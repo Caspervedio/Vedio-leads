@@ -1,0 +1,2615 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap" rel="stylesheet">
+<title>Vedio Leads</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --p1:#8258a8;--p2:#9470b8;--p3:#a78bca;--p4:#c4a8d8;--p5:#d1b6df;--p6:#e8d9f0;--p7:#f8f3fc;
+  --pdark:#5a3a7a;--pdarker:#3d2060;
+  --white:#ffffff;--gray:#6b7280;--gray2:#9ca3af;--gray3:#e5e7eb;--gray4:#f3f4f6;
+  --green:#16a34a;--greenbg:#dcfce7;--red:#dc2626;--redbg:#fee2e2;
+  --blue:#2563eb;--bluebg:#dbeafe;--amber:#d97706;--amberbg:#fef3c7;
+  --border:rgba(130,88,168,0.15);--border2:rgba(130,88,168,0.3);
+}
+body{font-family:"DM Sans",system-ui,-apple-system,sans-serif;font-size:13px;color:var(--pdarker);background:var(--p7);height:100vh;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:var(--p6)}::-webkit-scrollbar-thumb{background:var(--p4);border-radius:3px}
+
+/* APP SHELL */
+.app{display:flex;flex:1;overflow:hidden;height:calc(100vh - 0px)}
+.sidebar{width:280px;min-width:280px;flex-shrink:0;background:var(--p1);display:flex;flex-direction:column;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--p7)}
+
+/* SIDEBAR */
+.sb-logo{padding:20px;border-bottom:none;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.sb-logo img{width:36px;height:36px;border-radius:0;object-fit:contain}
+.sb-logo-text{color:#fff;font-size:15px;font-weight:700;letter-spacing:-.3px;line-height:1.2}
+.sb-logo-sub{font-size:11px;color:rgba(255,255,255,.5);font-weight:400;letter-spacing:.5px;text-transform:uppercase}
+
+.sb-nav{padding:8px 12px;flex-shrink:0;display:flex;flex-direction:column;gap:2px}
+.sb-nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;color:rgba(255,255,255,.7);font-size:14px;font-weight:500;cursor:pointer;border-radius:8px;transition:all .12s;user-select:none}
+.sb-nav a:hover{color:#fff;background:rgba(255,255,255,.1)}
+.sb-nav a.on{color:#fff;background:rgba(255,255,255,.2)}
+.sb-nav .ico{width:18px;height:18px;flex-shrink:0;opacity:.85;stroke-width:1.8}
+.sb-nav a.on .ico{opacity:1}
+
+/* FILTER ACCORDION */
+.sb-filters{flex:1;overflow-y:auto;overflow-x:hidden}
+.acc-hd{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.08)}
+.acc-hd:hover{background:rgba(255,255,255,.05)}
+.acc-title{font-size:10px;font-weight:700;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.8px}
+.acc-arrow{font-size:10px;color:rgba(255,255,255,.4);transition:transform .15s}
+.acc-arrow.open{transform:rotate(180deg)}
+.acc-body{padding:8px 12px 10px;border-bottom:1px solid rgba(255,255,255,.08);display:none}
+.acc-body.open{display:block}
+.fl{font-size:10px;color:rgba(255,255,255,.55);margin-bottom:3px;margin-top:7px;font-weight:600;letter-spacing:.3px}
+.fl:first-child{margin-top:0}
+.fi,.fs{width:100%;padding:5px 8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:5px;color:#fff;font-size:11.5px;font-family:inherit;outline:none;transition:border .1s}
+.fi:focus,.fs:focus{border-color:var(--p5);background:rgba(255,255,255,.15)}
+.fi::placeholder{color:rgba(255,255,255,.35)}
+.frow{display:flex;gap:4px;align-items:center}
+.frow .fi{flex:1}
+.frow span{color:rgba(255,255,255,.4);font-size:11px;flex-shrink:0}
+.tog-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0}
+.tog-row label{font-size:11.5px;color:rgba(255,255,255,.7);cursor:pointer}
+.tog{position:relative;width:30px;height:17px;flex-shrink:0}
+.tog input{opacity:0;width:0;height:0;position:absolute}
+.tog-sl{position:absolute;inset:0;background:rgba(255,255,255,.15);border-radius:9px;cursor:pointer;transition:background .2s}
+.tog-sl:before{content:'';position:absolute;width:13px;height:13px;left:2px;top:2px;background:rgba(255,255,255,.5);border-radius:50%;transition:all .2s}
+.tog input:checked+.tog-sl{background:var(--p5)}
+.tog input:checked+.tog-sl:before{transform:translateX(13px);background:#fff}
+.rk-grp{display:flex;gap:3px;margin-top:4px}
+.rk-btn{flex:1;padding:4px 2px;border:1px solid rgba(255,255,255,.15);border-radius:5px;font-size:10px;text-align:center;cursor:pointer;color:rgba(255,255,255,.5);background:transparent;font-family:inherit;transition:all .12s}
+.rk-btn.on{background:rgba(255,255,255,.85);color:var(--p1);border-color:transparent;font-weight:700}
+.chip-grp{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.chip{padding:3px 7px;border:1px solid rgba(255,255,255,.15);border-radius:10px;font-size:10.5px;color:rgba(255,255,255,.55);cursor:pointer;user-select:none;transition:all .12s}
+.chip:hover{color:rgba(255,255,255,.8)}
+.chip.on{background:rgba(255,255,255,.2);border-color:var(--p5);color:#fff}
+
+/* SIDEBAR LISTS */
+.sb-lists-wrap{flex-shrink:0;border-top:1px solid rgba(255,255,255,.12)}
+.sb-sec{padding:8px 14px 3px;font-size:9px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px;font-weight:700}
+.sb-li{display:flex;align-items:center;padding:5px 8px 5px 14px;color:rgba(255,255,255,.5);font-size:11.5px;cursor:pointer;gap:4px;transition:color .1s}
+.sb-li:hover{color:rgba(255,255,255,.8)}
+.sb-li.on{color:#fff}
+.sb-li-nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-li-c{font-size:10px;background:rgba(255,255,255,.12);padding:1px 5px;border-radius:8px;flex-shrink:0}
+.sb-li.on .sb-li-c{background:rgba(255,255,255,.25)}
+.sb-li-del{font-size:12px;cursor:pointer;color:rgba(255,255,255,.3);transition:color .1s;flex-shrink:0}
+.sb-li-del:hover{color:rgba(255,255,255,.8)}
+.sb-addlist{padding:5px 14px 8px;color:rgba(209,182,223,.7);font-size:11.5px;cursor:pointer;transition:color .1s}
+.sb-addlist:hover{color:var(--p5)}
+.nlinput{width:calc(100% - 20px);margin:3px 10px;padding:4px 8px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:5px;color:#fff;font-size:11px;outline:none;font-family:inherit}
+.nlinput:focus{border-color:var(--p5)}
+.sb-footer{padding:10px}
+.exp-btn{width:100%;padding:8px;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s}
+.exp-btn:hover{background:rgba(255,255,255,.25)}
+
+/* FILTER POPOVER */
+.filter-btn{position:relative}
+.filter-btn .btn{display:inline-flex;align-items:center;gap:5px}
+.filter-btn .filter-count{background:var(--p1);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;min-width:16px;text-align:center}
+.filter-popover{display:none;position:absolute;top:calc(100% + 6px);right:0;width:380px;max-height:80vh;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(130,88,168,.18);z-index:100;padding:0}
+.filter-popover.open{display:block}
+.filter-popover .fp-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:#fff;border-radius:12px 12px 0 0;z-index:1}
+.filter-popover .fp-title{font-size:14px;font-weight:700;color:var(--pdarker)}
+.filter-popover .fp-close{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;background:var(--p7);border-radius:6px;cursor:pointer;color:var(--gray);font-size:16px;transition:all .1s}
+.filter-popover .fp-close:hover{background:var(--p6);color:var(--pdarker)}
+.filter-popover .fp-section{padding:12px 16px;border-bottom:1px solid var(--border)}
+.filter-popover .fp-section:last-child{border-bottom:none}
+.filter-popover .fp-section-title{font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
+.filter-popover .fl{font-size:11px;color:var(--gray);margin-bottom:4px;margin-top:10px;font-weight:600;letter-spacing:.3px}
+.filter-popover .fl:first-child{margin-top:0}
+.filter-popover .fi,.filter-popover .fs{width:100%;padding:7px 10px;background:var(--p7);border:1px solid var(--border);border-radius:8px;color:var(--pdarker);font-size:12px;font-family:inherit;outline:none;transition:border .1s}
+.filter-popover .fi:focus,.filter-popover .fs:focus{border-color:var(--p1);background:#fff;box-shadow:0 0 0 3px rgba(130,88,168,.08)}
+.filter-popover .fi::placeholder{color:var(--gray2)}
+.filter-popover .frow{display:flex;gap:6px;align-items:center}
+.filter-popover .frow .fi{flex:1}
+.filter-popover .frow span{color:var(--gray2);font-size:12px;flex-shrink:0}
+.filter-popover .rk-grp{display:flex;gap:4px;margin-top:6px}
+.filter-popover .rk-btn{flex:1;padding:6px 4px;border:1px solid var(--border);border-radius:6px;font-size:11px;text-align:center;cursor:pointer;color:var(--gray);background:#fff;font-family:inherit;transition:all .12s}
+.filter-popover .rk-btn.on{background:var(--p1);color:#fff;border-color:var(--p1);font-weight:700}
+.filter-popover .chip-grp{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.filter-popover .chip{padding:5px 10px;border:1px solid var(--border);border-radius:14px;font-size:11.5px;color:var(--gray);cursor:pointer;user-select:none;transition:all .12s;background:#fff}
+.filter-popover .chip:hover{color:var(--pdarker);border-color:var(--p3)}
+.filter-popover .chip.on{background:var(--p6);border-color:var(--p1);color:var(--pdarker);font-weight:600}
+.filter-popover .fp-footer{padding:12px 16px;border-top:1px solid var(--border);position:sticky;bottom:0;background:#fff;border-radius:0 0 12px 12px}
+.fp-overlay{display:none;position:fixed;inset:0;z-index:99}
+.fp-overlay.open{display:block}
+
+/* TOOLBAR */
+.toolbar{padding:9px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex-shrink:0;background:var(--white)}
+.sb-toggle{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border2);border-radius:7px;cursor:pointer;color:var(--p1);background:var(--p7);font-size:14px;flex-shrink:0;transition:all .1s}
+.sb-toggle:hover{background:var(--p6)}
+.sbox{position:relative;flex:1;min-width:120px}
+.sbox input{width:100%;padding:7px 10px 7px 30px;border:1px solid var(--border2);border-radius:8px;color:var(--pdarker);font-size:12.5px;outline:none;font-family:inherit;background:var(--p7);transition:all .12s}
+.sbox input:focus{border-color:var(--p1);background:#fff;box-shadow:0 0 0 3px rgba(130,88,168,.1)}
+.sbox input::placeholder{color:var(--gray2)}
+.sbox-ico{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--p3);font-size:14px;pointer-events:none}
+.btn{padding:6px 11px;background:var(--p7);border:1px solid var(--border2);border-radius:7px;color:var(--p1);font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;transition:all .12s;display:inline-flex;align-items:center;gap:5px;font-weight:500}
+.btn:hover{background:var(--p6);border-color:var(--p1)}
+.btn-primary{background:var(--p1);color:#fff;border-color:var(--p1)}
+.btn-primary:hover{background:var(--pdark);border-color:var(--pdark)}
+.btn-sm{padding:4px 9px;font-size:11px}
+.btn-danger{color:var(--red);border-color:rgba(220,38,38,.25)}
+.btn-danger:hover{background:var(--redbg)}
+.btn-amber{color:var(--amber);border-color:rgba(217,119,6,.25)}
+.btn-amber:hover{background:var(--amberbg)}
+.btn-green{color:var(--green);border-color:rgba(22,163,74,.25)}
+.btn-green:hover{background:var(--greenbg)}
+
+/* LEADS LIST BAR */
+.leads-list-bar{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--white);flex-shrink:0}
+.llb-lists{display:flex;gap:4px;flex-wrap:wrap;flex:1}
+.llb-list{padding:5px 12px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;color:var(--gray);background:transparent;border:1px solid transparent;transition:all .12s;display:inline-flex;align-items:center;gap:6px;user-select:none}
+.llb-list:hover{background:var(--p7);color:var(--pdarker)}
+.llb-list.on{background:var(--p6);color:var(--p1);font-weight:600;border-color:var(--border)}
+.llb-list .llb-count{font-size:10px;background:var(--p7);padding:1px 6px;border-radius:8px;color:var(--gray2)}
+.llb-list.on .llb-count{background:var(--p1);color:#fff}
+.llb-list .llb-del{font-size:11px;color:var(--gray2);cursor:pointer;margin-left:2px;transition:color .1s}
+.llb-list .llb-del:hover{color:var(--red)}
+.llb-actions{display:flex;gap:5px;align-items:center;flex-shrink:0}
+.llb-input{padding:5px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;font-family:inherit;outline:none;width:140px;color:var(--pdarker);background:var(--p7)}
+.llb-input:focus{border-color:var(--p1);background:#fff}
+
+/* STATUS + SEL BARS */
+.stbar{padding:5px 12px;background:var(--p7);border-bottom:1px solid var(--border);font-size:11px;color:var(--gray);display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap}
+.stbar .hi{color:var(--p1);font-weight:600}
+.selbar{padding:6px 12px;background:var(--p6);border-bottom:1px solid var(--border2);font-size:12px;color:var(--pdark);display:flex;align-items:center;gap:7px;flex-shrink:0;flex-wrap:wrap}
+.selbar.h{display:none}
+
+/* BODY */
+.body-wrap{flex:1;display:flex;overflow:hidden;position:relative}
+.tw{flex:1;overflow:auto}
+
+/* TABLE */
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th{padding:8px 10px;text-align:left;font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--gray3);position:sticky;top:0;background:var(--white);z-index:5;font-weight:700;user-select:none;white-space:nowrap}
+th.sort{cursor:pointer}th.sort:hover{color:var(--p1)}th.sorted{color:var(--p1)}
+td{padding:8px 10px;border-bottom:1px solid var(--gray3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+tr:hover td{background:var(--p7);cursor:pointer}
+tr.sel td{background:var(--p6)}
+tr.chk td{background:var(--bluebg)}
+.co-name{font-weight:600;color:var(--pdarker);font-size:12.5px}
+.owner-badge{display:inline-block;width:18px;height:18px;border-radius:50%;color:#fff;font-size:8px;font-weight:700;line-height:18px;text-align:center;vertical-align:middle;margin-left:4px;flex-shrink:0}
+.ai-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--pdarker);cursor:pointer;user-select:none}
+.ai-toggle input{display:none}
+.ai-toggle .toggle-track{width:32px;height:18px;border-radius:9px;background:var(--gray2);position:relative;transition:background .2s}
+.ai-toggle input:checked+.toggle-track{background:var(--p1)}
+.ai-toggle .toggle-thumb{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s}
+.ai-toggle input:checked+.toggle-track .toggle-thumb{left:16px}
+.icp-bar{height:4px;background:var(--p6);border-radius:2px;width:40px;display:inline-block;vertical-align:middle}
+.icp-bar-fill{height:100%;border-radius:2px}
+.badge-hot{background:#ef4444;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+.badge-warm{background:#f59e0b;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+.badge-cold{background:#94a3b8;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse-dot 2s ease-in-out infinite;margin-right:4px}
+.disc-status{border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:12px}
+.disc-status.running{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:#059669}
+.disc-status.done{background:var(--p7);border:1px solid var(--border);color:var(--gray)}
+.disc-status.failed{background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);color:#dc2626}
+.disc-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.disc-metric{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center}
+.disc-metric-val{font-size:22px;font-weight:800;color:var(--pdarker)}
+.disc-metric-lbl{font-size:10px;color:var(--gray);margin-top:2px}
+.disc-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:12px}
+.disc-tab{padding:8px 16px;font-size:12px;font-weight:600;color:var(--gray);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s}
+.disc-tab.on{color:var(--p1);border-bottom-color:var(--p1)}
+.disc-tab .tab-badge{font-size:9px;background:var(--p6);color:var(--p1);padding:1px 5px;border-radius:8px;margin-left:4px}
+.disc-result{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.disc-result:hover{background:var(--p7);margin:0 -8px;padding:12px 8px;border-radius:6px}
+.disc-result.approved{opacity:.6}
+.disc-result.rejected{opacity:.4;text-decoration:line-through}
+.disc-score-circle{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff;flex-shrink:0}
+.disc-detail{background:var(--p7);border:1px solid var(--border);border-radius:8px;padding:12px;margin:-4px 0 8px 52px;font-size:11px}
+.reject-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.reject-chip{font-size:10px;padding:3px 8px;border-radius:10px;border:1px solid var(--border);cursor:pointer;background:#fff;transition:all .1s}
+.reject-chip:hover,.reject-chip.sel{background:var(--red);color:#fff;border-color:var(--red)}
+.feedback-card{background:var(--p7);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:16px}
+.grade-a{color:#16a34a;font-weight:800}.grade-b{color:#f59e0b;font-weight:800}.grade-c{color:#94a3b8;font-weight:800}
+#search-overlay{display:none;position:absolute;inset:0;background:rgba(255,255,255,.75);backdrop-filter:blur(4px);z-index:50;align-items:center;justify-content:center}
+.search-loading-inner{text-align:center;padding:40px}
+.search-spinner{width:36px;height:36px;border:3px solid var(--p6);border-top-color:var(--p1);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pill{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600}
+.pill-active{background:var(--greenbg);color:var(--green)}
+.pill-inactive{background:var(--gray4);color:var(--gray)}
+.pill-p1{background:var(--p6);color:var(--pdark)}
+.score-stars{color:var(--amber);font-size:11px;letter-spacing:-1px}
+.stage-pill{font-size:10px;padding:2px 6px;border-radius:8px;font-weight:600;white-space:nowrap}
+.s-new{background:#e0f2fe;color:#0369a1}
+.s-qual{background:#f0fdf4;color:#15803d}
+.s-dialog{background:#fef9c3;color:#854d0e}
+.s-prop{background:#fdf2f8;color:#86198f}
+.s-won{background:#dcfce7;color:#166534}
+.s-lost{background:#fee2e2;color:#991b1b}
+.ib{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--border2);border-radius:5px;cursor:pointer;background:transparent;color:var(--p3);font-size:11px;font-family:inherit;transition:all .12s}
+.ib:hover{background:var(--p6);color:var(--p1);border-color:var(--p1)}
+.ib.added{color:var(--green);border-color:rgba(22,163,74,.3);background:var(--greenbg)}
+.ib.rm:hover{background:var(--redbg);color:var(--red)}
+.cb{width:13px;height:13px;accent-color:var(--p1);cursor:pointer}
+
+/* DETAIL PANEL — fixed overlay, works from any view */
+.dp{width:340px;overflow-y:auto;background:var(--white)}
+.dp.h{display:none!important}
+.dp-head{padding:12px 14px 10px;border-bottom:1px solid var(--border);display:flex;gap:6px;justify-content:space-between;align-items:flex-start}
+.dp-name{font-size:14px;font-weight:700;color:var(--pdarker);line-height:1.3;margin-bottom:2px}
+.dp-cvr{font-size:10.5px;color:var(--gray);font-family:monospace}
+.dp-close{font-size:20px;color:var(--gray2);cursor:pointer;line-height:1;flex-shrink:0;transition:color .1s}
+.dp-close:hover{color:var(--pdarker)}
+.dp-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
+.dp-tab{padding:7px 10px;font-size:11px;color:var(--gray);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:all .12s;font-weight:500}
+.dp-tab:hover{color:var(--p1)}
+.dp-tab.on{color:var(--p1);border-bottom-color:var(--p1);font-weight:600}
+.dp-body{display:none;padding:10px 14px}
+.dp-body.on{display:block}
+.dp-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:10px}
+.dp-stat{background:var(--p7);border-radius:7px;padding:8px 10px;border:1px solid var(--border)}
+.dp-stat-l{font-size:9px;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:2px}
+.dp-stat-v{font-size:14px;font-weight:700;color:var(--pdarker)}
+.dp-row{display:flex;justify-content:space-between;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--gray3);font-size:11.5px;gap:6px}
+.dp-row:last-of-type{border:none}
+.dp-k{color:var(--gray);flex-shrink:0;font-weight:500}
+.dp-v{color:var(--pdarker);text-align:right;word-break:break-word;max-width:160px}
+.dp-v a{color:var(--blue);text-decoration:none}
+.dp-v a:hover{text-decoration:underline}
+.dp-section{font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.6px;margin:10px 0 4px;padding-bottom:4px;border-bottom:1px solid var(--gray3)}
+
+/* SOCIAL ICONS */
+.social-links{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.soc-ico{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;text-decoration:none;transition:all .12s;border:1px solid var(--border)}
+.soc-ico:hover{transform:scale(1.1)}
+.soc-ico svg{width:16px;height:16px;flex-shrink:0}
+.soc-ig{background:#fce7f3;border-color:#f9a8d4;color:#be185d}
+.soc-fb{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+.soc-tt{background:#f0fdf4;border-color:#86efac;color:#166534}
+.soc-li{background:#eff6ff;border-color:#93c5fd;color:#0369a1}
+.soc-web{background:var(--p6);border-color:var(--p4);color:var(--p1)}
+.soc-add{background:var(--gray4);border-color:var(--gray3);color:var(--gray);font-size:16px;font-weight:300}
+
+/* NOTES */
+.notes-area{width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:6px;font-size:12px;font-family:inherit;color:var(--pdarker);background:var(--p7);outline:none;resize:vertical;min-height:70px;transition:border .1s}
+.notes-area:focus{border-color:var(--p1);background:#fff}
+.notes-area::placeholder{color:var(--gray2)}
+
+/* FINANS BARS */
+.fin-bar-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.fin-bar-lbl{font-size:10px;color:var(--gray);width:80px;flex-shrink:0;text-align:right;font-weight:500}
+.fin-bar-track{flex:1;height:7px;background:var(--gray3);border-radius:4px;overflow:hidden}
+.fin-bar-fill{height:100%;border-radius:4px;transition:width .4s}
+.fin-bar-val{font-size:11px;color:var(--pdarker);width:60px;flex-shrink:0;text-align:right;font-weight:600}
+.fin-tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.fin-tbl td{padding:4px 0;border-bottom:1px solid var(--gray3);color:var(--gray)}
+.fin-tbl td:last-child{text-align:right;color:var(--pdarker);font-weight:600}
+.fin-tbl tr:last-child td{border:none}
+
+/* TAGS */
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:10.5px;background:var(--p6);color:var(--pdark);border:1px solid var(--border);cursor:pointer}
+.tag:hover{background:var(--p5)}
+.tag-input{border:none;outline:none;font-size:11px;font-family:inherit;color:var(--pdarker);background:transparent;width:80px}
+
+/* MODAL */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:flex;align-items:center;justify-content:center}
+.modal-bg.h{display:none}
+.modal{background:#fff;border-radius:12px;padding:22px;width:360px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal h3{font-size:15px;font-weight:700;color:var(--pdarker);margin-bottom:4px}
+.modal p{font-size:12px;color:var(--gray);margin-bottom:14px}
+.modal-section{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--gray3)}
+.modal-section:last-of-type{border:none;margin-bottom:0}
+.modal-section h4{font-size:12.5px;font-weight:700;color:var(--pdarker);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.modal input{width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:7px;color:var(--pdarker);font-size:12px;outline:none;font-family:inherit;margin-bottom:5px;background:var(--p7);transition:border .1s}
+.modal input:focus{border-color:var(--p1)}
+.modal input::placeholder{color:var(--gray2)}
+.modal-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:14px}
+
+/* LOGIN OVERLAY */
+.login-overlay{position:fixed;inset:0;background:var(--p7);z-index:1000;display:flex;align-items:center;justify-content:center}
+.login-card{background:#fff;border-radius:16px;padding:36px 40px;width:340px;box-shadow:0 20px 60px rgba(130,88,168,.18);border:1px solid var(--border)}
+.login-logo{text-align:center;margin-bottom:28px}
+.login-logo-title{font-size:22px;font-weight:800;color:var(--pdarker);margin-bottom:4px;letter-spacing:-.5px}
+.login-logo-sub{font-size:11px;color:var(--gray2)}
+.login-inp{width:100%;padding:10px 12px;border:1.5px solid var(--border2);border-radius:8px;color:var(--pdarker);font-size:13px;outline:none;font-family:inherit;background:var(--p7);transition:border .12s;margin-bottom:10px}
+.login-inp:focus{border-color:var(--p1);background:#fff}
+.login-inp::placeholder{color:var(--gray2)}
+.login-btn{width:100%;padding:11px;background:var(--p1);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:background .12s;margin-top:2px}
+.login-btn:hover{background:var(--pdark)}
+.login-err{color:var(--red);font-size:11.5px;text-align:center;margin-top:8px;display:none}
+.login-hint{font-size:10.5px;color:var(--gray2);text-align:center;margin-top:14px;line-height:1.6}
+
+/* USER PROFILE (sidebar bottom) */
+.user-profile{padding:12px;border-top:1px solid rgba(255,255,255,.15);flex-shrink:0;margin-top:auto}
+.user-profile-inner{display:flex;align-items:center;gap:12px;padding:12px;border-radius:0;background:transparent !important;cursor:default}
+.user-profile-inner:hover{background:transparent !important}
+.user-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:var(--p1);background:#fff !important;flex-shrink:0;letter-spacing:-.3px}
+.user-info{flex:1;min-width:0}
+.user-name{font-size:15px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-logout{color:rgba(255,255,255,.4);cursor:pointer;transition:color .12s;flex-shrink:0;line-height:1;padding:4px;display:flex;align-items:center;justify-content:center;position:relative}
+.user-logout:hover{color:rgba(255,255,255,.8)}
+.data-tip-popup{position:fixed;background:#1e1e2e;color:#fff;font-size:11px;font-weight:500;padding:4px 8px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:9999}
+
+/* CONTACTS / DEAL / HISTORY TABS */
+.dp-tabs{overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+.dp-tabs::-webkit-scrollbar{height:3px}
+.dp-tabs::-webkit-scrollbar-track{background:transparent}
+.dp-tabs::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.contact-card{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--p7);position:relative;margin-bottom:8px}
+.contact-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.contact-del{position:absolute;top:7px;right:8px;color:var(--gray3);cursor:pointer;font-size:18px;transition:color .1s;line-height:1}
+.contact-del:hover{color:var(--red)}
+.contact-form{background:var(--p7);border:1px solid var(--border2);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:7px;margin-bottom:10px}
+.contact-inp{padding:6px 9px;border:1px solid var(--border2);border-radius:6px;font-size:12px;font-family:inherit;color:var(--pdarker);background:#fff;outline:none;width:100%;transition:border-color .15s}
+.contact-inp:focus{border-color:var(--p1)}
+
+/* PROFILE MODAL */
+.profile-modal-card{background:#fff;border-radius:14px;width:420px;max-width:calc(100vw - 32px);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.28)}
+.profile-modal-hd{padding:15px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.profile-modal-title{font-size:14px;font-weight:700;color:var(--pdarker)}
+.profile-modal-close{font-size:22px;cursor:pointer;color:var(--gray2);line-height:1;padding:2px 6px;border-radius:4px;transition:color .1s}
+.profile-modal-close:hover{color:var(--pdarker)}
+.profile-modal-body{padding:20px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:16px}
+.profile-avatar-wrap{display:flex;flex-direction:column;align-items:center;gap:10px}
+.profile-avatar-ring{position:relative;width:80px;height:80px;cursor:pointer}
+.profile-avatar-big{width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:var(--p1);overflow:hidden;transition:opacity .15s;border:3px solid var(--p1);box-sizing:border-box;background:#fff}
+.profile-avatar-ring:hover .profile-avatar-big{opacity:.75}
+.profile-avatar-cam{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;pointer-events:none}
+.profile-avatar-ring:hover .profile-avatar-cam{opacity:1}
+.profile-avatar-cam-ico{background:rgba(0,0,0,.55);border-radius:50%;padding:7px;font-size:16px;line-height:1}
+.profile-field{display:flex;flex-direction:column;gap:5px}
+.profile-field label{font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px}
+.profile-field input{padding:8px 11px;border:1px solid var(--border2);border-radius:8px;font-size:13px;font-family:inherit;color:var(--pdarker);background:var(--p7);outline:none;transition:border-color .15s}
+.profile-field input:focus{border-color:var(--p1);background:#fff}
+.profile-color-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:2px}
+.profile-color-swatch{width:26px;height:26px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:transform .12s,border-color .12s}
+.profile-color-swatch:hover{transform:scale(1.15)}
+.profile-color-swatch.sel{border-color:var(--pdarker)}
+.profile-divider{border:none;border-top:1px solid var(--border);margin:0}
+.profile-pw-toggle{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--p1);cursor:pointer;user-select:none;padding:4px 0}
+.profile-pw-toggle:hover{color:var(--pdark)}
+.profile-pw-section{display:flex;flex-direction:column;gap:10px}
+.profile-msg{font-size:11.5px;padding:7px 10px;border-radius:7px;display:none}
+.profile-msg.ok{background:var(--greenbg);color:var(--green);display:block}
+.profile-msg.err{background:var(--redbg);color:var(--red);display:block}
+.profile-modal-ft{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0}
+
+/* EDIT LEAD MODAL */
+.edit-lead-card{background:#fff;border-radius:14px;width:480px;max-width:calc(100vw - 32px);max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.edit-lead-hd{padding:15px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.edit-lead-title{font-size:14px;font-weight:700;color:var(--pdarker)}
+.edit-lead-close{font-size:22px;cursor:pointer;color:var(--gray2);line-height:1;padding:2px 6px;border-radius:4px;transition:color .1s}
+.edit-lead-close:hover{color:var(--pdarker)}
+.edit-lead-body{padding:16px 20px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:12px}
+.edit-field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.edit-field{display:flex;flex-direction:column;gap:4px}
+.edit-field label{font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px}
+.edit-field input{padding:7px 10px;border:1px solid var(--border2);border-radius:7px;font-size:12.5px;font-family:inherit;color:var(--pdarker);background:var(--p7);outline:none;transition:border-color .15s}
+.edit-field input:focus{border-color:var(--p1);background:#fff}
+.edit-lead-ft{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0}
+.edit-section-lbl{font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.6px;padding-bottom:4px;border-bottom:1px solid var(--border);margin-top:2px}
+
+/* RESPONSIVE */
+@media(max-width:780px){.sidebar{width:180px}.dp{width:240px}}
+@media(max-width:600px){.sidebar{display:none}.dp{width:200px}}
+
+</style>
+</head>
+<body>
+
+<!-- LOGIN OVERLAY -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <img src="/login.png" alt="Vedio Leads" style="width:48px;height:48px;margin-bottom:6px">
+      <div class="login-logo-title">Vedio Leads</div>
+      <div class="login-logo-sub">Lead Management</div>
+    </div>
+
+    <input class="login-inp" id="login-email" type="email" placeholder="Email" autocomplete="email">
+    <input class="login-inp" id="login-pw" type="password" placeholder="Adgangskode" autocomplete="current-password"
+      onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="login-btn" onclick="doLogin()">Log ind</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<div class="app" id="app" style="display:none">
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sb">
+  <div class="sb-logo">
+    <img id="logo-img" src="/login.png" alt="Vedio">
+    <div>
+      <div class="sb-logo-text">Vedio Leads</div>
+      <div class="sb-logo-sub">Lead Management</div>
+    </div>
+  </div>
+
+  <nav class="sb-nav">
+    <a class="on" id="nv-s" onclick="sv('search')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="m11 11 3 3"/></svg>
+      Søg virksomheder
+    </a>
+    <a id="nv-l" onclick="sv('leads')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
+      Mine leads
+    </a>
+    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agent</div>
+    <a id="nv-c" onclick="sv('customers')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
+      Mine kunder <span id="cust-count" style="font-size:9px;background:var(--p6);color:var(--p1);padding:1px 5px;border-radius:8px;margin-left:4px"></span>
+    </a>
+    <a id="nv-d" onclick="sv('discovery')"><span id="disc-pulse" class="pulse-dot" style="display:none"></span>
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1v14M1 8h14M4 4l8 8M12 4l-8 8"/></svg>
+      Lead discovery
+    </a>
+  </nav>
+
+  <div class="sb-filters" id="sb-filters" style="display:none"></div>
+
+  <div class="sb-lists-wrap" id="sb-lists" style="display:none">
+    <div class="sb-sec">Lister</div>
+    <div id="lc"></div>
+    <div class="sb-addlist" onclick="togNL()">＋ Ny liste</div>
+    <input id="nli" class="nlinput" placeholder="Navn + Enter" style="display:none" autocomplete="off">
+  </div>
+  <div class="sb-footer" id="sb-footer" style="display:none">
+    <button class="exp-btn" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
+  </div>
+
+  <!-- USER PROFILE -->
+  <div class="user-profile" id="user-profile" style="display:none">
+    <div class="user-profile-inner" onclick="openProfileModal()" style="cursor:pointer" title="Rediger profil">
+      <div class="user-avatar" id="user-avatar"></div>
+      <div class="user-info">
+        <div class="user-name" id="user-name"></div>
+      </div>
+      <div class="user-logout" onclick="event.stopPropagation();logout()" data-tip="Log ud"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h7v12H6M2 8h8M8 5l3 3-3 3"/></svg></div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+  <div class="toolbar">
+    <div class="sb-toggle" onclick="togSB()">☰</div>
+    <div class="sbox" id="sw">
+      <span class="sbox-ico">⌕</span>
+      <input id="qs" type="text" placeholder="Hurtigsøg navn, CVR, branche, by…" autocomplete="off">
+    </div>
+    <div class="filter-btn" id="filter-btn-wrap">
+      <button class="btn" onclick="togFilterPop()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 3h14M3 8h10M5.5 13h5"/></svg>
+        Filtre
+        <span class="filter-count" id="filter-count" style="display:none">0</span>
+      </button>
+      <div class="fp-overlay" id="fp-overlay" onclick="togFilterPop()"></div>
+      <div class="filter-popover" id="filter-popover">
+        <div class="fp-hd">
+          <span class="fp-title">Filtre</span>
+          <button class="fp-close" onclick="togFilterPop()">✕</button>
+        </div>
+        <div class="fp-section">
+          <div class="fp-section-title">Generelt</div>
+          <div class="fl">Inkluder søgeord</div>
+          <input class="fi" id="q" placeholder="CVR, navn, website…" autocomplete="off">
+          <div class="fl">Ekskluder søgeord</div>
+          <input class="fi" id="q-ex" placeholder="Holding, udlejning…" autocomplete="off">
+          <div style="margin:8px 0"><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--pdarker);cursor:pointer"><input type="checkbox" id="f-hide-owned" onchange="applyF()"> Skjul andres leads</label></div>
+          <div class="fl">Reklamebeskyttelse</div>
+          <div class="rk-grp">
+            <button class="rk-btn on" id="rk-alle" onclick="setRk('alle')">Alle</button>
+            <button class="rk-btn" id="rk-skjul" onclick="setRk('skjul')">Skjul</button>
+            <button class="rk-btn" id="rk-kun" onclick="setRk('kun')">Kun</button>
+          </div>
+        </div>
+        <div class="fp-section">
+          <div class="fp-section-title">Virksomhedsoplysninger</div>
+          <div class="fl">Virksomhedsform</div>
+          <select class="fs" id="f-form" onchange="applyF()">
+            <option value="">Alle former</option>
+            <option value="ApS">ApS</option><option value="A/S">A/S</option>
+            <option value="I/S">I/S</option><option value="Enkeltmands">Enkeltmands</option>
+          </select>
+          <div class="fl">Ansatte</div>
+          <div class="frow"><input class="fi" id="fe1" type="number" placeholder="Fra" onchange="applyF()"><span>–</span><input class="fi" id="fe2" type="number" placeholder="Til" onchange="applyF()"></div>
+          <div class="fl">Egenkapital over (kr.)</div>
+          <input class="fi" id="f-eq" type="number" placeholder="0" onchange="applyF()">
+          <div class="fl">Resultat over (kr.)</div>
+          <input class="fi" id="f-res" type="number" placeholder="0" onchange="applyF()">
+          <div class="fl">Virksomhedens alder (mdr.)</div>
+          <div class="frow"><input class="fi" id="fam" type="number" placeholder="Min" onchange="applyF()"><span>–</span><input class="fi" id="faM" type="number" placeholder="Max" onchange="applyF()"></div>
+          <div class="fl">Branche</div>
+          <select class="fs" id="f-b" onchange="applyF()">
+            <option value="">Alle brancher</option>
+            <option value="41">Byggeri & anlæg</option>
+            <option value="43">Håndværk & installation</option>
+            <option value="45">Bilhandel & -værksted</option>
+            <option value="46">Engroshandel</option>
+            <option value="47">Detailhandel & butik</option>
+            <option value="55">Hotel & overnatning</option>
+            <option value="56">Restaurant & café</option>
+            <option value="49">Transport & logistik</option>
+            <option value="62">IT & software</option>
+            <option value="64">Finans & bank</option>
+            <option value="68">Ejendom & udlejning</option>
+            <option value="69">Jura & revision</option>
+            <option value="70">Rådgivning & konsulent</option>
+            <option value="71">Arkitekt & ingeniør</option>
+            <option value="73">Reklame & marketing</option>
+            <option value="77">Udlejning & leasing</option>
+            <option value="79">Rejsebureau</option>
+            <option value="81">Rengøring & service</option>
+            <option value="86">Sundhed & læge</option>
+            <option value="96">Frisør & personlig pleje</option>
+          </select>
+          <div class="fl">Stiftet (år)</div>
+          <div class="frow"><input class="fi" id="fy1" type="number" placeholder="2000" onchange="applyF()"><span>–</span><input class="fi" id="fy2" type="number" placeholder="2025" onchange="applyF()"></div>
+        </div>
+        <div class="fp-section">
+          <div class="fp-section-title">Område</div>
+          <div class="fl">Inkluder by</div>
+          <input class="fi" id="f-ci" placeholder="Aalborg" autocomplete="off" onchange="applyF()">
+          <div class="fl">Ekskluder by</div>
+          <input class="fi" id="f-cx" placeholder="København" autocomplete="off" onchange="applyF()">
+          <div class="fl">Postnr. interval</div>
+          <div class="frow"><input class="fi" id="fzm" type="number" placeholder="5000" onchange="applyF()"><span>–</span><input class="fi" id="fzM" type="number" placeholder="5999" onchange="applyF()"></div>
+        </div>
+        <div class="fp-footer">
+          <button class="btn btn-sm" style="width:100%;justify-content:center" onclick="resetF()">Nulstil alle filtre</button>
+        </div>
+      </div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:5px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="addAll()">+ Tilføj alle</button>
+    </div>
+  </div>
+
+  <div class="stbar" id="stbar"></div>
+  <div class="selbar h" id="selbar"></div>
+
+  <!-- LEADS LIST BAR (moved from sidebar) -->
+  <div class="leads-list-bar" id="leads-list-bar" style="display:none">
+    <div class="llb-lists" id="llb-lists"></div>
+    <div class="llb-actions">
+      <button class="btn btn-sm" onclick="togNL('nli2','inline-block')">+ Ny liste</button>
+      <input id="nli2" class="llb-input" placeholder="Navn + Enter" style="display:none" autocomplete="off">
+      <button class="btn btn-sm" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
+      <label class="ai-toggle" style="margin-left:auto"><input type="checkbox" id="ai-toggle" onchange="toggleAI(this.checked)"><span class="toggle-track"><span class="toggle-thumb"></span></span>AI Insights</label><button class="btn btn-sm" id="icp-gear" style="display:none;padding:2px 6px" onclick="openIcpSettings()" title="ICP Indstillinger">⚙</button>
+    </div>
+  </div>
+
+  <div class="body-wrap">
+    <div class="tw">
+      <table id="tbl"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+      <div id="load-more-wrap" style="display:none;padding:16px;text-align:center">
+        <button class="btn btn-primary btn-sm" id="load-more-btn" onclick="loadMore()" style="padding:8px 24px">Indlæs flere</button>
+        <span id="load-more-info" style="font-size:11px;color:var(--gray);margin-left:8px"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CUSTOMERS PAGE -->
+  <div id="customers-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--p7)">
+    <div style="max-width:800px;margin:0 auto;padding:28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;color:var(--pdarker);margin:0 0 2px">Mine kunder</h2>
+          <p style="font-size:12px;color:var(--gray);margin:0">Tilføj dine vundne kunder — AI-agenten bruger dem til at finde lignende virksomheder</p>
+        </div>
+        <button class="btn btn-sm" onclick="openBulkCustomerModal()" style="flex-shrink:0">Bulk import</button>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+        <div style="font-size:11px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Tilføj kunde</div>
+        <div style="display:flex;gap:8px">
+          <input class="fi" id="cust-cvr-input" placeholder="Indtast CVR-nummer (8 cifre)" style="flex:1;font-size:13px;border:1.5px solid var(--p1);background:var(--p7);border-radius:8px;padding:10px 14px" onkeydown="if(event.key==='Enter')addCustomerFromInput()">
+          <button class="btn btn-primary btn-sm" onclick="addCustomerFromInput()" style="padding:10px 20px;font-size:13px">+ Tilføj</button>
+        </div>
+        <div id="cust-add-msg" style="font-size:11px;margin-top:6px;min-height:16px"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div id="cust-stats-bar" style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04);min-height:80px"></div>
+        <div id="pattern-card" style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04);min-height:80px"></div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px" id="cust-list-header">Kundeliste</div>
+        <div id="cust-list" style="padding:0 16px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DISCOVERY PAGE -->
+  <div id="discovery-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--p7)">
+    <div style="max-width:800px;margin:0 auto;padding:28px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <h2 style="font-size:20px;font-weight:800;color:var(--pdarker);margin:0 0 2px">Lead Discovery</h2>
+          <p style="font-size:12px;color:var(--gray);margin:0">AI-agenten finder virksomheder der ligner dine bedste kunder</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="disc-run-btn" style="background:linear-gradient(135deg,var(--p1),var(--p3));border:none;padding:10px 20px;font-size:13px;flex-shrink:0" onclick="startDiscoveryRun()">Kør agent nu</button>
+      </div>
+      <div id="disc-status-bar"></div>
+      <div id="disc-metrics-row"></div>
+      <div id="disc-customer-chips" style="margin-bottom:14px"></div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.04);overflow:hidden">
+        <div id="disc-tabs-wrap" style="padding:0 16px;border-bottom:1px solid var(--border)"></div>
+        <div id="disc-results-list" style="padding:0 16px 8px"></div>
+      </div>
+      <div id="disc-feedback-card" style="margin-top:12px"></div>
+      <div id="disc-empty-state"></div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<!-- DETAIL PANEL (fixed, root-level so it works from any view) -->
+<div class="dp h" id="dp" style="position:fixed;right:0;top:0;bottom:0;z-index:200;background:#fff;box-shadow:-6px 0 32px rgba(0,0,0,.18);border-left:1px solid var(--border);display:flex;flex-direction:column"></div>
+
+<!-- PROFILE MODAL -->
+<div id="profile-modal" style="display:none;position:fixed;inset:0;z-index:320;background:rgba(0,0,0,.45);align-items:center;justify-content:center">
+  <div class="profile-modal-card">
+    <div class="profile-modal-hd">
+      <span class="profile-modal-title">Min profil</span>
+      <span class="profile-modal-close" onclick="closeProfileModal()">×</span>
+    </div>
+    <div class="profile-modal-body">
+
+      <!-- Avatar -->
+      <div class="profile-avatar-wrap">
+        <div class="profile-avatar-ring" onclick="document.getElementById('profile-avatar-input').click()" title="Skift profilbillede">
+          <div class="profile-avatar-big" id="profile-avatar-big"></div>
+          <div class="profile-avatar-cam"><div class="profile-avatar-cam-ico"></div></div>
+        </div>
+        <div style="font-size:10.5px;color:var(--gray2)">Klik for at uploade billede</div>
+        <input id="profile-avatar-input" type="file" accept="image/*" style="display:none" onchange="handleAvatarUpload(this)">
+        <button id="profile-avatar-remove" class="btn btn-danger btn-sm" style="display:none;font-size:11px;padding:4px 10px" onclick="removeAvatar()">Fjern billede</button>
+      </div>
+
+      <div class="profile-msg" id="profile-msg"></div>
+
+      <!-- Name + Email -->
+      <div class="profile-field">
+        <label>Navn</label>
+        <input id="pf-name" type="text" placeholder="Dit fulde navn">
+      </div>
+      <div class="profile-field">
+        <label>Email</label>
+        <input id="pf-email" type="email" placeholder="din@email.dk">
+      </div>
+
+      <!-- Color -->
+      <div class="profile-field">
+        <label>Profilfarve</label>
+        <div class="profile-color-row" id="profile-color-row">
+          <!-- swatches rendered by JS -->
+        </div>
+      </div>
+
+      <hr class="profile-divider">
+
+      <!-- Password change -->
+      <div class="profile-pw-toggle" onclick="togglePwSection()">
+        <span id="pw-toggle-arrow">▶</span> Skift adgangskode
+      </div>
+      <div class="profile-pw-section" id="profile-pw-section" style="display:none">
+        <div class="profile-field">
+          <label>Nuværende adgangskode</label>
+          <input id="pf-pw-current" type="password" placeholder="••••••••" autocomplete="current-password">
+        </div>
+        <div class="profile-field">
+          <label>Ny adgangskode</label>
+          <input id="pf-pw-new" type="password" placeholder="••••••••" autocomplete="new-password">
+        </div>
+        <div class="profile-field">
+          <label>Bekræft ny adgangskode</label>
+          <input id="pf-pw-confirm" type="password" placeholder="••••••••" autocomplete="new-password">
+        </div>
+        <button class="btn btn-sm" style="width:100%;justify-content:center" onclick="changePassword()">Skift adgangskode</button>
+      </div>
+
+    </div>
+    <div class="profile-modal-ft">
+      <button class="btn btn-sm" onclick="closeProfileModal()">Annuller</button>
+      <button class="btn btn-primary btn-sm" onclick="saveProfile()">Gem profil</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT LEAD MODAL -->
+<div id="edit-lead-modal" style="display:none;position:fixed;inset:0;z-index:310;background:rgba(0,0,0,.45);align-items:center;justify-content:center">
+  <div class="edit-lead-card">
+    <div class="edit-lead-hd">
+      <span class="edit-lead-title" id="edit-lead-title">Rediger lead</span>
+      <span class="edit-lead-close" onclick="closeEditLead()">×</span>
+    </div>
+    <div class="edit-lead-body">
+      <div class="edit-section-lbl">Kontaktperson</div>
+      <div class="edit-field-row">
+        <div class="edit-field">
+          <label>Kontaktnavn</label>
+          <input id="ef-contactName" placeholder="Fuldt navn">
+        </div>
+        <div class="edit-field">
+          <label>Titel / stilling</label>
+          <input id="ef-contactTitle" placeholder="CEO, Marketing Manager…">
+        </div>
+      </div>
+      <div class="edit-field-row">
+        <div class="edit-field">
+          <label>Telefon</label>
+          <input id="ef-ph" placeholder="12 34 56 78">
+        </div>
+        <div class="edit-field">
+          <label>Email</label>
+          <input id="ef-em" type="email" placeholder="kontakt@firma.dk">
+        </div>
+      </div>
+      <div class="edit-field">
+        <label>Website</label>
+        <input id="ef-web" placeholder="www.firma.dk">
+      </div>
+      <div class="edit-section-lbl" style="margin-top:4px">Virksomhed</div>
+      <div class="edit-field">
+        <label>Firmanavn</label>
+        <input id="ef-name" placeholder="Firmanavn">
+      </div>
+      <div class="edit-field">
+        <label>Branche</label>
+        <input id="ef-ind" placeholder="Detailhandel, Teknologi…">
+      </div>
+      <div class="edit-field">
+        <label>Adresse</label>
+        <input id="ef-addr" placeholder="Vejnavn 1">
+      </div>
+      <div class="edit-field-row">
+        <div class="edit-field">
+          <label>Postnr.</label>
+          <input id="ef-zip" placeholder="1234">
+        </div>
+        <div class="edit-field">
+          <label>By</label>
+          <input id="ef-city" placeholder="København">
+        </div>
+      </div>
+      <div class="edit-field-row">
+        <div class="edit-field">
+          <label>Omsætning (kr.)</label>
+          <input id="ef-omsaetning" type="number" placeholder="0">
+        </div>
+        <div class="edit-field">
+          <label>Ansatte</label>
+          <input id="ef-emps" type="number" placeholder="0">
+        </div>
+      </div>
+    </div>
+    <div class="edit-lead-ft">
+      <button class="btn btn-sm" onclick="closeEditLead()">Annuller</button>
+      <button class="btn btn-primary btn-sm" onclick="saveEditLead()">Gem ændringer</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// ── LOGO ──────────────────────────────────────────────────────────────────────
+document.getElementById('logo-img').src='/login.png';
+
+// ── API ───────────────────────────────────────────────────────────────────────
+const API=''; // Samme origin — server.js serverer frontend og API
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+// DATA er kun til fallback hvis server ikke kører (åbnes direkte som HTML)
+const DEMO_DATA=[
+  {cvr:"12345678",name:"Nordjysk IT ApS",addr:"Vesterbro 14",zip:"9000",city:"Aalborg",ph:"98100100",em:"info@nordjysk-it.dk",web:"nordjysk-it.dk",ind:"Udvikling af software",ic:"62",emp:14,emps:"10-19",st:"active",yr:"2012",form:"ApS",eq:1250000,res:380000,omsaetning:4200000,bf:890000,ageM:158,tech:["WordPress","Google Ads"],ig:"",fb:"nordjysk.it",tt:"",li:"nordjysk-it",directors:[{name:"Mikkel Andersen",title:"Direktør"}]},
+  {cvr:"23456789",name:"Byggefirma Nielsen A/S",addr:"Industrivej 3",zip:"9220",city:"Aalborg Øst",ph:"96200200",em:"bn@nielsen-byg.dk",web:"nielsen-byg.dk",ind:"Opførelse af bygninger",ic:"41",emp:72,emps:"50-99",st:"active",yr:"1998",form:"A/S",eq:8400000,res:1200000,omsaetning:42000000,bf:6300000,ageM:326,tech:[],ig:"",fb:"",tt:"",li:"",directors:[{name:"Henrik Nielsen",title:"Adm. direktør"},{name:"Jens Nielsen",title:"Bestyrelsesformand"}]},
+  {cvr:"34567890",name:"Café Bryggen ApS",addr:"Nytorv 8",zip:"9000",city:"Aalborg",ph:"98765432",em:"",web:"cafebryggen.dk",ind:"Restauranter",ic:"56",emp:6,emps:"5-9",st:"active",yr:"2019",form:"ApS",eq:180000,res:-45000,omsaetning:2800000,bf:420000,ageM:75,tech:[],ig:"cafebryggen_aal",fb:"cafebryggenaalborg",tt:"cafebryggen",li:"",directors:[{name:"Sofie Larsen",title:"Indehaver"}]},
+  {cvr:"45678901",name:"Reklamebureau PULS ApS",addr:"Vesterbro 40",zip:"9000",city:"Aalborg",ph:"70202020",em:"hej@puls.dk",web:"puls.dk",ind:"Reklamevirksomhed",ic:"73",emp:22,emps:"20-49",st:"active",yr:"2015",form:"ApS",eq:2100000,res:650000,omsaetning:12500000,bf:4800000,ageM:134,tech:["HubSpot","Meta Ads"],ig:"pulsreklame",fb:"pulsreklame",tt:"",li:"puls-reklamebureau",directors:[{name:"Thomas Krogh",title:"Direktør"},{name:"Line Vestergaard",title:"Kreativ direktør"}]},
+  {cvr:"56789012",name:"DataCloud Denmark ApS",addr:"Slotsgade 2",zip:"9000",city:"Aalborg",ph:"",em:"hi@datacloud.dk",web:"datacloud.dk",ind:"Databehandling og hosting",ic:"63",emp:3,emps:"2-4",st:"active",yr:"2022",form:"ApS",eq:95000,res:22000,omsaetning:680000,bf:310000,ageM:38,tech:["React","Shopify"],ig:"",fb:"",tt:"",li:"datacloud-dk",directors:[{name:"Emil Mikkelsen",title:"Stifter & CEO"}]},
+  {cvr:"67890123",name:"Madsens Tømrer",addr:"Langerak 5",zip:"9400",city:"Nørresundby",ph:"98123456",em:"",web:"",ind:"Tømrervirksomhed",ic:"41",emp:5,emps:"5-9",st:"active",yr:"2005",form:"Enkeltmands",eq:340000,res:180000,omsaetning:3100000,bf:620000,ageM:242,tech:[],ig:"",fb:"",tt:"",li:"",directors:[{name:"Karsten Madsen",title:"Indehaver"}]},
+  {cvr:"78901234",name:"Advokatfirma Holm & Sørensen",addr:"Boulevarden 13",zip:"9000",city:"Aalborg",ph:"98155555",em:"post@holmsorensen.dk",web:"holmsorensen.dk",ind:"Juridisk bistand",ic:"69",emp:12,emps:"10-19",st:"active",yr:"2001",form:"I/S",eq:4200000,res:890000,omsaetning:9800000,bf:7200000,ageM:302,tech:[],ig:"",fb:"holmsorensen.advokater",tt:"",li:"holmsorensen-advokatfirma",directors:[{name:"Peter Holm",title:"Partner"},{name:"Anne Sørensen",title:"Partner"}]},
+  {cvr:"89012345",name:"Grøn Arkitektur A/S",addr:"Kastetvej 22",zip:"9000",city:"Aalborg",ph:"96363636",em:"info@groen-ark.dk",web:"groen-ark.dk",ind:"Arkitektvirksomhed",ic:"71",emp:28,emps:"20-49",st:"active",yr:"2008",form:"A/S",eq:5600000,res:1100000,omsaetning:18000000,bf:8400000,ageM:206,tech:["WordPress"],ig:"groenarkitektur",fb:"",tt:"",li:"groen-arkitektur",directors:[{name:"Mette Grøn",title:"Adm. direktør"}]},
+  {cvr:"90123456",name:"MobilPay Finans ApS",addr:"Rendsburggade 14",zip:"9000",city:"Aalborg",ph:"",em:"mf@mobilfinans.dk",web:"",ind:"Anden finansiering",ic:"64",emp:4,emps:"2-4",st:"active",yr:"2021",form:"ApS",eq:320000,res:85000,omsaetning:1200000,bf:480000,ageM:50,tech:[],ig:"",fb:"",tt:"",li:"",directors:[{name:"Rasmus Kjær",title:"Direktør"}]},
+  {cvr:"01234567",name:"Ejendomshuset Nord A/S",addr:"Hobrovej 55",zip:"9200",city:"Aalborg SV",ph:"98888800",em:"info@ejnord.dk",web:"ejnord.dk",ind:"Udlejning af bolig",ic:"68",emp:11,emps:"10-19",st:"active",yr:"1995",form:"A/S",eq:28000000,res:3400000,omsaetning:8500000,bf:6200000,ageM:374,tech:[],ig:"",fb:"ejendomshuset.nord",tt:"",li:"",directors:[{name:"Lars Pedersen",title:"Adm. direktør"},{name:"Karen Christensen",title:"Bestyrelsesformand"}]},
+  {cvr:"11223344",name:"Konsulentgruppen Omega ApS",addr:"Jernbanegade 7",zip:"9000",city:"Aalborg",ph:"70111213",em:"omega@konsulent.dk",web:"omegakonsulent.dk",ind:"Virksomhedsrådgivning",ic:"70",emp:7,emps:"5-9",st:"active",yr:"2010",form:"ApS",eq:880000,res:320000,omsaetning:5400000,bf:3100000,ageM:182,tech:["HubSpot"],ig:"",fb:"",tt:"",li:"omega-konsulentgruppen",directors:[{name:"Claus Damgaard",title:"Managing Partner"}]},
+  {cvr:"22334455",name:"FreshFood Grossist A/S",addr:"Transportvej 3",zip:"9230",city:"Svenstrup J",ph:"98441122",em:"ordre@freshfood.dk",web:"freshfood.dk",ind:"Engroshandel fødevarer",ic:"46",emp:68,emps:"50-99",st:"active",yr:"2003",form:"A/S",eq:12000000,res:2100000,omsaetning:68000000,bf:9800000,ageM:266,tech:["Shopify"],ig:"freshfooddk",fb:"freshfooddanmark",tt:"freshfooddk",li:"freshfood-grossist",directors:[{name:"Niels Thomsen",title:"Adm. direktør"},{name:"Birgitte Hald",title:"CFO"}]},
+  {cvr:"33445566",name:"Detailhuset ApS",addr:"Nørregade 12",zip:"9000",city:"Aalborg",ph:"98110011",em:"",web:"",ind:"Detailhandel",ic:"47",emp:7,emps:"5-9",st:"inactive",yr:"2016",form:"ApS",eq:120000,res:-85000,omsaetning:1800000,bf:-120000,ageM:110,tech:[],ig:"",fb:"",tt:"",li:"",directors:[{name:"Jonas Bak",title:"Direktør"}]},
+  {cvr:"44556677",name:"Startup Lab Aalborg ApS",addr:"Gasværksvej 1",zip:"9000",city:"Aalborg",ph:"",em:"hi@startuplab.dk",web:"startuplab.dk",ind:"Udvikling af software",ic:"62",emp:3,emps:"1-4",st:"active",yr:"2023",form:"ApS",eq:48000,res:-22000,omsaetning:0,bf:-180000,ageM:26,tech:["React","Klaviyo"],ig:"startuplabaal",fb:"",tt:"startuplab_aal",li:"startup-lab-aalborg",directors:[{name:"Mathias Lund",title:"CEO"}]},
+  {cvr:"55667788",name:"Revision & Skat Nord ApS",addr:"Algade 42",zip:"9000",city:"Aalborg",ph:"98220033",em:"info@rsnord.dk",web:"rsnord.dk",ind:"Revision og bogføring",ic:"69",emp:14,emps:"10-19",st:"active",yr:"2007",form:"ApS",eq:1800000,res:540000,omsaetning:7200000,bf:5400000,ageM:218,tech:[],ig:"",fb:"rsnord.revision",tt:"",li:"revision-skat-nord",directors:[{name:"Jørgen Bertelsen",title:"Statsautoriseret revisor"}]},
+  {cvr:"66778899",name:"Copenhagen IT Solutions A/S",addr:"Dampfærgevej 22",zip:"2100",city:"København Ø",ph:"33123456",em:"cph@copits.dk",web:"copits.dk",ind:"IT-konsulentvirksomhed",ic:"62",emp:320,emps:"250-499",st:"active",yr:"1999",form:"A/S",eq:85000000,res:12000000,omsaetning:240000000,bf:68000000,ageM:314,tech:["HubSpot","Google Ads","React"],ig:"copits_cph",fb:"copenhagenit",tt:"",li:"copenhagen-it-solutions",directors:[{name:"Anders Borg",title:"CEO"},{name:"Christina Wahl",title:"CTO"}]},
+  {cvr:"77889900",name:"Øresund Marketing ApS",addr:"Strandvejen 100",zip:"2900",city:"Hellerup",ph:"44556677",em:"info@oresund-mktg.dk",web:"oresund-mktg.dk",ind:"Reklamevirksomhed",ic:"73",emp:14,emps:"10-19",st:"active",yr:"2014",form:"ApS",eq:1400000,res:480000,omsaetning:8900000,bf:4200000,ageM:146,tech:["WordPress","Klaviyo","Meta Ads"],ig:"oresundmarketing",fb:"oresundmarketing",tt:"oresundmktg",li:"oresund-marketing",directors:[{name:"Katrine Friis",title:"Direktør"}]},
+  {cvr:"88990011",name:"Byggeselskabet Vest ApS",addr:"Ringvej 14",zip:"6700",city:"Esbjerg",ph:"75120000",em:"vest@byggeselskab.dk",web:"byggeselskabet.dk",ind:"Opførelse af bygninger",ic:"41",emp:35,emps:"20-49",st:"active",yr:"2002",form:"ApS",eq:4800000,res:780000,omsaetning:28000000,bf:5600000,ageM:278,tech:[],ig:"",fb:"byggeselskabet.vest",tt:"",li:"",directors:[{name:"Torben Vester",title:"Direktør"}]},
+  {cvr:"99001122",name:"SundhedsKlinik Centrum ApS",addr:"Bispensgade 8",zip:"9000",city:"Aalborg",ph:"98334455",em:"info@skklinik.dk",web:"skklinik.dk",ind:"Lægekonsultationer",ic:"86",emp:9,emps:"5-9",st:"active",yr:"2018",form:"ApS",eq:620000,res:210000,omsaetning:4800000,bf:2100000,ageM:86,tech:[],ig:"sundhedsklinik_centrum",fb:"sundhedsklinikcentrum",tt:"",li:"",directors:[{name:"Dr. Maria Hansen",title:"Klinikejer"}]},
+  {cvr:"10203040",name:"Rengøring Total A/S",addr:"Hobrovej 12",zip:"9000",city:"Aalborg",ph:"96554433",em:"info@rengtotal.dk",web:"rengtotal.dk",ind:"Rengøringsvirksomhed",ic:"81",emp:88,emps:"50-99",st:"active",yr:"2000",form:"A/S",eq:6200000,res:920000,omsaetning:32000000,bf:7800000,ageM:302,tech:[],ig:"",fb:"rengtotal",tt:"",li:"rengoering-total",directors:[{name:"Poul Erik Jensen",title:"Adm. direktør"}]},
+  {cvr:"20304050",name:"DigitalFirst ApS",addr:"Karolinelundsvej 3",zip:"9000",city:"Aalborg",ph:"71234567",em:"hello@digitalfirst.dk",web:"digitalfirst.dk",ind:"Udvikling af software",ic:"62",emp:18,emps:"10-19",st:"active",yr:"2017",form:"ApS",eq:980000,res:410000,omsaetning:6800000,bf:3200000,ageM:98,tech:["React","Google Ads"],ig:"digitalfirst_dk",fb:"",tt:"digitalfirstdk",li:"digitalfirst",directors:[{name:"Kristian Bæk",title:"Direktør & Stifter"}]},
+  {cvr:"30405060",name:"Nordjyllands El-Service ApS",addr:"Skelagervej 1",zip:"9000",city:"Aalborg",ph:"98776655",em:"",web:"",ind:"Specialiseret byggeri",ic:"43",emp:22,emps:"20-49",st:"active",yr:"2009",form:"ApS",eq:2400000,res:560000,omsaetning:14000000,bf:3400000,ageM:194,tech:[],ig:"",fb:"",tt:"",li:"",directors:[{name:"Flemming Juhl",title:"Direktør"}]},
+  {cvr:"40506070",name:"Aarhus Web Bureau ApS",addr:"Åboulevarden 5",zip:"8000",city:"Aarhus C",ph:"86123456",em:"web@awb.dk",web:"awb.dk",ind:"Udvikling af software",ic:"62",emp:9,emps:"5-9",st:"active",yr:"2016",form:"ApS",eq:540000,res:180000,omsaetning:3800000,bf:1900000,ageM:110,tech:["WordPress","WooCommerce"],ig:"aawb_dk",fb:"",tt:"",li:"aarhus-web-bureau",directors:[{name:"Simone Dahl",title:"Creative Director"}]},
+  {cvr:"50607080",name:"Møbeldesign Studio ApS",addr:"Vestergade 22",zip:"8000",city:"Aarhus C",ph:"",em:"studio@moebeldesign.dk",web:"moebeldesign.dk",ind:"Møbelproduktion",ic:"31",emp:4,emps:"2-4",st:"active",yr:"2020",form:"ApS",eq:220000,res:45000,omsaetning:980000,bf:320000,ageM:62,tech:["Shopify"],ig:"moebeldesign_studio",fb:"moebeldesignstudio",tt:"",li:"moebeldesign-studio",directors:[{name:"Ida Nørgaard",title:"Indehaver & Designer"}]},
+];
+
+// ICP scores + pipeline state + notes per CVR (in-memory, saved to storage)
+let leadNotes={},leadTags={},leadFollowup={},leadAssigned={};
+let leadContacts={};
+let res=[],leads=[],lists=[{id:'all',name:'Alle leads'}],aList='all',aView='search';
+let leadOwners={}; // {cvr: [{id,name,color,avatar}]} — all users' claimed leads
+let aiEnabled=localStorage.getItem('vl_ai_enabled')!=='false'; // ON by default
+let enrichStatus={}; // {cvr: {grade, total_score, recommendation, enriched_at}}
+
+
+let selCo=null,ckd=new Set(),sC='name',sD=1,techSel=new Set();
+let sbOpen=true,isServerMode=false,apiTotal=0,apiFrom=0,apiProvider='cvrapi';
+let currentUser=null,authToken='';
+
+// ── AUTH HELPERS ─────────────────────────────────────────────────────────────
+function ah(extra){return Object.assign({'Content-Type':'application/json'},authToken?{'Authorization':'Bearer '+authToken}:{},extra||{});}
+
+function lsKey(k){return currentUser?`vl_${currentUser.id}_${k}`:`vl_${k}`;}
+
+function showLogin(){
+  document.getElementById('login-overlay').style.display='flex';
+  document.getElementById('app').style.display='none';
+  setTimeout(()=>document.getElementById('login-email').focus(),100);
+}
+
+function applyAvatarToEl(el, user){
+  if(!el)return;
+  if(user.avatar){
+    el.innerHTML='<img src="'+user.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block">';
+    el.style.background='transparent';
+    el.style.fontSize='0';
+  } else {
+    el.innerHTML='';
+    const initials=user.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+    el.textContent=initials;
+    el.style.background='#fff';
+    el.style.fontSize='';
+  }
+}
+
+function showApp(){
+  document.getElementById('login-overlay').style.display='none';
+  document.getElementById('app').style.display='flex';
+  if(currentUser){
+    const up=document.getElementById('user-profile');
+    const av=document.getElementById('user-avatar');
+    const nm=document.getElementById('user-name');
+    if(up)up.style.display='block';
+    applyAvatarToEl(av,currentUser);
+    if(nm)nm.textContent=currentUser.name;
+  }
+  if(isServerMode)fetchOwners();
+  setTimeout(()=>{const t=document.getElementById('ai-toggle');if(t)t.checked=aiEnabled;if(aiEnabled&&aView==='leads')fetchEnrichStatus();if(aiEnabled){const gear=document.getElementById('icp-gear');if(gear)gear.style.display='';}},200);
+}
+async function fetchOwners(){
+  try{
+    const r=await fetch('/api/leads/owners',{headers:ah()});
+    if(r.ok)leadOwners=await r.json();
+  }catch(e){}
+}
+
+const LOCAL_ACCOUNTS=[
+  {id:'nicolas',name:'Nicolas',email:'nicolas@vedio.dk',password:'vedio',color:'#8258a8'},
+  {id:'victor',name:'Victor',email:'victor@vedio.dk',password:'vedio',color:'#3b82f6'},
+  {id:'admin',name:'Admin',email:'admin@vedio.dk',password:'vedio',color:'#f59e0b'}
+];
+
+async function doLogin(){
+  const email=document.getElementById('login-email').value.trim().toLowerCase();
+  const pw=document.getElementById('login-pw').value;
+  const errEl=document.getElementById('login-err');
+  errEl.style.display='none';
+  if(!email||!pw){errEl.textContent='Udfyld email og adgangskode';errEl.style.display='block';return;}
+
+  // Try server login first
+  if(isServerMode){
+    try{
+      const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pw})});
+      if(r.ok){
+        const d=await r.json();
+        authToken=d.token;currentUser=d.user;
+        localStorage.setItem('vl_token',authToken);
+        showApp();await loadUserState();sv('search');
+        setTimeout(()=>{['q','q-ex','f-ci','f-cx','qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
+        return;
+      }
+    }catch(err){}
+  }
+
+  // Local account login
+  const acc=LOCAL_ACCOUNTS.find(a=>a.email===email&&a.password===pw);
+  if(!acc){errEl.textContent='Forkert email eller adgangskode';errEl.style.display='block';return;}
+  currentUser={id:acc.id,name:acc.name,email:acc.email,color:acc.color};
+  localStorage.setItem('vl_current_user',JSON.stringify(currentUser));
+  // Load user-specific state
+  try{
+    const ld=localStorage.getItem(lsKey('l'));const ll=localStorage.getItem(lsKey('ls'));
+    if(ld)leads=JSON.parse(ld);
+    if(ll){const p=JSON.parse(ll);lists=[{id:'all',name:'Alle leads'},...p.filter(x=>x.id!=='all')];}
+    const nt=localStorage.getItem(lsKey('notes'));const tg=localStorage.getItem(lsKey('tags'));
+    const fu=localStorage.getItem(lsKey('fu'));const ct=localStorage.getItem(lsKey('contacts'));
+    if(nt)leadNotes=JSON.parse(nt);if(tg)leadTags=JSON.parse(tg);
+    if(fu)leadFollowup=JSON.parse(fu);if(ct)leadContacts=JSON.parse(ct);
+  }catch(e){}
+  showApp();rSB();
+  res=[];render();
+  setTimeout(()=>{['q','q-ex','f-ci','f-cx','qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
+}
+
+async function logout(){
+  if(isServerMode){try{await fetch('/api/auth/logout',{method:'POST',headers:ah()});}catch(e){}}
+  authToken='';currentUser=null;
+  localStorage.removeItem('vl_token');
+  localStorage.removeItem('vl_current_user');
+  leadNotes={};leadTags={};leadFollowup={};
+  leadContacts={};
+  leads=[];lists=[{id:'all',name:'Alle leads'}];
+  showLogin();
+}
+
+async function loadUserState(){
+  try{
+    const d=await fetch('/api/leads',{headers:ah()}).then(r=>r.json());
+    leads=d.leads||[];
+    lists=[{id:'all',name:'Alle leads'},...(d.lists||[]).filter(l=>l.id!=='all')];
+  }catch(e){}
+  // Per-user localStorage meta
+  try{
+    const nt=localStorage.getItem(lsKey('notes'));
+    const tg=localStorage.getItem(lsKey('tags'));
+    const fu=localStorage.getItem(lsKey('fu'));
+    const ct=localStorage.getItem(lsKey('contacts'));
+    if(nt)leadNotes=JSON.parse(nt);
+    if(tg)leadTags=JSON.parse(tg);
+    if(fu)leadFollowup=JSON.parse(fu);
+    if(ct)leadContacts=JSON.parse(ct);
+  }catch(e){}
+  rSB();applyF();
+}
+
+(async()=>{
+  // Detect if running via server
+  try{
+    const status=await fetch('/api/status');
+    const sd=await status.json().catch(()=>null);
+    if(status.ok && sd && sd.status){
+      isServerMode=true;
+      apiProvider=sd.provider||'cvrapi';
+      // Try stored token
+      const storedToken=localStorage.getItem('vl_token');
+      if(storedToken){
+        const me=await fetch('/api/auth/me',{headers:{'Authorization':'Bearer '+storedToken}});
+        if(me.ok){
+          authToken=storedToken;
+          currentUser=await me.json();
+          showApp();
+          await loadUserState();
+          sv('search');
+          setTimeout(()=>{
+            ['q','q-ex','f-ci','f-cx','qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
+          },80);
+          return;
+        } else {
+          localStorage.removeItem('vl_token');
+        }
+      }
+      // Server token didn't work, fall through to local check
+    }
+  }catch(e){}
+
+  // No auto-login from local storage — always require login
+  // No saved session — show login
+  showLogin();
+})();
+
+function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+
+async function save(){
+  try{
+    localStorage.setItem(lsKey('notes'),JSON.stringify(leadNotes));
+    localStorage.setItem(lsKey('tags'),JSON.stringify(leadTags));
+    localStorage.setItem(lsKey('fu'),JSON.stringify(leadFollowup));
+    localStorage.setItem(lsKey('contacts'),JSON.stringify(leadContacts));
+    if(!isServerMode){
+      localStorage.setItem('vl_l',JSON.stringify(leads));
+      localStorage.setItem('vl_ls',JSON.stringify(lists));
+    }
+  }catch(e){}
+}
+
+// ── FILTERS + LIVE SEARCH ────────────────────────────────────────────────────
+async function applyF(fromOffset=0){
+  let q=(document.getElementById('q').value||document.getElementById('qs').value||'').trim();
+  const branche=document.getElementById('f-b').value,form=document.getElementById('f-form').value;
+  const fe1=document.getElementById('fe1').value,fe2=document.getElementById('fe2').value;
+  const fy1=document.getElementById('fy1').value,fy2=document.getElementById('fy2').value;
+  const fam=document.getElementById('fam').value,faM=document.getElementById('faM').value;
+  const ci=document.getElementById('f-ci').value.trim();
+  const cx=document.getElementById('f-cx').value.toLowerCase().trim();
+  const fzm=document.getElementById('fzm').value,fzM=document.getElementById('fzM').value;
+  const needEm=false,needPh=false,needSoc=false,needVid=false;
+  const qex=(document.getElementById('q-ex').value||'').trim().toLowerCase();
+  const adProtect=['alle','skjul','kun'].find(k=>document.getElementById('rk-'+k)?.classList.contains('on'))||'alle';
+
+  // Map branche filter to search keyword for better results
+  const brancheKeywords = {'41':'bygge','43':'el','45':'auto','46':'grossist','47':'butik','55':'hotel','56':'restaurant','49':'transport','62':'it','64':'bank','68':'ejendom','69':'advokat','70':'konsulent','71':'arkitekt','73':'reklame','77':'udlejning','79':'rejse','81':'rengøring','86':'læge','96':'frisør'};
+  if(branche && q.length<2 && brancheKeywords[branche]){q=brancheKeywords[branche];}
+  const hasAnyFilter = branche||form||ci||fzm||fam||faM||fy1||fy2||qex;
+  const canServerSearch = isServerMode && (q.length>=2 || branche);
+
+  // Tom søgning i server mode — vis intro-tilstand, ikke demo-data
+  if(isServerMode && q.length<2 && !hasAnyFilter){
+    res=[];apiTotal=0;apiFrom=0;
+    clearApiError();
+    document.getElementById('tbody').innerHTML=`<tr><td colspan="11" style="text-align:center;padding:70px 20px;color:var(--gray2)">
+      <div style="font-size:28px;margin-bottom:12px"></div>
+      <div style="font-size:14px;font-weight:600;color:var(--pdarker);margin-bottom:6px">Søg efter virksomheder</div>
+      <div style="font-size:12px">Skriv mindst 2 tegn i søgefeltet — navn, CVR eller branche</div>
+    </td></tr>`;
+    document.getElementById('thead').innerHTML='';
+    const lmw=document.getElementById('load-more-wrap');if(lmw)lmw.style.display='none';
+    const sb=document.getElementById('stbar');if(sb)sb.innerHTML='';
+    return;
+  }
+
+  if(canServerSearch){
+    setLoading(true);
+    const params=new URLSearchParams();
+    if(q)params.set('q',q);
+    if(branche)params.set('branche',branche);
+    if(form)params.set('form',form);
+    if(ci)params.set('city',ci);
+    if(fzm)params.set('zip',fzm);
+    if(fe1)params.set('empMin',fe1);if(fe2)params.set('empMax',fe2);
+    if(fy1)params.set('foundedFrom',fy1);if(fy2)params.set('foundedTo',fy2);
+    if(needEm)params.set('hasEmail','true');if(needPh)params.set('hasPhone','true');
+    if(adProtect!=='alle')params.set('adProtect',adProtect);
+    params.set('from',fromOffset);
+    params.set('size','50');
+    try{
+      const r=await fetch(`/api/search?${params}`);
+      const data=await r.json();
+      if(!r.ok){
+        showApiError(data.error||'Søgning fejlede',data.code);
+        setLoading(false);
+        localFilter(q,qex,form,branche,fe1,fe2,fy1,fy2,ci,cx,fzm,fzM,needEm,needPh,needSoc,needVid,adProtect);
+        return;
+      }
+      clearApiError();
+      // Opdater aktiv provider fra søgesvaret (håndterer fallback til cvrapi)
+      if(data.provider)apiProvider=data.provider+(data.fallback?' fallback':'');
+      let co=data.companies||[];
+      apiTotal=data.totalAvailable||data.total||co.length;
+      apiFrom=fromOffset;
+
+      // Client-side efterfiltrering (uanset provider)
+      if(qex)co=co.filter(c=>!c.name.toLowerCase().includes(qex)&&!(c.industry||'').toLowerCase().includes(qex));
+      if(cx)co=co.filter(c=>!(c.city||'').toLowerCase().includes(cx));
+      if(fzM)co=co.filter(c=>+c.zip<=+fzM);
+      if(needSoc)co=co.filter(c=>c.ig||c.fb||c.tt||c.li);
+      if(needVid)co=co.filter(c=>c.ig||c.tt);
+      if(techSel.size>0)co=co.filter(c=>[...techSel].some(t=>(c.tech||[]).includes(t)));
+
+      const mapC=c=>({...c,
+        ic:c.industryCode||c.ic||'',ind:c.industry||c.ind||'',
+        emp:c.employeeCount||c.emp||0,emps:c.employees||c.emps||'',
+        ph:c.phone||c.ph||'',em:c.email||c.em||'',
+        addr:c.address||c.addr||'',st:c.status||c.st||'active',yr:c.founded||c.yr||'',
+        ageM:c.ageM||0,eq:c.equity||c.eq||0,omsaetning:c.revenue||c.omsaetning||0,
+        bf:c.grossProfit||c.bf||0,res:c.result||c.res||0,
+        ig:c.ig||'',fb:c.fb||'',tt:c.tt||'',li:c.li||'',tech:c.tech||[],
+      });
+      const mapped=co.map(mapC);
+      // Merge lokale leads der matcher søgningen (vises altid uanset API)
+      const ql2=(q||'').toLowerCase();
+      const localMatches=leads.filter(l=>{
+        if(mapped.find(x=>x.cvr===l.cvr))return false; // allerede i API-resultater
+        if(q&&!(l.name?.toLowerCase().includes(ql2)||l.cvr?.includes(q)||l.city?.toLowerCase().includes(ql2)))return false;
+        if(qex&&l.name?.toLowerCase().includes(qex))return false;
+        return true;
+      }).map(mapC);
+      if(fromOffset>0){res=[...res,...mapped,...localMatches];}else{res=[...mapped,...localMatches];}
+      // Dedup by CVR (in case of overlapping results)
+      res=[...new Map(res.map(c=>[c.cvr,c])).values()];
+    }catch(err){
+      showApiError('Netværksfejl: '+err.message);
+      setLoading(false);
+      localFilter(q,qex,form,branche,fe1,fe2,fy1,fy2,ci,cx,fzm,fzM,needEm,needPh,needSoc,needVid,adProtect);
+      return;
+    }
+    setLoading(false);
+  } else {
+    localFilter(q,qex,form,branche,fe1,fe2,fy1,fy2,ci,cx,fzm,fzM,needEm,needPh,needSoc,needVid,adProtect);
+    return;
+  }
+  sortR();render();
+}
+
+function localFilter(q,qex,form,branche,fe1,fe2,fy1,fy2,ci,cx,fzm,fzM,needEm,needPh,needSoc,needVid,adProtect){
+  apiTotal=0;apiFrom=0;
+  const ql=(q||'').toLowerCase();
+  const pool=res;
+  res=pool.filter(c=>{
+    if(q&&!(c.name.toLowerCase().includes(ql)||c.cvr.includes(q)||c.city.toLowerCase().includes(ql)||c.ind.toLowerCase().includes(ql)))return false;
+    if(qex&&(c.name.toLowerCase().includes(qex)||c.ind.toLowerCase().includes(qex)))return false;
+    if(form&&c.form!==form)return false;
+    if(branche&&!c.ic.startsWith(branche))return false;
+    if(fe1&&c.emp<+fe1)return false;if(fe2&&c.emp>+fe2)return false;
+    if(fy1&&+c.yr<+fy1)return false;if(fy2&&+c.yr>+fy2)return false;
+    if(ci&&!c.city.toLowerCase().includes(ci.toLowerCase()))return false;
+    if(cx&&c.city.toLowerCase().includes(cx))return false;
+    if(needEm&&!c.em)return false;if(needPh&&!c.ph)return false;
+    if(needSoc&&!(c.ig||c.fb||c.tt||c.li))return false;
+    if(needVid&&!(c.ig||c.tt))return false;
+    if(adProtect==='skjul'&&c.adProtected)return false;
+    if(adProtect==='kun'&&!c.adProtected)return false;
+    if(techSel.size>0&&![...techSel].some(t=>(c.tech||[]).includes(t)))return false;
+    return true;
+  });
+  sortR();render();
+}
+
+let _loadingMore=false;
+async function loadMore(){
+  if(_loadingMore||!isServerMode||apiTotal<=res.length)return;
+  _loadingMore=true;
+  const btn=document.getElementById('load-more-btn');
+  if(btn){btn.disabled=true;btn.textContent='Indlæser…';}
+  await applyF(res.length);
+  _loadingMore=false;
+  if(btn){btn.disabled=false;btn.textContent='Indlæs flere';}
+}
+
+function checkAutoLoad(){} // placeholder
+
+function setLoading(on){
+  const sb=document.getElementById('stbar');
+  let overlay=document.getElementById('search-overlay');
+  if(on){
+    sb.innerHTML='<span style="color:var(--gray2)">Søger…</span>';
+    if(!overlay){
+      overlay=document.createElement('div');overlay.id='search-overlay';
+      overlay.innerHTML=`<div class="search-loading-inner">
+        <div class="search-spinner"></div>
+        <div style="font-size:16px;font-weight:700;color:var(--pdarker);margin-top:16px">Finder leads…</div>
+        <div style="font-size:12px;color:var(--gray2);margin-top:4px">Søger i CVR-registret</div>
+      </div>`;
+      document.querySelector('.body-wrap').appendChild(overlay);
+    }
+    overlay.style.display='flex';
+  } else {
+    if(overlay)overlay.style.display='none';
+  }
+}
+
+function showApiError(msg,code){
+  let html=`<span style="color:var(--red);font-weight:600">${e(msg)}</span>`;
+  let errDiv=document.getElementById('api-error-bar');
+  if(!errDiv){
+    errDiv=document.createElement('div');
+    errDiv.id='api-error-bar';
+    errDiv.style.cssText='padding:6px 12px;background:#fee2e2;border-bottom:1px solid #fca5a5;font-size:11.5px;display:flex;align-items:center;gap:8px';
+    const stbar=document.getElementById('stbar');
+    stbar.parentNode.insertBefore(errDiv,stbar.nextSibling);
+  }
+  errDiv.innerHTML=html+`<span onclick="clearApiError()" style="margin-left:auto;cursor:pointer;color:var(--gray2);font-size:14px">✕</span>`;
+  errDiv.style.display='flex';
+}
+
+function clearApiError(){
+  const el=document.getElementById('api-error-bar');
+  if(el)el.style.display='none';
+}
+
+function setRk(v){['alle','skjul','kun'].forEach(k=>document.getElementById('rk-'+k).classList.toggle('on',k===v));applyF();}
+function tChipTech(el,name){techSel.has(name)?(techSel.delete(name),el.classList.remove('on')):(techSel.add(name),el.classList.add('on'));applyF();}
+function resetF(){
+  ['q','q-ex','f-ci','f-cx','qs','fe1','fe2','fy1','fy2','f-eq','f-res','fam','faM','fzm','fzM'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('f-form').value='';document.getElementById('f-b').value='';
+  techSel.clear();
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+  setRk('alle');applyF();
+}
+
+function togAcc(id){
+  const b=document.getElementById('acc-'+id),a=document.getElementById('arr-'+id);
+  const o=b.classList.toggle('open');a.classList.toggle('open',o);
+}
+
+// ── SORT + RENDER ──────────────────────────────────────────────────────────────
+function sortR(){
+  const getSortVal=(c)=>{
+    if(sC==='emp')return c.emp;
+    if(sC==='eq')return c.eq;
+    if(sC==='omsaetning')return c.omsaetning;
+    if(sC==='icp')return(enrichStatus[c.cvr]?.total_score)||0;
+    return c[sC]||'';
+  };
+  res.sort((a,b)=>{const av=getSortVal(a),bv=getSortVal(b);return av<bv?-sD:av>bv?sD:0;});
+  // Also sort leads for the leads view
+  leads.sort((a,b)=>{const av=getSortVal(a),bv=getSortVal(b);return av<bv?-sD:av>bv?sD:0;});
+}
+function setSort(c){sC===c?sD*=-1:(sC=c,sD=1);sortR();render();}
+function si(k){return`<span style="opacity:${sC===k?1:.3};font-size:9px;margin-left:2px">${sC===k?(sD>0?'▲':'▼'):'⇅'}</span>`;}
+function render(){if(aView==='search')rTbl();else rLeads();setTimeout(checkAutoLoad,100);}
+
+// ── CUSTOMERS PAGE ───────────────────────────────────────────────────────────
+async function addCustomerFromInput(){
+  const input=document.getElementById('cust-cvr-input');
+  const msg=document.getElementById('cust-add-msg');
+  const cvr=input.value.trim().replace(/\s/g,'');
+  if(!cvr||cvr.length<8){msg.innerHTML='<span style="color:var(--red)">Indtast et gyldigt CVR-nummer (8 cifre)</span>';return;}
+  msg.innerHTML='<span style="color:var(--gray2)">Tilføjer...</span>';
+  try{
+    const r=await fetch('/api/customers',{method:'POST',headers:ah(),body:JSON.stringify({cvr_number:cvr})});
+    const d=await r.json();
+    if(!r.ok){msg.innerHTML=`<span style="color:var(--red)">${d.error||'Fejl'}</span>`;return;}
+    msg.innerHTML=`<span style="color:var(--green)">✓ ${d.company_name||cvr} tilføjet</span>`;
+    input.value='';
+    setTimeout(()=>{msg.innerHTML='';},3000);
+    renderCustomersPage();
+  }catch(e){msg.innerHTML=`<span style="color:var(--red)">Fejl: ${e.message}</span>`;}
+}
+
+function openBulkCustomerModal(){
+  const bg=document.createElement('div');bg.className='modal-bg';bg.id='bulk-cust-bg';
+  bg.innerHTML=`<div class="modal" style="width:400px">
+    <h3>Bulk import kunder</h3>
+    <p style="font-size:12px;color:var(--gray)">Indsæt CVR-numre (ét per linje eller kommasepareret)</p>
+    <textarea id="bulk-cust-input" style="width:100%;height:120px;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;font-family:monospace;resize:vertical" placeholder="12345678&#10;23456789&#10;34567890"></textarea>
+    <div id="bulk-cust-msg" style="font-size:11px;margin:8px 0"></div>
+    <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="document.getElementById('bulk-cust-bg').remove()">Annuller</button>
+      <button class="btn btn-primary btn-sm" onclick="doBulkCustomerImport()">Importér</button>
+    </div>
+  </div>`;
+  bg.onclick=ev=>{if(ev.target===bg)bg.remove();};
+  document.body.appendChild(bg);
+}
+
+async function doBulkCustomerImport(){
+  const input=document.getElementById('bulk-cust-input');
+  const msg=document.getElementById('bulk-cust-msg');
+  const cvrs=[...new Set(input.value.split(/[\n,;\s]+/).map(s=>s.trim()).filter(s=>s.length>=8))];
+  if(!cvrs.length){msg.innerHTML='<span style="color:var(--red)">Ingen gyldige CVR-numre fundet</span>';return;}
+  msg.innerHTML=`<span style="color:var(--gray2)">Importerer ${cvrs.length} kunder...</span>`;
+  try{
+    const r=await fetch('/api/customers/bulk',{method:'POST',headers:ah(),body:JSON.stringify({cvr_numbers:cvrs})});
+    const d=await r.json();
+    msg.innerHTML=`<span style="color:var(--green)">✓ ${d.added} tilføjet, ${d.skipped} allerede tilføjet${d.errors?.length?', '+d.errors.length+' fejl':''}</span>`;
+    setTimeout(()=>{document.getElementById('bulk-cust-bg')?.remove();renderCustomersPage();},1500);
+  }catch(e){msg.innerHTML=`<span style="color:var(--red)">Fejl: ${e.message}</span>`;}
+}
+
+async function deleteCustomer(id){
+  try{
+    await fetch('/api/customers/'+id,{method:'DELETE',headers:ah()});
+    renderCustomersPage();
+  }catch(e){}
+}
+
+async function renderCustomersPage(){
+  if(!isServerMode)return;
+  // Fetch customers and stats in parallel
+  const [custR,statsR]=await Promise.all([
+    fetch('/api/customers',{headers:ah()}).then(r=>r.json()).catch(()=>({customers:[],total:0})),
+    fetch('/api/customers/stats',{headers:ah()}).then(r=>r.json()).catch(()=>({}))
+  ]);
+  const customers=custR.customers||[];
+  const total=custR.total||0;
+
+  // Update sidebar count
+  const countEl=document.getElementById('cust-count');
+  if(countEl)countEl.textContent=total||'';
+  const listHeader=document.getElementById('cust-list-header');
+  if(listHeader)listHeader.textContent=`Kundeliste (${total})`;
+
+  // Stats bar
+  const statsBar=document.getElementById('cust-stats-bar');
+  if(statsBar){
+    if(total===0)statsBar.innerHTML='<div style="font-size:11px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Statistik</div><div style="font-size:12px;color:var(--gray)">Ingen kunder endnu</div>';
+    else{
+      let statsHtml='<div style="font-size:11px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Statistik</div>';
+      statsHtml+=`<div style="font-size:24px;font-weight:800;color:var(--pdarker);margin-bottom:4px">${total}</div><div style="font-size:10px;color:var(--gray);margin-bottom:8px">kunder totalt</div>`;
+      if(statsR.top_industries?.[0])statsHtml+=`<div style="font-size:11px;color:var(--pdarker);margin-bottom:2px"><strong>Top branche:</strong> ${statsR.top_industries[0].name} (${statsR.top_industries[0].count})</div>`;
+      if(statsR.top_municipalities?.[0])statsHtml+=`<div style="font-size:11px;color:var(--pdarker);margin-bottom:2px"><strong>Top by:</strong> ${statsR.top_municipalities[0].name} (${statsR.top_municipalities[0].count})</div>`;
+      if(statsR.avg_employee_range)statsHtml+=`<div style="font-size:11px;color:var(--pdarker)"><strong>Typisk:</strong> ${statsR.avg_employee_range} ansatte</div>`;
+      statsBar.innerHTML=statsHtml;
+    }
+  }
+
+  // Customer list
+  const listEl=document.getElementById('cust-list');
+  if(listEl){
+    if(total===0){
+      listEl.innerHTML=`<div style="text-align:center;padding:40px 20px">
+        <div style="font-size:36px;margin-bottom:12px">🎯</div>
+        <div style="font-size:15px;font-weight:700;color:var(--pdarker);margin-bottom:6px">Tilføj dine vundne kunder</div>
+        <div style="font-size:12px;color:var(--gray);max-width:320px;margin:0 auto 16px">AI-agenten analyserer dine bedste kunder og finder lignende virksomheder automatisk</div>
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('cust-cvr-input').focus()">Tilføj første kunde</button>
+      </div>`;
+    } else {
+      listEl.innerHTML=customers.map(c=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)" class="cust-row">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;color:var(--pdarker)">${e(c.company_name||c.cvr_number)}</div>
+            <div style="font-size:11px;color:var(--gray)">${c.cvr_number} · ${c.industry_description||'—'} · ${c.municipality||'—'} · ${c.employee_interval||'—'}</div>
+          </div>
+          <div style="font-size:10px;color:var(--gray2);white-space:nowrap">${c.added_at?new Date(c.added_at).toLocaleDateString('da-DK'):''}</div>
+          <button class="ib rm" onclick="deleteCustomer('${c.id}')" title="Fjern" style="opacity:0.3">✕</button>
+        </div>`).join('');
+    }
+  }
+
+  // Pattern card
+  await renderPatternCard();
+}
+
+async function renderPatternCard(){
+  const card=document.getElementById('pattern-card');if(!card)return;
+  try{
+    const custR=await fetch('/api/customers',{headers:ah()}).then(r=>r.json()).catch(()=>({total:0}));
+    const total=custR.total||0;
+
+    if(total<5){
+      card.innerHTML=`<div style="text-align:center;padding:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--pdarker);margin-bottom:4px">AI Mønster</div>
+        <div style="font-size:11px;color:var(--gray)">Tilføj mindst 5 kunder for at starte AI-agenten (har ${total})</div>
+        <div style="height:6px;background:var(--p6);border-radius:3px;margin-top:8px"><div style="height:100%;width:${total*20}%;background:var(--p1);border-radius:3px;transition:width .3s"></div></div>
+      </div>`;
+      return;
+    }
+
+    // Try to get existing pattern
+    const patR=await fetch('/api/discovery/pattern',{headers:ah()});
+    if(patR.ok){
+      const pat=await patR.json();
+      const pd=pat.pattern_data||{};
+      card.innerHTML=`<div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:var(--pdarker)">AI Mønster <span style="font-size:9px;color:var(--gray);font-weight:400">v${pat.version} · ${pat.customer_count} kunder · ${new Date(pat.created_at).toLocaleDateString('da-DK')}</span></div>
+          <button class="btn btn-sm" style="font-size:10px" onclick="refreshPattern()">Generer nyt</button>
+        </div>
+        <div style="font-size:12px;color:var(--pdarker);line-height:1.5;margin-bottom:10px">${e(pd.summary||'')}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">
+          ${(pd.key_traits||[]).map(t=>`<span style="font-size:10px;background:rgba(16,185,129,.12);color:#059669;padding:2px 8px;border-radius:10px">${e(t)}</span>`).join('')}
+        </div>
+        ${(pd.avoid_signals||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">
+          ${pd.avoid_signals.map(t=>`<span style="font-size:10px;background:rgba(239,68,68,.1);color:#dc2626;padding:2px 8px;border-radius:10px">${e(t)}</span>`).join('')}
+        </div>`:''}
+        <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;background:linear-gradient(135deg,var(--p1),var(--p3));border:none" onclick="sv('discovery')">Start lead discovery →</button>
+      </div>`;
+    } else {
+      card.innerHTML=`<div style="text-align:center;padding:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--pdarker);margin-bottom:8px">AI Mønster</div>
+        <div style="font-size:11px;color:var(--gray);margin-bottom:12px">Klar til at analysere dine ${total} kunder</div>
+        <button class="btn btn-primary btn-sm" onclick="generatePattern()">Generer mønster</button>
+      </div>`;
+    }
+  }catch(e){card.innerHTML=`<div style="color:var(--red);font-size:11px">${e.message}</div>`;}
+}
+
+async function generatePattern(){
+  const card=document.getElementById('pattern-card');
+  if(card)card.innerHTML='<div style="text-align:center;padding:20px"><div class="search-spinner" style="width:24px;height:24px;margin:0 auto 10px"></div><div style="font-size:12px;color:var(--gray)">Analyserer dine kunder...</div></div>';
+  try{
+    await fetch('/api/discovery/pattern',{method:'POST',headers:ah()});
+    await renderPatternCard();
+  }catch(e){if(card)card.innerHTML=`<div style="color:var(--red);font-size:11px">Fejl: ${e.message}</div>`;}
+}
+
+async function refreshPattern(){
+  const card=document.getElementById('pattern-card');
+  if(card)card.innerHTML='<div style="text-align:center;padding:20px"><div class="search-spinner" style="width:24px;height:24px;margin:0 auto 10px"></div><div style="font-size:12px;color:var(--gray)">Genererer nyt mønster...</div></div>';
+  try{
+    await fetch('/api/discovery/pattern/refresh',{method:'POST',headers:ah()});
+    await renderPatternCard();
+  }catch(e){if(card)card.innerHTML=`<div style="color:var(--red);font-size:11px">Fejl: ${e.message}</div>`;}
+}
+
+let _discFeedbackTab='new'; // 'new','approved','rejected'
+let _discExpandedId=null;
+let _discPolling=false;
+
+async function renderDiscoveryPage(){
+  if(!isServerMode)return;
+  const [runR,custR,statsR]=await Promise.all([
+    fetch('/api/discovery/run/current',{headers:ah()}).then(r=>r.ok?r.json():null).catch(()=>null),
+    fetch('/api/customers',{headers:ah()}).then(r=>r.json()).catch(()=>({customers:[],total:0})),
+    fetch('/api/discovery/feedback/stats',{headers:ah()}).then(r=>r.json()).catch(()=>({}))
+  ]);
+  const customers=custR.customers||[];
+  const run=runR;
+  const isRunning=run&&['queued','filtering','scoring'].includes(run.status);
+
+  // Run button state
+  const btn=document.getElementById('disc-run-btn');
+  if(btn){
+    const patR=await fetch('/api/discovery/pattern',{headers:ah()}).catch(()=>({ok:false}));
+    if(!patR.ok){btn.disabled=true;btn.title='Tilføj kunder og generer et mønster først';}
+    else{btn.disabled=isRunning;btn.title='';}
+  }
+
+  // Status bar
+  const sb=document.getElementById('disc-status-bar');
+  if(sb){
+    if(isRunning){
+      sb.innerHTML=`<div class="disc-status running"><span class="pulse-dot"></span><span style="font-weight:700">Discovery kører</span><span>${run.scored_count||0} af ${run.total_candidates||0} kandidater analyseret</span><div style="flex:1;height:4px;background:rgba(16,185,129,.15);border-radius:2px;margin:0 8px"><div style="height:100%;width:${run.progress_pct||0}%;background:#059669;border-radius:2px"></div></div><button class="btn btn-sm" style="font-size:10px" onclick="cancelDiscoveryRun('${run.id}')">Annuller</button></div>`;
+    } else if(run?.status==='completed'){
+      sb.innerHTML=`<div class="disc-status done"><span style="font-weight:600">Færdig</span> — ${run.results_count||0} nye leads fundet · Afsluttet ${run.completed_at?new Date(run.completed_at).toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'}):''}</div>`;
+    } else if(run?.status==='failed'){
+      sb.innerHTML=`<div class="disc-status failed"><span style="font-weight:600">Fejl:</span> ${e(run.error_message||'Ukendt fejl')}<button class="btn btn-sm" style="margin-left:auto;font-size:10px" onclick="startDiscoveryRun()">Prøv igen</button></div>`;
+    } else sb.innerHTML='';
+  }
+
+  // Pulse dot on sidebar
+  const pulse=document.getElementById('disc-pulse');
+  if(pulse)pulse.style.display=isRunning?'inline-block':'none';
+
+  // Metrics
+  const metricsEl=document.getElementById('disc-metrics-row');
+  const feedbackQ=`feedback=${_discFeedbackTab==='new'?'null':_discFeedbackTab}&limit=200`;
+  const resultsR=await fetch(`/api/discovery/results?${feedbackQ}`,{headers:ah()}).then(r=>r.json()).catch(()=>({results:[],total:0}));
+  const allR=await fetch('/api/discovery/results?feedback=all&limit=1000',{headers:ah()}).then(r=>r.json()).catch(()=>({results:[],total:0}));
+  const newCount=(allR.results||[]).filter(r=>!r.feedback).length;
+  const appCount=(allR.results||[]).filter(r=>r.feedback==='approved').length;
+  const rejCount=(allR.results||[]).filter(r=>r.feedback==='rejected').length;
+  const avgScore=allR.total>0?Math.round((allR.results||[]).reduce((s,r)=>s+r.match_score,0)/allR.total):0;
+
+  if(metricsEl&&(customers.length>0||allR.total>0)){
+    metricsEl.innerHTML=`<div class="disc-metrics">
+      <div class="disc-metric"><div class="disc-metric-val">${customers.length}</div><div class="disc-metric-lbl">Kunder analyseret</div></div>
+      <div class="disc-metric"><div class="disc-metric-val">${newCount}</div><div class="disc-metric-lbl">Nye leads fundet</div></div>
+      <div class="disc-metric"><div class="disc-metric-val">${avgScore}</div><div class="disc-metric-lbl">Gns. match score</div></div>
+    </div>`;
+  } else if(metricsEl)metricsEl.innerHTML='';
+
+  // Customer chips
+  const chipsEl=document.getElementById('disc-customer-chips');
+  if(chipsEl&&customers.length>0){
+    const show=customers.slice(0,5);
+    const more=customers.length-5;
+    chipsEl.innerHTML=`<div style="display:flex;flex-wrap:wrap;gap:4px">${show.map(c=>`<span style="font-size:10px;background:var(--p6);color:var(--p1);padding:2px 8px;border-radius:10px;cursor:pointer" onclick="sv('customers')">${e(c.company_name||c.cvr_number)}</span>`).join('')}${more>0?`<span style="font-size:10px;background:var(--p6);color:var(--gray);padding:2px 8px;border-radius:10px;cursor:pointer" onclick="sv('customers')">+${more} mere</span>`:''}</div>`;
+  } else if(chipsEl)chipsEl.innerHTML='';
+
+  // Tabs
+  const tabsEl=document.getElementById('disc-tabs-wrap');
+  if(tabsEl&&allR.total>0){
+    tabsEl.innerHTML=`<div class="disc-tabs">
+      <div class="disc-tab${_discFeedbackTab==='new'?' on':''}" onclick="setDiscTab('new')">Nye <span class="tab-badge">${newCount}</span></div>
+      <div class="disc-tab${_discFeedbackTab==='approved'?' on':''}" onclick="setDiscTab('approved')">Godkendte <span class="tab-badge">${appCount}</span></div>
+      <div class="disc-tab${_discFeedbackTab==='rejected'?' on':''}" onclick="setDiscTab('rejected')">Afviste <span class="tab-badge">${rejCount}</span></div>
+    </div>`;
+  } else if(tabsEl)tabsEl.innerHTML='';
+
+  // Results list
+  const listEl=document.getElementById('disc-results-list');
+  if(listEl){
+    const results=resultsR.results||[];
+    if(results.length>0){
+      listEl.innerHTML=results.map(r=>{
+        const sc=r.match_score||0;
+        const scColor=sc>=80?'#16a34a':sc>=65?'#f59e0b':'#94a3b8';
+        const cls=r.feedback==='approved'?'approved':r.feedback==='rejected'?'rejected':'';
+        const expanded=_discExpandedId===r.id;
+        return `<div>
+          <div class="disc-result ${cls}" onclick="toggleDiscDetail('${r.id}')">
+            <div class="disc-score-circle" style="background:${scColor}">${sc}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:700;color:var(--pdarker)">${e(r.company_name)}</div>
+              <div style="font-size:10px;color:var(--gray)">${r.cvr_number} · ${r.company_data?.city||''} · ${r.company_data?.industry||''}</div>
+            </div>
+            <div style="text-align:right;min-width:100px">
+              <div style="font-size:10px;color:var(--gray2)">Ligner mest</div>
+              <div style="font-size:11px;font-weight:600;color:var(--pdarker)">${e(r.most_similar_name||'—')}</div>
+            </div>
+            <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px" onclick="event.stopPropagation()">
+              ${r.feedback==='approved'?'<span style="color:var(--green);font-size:11px;font-weight:700">✓ Godkendt</span>'
+                :r.feedback==='rejected'?'<span style="color:var(--gray2);font-size:11px">✕ Afvist</span>'
+                :`<button class="btn btn-sm" style="font-size:10px;background:var(--green);color:#fff;border:none;padding:3px 10px" onclick="approveDiscResult('${r.id}','${e(r.company_name)}')">Godkend</button>
+                   <button class="btn btn-sm" style="font-size:10px;padding:3px 10px" onclick="showRejectUI('${r.id}')">Afvis</button>`}
+            </div>
+          </div>
+          ${expanded?`<div class="disc-detail" id="disc-detail-${r.id}">
+            <div style="font-weight:700;margin-bottom:6px;color:var(--pdarker)">Match-årsager:</div>
+            <ul style="margin:0 0 8px 16px;padding:0">${(r.match_reasons||[]).map(rr=>`<li style="margin-bottom:2px">${e(rr)}</li>`).join('')}</ul>
+            ${r.enrichment?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><span class="grade-${(r.enrichment.grade||'c')[0].toLowerCase()}" style="font-size:14px">${r.enrichment.grade||'—'}</span> <span style="font-size:10px;color:var(--gray)">ICP Score: ${r.enrichment.total_score||'—'}</span><div style="font-size:11px;color:var(--gray);margin-top:4px">${e(r.enrichment.summary||'')}</div></div>`
+            :`<button class="btn btn-sm" style="font-size:10px;background:var(--p1);color:#fff;border:none" onclick="event.stopPropagation();enrichDiscResult('${r.cvr_number}',this)">Enrich denne lead</button>`}
+          </div>`:''}</div>`;
+      }).join('');
+    } else {
+      listEl.innerHTML=`<div style="text-align:center;padding:24px;color:var(--gray2);font-size:12px">${_discFeedbackTab==='new'?'Ingen nye leads at gennemgå':_discFeedbackTab==='approved'?'Ingen godkendte leads endnu':'Ingen afviste leads endnu'}</div>`;
+    }
+  }
+
+  // Feedback insight card
+  const fbEl=document.getElementById('disc-feedback-card');
+  if(fbEl){
+    const totalFb=(statsR.total_approved||0)+(statsR.total_rejected||0);
+    if(totalFb>=10){
+      const analysisR=await fetch('/api/discovery/feedback/analysis',{headers:ah()}).then(r=>r.json()).catch(()=>({}));
+      if(analysisR.status==='ready'){
+        fbEl.innerHTML=`<div class="feedback-card">
+          <div style="font-size:11px;font-weight:700;color:var(--pdarker);margin-bottom:6px">Baseret på din feedback:</div>
+          <div style="font-size:12px;color:var(--gray);line-height:1.4">${e(analysisR.summary||'')}</div>
+          ${analysisR.pattern_adjustments?`<div style="margin-top:8px"><button class="btn btn-sm" style="font-size:10px;background:var(--p1);color:#fff;border:none" onclick="applyFeedbackAdjustments()">Anvend forslag til mønster</button></div>`:''}
+          <div style="font-size:10px;color:var(--gray2);margin-top:6px">Godkendelsesrate: ${statsR.approval_rate||0}% · Gns. godkendt score: ${statsR.avg_approved_score||0} · Gns. afvist score: ${statsR.avg_rejected_score||0}</div>
+        </div>`;
+      } else fbEl.innerHTML='';
+    } else if(totalFb>0){
+      fbEl.innerHTML=`<div class="feedback-card"><div style="font-size:11px;color:var(--gray)">Godkend eller afvis ${10-totalFb} flere leads for at forbedre agenten (${totalFb}/10)</div></div>`;
+    } else fbEl.innerHTML='';
+  }
+
+  // Empty state
+  const emptyEl=document.getElementById('disc-empty-state');
+  if(emptyEl){
+    if(allR.total===0&&(!run||run.status==='completed')){
+      const hasCustomers=customers.length>=5;
+      const patR2=await fetch('/api/discovery/pattern',{headers:ah()}).catch(()=>({ok:false}));
+      const hasPattern=patR2.ok;
+      emptyEl.innerHTML=`<div style="text-align:center;padding:30px 20px">
+        <div style="display:flex;justify-content:center;gap:24px;margin-bottom:20px">
+          <div style="text-align:center"><div style="width:32px;height:32px;border-radius:50%;background:${customers.length>=5?'var(--green)':'var(--p6)'};color:${customers.length>=5?'#fff':'var(--gray)'};display:flex;align-items:center;justify-content:center;margin:0 auto 4px;font-size:14px;font-weight:700">${customers.length>=5?'✓':'1'}</div><div style="font-size:10px;color:var(--gray)">Tilføj kunder</div></div>
+          <div style="color:var(--gray2)">→</div>
+          <div style="text-align:center"><div style="width:32px;height:32px;border-radius:50%;background:${hasPattern?'var(--green)':'var(--p6)'};color:${hasPattern?'#fff':'var(--gray)'};display:flex;align-items:center;justify-content:center;margin:0 auto 4px;font-size:14px;font-weight:700">${hasPattern?'✓':'2'}</div><div style="font-size:10px;color:var(--gray)">Generer mønster</div></div>
+          <div style="color:var(--gray2)">→</div>
+          <div style="text-align:center"><div style="width:32px;height:32px;border-radius:50%;background:var(--p6);color:var(--gray);display:flex;align-items:center;justify-content:center;margin:0 auto 4px;font-size:14px;font-weight:700">3</div><div style="font-size:10px;color:var(--gray)">Kør agenten</div></div>
+        </div>
+        ${!hasCustomers?`<button class="btn btn-primary btn-sm" onclick="sv('customers')">Tilføj kunder →</button>`
+          :!hasPattern?`<button class="btn btn-primary btn-sm" onclick="sv('customers')">Generer mønster →</button>`
+          :`<button class="btn btn-primary btn-sm" style="background:linear-gradient(135deg,var(--p1),var(--p3));border:none" onclick="startDiscoveryRun()">Kør agent nu</button>`}
+      </div>`;
+    } else emptyEl.innerHTML='';
+  }
+
+  // Auto-poll while running
+  if(isRunning&&!_discPolling){
+    _discPolling=true;
+    setTimeout(()=>{_discPolling=false;if(aView==='discovery')renderDiscoveryPage();},5000);
+  }
+}
+
+function setDiscTab(tab){_discFeedbackTab=tab;renderDiscoveryPage();}
+function toggleDiscDetail(id){_discExpandedId=_discExpandedId===id?null:id;renderDiscoveryPage();}
+
+async function startDiscoveryRun(){
+  try{
+    const r=await fetch('/api/discovery/run',{method:'POST',headers:ah()});
+    const d=await r.json();
+    if(!r.ok){showToast(d.error||'Fejl');return;}
+    showToast('Discovery startet');
+    renderDiscoveryPage();
+  }catch(e){showToast('Fejl: '+e.message);}
+}
+
+async function cancelDiscoveryRun(id){
+  try{
+    await fetch('/api/discovery/run/'+id+'/cancel',{method:'POST',headers:ah()});
+    showToast('Discovery annulleret');
+    renderDiscoveryPage();
+  }catch(e){}
+}
+
+async function approveDiscResult(id,name){
+  try{
+    await fetch('/api/discovery/results/'+id+'/feedback',{method:'POST',headers:ah(),body:JSON.stringify({feedback:'approved'})});
+    showToast((name||'Lead')+' tilføjet til AI-discovered leads');
+    renderDiscoveryPage();
+  }catch(e){}
+}
+
+function showRejectUI(id){
+  _discExpandedId=id;
+  renderDiscoveryPage();
+  // Add reject UI after render
+  setTimeout(()=>{
+    const detail=document.getElementById('disc-detail-'+id);
+    if(!detail||detail.querySelector('.reject-chips'))return;
+    const div=document.createElement('div');
+    div.style.cssText='margin-top:10px;padding-top:10px;border-top:1px solid var(--border)';
+    div.innerHTML=`<div style="font-size:11px;font-weight:600;color:var(--pdarker);margin-bottom:4px">Hvorfor afviser du? (valgfrit)</div>
+      <div class="reject-chips">
+        <span class="reject-chip" onclick="this.classList.toggle('sel')">For lille</span>
+        <span class="reject-chip" onclick="this.classList.toggle('sel')">Forkert branche</span>
+        <span class="reject-chip" onclick="this.classList.toggle('sel')">Allerede kontaktet</span>
+        <span class="reject-chip" onclick="this.classList.toggle('sel')">Ikke relevant</span>
+      </div>
+      <button class="btn btn-sm" style="margin-top:8px;font-size:10px;background:var(--red);color:#fff;border:none" onclick="submitReject('${id}')">Bekræft afvisning</button>`;
+    detail.appendChild(div);
+  },50);
+}
+
+async function submitReject(id){
+  const chips=document.querySelectorAll('#disc-detail-'+id+' .reject-chip.sel');
+  const reasons=[...chips].map(c=>c.textContent).join(', ');
+  try{
+    await fetch('/api/discovery/results/'+id+'/feedback',{method:'POST',headers:ah(),body:JSON.stringify({feedback:'rejected',reason:reasons||''})});
+    showToast('Lead afvist');
+    _discExpandedId=null;
+    renderDiscoveryPage();
+  }catch(e){}
+}
+
+async function enrichDiscResult(cvr,btn){
+  if(btn){btn.disabled=true;btn.textContent='Enriching...';}
+  const c=[...leads,...(await fetch('/api/discovery/results?feedback=all&limit=500',{headers:ah()}).then(r=>r.json()).catch(()=>({results:[]}))).results.map(r=>r.company_data).filter(Boolean)].find(x=>(x.cvr||x.cvr_number)===cvr);
+  if(!c)return;
+  try{
+    await fetch('/api/enrich/full',{method:'POST',headers:ah(),body:JSON.stringify({companyData:{cvr_number:cvr,name:c.name||'',industry_description:c.industry||'',city:c.city||'',founded_date:c.founded||'',employee_interval:c.employees||'',status:'active',revenue:c.revenue||0}})});
+    renderDiscoveryPage();
+  }catch(e){}
+}
+
+async function applyFeedbackAdjustments(){
+  try{
+    const r=await fetch('/api/discovery/feedback/apply',{method:'POST',headers:ah()});
+    const d=await r.json();
+    if(!r.ok){showToast(d.error||'Fejl');return;}
+    showToast('Mønster opdateret med feedback (v'+((d.pattern?.version)||'?')+')');
+    renderDiscoveryPage();
+  }catch(e){showToast('Fejl: '+e.message);}
+}
+
+function sv(v){
+  aView=v;
+  document.getElementById('nv-s').classList.toggle('on',v==='search');
+  document.getElementById('nv-l').classList.toggle('on',v==='leads');
+  document.getElementById('nv-c')?.classList.toggle('on',v==='customers');
+  document.getElementById('nv-d')?.classList.toggle('on',v==='discovery');
+
+  selCo=null;hdDp();ckd.clear();upSel();
+  const bw=document.querySelector('.body-wrap');
+  const tb=document.querySelector('.toolbar');
+  const sb=document.getElementById('stbar');
+  const selb=document.getElementById('selbar');
+  const custPage=document.getElementById('customers-page');
+  const discPage=document.getElementById('discovery-page');
+
+  // Hide everything first
+  bw.style.display='none';tb.style.display='none';
+  if(sb)sb.style.display='none';if(selb)selb.style.display='none';
+  document.getElementById('sb-lists').style.display='none';
+  document.getElementById('sb-footer').style.display='none';
+  document.getElementById('leads-list-bar').style.display='none';
+  if(custPage)custPage.style.display='none';
+  if(discPage)discPage.style.display='none';
+
+  if(v==='search'||v==='leads'){
+    bw.style.display='';tb.style.display='';if(sb)sb.style.display='';if(selb)selb.style.display='';
+    if(v==='leads'){
+      document.getElementById('leads-list-bar').style.display='';
+    }
+    rSB();render();
+    if(v==='leads'&&aiEnabled)setTimeout(fetchEnrichStatus,100);
+  } else if(v==='customers'){
+    if(custPage)custPage.style.display='flex';custPage.style.flexDirection='column';
+    renderCustomersPage();
+  } else if(v==='discovery'){
+    if(discPage)discPage.style.display='flex';discPage.style.flexDirection='column';
+    renderDiscoveryPage();
+  }
+}
+
+
+
+
+async function runEnrich(cvr){
+  const wrap=document.getElementById('ai-enrich-wrap-'+cvr);
+  if(!wrap)return;
+  wrap.innerHTML='<div style="text-align:center;padding:12px;font-size:12px;color:var(--gray2)"><div class="search-spinner" style="width:20px;height:20px;margin:0 auto 8px"></div>Analyserer med AI…</div>';
+  const c=[...res,...leads].find(x=>x.cvr===cvr);
+  if(!c){wrap.innerHTML='<div style="color:var(--red);font-size:12px">Firma ikke fundet</div>';return;}
+  try{
+    const body={companyData:{cvr_number:c.cvr,name:c.name,legal_form:c.form||'',industry_code:c.ic||'',industry_description:c.ind||'',municipality:c.city||'',address:c.addr||'',founded_date:c.yr||'',employee_interval:c.emps||'',status:c.st||'active',revenue:c.omsaetning||0,grossProfit:c.bf||0,equity:c.eq||0}};
+    const r=await fetch('/api/enrich/full',{method:'POST',headers:ah(),body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){wrap.innerHTML=`<div style="color:var(--red);font-size:12px">${d.error||'Fejl'}</div>`;return;}
+    const s=d.score||{};const p=d.profile||{};
+    const gradeColor={'A+':'#16a34a','A':'#22c55e','B':'#f59e0b','C':'#f97316','D':'#ef4444'}[s.grade]||'var(--gray)';
+    const recColor={'HOT':'#ef4444','WARM':'#f59e0b','COLD':'#3b82f6'}[s.recommendation]||'var(--gray)';
+    wrap.innerHTML=`
+      <div style="background:var(--p7);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:4px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:11px;font-weight:700;color:var(--pdarker);text-transform:uppercase;letter-spacing:.5px">AI Lead Score</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="background:${recColor};color:#fff;font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px">${s.recommendation||'—'}</span>
+            <span style="font-size:22px;font-weight:800;color:${gradeColor}">${s.grade||'—'}</span>
+            <span style="font-size:11px;color:var(--gray)">${s.total_score||0}/100</span>
+          </div>
+        </div>
+        ${Object.entries(s.criteria_scores||{}).map(([k,v])=>{
+          const pct=v.max?Math.round(v.score/v.max*100):0;
+          const label={'industry_fit':'Branche','company_size':'Størrelse','company_maturity':'Modenhed','geography':'Geografi','growth_signals':'Vækst'}[k]||k;
+          return `<div style="margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px"><span style="font-weight:600;color:var(--pdarker)">${label}</span><span style="color:var(--gray)">${v.score}/${v.max}</span></div>
+            <div style="height:4px;background:var(--p6);border-radius:2px"><div style="height:100%;width:${pct}%;background:${pct>=70?'var(--green)':pct>=40?'var(--amber)':'var(--red)'};border-radius:2px"></div></div>
+            <div style="font-size:9px;color:var(--gray2);margin-top:1px">${e(v.reason||'')}</div>
+          </div>`;
+        }).join('')}
+        ${s.next_action?`<div style="background:var(--p6);border-radius:6px;padding:8px 10px;margin-top:8px;font-size:11px;color:var(--pdarker)"><strong>Næste skridt:</strong> ${e(s.next_action)}</div>`:''}
+        ${p.summary?`<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">AI Profil</div>
+          <div style="font-size:11px;color:var(--pdarker);line-height:1.4">${e(p.summary)}</div>
+          ${p.potential_pain_points?.length?`<div style="margin-top:6px;font-size:10px;font-weight:700;color:var(--gray2)">Mulige udfordringer:</div><ul style="margin:2px 0 0 14px;padding:0;font-size:10.5px;color:var(--gray)">${p.potential_pain_points.map(pp=>'<li>'+e(pp)+'</li>').join('')}</ul>`:''}
+          ${p.conversation_starters?.length?`<div style="margin-top:6px;font-size:10px;font-weight:700;color:var(--gray2)">Samtalestartere:</div><ul style="margin:2px 0 0 14px;padding:0;font-size:10.5px;color:var(--gray)">${p.conversation_starters.map(cs=>'<li>'+e(cs)+'</li>').join('')}</ul>`:''}
+        </div>`:''}
+      </div>`;
+  }catch(ex){wrap.innerHTML=`<div style="color:var(--red);font-size:12px">Fejl: ${ex.message}</div>`;}
+}
+
+async function openIcpSettings(){
+  let icp;
+  try{const r=await fetch('/api/settings/icp',{headers:ah()});icp=await r.json();}catch(e){icp={name:'',description:'',version:'v1',criteria:{industry_fit:{weight:25,ideal:'',avoid:''},company_size:{weight:25,ideal:'',avoid:''},company_maturity:{weight:15,ideal:'',avoid:''},geography:{weight:15,ideal:'',avoid:''},growth_signals:{weight:20,ideal:'',avoid:''}}};}
+  const labels={industry_fit:'Branche-match',company_size:'Virksomhedsstørrelse',company_maturity:'Modenhed',geography:'Geografi',growth_signals:'Vækstsignaler'};
+  const bg=document.createElement('div');bg.className='modal-bg';bg.id='icp-modal-bg';
+  bg.innerHTML=`<div class="modal" style="width:480px;max-height:85vh;overflow-y:auto">
+    <h3 style="margin:0 0 4px">ICP Indstillinger</h3>
+    <p style="font-size:11px;color:var(--gray);margin:0 0 12px">Version: ${icp.version||'v1'}</p>
+    <div style="margin-bottom:12px">
+      <label style="font-size:11px;font-weight:700;color:var(--pdarker)">ICP Navn</label>
+      <input class="fi" id="icp-name" value="${e(icp.name||'')}" placeholder="F.eks. B2B SaaS til danske virksomheder">
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:11px;font-weight:700;color:var(--pdarker)">Beskrivelse</label>
+      <input class="fi" id="icp-desc" value="${e(icp.description||'')}" placeholder="Kort beskrivelse af jeres ideelle kunde">
+    </div>
+    <div style="font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Kriterier (vægt skal summe til 100)</div>
+    ${Object.entries(icp.criteria||{}).map(([k,v])=>`
+      <div style="background:var(--p7);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;font-weight:700;color:var(--pdarker)">${labels[k]||k}</span>
+          <div style="display:flex;align-items:center;gap:4px"><input type="number" class="fi icp-weight" data-key="${k}" value="${v.weight}" min="0" max="100" style="width:50px;text-align:center;padding:3px"><span style="font-size:10px;color:var(--gray)">/100</span></div>
+        </div>
+        <label style="font-size:10px;color:var(--gray2)">Ideelt</label>
+        <input class="fi icp-ideal" data-key="${k}" value="${e(v.ideal||'')}" placeholder="Hvad er ideelt?" style="font-size:11px;margin-bottom:4px">
+        <label style="font-size:10px;color:var(--gray2)">Undgå</label>
+        <input class="fi icp-avoid" data-key="${k}" value="${e(v.avoid||'')}" placeholder="Hvad skal undgås?" style="font-size:11px">
+      </div>`).join('')}
+    <div id="icp-weight-sum" style="font-size:11px;color:var(--gray);margin-bottom:12px;text-align:right">Sum: ${Object.values(icp.criteria||{}).reduce((s,c)=>s+c.weight,0)}/100</div>
+    <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="resetIcp()">Nulstil</button>
+      <button class="btn btn-sm" onclick="document.getElementById('icp-modal-bg').remove()">Annuller</button>
+      <button class="btn btn-primary btn-sm" onclick="saveIcp()">Gem ICP</button>
+    </div>
+  </div>`;
+  bg.onclick=ev=>{if(ev.target===bg)bg.remove();};
+  document.body.appendChild(bg);
+  // Live weight sum
+  bg.querySelectorAll('.icp-weight').forEach(inp=>inp.addEventListener('input',()=>{
+    const sum=[...bg.querySelectorAll('.icp-weight')].reduce((s,el)=>s+Number(el.value||0),0);
+    document.getElementById('icp-weight-sum').textContent='Sum: '+sum+'/100';
+    document.getElementById('icp-weight-sum').style.color=sum===100?'var(--green)':'var(--red)';
+  }));
+}
+
+async function saveIcp(){
+  const bg=document.getElementById('icp-modal-bg');if(!bg)return;
+  const criteria={};
+  bg.querySelectorAll('.icp-weight').forEach(el=>{
+    const k=el.dataset.key;
+    criteria[k]={weight:Number(el.value),ideal:bg.querySelector(`.icp-ideal[data-key="${k}"]`).value,avoid:bg.querySelector(`.icp-avoid[data-key="${k}"]`).value};
+  });
+  const sum=Object.values(criteria).reduce((s,c)=>s+c.weight,0);
+  if(sum!==100){showToast('Vægt skal summe til 100 (nu: '+sum+')');return;}
+  const body={name:document.getElementById('icp-name').value,description:document.getElementById('icp-desc').value,criteria};
+  try{
+    const r=await fetch('/api/settings/icp',{method:'PUT',headers:ah(),body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){showToast(d.error||'Fejl');return;}
+    bg.remove();
+    showToast('ICP gemt ('+d.version+') — scores kan være forældede');
+    // Show re-score notice
+    const bar=document.getElementById('leads-list-bar');
+    if(bar&&!document.getElementById('rescore-notice')){
+      const notice=document.createElement('div');notice.id='rescore-notice';
+      notice.style.cssText='width:100%;padding:8px 12px;background:linear-gradient(135deg,var(--p7),var(--p6));border-radius:6px;font-size:11px;color:var(--pdarker);display:flex;align-items:center;gap:8px;margin-top:6px';
+      notice.innerHTML='<span>ICP opdateret til '+d.version+'. Scores kan være forældede.</span><button class="btn btn-sm" style="background:var(--p1);color:#fff;border:none;font-size:10px" onclick="rescoreAll()">Re-score alle</button><button class="btn btn-sm" style="font-size:10px" onclick="this.parentElement.remove()">Luk</button>';
+      bar.appendChild(notice);
+    }
+  }catch(ex){showToast('Fejl: '+ex.message);}
+}
+
+async function resetIcp(){
+  if(!confirm('Nulstil ICP til standardværdier?'))return;
+  document.getElementById('icp-modal-bg')?.remove();
+  try{
+    await fetch('/api/settings/icp',{method:'PUT',headers:ah(),body:JSON.stringify({name:'Default ICP',description:'B2B companies in Denmark',criteria:{industry_fit:{weight:25,ideal:'Manufacturing, Logistics, Professional Services, Construction, Wholesale',avoid:'Holdings, shell companies'},company_size:{weight:25,ideal:'20-500 employees',avoid:'Micro companies under 5'},company_maturity:{weight:15,ideal:'3-25 years old',avoid:'Startups under 1 year'},geography:{weight:15,ideal:'Jylland and Sjælland metro areas',avoid:''},growth_signals:{weight:20,ideal:'Increasing employees, multiple P-units',avoid:'Declining revenue'}}})});
+    showToast('ICP nulstillet');
+  }catch(e){}
+}
+
+async function rescoreAll(){
+  const notice=document.getElementById('rescore-notice');
+  if(notice)notice.innerHTML='<span>Re-scorer alle leads…</span><span id="rescore-prog" style="font-weight:700"></span>';
+  const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
+  const enriched=vis.filter(c=>enrichStatus[c.cvr]);
+  if(!enriched.length){showToast('Ingen leads at re-score');if(notice)notice.remove();return;}
+  let done=0;
+  for(let i=0;i<enriched.length;i+=20){
+    const batch=enriched.slice(i,i+20).map(c=>({cvr_number:c.cvr,name:c.name,industry_description:c.ind||'',city:c.city||'',founded_date:c.yr||'',employee_interval:c.emps||'',status:c.st||'active',revenue:c.omsaetning||0}));
+    try{
+      const r=await fetch('/api/enrich/batch',{method:'POST',headers:ah(),body:JSON.stringify({companies:batch})});
+      const d=await r.json();
+      for(const res of(d.results||[])){if(res.grade)enrichStatus[res.cvr_number]={grade:res.grade,total_score:res.total_score,recommendation:res.recommendation,enriched_at:new Date().toISOString()};}
+    }catch(e){}
+    done+=batch.length;
+    const prog=document.getElementById('rescore-prog');
+    if(prog)prog.textContent=`${done}/${enriched.length}`;
+    render();
+  }
+  if(notice)notice.remove();
+  showToast(`${done} leads re-scored`);
+}
+
+function toggleAI(on){
+  aiEnabled=on;
+  localStorage.setItem('vl_ai_enabled',on?'true':'false');
+  const gear=document.getElementById('icp-gear');if(gear)gear.style.display=on?'':'none';
+  if(on&&aView==='leads')fetchEnrichStatus();
+  render();
+}
+async function fetchEnrichStatus(){
+  if(!isServerMode||!aiEnabled)return;
+  const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
+  if(!vis.length)return;
+  const cvrs=vis.map(c=>c.cvr).join(',');
+  try{
+    const r=await fetch('/api/enrich/status?cvrs='+cvrs,{headers:ah()});
+    if(r.ok){
+      const d=await r.json();Object.assign(enrichStatus,d);render();
+      // Auto-enrich unenriched leads in background (max 5 at a time)
+      const unenriched=vis.filter(c=>!d[c.cvr]).slice(0,5);
+      for(const c of unenriched)enrichOne(c.cvr);
+    }
+  }catch(e){}
+}
+async function enrichOne(cvr,btn){
+  if(btn){btn.disabled=true;btn.textContent='…';}
+  const c=[...res,...leads].find(x=>x.cvr===cvr);if(!c)return;
+  try{
+    const body={companyData:{cvr_number:c.cvr,name:c.name,industry_description:c.ind||'',city:c.city||'',founded_date:c.yr||'',employee_interval:c.emps||'',status:c.st||'active',revenue:c.omsaetning||0,grossProfit:c.bf||0,equity:c.eq||0}};
+    const r=await fetch('/api/enrich/full',{method:'POST',headers:ah(),body:JSON.stringify(body)});
+    const d=await r.json();
+    if(r.ok&&d.score){enrichStatus[cvr]={grade:d.score.grade,total_score:d.score.total_score,recommendation:d.score.recommendation,enriched_at:new Date().toISOString()};render();}
+  }catch(e){}
+}
+async function enrichBatch(cvrs){
+  const pool=[...res,...leads];
+  const toEnrich=cvrs.filter(cvr=>!enrichStatus[cvr]);
+  if(!toEnrich.length){showToast('Alle er allerede enriched');return;}
+  const prog=document.getElementById('enrich-progress');
+  let done=0;
+  for(let i=0;i<toEnrich.length;i+=20){
+    const batch=toEnrich.slice(i,i+20).map(cvr=>{const c=pool.find(x=>x.cvr===cvr);return c?{cvr_number:c.cvr,name:c.name,industry_description:c.ind||'',city:c.city||'',founded_date:c.yr||'',employee_interval:c.emps||'',status:c.st||'active',revenue:c.omsaetning||0}:null;}).filter(Boolean);
+    try{
+      const r=await fetch('/api/enrich/batch',{method:'POST',headers:ah(),body:JSON.stringify({companies:batch})});
+      const d=await r.json();
+      for(const res of(d.results||[])){if(res.grade)enrichStatus[res.cvr_number]={grade:res.grade,total_score:res.total_score,recommendation:res.recommendation,enriched_at:new Date().toISOString()};}
+    }catch(e){}
+    done+=batch.length;
+    if(prog)prog.textContent=`Enriching ${done}/${toEnrich.length}…`;
+    render();
+  }
+  if(prog)prog.textContent='';
+  showToast(`${done} leads enriched`);
+}
+function icpCell(cvr){
+  const s=enrichStatus[cvr];
+  if(!s)return `<span style="color:var(--gray2);font-size:10px;font-style:italic">—</span> <button class="btn btn-sm" style="padding:1px 6px;font-size:9px;background:var(--p1);color:#fff;border:none" onclick="event.stopPropagation();enrichOne('${cvr}',this)">Enrich</button>`;
+  const pct=s.total_score||0;
+  const gc=pct>=70?'grade-a':pct>=50?'grade-b':'grade-c';
+  const bc=pct>=70?'var(--green)':pct>=50?'var(--amber)':'var(--gray2)';
+  return `<span class="${gc}" style="font-size:13px">${s.grade||'—'}</span> <span class="icp-bar"><span class="icp-bar-fill" style="width:${pct}%;background:${bc}"></span></span> <span style="font-size:10px;color:var(--gray)">${pct}</span>`;
+}
+function recBadge(cvr){
+  const s=enrichStatus[cvr];
+  if(!s||!s.recommendation)return '';
+  const cls={'HOT':'badge-hot','WARM':'badge-warm','COLD':'badge-cold'}[s.recommendation]||'badge-cold';
+  return `<span class="${cls}">${s.recommendation}</span>`;
+}
+
+function ownerBadges(cvr){
+  const owners=(leadOwners[cvr]||[]).filter(o=>o.id!==currentUser?.id);
+  if(!owners.length)return '';
+  return ' '+owners.map(o=>{
+    if(o.avatar){
+      return `<span class="owner-badge" title="${e(o.name)} har denne lead" style="background:transparent;padding:0"><img src="${o.avatar}" style="width:18px;height:18px;border-radius:50%;object-fit:cover;display:block"></span>`;
+    }
+    const initials=o.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+    return `<span class="owner-badge" title="${e(o.name)} har denne lead" style="background:${o.color||'#8258a8'}">${initials}</span>`;
+  }).join('');
+}
+
+function showToast(msg,dur=2500){
+  let t=document.getElementById('toast-msg');
+  if(!t){t=document.createElement('div');t.id='toast-msg';t.style.cssText='position:fixed;bottom:24px;right:24px;background:var(--pdarker);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;z-index:9999;transition:opacity .3s';document.body.appendChild(t);}
+  t.textContent=msg;t.style.opacity='1';
+  clearTimeout(t._t);t._t=setTimeout(()=>{t.style.opacity='0';},dur);
+}
+
+
+
+// ── TABLE ─────────────────────────────────────────────────────────────────────
+function rTbl(){
+  const hideOwned=document.getElementById('f-hide-owned')?.checked;
+  const visRes=hideOwned?res.filter(c=>{const ow=leadOwners[c.cvr]||[];return !ow.some(o=>o.id!==currentUser?.id);}):res;
+
+  document.getElementById('thead').innerHTML=`<tr>
+    <th style="width:28px"><input type="checkbox" class="cb" onchange="togAll(this)"></th>
+    <th class="sort${sC==='name'?' sorted':''}" style="width:20%" onclick="setSort('name')">Virksomhed ${si('name')}</th>
+    <th style="width:72px">CVR</th>
+    <th style="width:12%">Hjemmeside</th>
+    <th style="width:90px">Tlf-nr</th>
+    <th style="width:14%">E-mail</th>
+    <th class="sort${sC==='city'?' sorted':''}" style="width:8%" onclick="setSort('city')">By ${si('city')}</th>
+    <th class="sort${sC==='emp'?' sorted':''}" style="width:42px" onclick="setSort('emp')">Ans. ${si('emp')}</th>
+    <th class="sort${sC==='omsaetning'?' sorted':''}" style="width:78px" onclick="setSort('omsaetning')">Omsætning ${si('omsaetning')}</th>
+    <th class="sort${sC==='ind'?' sorted':''}" style="width:14%" onclick="setSort('ind')">Branche ${si('ind')}</th>
+    <th style="width:50px"></th>
+  </tr>`;
+
+  document.getElementById('tbody').innerHTML=visRes.map(c=>{
+    return`<tr data-cvr="${c.cvr}" class="${selCo?.cvr===c.cvr?'sel':''} ${ckd.has(c.cvr)?'chk':''}">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="cb" ${ckd.has(c.cvr)?'checked':''} onchange="togCk('${c.cvr}',this.checked)"></td>
+      <td><span class="co-name" title="${e(c.name)}">${trunc(e(c.name),22)}</span>${ownerBadges(c.cvr)}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--gray2)">${c.cvr}</td>
+      <td>${c.web?`<a href="https://${c.web}" target="_blank" style="color:var(--p1);text-decoration:none;font-size:11px">${c.web}</a>`:'<span style="color:var(--gray2);font-size:11px">—</span>'}</td>
+      <td>${c.ph?`<a href="tel:${c.ph}" style="color:var(--p1);text-decoration:none;font-size:11px">${c.ph}</a>`:'<span style="color:var(--gray2);font-size:11px">—</span>'}</td>
+      <td>${c.em?`<a href="mailto:${c.em}" style="color:var(--p1);text-decoration:none;font-size:11px">${c.em}</a>`:'<span style="color:var(--gray2);font-size:11px">—</span>'}</td>
+      <td style="color:var(--gray)">${c.city}</td>
+      <td style="color:var(--gray)">${c.emps}</td>
+      <td style="font-weight:600;font-size:11.5px;color:${c.omsaetning>0?'var(--pdarker)':'var(--gray2)'}">${fmtKr(c.omsaetning)}</td>
+      <td style="color:var(--gray);font-size:11.5px" title="${e(c.ind)}">${trunc(c.ind,18)}</td>
+      <td style="overflow:visible;text-overflow:clip" onclick="event.stopPropagation()">
+        <div style="display:flex;gap:3px;align-items:center">
+          ${isL(c.cvr)?'<button class="ib added" title="I leads">✓</button>':`<button class="ib" onclick="showListPicker(['${c.cvr}'])" title="Tilføj lead">+</button>`}
+          <button class="ib" onclick="selC('${c.cvr}')" title="Detaljer">→</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('tbody').onclick=ev=>{
+    const tr=ev.target.closest('tr[data-cvr]');
+    if(tr&&!ev.target.closest('td:last-child')&&ev.target.tagName!=='INPUT')selC(tr.dataset.cvr);
+  };
+  rStb();upSel();
+}
+
+function rLeads(){
+  const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
+  const ai=aiEnabled;
+  const colCount=ai?14:12;
+  if(!vis.length){
+    document.getElementById('thead').innerHTML='';
+    document.getElementById('tbody').innerHTML=`<tr><td colspan="${colCount}" style="text-align:center;padding:60px;color:var(--gray2)">Ingen leads endnu — gå til Søg og tilføj virksomheder</td></tr>`;
+    rStb();return;
+  }
+  document.getElementById('thead').innerHTML=`<tr>
+    <th style="width:28px"><input type="checkbox" class="cb" onchange="togAll(this)"></th>
+    <th class="sort${sC==='name'?' sorted':''}" style="width:${ai?'16%':'20%'}" onclick="setSort('name')">Virksomhed ${si('name')}</th>
+    <th style="width:72px">CVR</th>
+    <th style="width:${ai?'10%':'12%'}">Hjemmeside</th>
+    <th style="width:90px">Tlf-nr</th>
+    <th style="width:${ai?'12%':'14%'}">E-mail</th>
+    <th class="sort${sC==='city'?' sorted':''}" style="width:8%" onclick="setSort('city')">By ${si('city')}</th>
+    <th class="sort${sC==='emp'?' sorted':''}" style="width:42px" onclick="setSort('emp')">Ans. ${si('emp')}</th>
+    <th class="sort${sC==='omsaetning'?' sorted':''}" style="width:78px" onclick="setSort('omsaetning')">Omsætning ${si('omsaetning')}</th>
+    <th class="sort${sC==='ind'?' sorted':''}" style="width:${ai?'10%':'14%'}" onclick="setSort('ind')">Branche ${si('ind')}</th>
+    ${ai?`<th class="sort${sC==='icp'?' sorted':''}" style="width:100px" onclick="setSort('icp')">ICP ${si('icp')}</th>
+    <th style="width:60px">Status</th>`:''}
+    <th style="width:75px">Tilføjet</th>
+    <th style="width:36px"></th>
+  </tr>`;
+  document.getElementById('tbody').innerHTML=vis.map(c=>{
+    return`<tr data-cvr="${c.cvr}" class="${selCo?.cvr===c.cvr?'sel':''} ${ckd.has(c.cvr)?'chk':''}">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="cb" ${ckd.has(c.cvr)?'checked':''} onchange="togCk('${c.cvr}',this.checked)"></td>
+      <td><span class="co-name">${trunc(e(c.name),ai?18:22)}</span>${ownerBadges(c.cvr)}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--gray2)">${c.cvr}</td>
+      <td>${c.web?`<a href="https://${c.web}" target="_blank" style="color:var(--p1);text-decoration:none;font-size:11px">${c.web}</a>`:'<span style="color:var(--gray2);font-size:11px">—</span>'}</td>
+      <td>${c.ph?`<a href="tel:${c.ph}" style="color:var(--p1);text-decoration:none;font-size:11px">${c.ph}</a>`:'<span style="color:var(--gray2);font-size:11px">—</span>'}</td>
+      <td>${c.em?`<a href="mailto:${c.em}" style="color:var(--p1);text-decoration:none;font-size:11px">${c.em}</a>`:'<span style="color:var(--gray2);font-size:11px">—</span>'}</td>
+      <td style="color:var(--gray)">${c.city}</td>
+      <td style="color:var(--gray)">${c.emps}</td>
+      <td style="font-weight:600;font-size:11.5px;color:${c.omsaetning>0?'var(--pdarker)':'var(--gray2)'}">${fmtKr(c.omsaetning)}</td>
+      <td style="color:var(--gray);font-size:11.5px" title="${e(c.ind)}">${trunc(c.ind,ai?14:18)||'—'}</td>
+      ${ai?`<td>${icpCell(c.cvr)}</td><td>${recBadge(c.cvr)}</td>`:''}
+      <td style="color:var(--gray2);font-size:11px">${c.addedAt?new Date(c.addedAt).toLocaleDateString('da-DK'):'—'}</td>
+      <td onclick="event.stopPropagation()"><button class="ib rm" onclick="remL('${c.cvr}')" title="Fjern">✕</button></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tbody').onclick=ev=>{
+    const tr=ev.target.closest('tr[data-cvr]');
+    if(tr&&!ev.target.closest('td:last-child')&&ev.target.tagName!=='INPUT')selLD(tr.dataset.cvr);
+  };
+  rStb();upSel();
+}
+
+function stageClass(s){return{
+  // Legacy stages
+  'Ny':'s-new','Kvalificeret':'s-qual','I dialog':'s-dialog','Tilbud':'s-prop','Forhandling':'s-prop','Vundet':'s-won','Tabt':'s-lost',
+  // SDR stages
+  'Kontaktet':'s-dialog','Møde booket':'s-prop','Ikke interesseret':'s-lost',
+  // AE stages
+  'Demo Booket':'s-new','Tilbud sendt':'s-dialog'
+}[s]||'s-new';}
+
+function rStb(){
+  const sb=document.getElementById('stbar');
+  if(aView==='leads'){const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);sb.innerHTML=`<span class="hi">${vis.length}</span> leads`;return;}
+  const hp=res.filter(r=>r.ph||r.phone).length,inL=res.filter(r=>isL(r.cvr)).length;
+  const totalLabel=apiTotal>0&&apiTotal>res.length
+    ?`<span class="hi">${res.length}</span> af <span class="hi">${apiTotal.toLocaleString('da-DK')}</span>`
+    :`<span class="hi">${res.length}</span>`;
+  sb.innerHTML=`${totalLabel} virksomheder &nbsp;·&nbsp; ${hp} har tlf. &nbsp;·&nbsp; ${inL} i leads`;
+
+  // Show "Load more" button if more results available
+  const lmw=document.getElementById('load-more-wrap');
+  const lmi=document.getElementById('load-more-info');
+  if(lmw&&isServerMode&&apiTotal>res.length){
+    lmw.style.display='block';
+    if(lmi)lmi.textContent=`${res.length} af ${apiTotal.toLocaleString('da-DK')} virksomheder indlæst`;
+  }else if(lmw){lmw.style.display='none';}
+}
+
+// ── DETAIL PANEL ───────────────────────────────────────────────────────────────
+function selC(cvr){const c=res.find(x=>x.cvr===cvr);if(!c)return;selCo=c;rTbl();showDp(c);}
+function selLD(cvr){const c=leads.find(x=>x.cvr===cvr);if(!c)return;selCo=c;rLeads();showDp(c);}
+function hdDp(){
+  document.getElementById('dp').classList.add('h');
+  selCo=null;
+}
+
+function showDp(c){
+  const dp=document.getElementById('dp');dp.classList.remove('h');
+  const inL=isL(c.cvr);
+  const notes=leadNotes[c.cvr]||'';
+  const tags=(leadTags[c.cvr]||[]);
+  const _pool=res.length>0?res:leads.length>0?leads:[];
+  const mxO=_pool.reduce((m,d)=>Math.max(m,d.omsaetning||0),1);
+  const mxB=_pool.reduce((m,d)=>Math.max(m,d.bf||0),1);
+  const mxE=_pool.reduce((m,d)=>Math.max(m,d.eq||0),1);
+
+  dp.innerHTML=`
+    <div class="dp-head">
+      <div>
+        <div class="dp-name">${e(c.name)}</div>
+        <div class="dp-cvr">CVR ${c.cvr} · ${c.form}</div>
+      </div>
+      <span class="dp-close" onclick="hdDp()">×</span>
+    </div>
+    <div class="dp-tabs">
+      <div class="dp-tab on" data-tab="info">Info</div>
+      <div class="dp-tab" data-tab="contacts">Personer</div>
+      <div class="dp-tab" data-tab="finans">Finans</div>
+    </div>
+
+    <!-- INFO TAB -->
+    <div class="dp-body on" id="tab-info">
+      <div class="dp-stat-grid">
+        <div class="dp-stat"><div class="dp-stat-l">Stiftet</div><div class="dp-stat-v">${c.yr}</div></div>
+        <div class="dp-stat"><div class="dp-stat-l">Ansatte</div><div class="dp-stat-v">${c.emps}</div></div>
+        <div class="dp-stat"><div class="dp-stat-l">Alder</div><div class="dp-stat-v">${Math.floor(c.ageM/12)} år</div></div>
+        <div class="dp-stat"><div class="dp-stat-l">Status</div><div class="dp-stat-v"><span class="pill ${c.st==='active'?'pill-active':'pill-inactive'}">${c.st==='active'?'Aktiv':'Inaktiv'}</span></div></div>
+      </div>
+      ${(c.contactName||c.contactTitle)?`<div style="background:var(--p7);border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
+        <div style="width:30px;height:30px;border-radius:50%;background:var(--p3);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0">${(c.contactName||'?')[0].toUpperCase()}</div>
+        <div>
+          <div style="font-size:12.5px;font-weight:700;color:var(--pdarker)">${e(c.contactName||'—')}</div>
+          ${c.contactTitle?`<div style="font-size:10.5px;color:var(--gray)">${e(c.contactTitle)}</div>`:''}
+        </div>
+      </div>`:''}
+      <div class="dp-row"><span class="dp-k">Adresse</span><span class="dp-v">${[c.addr,c.zip,c.city].filter(Boolean).join(', ')||'—'}</span></div>
+      <div class="dp-row"><span class="dp-k">Branche</span><span class="dp-v">${c.ind||'—'}</span></div>
+      <div class="dp-row"><span class="dp-k">Telefon</span><span class="dp-v">${c.ph?`<a href="tel:${c.ph}">${fp(c.ph)}</a>`:'<span style="color:var(--gray2);font-size:11px">Ikke udfyldt</span>'}</span></div>
+      <div class="dp-row"><span class="dp-k">Email</span><span class="dp-v">${c.em?`<a href="mailto:${c.em}">${c.em}</a>`:'<span style="color:var(--gray2);font-size:11px">Ikke udfyldt</span>'}</span></div>
+      <div class="dp-row"><span class="dp-k">Website</span><span class="dp-v">${c.web?`<a href="https://${c.web}" target="_blank">${c.web}</a>`:'<span style="color:var(--gray2);font-size:11px">Ikke udfyldt</span>'}</span></div>
+      ${c.tech&&c.tech.length?`<div class="dp-row"><span class="dp-k">Teknologi</span><span class="dp-v" style="font-size:10.5px">${c.tech.join(', ')}</span></div>`:''}
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px">
+        ${inL?`
+          <button class="btn btn-sm" style="width:100%;justify-content:center;gap:6px" onclick="openEditLead('${c.cvr}')">Rediger oplysninger</button>
+          <button class="btn" style="width:100%;justify-content:center;color:var(--green);border-color:rgba(22,163,74,.3)" disabled>✓ Allerede i leads</button>
+          <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="remL('${c.cvr}')">Fjern fra leads</button>`
+          :`<button class="btn btn-primary" style="width:100%;justify-content:center" onclick="showListPicker(['${c.cvr}'])">+ Tilføj til leads</button>`}
+      </div>
+      <div id="ai-enrich-wrap-${c.cvr}" style="margin-top:10px">
+        <button class="btn btn-sm" style="width:100%;justify-content:center;gap:6px;background:linear-gradient(135deg,var(--p1),var(--p3));color:#fff;border:none" onclick="runEnrich('${c.cvr}')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          AI Lead Score
+        </button>
+      </div>
+    </div>
+
+    <!-- FINANS TAB -->
+    <div class="dp-body" id="tab-finans">
+      <div style="margin-bottom:10px">
+        <div class="fin-bar-row"><div class="fin-bar-lbl">Omsætning</div><div class="fin-bar-track"><div class="fin-bar-fill" style="width:${Math.round(c.omsaetning/mxO*100)}%;background:var(--blue)"></div></div><div class="fin-bar-val">${fmtKr(c.omsaetning)}</div></div>
+        <div class="fin-bar-row"><div class="fin-bar-lbl">Bruttofort.</div><div class="fin-bar-track"><div class="fin-bar-fill" style="width:${c.bf>0?Math.round(c.bf/mxB*100):0}%;background:var(--p1)"></div></div><div class="fin-bar-val" style="color:${c.bf>=0?'var(--green)':'var(--red)'}">${fmtKr(c.bf)}</div></div>
+        <div class="fin-bar-row"><div class="fin-bar-lbl">Egenkapital</div><div class="fin-bar-track"><div class="fin-bar-fill" style="width:${c.eq>0?Math.round(c.eq/mxE*100):0}%;background:var(--amber)"></div></div><div class="fin-bar-val" style="color:${c.eq>=0?'var(--amber)':'var(--red)'}">${fmtKr(c.eq)}</div></div>
+      </div>
+      <table class="fin-tbl">
+        <tr><td>Omsætning</td><td>${fmtKr(c.omsaetning)}</td></tr>
+        <tr><td>Bruttofortjeneste</td><td style="color:${c.bf>=0?'var(--green)':'var(--red)'}">${fmtKr(c.bf)}</td></tr>
+        <tr><td>Resultat</td><td style="color:${c.res>=0?'var(--green)':'var(--red)'}">${fmtKr(c.res)}</td></tr>
+        <tr><td>Egenkapital</td><td style="color:${c.eq>=0?'var(--amber)':'var(--red)'}">${fmtKr(c.eq)}</td></tr>
+        <tr><td>Bruttomargin</td><td>${c.omsaetning>0?Math.round(c.bf/c.omsaetning*100)+'%':'—'}</td></tr>
+      </table>
+      <div style="font-size:10px;color:var(--gray2);margin-top:8px">Demo-data. Live finans kræver Erhvervsstyrelsens årsrapport-API.</div>
+    </div>
+
+
+    <!-- PERSONER TAB -->
+    <div class="dp-body" id="tab-contacts">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="dp-section" style="margin:0">Registrerede personer</div>
+        <button class="btn btn-primary btn-sm" onclick="toggleContactForm('${c.cvr}')">＋ Tilføj</button>
+      </div>
+
+      ${(c.directors||[]).length>0?`
+      <div style="margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fra CVR-registret</div>
+        ${c.directors.map(d=>`
+          <div class="contact-card" style="border-color:var(--p5);background:var(--p7)">
+            <div class="contact-av" style="background:var(--p1)">${(d.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12.5px;font-weight:700;color:var(--pdarker)">${e(d.name||'')}</div>
+              <div style="font-size:11px;color:var(--gray)">${e(d.title||'Direktør')}</div>
+            </div>
+            <span style="font-size:9px;color:var(--gray2);background:var(--p6);padding:2px 6px;border-radius:4px;white-space:nowrap">CVR</span>
+          </div>`).join('')}
+      </div>`:''}
+
+      <div id="contact-form-${c.cvr}" class="contact-form" style="display:none">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <input class="contact-inp" id="cf-name" placeholder="Navn *">
+          <input class="contact-inp" id="cf-title" placeholder="Stilling / titel">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <input class="contact-inp" id="cf-phone" placeholder="Telefon">
+          <input class="contact-inp" id="cf-email" type="email" placeholder="Email">
+        </div>
+        <input class="contact-inp" id="cf-linkedin" placeholder="LinkedIn URL">
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          <button class="btn btn-sm" onclick="toggleContactForm('${c.cvr}')">Annuller</button>
+          <button class="btn btn-primary btn-sm" onclick="saveContact('${c.cvr}')">Gem person</button>
+        </div>
+      </div>
+
+      ${(leadContacts[c.cvr]||[]).length>0?`<div style="font-size:10px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Manuelt tilføjede</div>`:''}
+      <div id="contacts-list-${c.cvr}">
+        ${(leadContacts[c.cvr]||[]).map(ct=>`
+            <div class="contact-card" id="cc-${ct.id}">
+              <div class="contact-av" style="background:${ct.color||'var(--p3)'}">${(ct.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12.5px;font-weight:700;color:var(--pdarker)">${e(ct.name||'')}</div>
+                ${ct.title?`<div style="font-size:11px;color:var(--gray)">${e(ct.title)}</div>`:''}
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+                  ${ct.phone?`<a href="tel:${ct.phone}" style="font-size:11px;color:var(--p1);text-decoration:none">${e(ct.phone)}</a>`:''}
+                  ${ct.email?`<a href="mailto:${ct.email}" style="font-size:11px;color:var(--p1);text-decoration:none">${e(ct.email)}</a>`:''}
+                  ${ct.linkedin?`<a href="${ct.linkedin}" target="_blank" style="font-size:11px;color:var(--p1);text-decoration:none">in LinkedIn</a>`:''}
+                </div>
+              </div>
+              <span class="contact-del" onclick="removeContact('${c.cvr}','${ct.id}')" title="Fjern">×</span>
+            </div>`).join('')}
+      </div>
+    </div>
+
+
+  `;
+
+  // Tab click handlers
+  dp.querySelectorAll('.dp-tab').forEach(t=>t.addEventListener('click',()=>showTab(t.dataset.tab||t.textContent.trim().toLowerCase())));
+}
+
+function showTab(id){
+  document.querySelectorAll('.dp-tab').forEach((t,i)=>t.classList.toggle('on',['info','contacts','finans'][i]===id));
+  document.querySelectorAll('.dp-body').forEach(b=>b.classList.remove('on'));
+  document.getElementById('tab-'+id).classList.add('on');
+}
+
+async function setNote(cvr,note){leadNotes[cvr]=note;await save();}
+async function addTag(ev,cvr){
+  if(ev.key==='Enter'){
+    const v=ev.target.value.trim();if(!v)return;
+    leadTags[cvr]=[...(leadTags[cvr]||[]).filter(t=>t!==v),v];
+    await save();ev.target.value='';showDp(selCo);
+  }
+}
+async function removeTag(cvr,tag){leadTags[cvr]=(leadTags[cvr]||[]).filter(t=>t!==tag);await save();showDp(selCo);}
+
+// ── LEADS ─────────────────────────────────────────────────────────────────────
+function isL(cvr){return leads.some(l=>l.cvr===cvr);}
+async function qAdd(cvr,listId){
+  const c=[...res,...leads].find(x=>x.cvr===cvr);if(!c||isL(cvr))return;
+  const lid=listId||(aList==='all'?'ungrouped':aList);
+  const lead={...c,listId:lid,addedAt:new Date().toISOString()};
+  if(isServerMode){
+    try{await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify({company:lead,listId:lid})});}catch(e){}
+  }
+  leads.push(lead);
+  // Update local owners map immediately
+  if(!leadOwners[cvr])leadOwners[cvr]=[];
+  if(!leadOwners[cvr].some(o=>o.id===currentUser.id))leadOwners[cvr].push({id:currentUser.id,name:currentUser.name,color:currentUser.color||'#8258a8',avatar:currentUser.avatar||null});
+  await save();rSB();render();if(selCo?.cvr===cvr)showDp(leads.find(l=>l.cvr===cvr)||c);
+  // Auto-enrich in background
+  if(isServerMode&&!enrichStatus[cvr])enrichOne(cvr);
+}
+function showListPicker(cvrs){
+  // cvrs: array of CVR strings to add
+  const toAdd=cvrs.filter(c=>!isL(c));
+  if(!toAdd.length){alert('Alle valgte er allerede i leads');return;}
+  const bg=document.createElement('div');bg.className='modal-bg';bg.id='list-picker-bg';
+  bg.innerHTML=`<div class="modal" style="width:320px">
+    <h3>Tilføj ${toAdd.length} til liste</h3>
+    <p>Vælg hvilken liste de skal tilføjes til:</p>
+    <div style="display:flex;flex-direction:column;gap:6px" id="lp-lists">
+      ${lists.map(l=>`<button class="btn btn-sm" style="justify-content:flex-start;padding:10px 14px;font-size:13px" onclick="doListAdd('${l.id}')">${e(l.name)}</button>`).join('')}
+      <button class="btn btn-sm" style="justify-content:flex-start;padding:10px 14px;font-size:13px;color:var(--p1)" onclick="doListAdd('ungrouped')">Uden liste</button>
+    </div>
+    <div class="modal-actions"><button class="btn btn-sm" onclick="closeListPicker()">Annuller</button></div>
+  </div>`;
+  bg.onclick=ev=>{if(ev.target===bg)closeListPicker();};
+  document.body.appendChild(bg);
+  window._lpCvrs=toAdd;
+}
+function closeListPicker(){const bg=document.getElementById('list-picker-bg');if(bg)bg.remove();}
+async function doListAdd(listId){
+  const cvrs=window._lpCvrs||[];
+  closeListPicker();
+  for(const cvr of cvrs)await qAdd(cvr,listId==='all'?'ungrouped':listId);
+  ckd.clear();upSel();
+}
+async function remL(cvr){
+  if(isServerMode){try{await fetch(`/api/leads/${cvr}`,{method:'DELETE',headers:ah()});}catch(e){}}
+  leads=leads.filter(l=>l.cvr!==cvr);
+  if(leadOwners[cvr])leadOwners[cvr]=leadOwners[cvr].filter(o=>o.id!==currentUser?.id);
+  await save();rSB();if(selCo?.cvr===cvr)hdDp();render();
+}
+
+function rSB(){
+  // Pre-compute counts once
+  const counts=new Map();
+  counts.set('all',leads.length);
+  lists.forEach(l=>{if(l.id!=='all')counts.set(l.id,leads.filter(x=>x.listId===l.id).length);});
+  const isOn=id=>aList===id&&aView==='leads';
+
+  document.getElementById('lc').innerHTML=lists.map(l=>`
+    <div class="sb-li${isOn(l.id)?' on':''}" onclick="swList('${l.id}')">
+      <span class="sb-li-nm">${e(l.name)}</span>
+      <span class="sb-li-c">${counts.get(l.id)}</span>
+      ${l.id!=='all'?`<span class="sb-li-del" onclick="event.stopPropagation();delList('${l.id}')">×</span>`:''}
+    </div>`).join('');
+  const llb=document.getElementById('llb-lists');
+  if(llb)llb.innerHTML=lists.map(l=>`
+    <div class="llb-list${isOn(l.id)?' on':''}" onclick="swList('${l.id}')">
+      ${e(l.name)}
+      <span class="llb-count">${counts.get(l.id)}</span>
+      ${l.id!=='all'?`<span class="llb-del" onclick="event.stopPropagation();delList('${l.id}')">×</span>`:''}
+    </div>`).join('');
+}
+
+function swList(id){aList=id;rSB();if(aView!=='leads')sv('leads');else render();}
+function togNL(id='nli',disp='block'){
+  const n=document.getElementById(id);n.style.display=n.style.display==='none'?disp:'none';
+  if(n.style.display!=='none'){n.focus();n.onkeydown=ev=>{
+    if(ev.key==='Enter'){const v=ev.target.value.trim();if(v){lists.push({id:'l'+Date.now(),name:v});save();rSB();}n.value='';n.style.display='none';}
+    if(ev.key==='Escape'){n.value='';n.style.display='none';}
+  };}
+}
+async function delList(id){
+  if(!confirm('Slet listen?'))return;
+  lists=lists.filter(l=>l.id!==id);leads=leads.map(l=>l.listId===id?{...l,listId:'ungrouped'}:l);
+  if(aList===id)aList='all';await save();rSB();if(aView==='leads')render();
+}
+
+// ── BULK ──────────────────────────────────────────────────────────────────────
+function togCk(cvr,on){if(on)ckd.add(cvr);else ckd.delete(cvr);upSel();}
+function togAll(cb){
+  const pool=aView==='leads'?(aList==='all'?leads:leads.filter(l=>l.listId===aList)):res;
+  if(cb.checked)pool.forEach(c=>ckd.add(c.cvr));else ckd.clear();render();upSel();
+}
+function upSel(){
+  const sb=document.getElementById('selbar');if(!ckd.size){sb.classList.add('h');return;}
+  sb.classList.remove('h');
+  sb.innerHTML=`<strong>${ckd.size}</strong> valgt &nbsp;
+    <button class="btn btn-primary btn-sm" onclick="bulkAdd()">+ Tilføj som leads</button>
+    ${aView==='leads'?'<button class="btn btn-danger btn-sm" onclick="bulkRem()">Fjern valgte</button>':''}
+    ${aView==='leads'&&aiEnabled?`<button class="btn btn-sm" style="background:linear-gradient(135deg,var(--p1),var(--p3));color:#fff;border:none" onclick="enrichBatch([...ckd])">AI Enrich (${ckd.size})</button><span id="enrich-progress" style="font-size:11px;color:var(--gray)"></span>`:''}
+    <button class="btn btn-sm" onclick="expSel()">⬇ CSV</button>
+    <button class="btn btn-sm" style="margin-left:auto" onclick="ckd.clear();render();upSel()">× Fravælg</button>`;
+}
+function bulkAdd(){showListPicker([...ckd]);}
+async function bulkRem(){for(const c of[...ckd])await remL(c);ckd.clear();upSel();}
+function expSel(){const pool=aView==='leads'?leads:res;doCSV(pool.filter(c=>ckd.has(c.cvr)),'vedio_leads_valgte');}
+function addAll(){showListPicker(res.map(c=>c.cvr));}
+
+
+// ── EXPORT ─────────────────────────────────────────────────────────────────────
+function togSB(){sbOpen=!sbOpen;document.getElementById('sb').style.width=sbOpen?'280px':'0';}
+function togFilterPop(){const p=document.getElementById('filter-popover'),o=document.getElementById('fp-overlay');const isOpen=p.classList.toggle('open');o.classList.toggle('open',isOpen);}
+function doExport(){const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);if(!vis.length){alert('Ingen leads endnu');return;}doCSV(vis,'vedio_leads');}
+function doCSV(data,fn){
+  const f=[
+    ['cvr','CVR'],['name','Navn'],['web','Website'],['ph','Telefon'],['em','Email'],
+    ['addr','Adresse'],['zip','Postnr'],['city','By'],
+    ['ind','Branche'],['form','Form'],
+    ['emps','Ansatte'],['st','Status'],['yr','Stiftet'],
+    ['omsaetning','Omsætning'],['eq','Egenkapital'],['res','Resultat'],
+    ['addedAt','Tilføjet']
+  ];
+  const getExtra=(c)=>[
+    ['Note',leadNotes[c.cvr]||''],['Tags',(leadTags[c.cvr]||[]).join(', ')],
+    ['Followup',leadFollowup[c.cvr]||'']
+  ];
+  const header=[...f.map(x=>x[1]),'Note','Tags','Followup'].map(x=>`"${x}"`).join(';');
+  const rows=data.map(c=>[
+    ...f.map(x=>`"${(c[x[0]]||'').toString().replace(/"/g,'""')}"`),
+    ...getExtra(c).map(x=>`"${x[1].toString().replace(/"/g,'""')}"`)
+  ].join(';'));
+  const csv='\uFEFF'+[header,...rows].join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
+  a.download=fn+'_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+}
+
+// ── UTILS ──────────────────────────────────────────────────────────────────────
+function fmtKr(n){if(!n||n===0)return'—';const abs=Math.abs(n);const s=abs>=1000000?(Math.round(abs/100000)/10).toFixed(1)+'m':abs>=1000?Math.round(abs/1000)+'k':abs.toString();return(n<0?'-':'')+s;}
+function fp(p){const d=(p||'').replace(/\D/g,'');return d.length===8?d.replace(/(\d{2})(\d{2})(\d{2})(\d{2})/,'$1 $2 $3 $4'):p||'';}
+function e(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function trunc(s,n){return s&&s.length>n?s.slice(0,n)+'…':s||'';}
+// ── CONTACTS ──────────────────────────────────────────────────────────────────
+const CONTACT_COLORS=['#8258a8','#2563eb','#16a34a','#d97706','#0891b2','#7c3aed','#db2777','#dc2626'];
+function toggleContactForm(cvr){
+  const f=document.getElementById('contact-form-'+cvr);
+  if(!f)return;
+  const open=f.style.display!=='none';
+  f.style.display=open?'none':'flex';
+  if(!open){setTimeout(()=>{const n=document.getElementById('cf-name');if(n)n.focus();},50);}
+}
+async function saveContact(cvr){
+  const name=(document.getElementById('cf-name')?.value||'').trim();
+  if(!name){document.getElementById('cf-name')?.focus();return;}
+  const ct={
+    id:'c'+Date.now(),
+    name,
+    title:(document.getElementById('cf-title')?.value||'').trim(),
+    phone:(document.getElementById('cf-phone')?.value||'').trim(),
+    email:(document.getElementById('cf-email')?.value||'').trim(),
+    linkedin:(document.getElementById('cf-linkedin')?.value||'').trim(),
+    color:CONTACT_COLORS[Math.floor(Math.random()*CONTACT_COLORS.length)],
+    createdAt:new Date().toISOString(),
+  };
+  leadContacts[cvr]=[...(leadContacts[cvr]||[]),ct];
+  if(isServerMode){try{await fetch('/api/meta/'+cvr,{method:'PATCH',headers:ah(),body:JSON.stringify({contacts:leadContacts[cvr]})});}catch(e){}}
+  await save();
+  if(selCo&&selCo.cvr===cvr)showDp(selCo);
+  showTab('contacts');
+}
+async function removeContact(cvr,id){
+  leadContacts[cvr]=(leadContacts[cvr]||[]).filter(c=>c.id!==id);
+  if(isServerMode){try{await fetch('/api/meta/'+cvr,{method:'PATCH',headers:ah(),body:JSON.stringify({contacts:leadContacts[cvr]})});}catch(e){}}
+  await save();
+  if(selCo&&selCo.cvr===cvr)showDp(selCo);
+  showTab('contacts');
+}
+
+// ── PROFILE MODAL ─────────────────────────────────────────────────────────────
+const PROFILE_COLORS=['#8258a8','#2563eb','#16a34a','#d97706','#dc2626','#0891b2','#7c3aed','#db2777','#059669','#ea580c'];
+let profileAvatarData=null; // pending base64 or null-to-clear
+
+function openProfileModal(){
+  if(!currentUser)return;
+  profileAvatarData=undefined; // undefined = no change pending
+  // Populate fields
+  document.getElementById('pf-name').value=currentUser.name||'';
+  document.getElementById('pf-email').value=currentUser.email||'';
+  document.getElementById('pf-pw-current').value='';
+  document.getElementById('pf-pw-new').value='';
+  document.getElementById('pf-pw-confirm').value='';
+  document.getElementById('profile-pw-section').style.display='none';
+  document.getElementById('pw-toggle-arrow').textContent='▶';
+  // Hide message
+  const msg=document.getElementById('profile-msg');
+  msg.className='profile-msg';msg.textContent='';
+  // Avatar preview
+  const bigAv=document.getElementById('profile-avatar-big');
+  applyAvatarToEl(bigAv,currentUser);
+  bigAv.style.width='80px';bigAv.style.height='80px';bigAv.style.fontSize='28px';
+  document.getElementById('profile-avatar-remove').style.display=currentUser.avatar?'block':'none';
+  // Color swatches
+  const cr=document.getElementById('profile-color-row');
+  cr.innerHTML=PROFILE_COLORS.map(c=>`<div class="profile-color-swatch${(currentUser.color||'#8258a8')===c?' sel':''}" style="background:${c}" onclick="selectProfileColor('${c}')" title="${c}"></div>`).join('');
+  // Show modal
+  document.getElementById('profile-modal').style.display='flex';
+  setTimeout(()=>document.getElementById('pf-name').focus(),60);
+}
+
+function closeProfileModal(){
+  document.getElementById('profile-modal').style.display='none';
+  profileAvatarData=undefined;
+}
+
+function togglePwSection(){
+  const sec=document.getElementById('profile-pw-section');
+  const arr=document.getElementById('pw-toggle-arrow');
+  const open=sec.style.display!=='none';
+  sec.style.display=open?'none':'flex';
+  arr.textContent=open?'▶':'▼';
+}
+
+function selectProfileColor(c){
+  document.querySelectorAll('.profile-color-swatch').forEach(s=>s.classList.remove('sel'));
+  event.target.classList.add('sel');
+}
+
+function handleAvatarUpload(input){
+  const file=input.files[0];
+  if(!file)return;
+  if(file.size>2*1024*1024){showProfileMsg('Billede må max være 2 MB','err');input.value='';return;}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    profileAvatarData=ev.target.result; // base64
+    const bigAv=document.getElementById('profile-avatar-big');
+    bigAv.innerHTML='<img src="'+profileAvatarData+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block">';
+    bigAv.style.background='transparent';bigAv.style.fontSize='0';
+    document.getElementById('profile-avatar-remove').style.display='block';
+  };
+  reader.readAsDataURL(file);
+  input.value='';
+}
+
+function removeAvatar(){
+  profileAvatarData=null; // null = explicitly remove
+  const bigAv=document.getElementById('profile-avatar-big');
+  const initials=(currentUser.name||'?').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+  bigAv.innerHTML='';bigAv.textContent=initials;
+  bigAv.style.background=currentUser.color||'var(--p1)';bigAv.style.fontSize='28px';
+  document.getElementById('profile-avatar-remove').style.display='none';
+}
+
+function showProfileMsg(txt,type){
+  const msg=document.getElementById('profile-msg');
+  msg.textContent=txt;msg.className='profile-msg '+type;
+  if(type==='ok')setTimeout(()=>{msg.className='profile-msg';msg.textContent='';},3000);
+}
+
+async function saveProfile(){
+  if(!currentUser)return;
+  const name=document.getElementById('pf-name').value.trim();
+  const email=document.getElementById('pf-email').value.trim();
+  const selSwatch=document.querySelector('.profile-color-swatch.sel');
+  const color=selSwatch?selSwatch.style.background:currentUser.color;
+  if(!name){showProfileMsg('Navn må ikke være tomt','err');return;}
+  if(!email||!email.includes('@')){showProfileMsg('Ugyldig email','err');return;}
+  const body={name,email,color};
+  if(profileAvatarData!==undefined)body.avatar=profileAvatarData;
+
+  // Try server first
+  if(isServerMode&&authToken){
+    try{
+      const r=await fetch('/api/auth/profile',{method:'PATCH',headers:ah(),body:JSON.stringify(body)});
+      const d=await r.json();
+      if(r.ok){
+        currentUser=Object.assign(currentUser,d);
+        applyAvatarToEl(document.getElementById('user-avatar'),currentUser);
+        document.getElementById('user-name').textContent=currentUser.name;
+        showProfileMsg('Profil gemt ✓','ok');
+        setTimeout(closeProfileModal,1200);
+        return;
+      }
+    }catch(ex){}
+  }
+
+  // Local save
+  Object.assign(currentUser,body);
+  if(profileAvatarData===null)delete currentUser.avatar;
+  else if(profileAvatarData)currentUser.avatar=profileAvatarData;
+  localStorage.setItem('vl_current_user',JSON.stringify(currentUser));
+  applyAvatarToEl(document.getElementById('user-avatar'),currentUser);
+  document.getElementById('user-name').textContent=currentUser.name;
+  showProfileMsg('Profil gemt ✓','ok');
+  setTimeout(closeProfileModal,1200);
+}
+
+async function changePassword(){
+  const cur=document.getElementById('pf-pw-current').value;
+  const nw=document.getElementById('pf-pw-new').value;
+  const cf=document.getElementById('pf-pw-confirm').value;
+  if(!cur||!nw||!cf){showProfileMsg('Udfyld alle adgangskode-felter','err');return;}
+  if(nw!==cf){showProfileMsg('De to nye adgangskoder matcher ikke','err');return;}
+  if(nw.length<3){showProfileMsg('Ny adgangskode skal være mindst 3 tegn','err');return;}
+
+  // Try server first
+  if(isServerMode&&authToken){
+    try{
+      const r=await fetch('/api/auth/change-password',{method:'POST',headers:ah(),body:JSON.stringify({currentPassword:cur,newPassword:nw})});
+      const d=await r.json();
+      if(!r.ok){showProfileMsg(d.error||'Fejl ved skift af adgangskode','err');return;}
+      document.getElementById('pf-pw-current').value='';
+      document.getElementById('pf-pw-new').value='';
+      document.getElementById('pf-pw-confirm').value='';
+      showProfileMsg('Adgangskode ændret ✓','ok');
+      return;
+    }catch(ex){}
+  }
+
+  // Local password change
+  const acc=LOCAL_ACCOUNTS.find(a=>a.email===currentUser.email);
+  if(!acc||acc.password!==cur){showProfileMsg('Forkert nuværende adgangskode','err');return;}
+  acc.password=nw;
+  document.getElementById('pf-pw-current').value='';
+  document.getElementById('pf-pw-new').value='';
+  document.getElementById('pf-pw-confirm').value='';
+  showProfileMsg('Adgangskode ændret ✓','ok');
+}
+
+// ── EDIT LEAD ─────────────────────────────────────────────────────────────────
+let editLeadCvr=null;
+function openEditLead(cvr){
+  const c=leads.find(l=>l.cvr===cvr);if(!c)return;
+  editLeadCvr=cvr;
+  document.getElementById('edit-lead-title').textContent='Rediger: '+c.name;
+  document.getElementById('ef-contactName').value=c.contactName||'';
+  document.getElementById('ef-contactTitle').value=c.contactTitle||'';
+  document.getElementById('ef-ph').value=c.ph||'';
+  document.getElementById('ef-em').value=c.em||'';
+  document.getElementById('ef-web').value=c.web||'';
+  document.getElementById('ef-name').value=c.name||'';
+  document.getElementById('ef-ind').value=c.ind||'';
+  document.getElementById('ef-addr').value=c.addr||'';
+  document.getElementById('ef-zip').value=c.zip||'';
+  document.getElementById('ef-city').value=c.city||'';
+  document.getElementById('ef-omsaetning').value=c.omsaetning||'';
+  document.getElementById('ef-emps').value=c.emps||'';
+  const modal=document.getElementById('edit-lead-modal');
+  modal.style.display='flex';
+  setTimeout(()=>document.getElementById('ef-contactName').focus(),50);
+}
+function closeEditLead(){
+  document.getElementById('edit-lead-modal').style.display='none';
+  editLeadCvr=null;
+}
+async function saveEditLead(){
+  if(!editLeadCvr)return;
+  const updates={
+    name:(document.getElementById('ef-name').value.trim()||undefined),
+    contactName:document.getElementById('ef-contactName').value.trim(),
+    contactTitle:document.getElementById('ef-contactTitle').value.trim(),
+    ph:document.getElementById('ef-ph').value.trim(),
+    em:document.getElementById('ef-em').value.trim(),
+    web:document.getElementById('ef-web').value.trim(),
+    ind:document.getElementById('ef-ind').value.trim(),
+    addr:document.getElementById('ef-addr').value.trim(),
+    zip:document.getElementById('ef-zip').value.trim(),
+    city:document.getElementById('ef-city').value.trim(),
+    omsaetning:parseInt(document.getElementById('ef-omsaetning').value)||0,
+    emps:parseInt(document.getElementById('ef-emps').value)||0,
+  };
+  if(!updates.name)delete updates.name;
+  const lead=leads.find(l=>l.cvr===editLeadCvr);
+  if(lead)Object.assign(lead,updates);
+  if(isServerMode){
+    try{await fetch('/api/leads/'+editLeadCvr,{method:'PATCH',headers:ah(),body:JSON.stringify(updates)});}catch(ex){}
+  }
+  await save();
+  const btn=document.querySelector('#edit-lead-modal .btn-primary');
+  if(btn){btn.textContent='✓ Gemt!';setTimeout(()=>{btn.textContent='Gem ændringer';},1200);}
+  closeEditLead();
+  const updated=leads.find(l=>l.cvr===editLeadCvr||l.cvr===(lead&&lead.cvr));
+  const target=leads.find(l=>l.cvr===(lead?lead.cvr:editLeadCvr));
+  if(selCo&&target&&selCo.cvr===target.cvr){selCo=target;showDp(target);}
+  rLeads();render();
+}
+
+document.addEventListener('keydown',ev=>{if(ev.key==='Escape'){hdDp();closeEditLead();closeProfileModal();ckd.clear();upSel();}});
+document.querySelectorAll('[data-tip]').forEach(el=>{let t=null;el.addEventListener('mouseenter',()=>{t=document.createElement('div');t.className='data-tip-popup';t.textContent=el.dataset.tip;document.body.appendChild(t);const r=el.getBoundingClientRect();t.style.left=r.left+r.width/2-t.offsetWidth/2+'px';t.style.top=r.top-t.offsetHeight-6+'px';});el.addEventListener('mouseleave',()=>{if(t){t.remove();t=null;}});});
+document.getElementById('edit-lead-modal').addEventListener('click',ev=>{if(ev.target.id==='edit-lead-modal')closeEditLead();});
+document.getElementById('profile-modal').addEventListener('click',ev=>{if(ev.target.id==='profile-modal')closeProfileModal();});
+
+
+</script>
+</body>
+</html>
