@@ -323,6 +323,7 @@ tr.chk td{background:var(--bluebg)}
 @keyframes loginPopIn{from{opacity:0;transform:translateY(8px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
 .login-logo{text-align:center;margin-bottom:28px}
 .login-logo-dot{width:56px;height:56px;margin:0 auto 14px;border-radius:14px;background:linear-gradient(135deg,#7c3aed 0%,#a78bfa 100%);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;color:#fff;letter-spacing:-1px;box-shadow:0 8px 32px rgba(124,58,237,0.45)}
+.login-logo-img{display:block;width:64px;height:64px;margin:0 auto 14px;border-radius:14px;object-fit:contain;box-shadow:0 8px 32px rgba(124,58,237,0.45)}
 .login-logo-title{font-size:22px;font-weight:800;color:#fff;margin-bottom:4px;letter-spacing:-0.5px;font-family:'Outfit',sans-serif}
 .login-logo-sub{font-size:10px;color:#c4b5fd;letter-spacing:1.4px;text-transform:uppercase;font-weight:800;font-family:'Outfit',sans-serif}
 .login-inp{width:100%;padding:12px 14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;color:#fff;font-size:13px;font-weight:500;font-family:'Outfit',sans-serif;outline:none;transition:border-color 0.15s,background 0.15s;margin-bottom:10px}
@@ -425,8 +426,7 @@ body::before{content:'';position:fixed;inset:0;opacity:0.10;mix-blend-mode:overl
 .sidebar{background:var(--dark2) !important;border-right:1px solid var(--w08);position:relative}
 .sidebar::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(124,58,237,0.06) 0%,transparent 30%);pointer-events:none}
 .sb-logo{border-bottom:1px solid var(--w08);padding:18px 20px}
-.sb-logo img{display:none}
-.sb-logo::before{content:'V';width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#7c3aed 0%,#a78bfa 100%);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:900;color:#fff;letter-spacing:-0.5px;box-shadow:0 4px 16px rgba(124,58,237,0.4);flex-shrink:0}
+.sb-logo img{display:block !important;width:36px;height:36px;border-radius:9px;object-fit:contain;box-shadow:0 4px 16px rgba(124,58,237,0.4);flex-shrink:0}
 .sb-logo-text{color:#fff;font-weight:800;letter-spacing:-0.3px}
 .sb-logo-sub{color:var(--purple-soft);letter-spacing:1.2px;font-weight:700}
 
@@ -700,7 +700,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 <div class="login-overlay" id="login-overlay">
   <div class="login-card">
     <div class="login-logo">
-      <div class="login-logo-dot">V</div>
+      <img class="login-logo-img" src="/logo.png" alt="Vedio">
       <div class="login-logo-title">Vedio Leads</div>
       <div class="login-logo-sub">Lead Management</div>
     </div>
@@ -718,7 +718,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sb">
   <div class="sb-logo">
-    <img id="logo-img" src="/login.png" alt="Vedio">
+    <img id="logo-img" src="/logo.png" alt="Vedio">
     <div>
       <div class="sb-logo-text">Vedio Leads</div>
       <div class="sb-logo-sub">Lead Management</div>
