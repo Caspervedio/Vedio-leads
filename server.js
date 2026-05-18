@@ -885,6 +885,26 @@ function setCachedAds(cvr, data) {
   saveMetaAds(all);
 }
 
+// Datafordeler returns the legal company name ("BYGMA GRUPPEN A/S") which
+// almost never appears verbatim inside ad creative. Meta's keyword_exact_phrase
+// search needs the *brand* name — the bit advertisers actually print on their
+// ads ("Bygma"). This strips common Danish corporate suffixes and shell-company
+// noise so we feed Meta something searchable. Tested cases:
+//   "BYGMA GRUPPEN A/S"          → "BYGMA"
+//   "A.P. Møller - Mærsk A/S"    → "A.P. Møller - Mærsk"  (no GROUP/HOLDING)
+//   "JYSK HOLDING A/S"           → "JYSK"
+//   "DAGROFA APS"                → "DAGROFA"
+// If the cleaned name is too short (<2 chars after trim), we fall back to the
+// raw input so we don't blow away one-letter brand names.
+function brandNameFromLegal(legal) {
+  const cleaned = String(legal || "")
+    .replace(/\b(GRUPPEN|GROUP|HOLDING|HOLDINGSELSKAB|INVEST(ERING|MENT)?S?|INTERNATIONAL|DANMARK|DENMARK|SCANDINAVIA|NORDIC|EUROPE|EU)\b/gi, " ")
+    .replace(/\b(A\/S|ApS|IVS|I\/S|K\/S|P\/S|S\.A\.|GmbH|Ltd|Inc|Corp|LLC)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length >= 2 ? cleaned : String(legal || "").trim();
+}
+
 function buildAdsUrl(name) {
   const params = new URLSearchParams({
     active_status: "active",
@@ -995,18 +1015,29 @@ async function scrapeMetaAds(name, opts = {}) {
   }
 }
 
-// POST /api/check-ads/:cvr — scrape Meta and update cache for one company
+// POST /api/check-ads/:cvr — scrape Meta and update cache for one company.
+// Accepts an optional `name` override in the body (so the UI can let users
+// hand-tune the search term per row). If omitted, we derive a brand-name
+// guess from Datafordeler's legal name via brandNameFromLegal().
 app.post("/api/check-ads/:cvr", authMiddleware, async (req, res) => {
   const cvr = req.params.cvr;
   try {
     const company = await lookupDatafordeler(cvr).catch(() => null);
-    const name = (req.body && req.body.name) || company?.name;
-    if (!name) return res.status(400).json({ error: "Company name not available" });
-    const result = await scrapeMetaAds(name);
+    const override = req.body && req.body.name;
+    const searchName = override || brandNameFromLegal(company?.name);
+    if (!searchName) return res.status(400).json({ error: "Company name not available" });
+    const result = await scrapeMetaAds(searchName);
     if (result.verdict !== null) {
-      setCachedAds(cvr, { name, verdict: result.verdict, matched: result.matched || 0, total: result.total || 0, advertisers: result.advertisers || [] });
+      setCachedAds(cvr, {
+        name: company?.name || searchName,
+        searchName,
+        verdict: result.verdict,
+        matched: result.matched || 0,
+        total: result.total || 0,
+        advertisers: result.advertisers || [],
+      });
     }
-    res.json({ cvr, name, ...result, checkedAt: new Date().toISOString() });
+    res.json({ cvr, name: searchName, ...result, checkedAt: new Date().toISOString() });
   } catch (e) {
     console.error("[ads] check failed for", cvr, e.message);
     res.status(503).json({ error: e.message });
@@ -1048,10 +1079,11 @@ app.post("/api/check-ads-batch", authMiddleware, async (req, res) => {
     for (let i = 0; i < items.length; i++) {
       const { cvr, name } = items[i];
       if (!cvr || !name) continue;
+      const searchName = brandNameFromLegal(name);
       try {
-        const r = await scrapeMetaAds(name, { context });
+        const r = await scrapeMetaAds(searchName, { context });
         if (r.verdict !== null) {
-          setCachedAds(cvr, { name, verdict: r.verdict, matched: r.matched || 0, total: r.total || 0, advertisers: r.advertisers || [] });
+          setCachedAds(cvr, { name, searchName, verdict: r.verdict, matched: r.matched || 0, total: r.total || 0, advertisers: r.advertisers || [] });
         }
         results[cvr] = r;
       } catch (err) {
