@@ -470,8 +470,12 @@ body::before{content:'';position:fixed;inset:0;opacity:0.10;mix-blend-mode:overl
 .exp-btn{background:var(--w04);color:#fff;border-color:var(--w08);font-family:'Outfit',sans-serif;font-weight:700;border-radius:9px}
 .exp-btn:hover{background:rgba(124,58,237,0.15);border-color:rgba(124,58,237,0.3)}
 
-/* TOOLBAR / TOP BAR — Glass dark */
-.toolbar{background:rgba(13,10,20,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom-color:var(--w08)}
+/* TOOLBAR / TOP BAR — Glass dark
+   z-index:50 keeps the filter popover (which lives inside .toolbar) above
+   the leads-list-bar (z:40) and the table below. backdrop-filter creates a
+   stacking context so the popover can't escape; lifting the whole toolbar
+   solves it cleanly. */
+.toolbar{background:rgba(13,10,20,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom-color:var(--w08);position:relative;z-index:50}
 .sb-toggle{background:var(--w04);border-color:var(--w08);color:var(--purple-light);border-radius:9px}
 .sb-toggle:hover{background:rgba(124,58,237,0.15);border-color:rgba(124,58,237,0.3)}
 .sbox input{background:var(--w04);border-color:var(--w08);color:#fff;border-radius:10px;font-family:'Outfit',sans-serif}
@@ -492,7 +496,7 @@ body::before{content:'';position:fixed;inset:0;opacity:0.10;mix-blend-mode:overl
 .btn-green:hover{background:rgba(52,211,153,0.10);border-color:rgba(52,211,153,0.45);color:var(--green)}
 
 /* LEADS LIST BAR */
-.leads-list-bar{background:rgba(13,10,20,0.7);border-bottom-color:var(--w08);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.leads-list-bar{background:rgba(13,10,20,0.7);border-bottom-color:var(--w08);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);position:relative;z-index:40}
 .llb-list{color:var(--w55);font-family:'Outfit',sans-serif;font-weight:600}
 .llb-list:hover{background:var(--w04);color:#fff}
 .llb-list.on{background:rgba(124,58,237,0.18);color:#fff;border-color:rgba(124,58,237,0.4);font-weight:700}
