@@ -861,6 +861,212 @@ app.get("/api/company/:cvr", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// META ADS — public Ad Library scrape via Playwright. No Meta API token: the
+// official /ads_archive endpoint is restricted to political/issue ads outside
+// the US and commercial-ad access takes weeks of DSA review. The scrape is
+// brittle (Meta restructures the page ~every 6–12 months → expect ~1–2 hrs of
+// selector maintenance) but it's the same approach used in the COO project.
+// ─────────────────────────────────────────────────────────────────────────────
+const META_ADS_FILE = path.join(DATA_DIR, "meta_ads.json");
+const META_ADS_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days — re-check after this
+
+function loadMetaAds() { return loadJsonFile(META_ADS_FILE, {}); }
+function saveMetaAds(d) { try { fs.writeFileSync(META_ADS_FILE, JSON.stringify(d, null, 2)); } catch (e) { console.error("[ads] save failed:", e.message); } }
+function getCachedAds(cvr) {
+  const e = loadMetaAds()[cvr];
+  if (!e) return null;
+  if (Date.now() - new Date(e.checkedAt).getTime() > META_ADS_TTL) return null;
+  return e;
+}
+function setCachedAds(cvr, data) {
+  const all = loadMetaAds();
+  all[cvr] = { ...data, checkedAt: new Date().toISOString() };
+  saveMetaAds(all);
+}
+
+function buildAdsUrl(name) {
+  const params = new URLSearchParams({
+    active_status: "active",
+    ad_type: "all",
+    country: "DK",
+    is_targeted_country: "false",
+    media_type: "all",
+    search_type: "keyword_exact_phrase",
+    q: name,
+  });
+  return `https://www.facebook.com/ads/library/?${params.toString()}`;
+}
+
+function normalizeCompanyName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[®©™]/g, "")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\b(aps|a\/s|as|ivs|i\/s|ltd|inc|gmbh|sa|sarl|dk|denmark|danmark|gruppen)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Token + substring match — same heuristic as the COO project's
+// `advertiserMatchesCompany`. Whole-word boundary check avoids "Bygma"
+// matching "Mybyg" or similar.
+function advertiserMatchesCompany(advertiser, company) {
+  const a = normalizeCompanyName(advertiser);
+  const c = normalizeCompanyName(company);
+  if (!a || !c) return false;
+  if (a === c) return true;
+  if (c.length < 4) return false;
+  const aTokens = new Set(a.split(" ").filter((t) => t.length >= 4));
+  const cTokens = c.split(" ").filter((t) => t.length >= 4);
+  if (cTokens.some((t) => aTokens.has(t))) return true;
+  const aWord = ` ${a} `;
+  const cWord = ` ${c} `;
+  if (aWord.includes(cWord)) return true;
+  if (c.length >= 6 && cWord.includes(aWord)) return true;
+  return false;
+}
+
+// Parse the rendered Ads Library page text and verify ≥1 ad card matches
+// the searched company. The page structure (DK locale) is:
+//   Aktiv · Vist {date} · Platforme · Facebook, Instagram
+//   <Advertiser page name>          ← we want this
+//   Sponsoreret
+//   <ad body / CTA>
+// Last non-empty line before each "Sponsoreret" = advertiser name.
+function classifyAdsPage(text, companyName) {
+  if (!text) return { verdict: null, reason: "no body text" };
+  if (!/annoncebibliotek/i.test(text) && !/ad library/i.test(text)) {
+    return { verdict: null, reason: "ads library chrome missing (bot challenge?)" };
+  }
+  if (/ingen annoncer matcher/i.test(text) || /no ads match/i.test(text)) {
+    return { verdict: false, matched: 0, total: 0, advertisers: [] };
+  }
+  const parts = text.split(/sponsoreret|\bsponsored\b/i);
+  const advertisers = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const lines = parts[i].split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length) advertisers.push(lines[lines.length - 1]);
+  }
+  const total = advertisers.length;
+  if (total === 0) return { verdict: false, matched: 0, total: 0, advertisers: [] };
+  const matched = advertisers.filter((a) => advertiserMatchesCompany(a, companyName)).length;
+  return matched > 0
+    ? { verdict: true, matched, total, advertisers }
+    : { verdict: false, matched: 0, total, advertisers };
+}
+
+async function launchAdsBrowser() {
+  // Lazy-require so the server still boots when playwright isn't installed
+  // locally (the production Dockerfile uses the playwright base image; dev
+  // machines without it get 503 on /api/check-ads but the rest of the app
+  // works normally).
+  let chromium;
+  try { ({ chromium } = require("playwright")); }
+  catch (e) { throw new Error("playwright not installed: " + e.message); }
+  const launchOpts = { headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] };
+  if (process.env.CHROMIUM_PATH) launchOpts.executablePath = process.env.CHROMIUM_PATH;
+  const browser = await chromium.launch(launchOpts);
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    locale: "da-DK",
+    viewport: { width: 1280, height: 800 },
+  });
+  return { browser, context };
+}
+
+async function scrapeMetaAds(name, opts = {}) {
+  const { browser, context } = opts.context ? { browser: null, context: opts.context } : await launchAdsBrowser();
+  try {
+    const page = await context.newPage();
+    try {
+      await page.goto(buildAdsUrl(name), { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(4000);
+      await page.waitForSelector('[role="main"], [role="article"]', { timeout: 5000 }).catch(() => {});
+      const text = await page.evaluate(() => document.body.innerText).catch(() => null);
+      return classifyAdsPage(text, name);
+    } finally {
+      await page.close().catch(() => {});
+    }
+  } finally {
+    if (browser && !opts.context) await browser.close().catch(() => {});
+  }
+}
+
+// POST /api/check-ads/:cvr — scrape Meta and update cache for one company
+app.post("/api/check-ads/:cvr", authMiddleware, async (req, res) => {
+  const cvr = req.params.cvr;
+  try {
+    const company = await lookupDatafordeler(cvr).catch(() => null);
+    const name = (req.body && req.body.name) || company?.name;
+    if (!name) return res.status(400).json({ error: "Company name not available" });
+    const result = await scrapeMetaAds(name);
+    if (result.verdict !== null) {
+      setCachedAds(cvr, { name, verdict: result.verdict, matched: result.matched || 0, total: result.total || 0, advertisers: result.advertisers || [] });
+    }
+    res.json({ cvr, name, ...result, checkedAt: new Date().toISOString() });
+  } catch (e) {
+    console.error("[ads] check failed for", cvr, e.message);
+    res.status(503).json({ error: e.message });
+  }
+});
+
+// GET /api/ads-status/:cvr — cached verdict only
+app.get("/api/ads-status/:cvr", authMiddleware, (req, res) => {
+  const cached = getCachedAds(req.params.cvr);
+  res.json(cached || { cached: false });
+});
+
+// GET /api/ads-status — bulk fetch via ?cvrs=a,b,c (so the leads table can
+// paint pills in one round-trip instead of N).
+app.get("/api/ads-status", authMiddleware, (req, res) => {
+  const cvrs = String(req.query.cvrs || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const all = loadMetaAds();
+  const out = {};
+  for (const cvr of cvrs) {
+    const e = all[cvr];
+    if (!e) continue;
+    if (Date.now() - new Date(e.checkedAt).getTime() > META_ADS_TTL) continue;
+    out[cvr] = e;
+  }
+  res.json(out);
+});
+
+// POST /api/check-ads-batch — body: { items: [{cvr, name}, ...] }
+// Reuses a single browser context across the batch to skip the ~1.5s
+// chromium launch on each company. Sequential with a 2.5s delay between
+// hits — Meta is rate-friendly at this pace.
+app.post("/api/check-ads-batch", authMiddleware, async (req, res) => {
+  const items = (req.body && req.body.items) || [];
+  if (!Array.isArray(items) || items.length === 0) return res.json({});
+  let browser, context;
+  const results = {};
+  try {
+    ({ browser, context } = await launchAdsBrowser());
+    for (let i = 0; i < items.length; i++) {
+      const { cvr, name } = items[i];
+      if (!cvr || !name) continue;
+      try {
+        const r = await scrapeMetaAds(name, { context });
+        if (r.verdict !== null) {
+          setCachedAds(cvr, { name, verdict: r.verdict, matched: r.matched || 0, total: r.total || 0, advertisers: r.advertisers || [] });
+        }
+        results[cvr] = r;
+      } catch (err) {
+        results[cvr] = { verdict: null, reason: err.message };
+      }
+      if (i < items.length - 1) await new Promise((r) => setTimeout(r, 2500));
+    }
+    res.json(results);
+  } catch (e) {
+    res.status(503).json({ error: e.message });
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+});
+
 // ── Leads ─────────────────────────────────────────────────────────────────────
 
 // Get all users' claimed CVRs (for showing owner avatars on search results)

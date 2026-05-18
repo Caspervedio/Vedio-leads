@@ -880,7 +880,12 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <button class="btn btn-sm" onclick="togNL('nli2','inline-block')">+ Ny liste</button>
       <input id="nli2" class="llb-input" placeholder="Navn + Enter" style="display:none" autocomplete="off">
       <button class="btn btn-sm" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
-      <label class="ai-toggle" style="margin-left:auto"><input type="checkbox" id="ai-toggle" onchange="toggleAI(this.checked)"><span class="toggle-track"><span class="toggle-thumb"></span></span>AI Insights</label><button class="btn btn-sm" id="icp-gear" style="display:none;padding:2px 6px" onclick="openIcpSettings()" title="ICP Indstillinger">⚙</button>
+      <label class="ai-toggle" style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px">
+        <input type="checkbox" id="meta-only-toggle" onchange="setMetaOnlyFilter(this.checked)">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        Kun virksomheder med aktive Meta-ads
+      </label>
+      <button class="btn btn-sm" id="ads-bulk-btn" onclick="checkAdsForSelected()" title="Tjek Meta-ads for valgte virksomheder (langsom: ~5 s pr. række)">📢 Tjek ads</button>
     </div>
   </div>
 
@@ -1137,7 +1142,12 @@ let leadNotes={},leadTags={},leadFollowup={},leadAssigned={};
 let leadContacts={};
 let res=[],leads=[],lists=[{id:'all',name:'Alle leads'}],aList='all',aView='search';
 let leadOwners={}; // {cvr: [{id,name,color,avatar}]} — all users' claimed leads
-let aiEnabled=localStorage.getItem('vl_ai_enabled')!=='false'; // ON by default
+// Old AI-ICP scoring removed in favour of Meta-ads ICP signal.
+// Keeping the flag at false so the leftover conditional blocks
+// (`${aiEnabled ? '...' : ''}`) all render empty without touching them.
+let aiEnabled=false;
+// Per-CVR Meta-ads cache: { cvr: { verdict, matched, total, advertisers, checkedAt } }
+const metaAds={};
 let enrichStatus={}; // {cvr: {grade, total_score, recommendation, enriched_at}}
 
 
@@ -1533,6 +1543,9 @@ function sortR(){
     if(sC==='eq')return c.eq;
     if(sC==='omsaetning')return c.omsaetning;
     if(sC==='icp')return(enrichStatus[c.cvr]?.total_score)||0;
+    // Meta-ads sort: matched-count first, then 0 for negative, -1 for unchecked
+    // so checked-with-ads → checked-without-ads → never-checked.
+    if(sC==='ads'){const m=metaAds[c.cvr];if(!m||m._loading)return -1;return m.verdict?(m.matched||0):0;}
     return c[sC]||'';
   };
   res.sort((a,b)=>{const av=getSortVal(a),bv=getSortVal(b);return av<bv?-sD:av>bv?sD:0;});
@@ -1542,6 +1555,129 @@ function sortR(){
 function setSort(c){sC===c?sD*=-1:(sC=c,sD=1);sortR();render();}
 function si(k){return`<span style="opacity:${sC===k?1:.3};font-size:9px;margin-left:2px">${sC===k?(sD>0?'▲':'▼'):'⇅'}</span>`;}
 function render(){if(aView==='search')rTbl();else rLeads();setTimeout(checkAutoLoad,100);}
+
+// ── META ADS ─────────────────────────────────────────────────────────────────
+// Server scrapes facebook.com/ads/library via Playwright; we cache the
+// verdict per CVR for 7 days. UI states: never-checked (?), in-flight
+// (⏳), verdict=true (📢 N ads, purple), verdict=false (— grey).
+let metaOnlyFilter=false;
+function setMetaOnlyFilter(on){metaOnlyFilter=!!on;render();}
+
+function adsPill(cvr,name){
+  const m=metaAds[cvr];
+  if(!m){
+    return `<button class="ib" style="font-size:10px;padding:2px 8px;border-radius:11px" onclick="checkAds('${cvr}',${JSON.stringify(name||'').replace(/"/g,'&quot;')})" title="Tjek Meta ads">?</button>`;
+  }
+  if(m._loading){
+    return `<span style="font-size:10px;color:var(--purple-light);font-weight:600">⏳ Tjekker…</span>`;
+  }
+  if(m.error){
+    return `<button class="ib" style="font-size:10px;padding:2px 8px;border-radius:11px;color:var(--red);border-color:rgba(248,113,113,0.3)" onclick="checkAds('${cvr}',${JSON.stringify(name||'').replace(/"/g,'&quot;')})" title="${e(m.error)}">⚠</button>`;
+  }
+  const age=m.checkedAt?Math.round((Date.now()-new Date(m.checkedAt).getTime())/86400000):0;
+  const ageLabel=age===0?'I dag':(age===1?'I går':`${age} dage`);
+  if(m.verdict){
+    return `<span class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:10px;font-weight:700" title="${m.matched} af ${m.total} ads matchede – tjekket ${ageLabel} siden">📢 ${m.matched||0} ads</span>`;
+  }
+  return `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:10px;font-weight:600" title="Ingen aktive Meta-ads – tjekket ${ageLabel} siden">— Ingen ads</span>`;
+}
+
+async function checkAds(cvr,name){
+  metaAds[cvr]={_loading:true};render();refreshMetaAdsSection(cvr);
+  try{
+    const r=await fetch(`/api/check-ads/${cvr}`,{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({name})});
+    const d=await r.json();
+    if(!r.ok){metaAds[cvr]={error:d.error||'fejl'};render();return;}
+    if(d.verdict===null){metaAds[cvr]={error:d.reason||'Kunne ikke afgøre'};render();return;}
+    metaAds[cvr]={verdict:d.verdict,matched:d.matched||0,total:d.total||0,advertisers:d.advertisers||[],checkedAt:d.checkedAt||new Date().toISOString()};
+    render();refreshMetaAdsSection(cvr);
+  }catch(ex){metaAds[cvr]={error:ex.message};render();refreshMetaAdsSection(cvr);}
+}
+
+async function checkAdsForSelected(){
+  const cvrs=[...ckd];
+  if(cvrs.length===0){showToast('Vælg mindst én række først');return;}
+  if(cvrs.length>10&&!confirm(`Tjek Meta-ads for ${cvrs.length} virksomheder? Det tager cirka ${Math.ceil(cvrs.length*5/60)} minutter.`))return;
+  // Look up names from the visible list (search OR leads view).
+  const lookup={};for(const c of res)lookup[c.cvr]=c.name;for(const c of leads)lookup[c.cvr]=c.name;
+  const items=cvrs.map(cvr=>({cvr,name:lookup[cvr]})).filter(it=>it.name);
+  if(items.length===0){showToast('Kunne ikke finde virksomhedsnavne for valgte rækker');return;}
+  for(const it of items)metaAds[it.cvr]={_loading:true};render();
+  try{
+    const r=await fetch('/api/check-ads-batch',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({items})});
+    const d=await r.json();
+    for(const cvr of Object.keys(d)){
+      const v=d[cvr];
+      if(v.verdict===null)metaAds[cvr]={error:v.reason||'fejl'};
+      else metaAds[cvr]={verdict:v.verdict,matched:v.matched||0,total:v.total||0,advertisers:v.advertisers||[],checkedAt:new Date().toISOString()};
+    }
+    render();showToast(`Tjekket ${items.length} virksomheder`);
+  }catch(ex){
+    for(const it of items)if(metaAds[it.cvr]?._loading)metaAds[it.cvr]={error:ex.message};
+    render();
+  }
+}
+
+// Render the Meta-ads block inside the lead detail panel. Re-called from
+// checkAds() after a fetch completes so the panel updates in place without
+// a full re-render.
+function renderMetaAdsSection(c){
+  const m=metaAds[c.cvr];
+  const adsLibraryUrl=`https://www.facebook.com/ads/library/?country=DK&active_status=active&q=${encodeURIComponent(c.name||'')}`;
+  if(!m){
+    return `<div style="font-size:12px;color:var(--w55);margin-bottom:6px">Ikke tjekket endnu.</div>
+      <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;gap:6px" onclick="checkAds('${c.cvr}',${JSON.stringify(c.name||'').replace(/"/g,'&quot;')})">📢 Tjek aktive Meta-ads</button>
+      <a href="${adsLibraryUrl}" target="_blank" style="display:block;text-align:center;font-size:10.5px;color:var(--w35);margin-top:6px">Åbn i Meta Ad Library →</a>`;
+  }
+  if(m._loading){
+    return `<div style="font-size:12px;color:var(--purple-light);text-align:center;padding:14px 0">⏳ Henter resultater fra Meta…</div>`;
+  }
+  if(m.error){
+    return `<div style="font-size:12px;color:var(--red);margin-bottom:6px">${e(m.error)}</div>
+      <button class="btn btn-sm" style="width:100%;justify-content:center" onclick="checkAds('${c.cvr}',${JSON.stringify(c.name||'').replace(/"/g,'&quot;')})">Prøv igen</button>`;
+  }
+  const age=m.checkedAt?Math.round((Date.now()-new Date(m.checkedAt).getTime())/86400000):0;
+  const ageLabel=age===0?'i dag':(age===1?'i går':`for ${age} dage siden`);
+  const verdictBlock=m.verdict
+    ? `<div style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
+          <div style="font-size:22px;font-weight:900;color:#fff">📢 ${m.matched} aktiv${m.matched===1?'':'e'}</div>
+          <div style="font-size:10px;color:var(--w55);font-weight:600">af ${m.total} reklame${m.total===1?'':'r'} på siden</div>
+        </div>
+        <div style="font-size:11px;color:var(--purple-soft);margin-top:4px;font-weight:600">Match — kører Meta-ads ${ageLabel}</div>
+      </div>
+      ${(m.advertisers||[]).length?`<div style="font-size:10.5px;color:var(--w55);margin-bottom:6px">Annoncører fundet på siden:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${(m.advertisers||[]).slice(0,8).map(a=>`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--w04);color:var(--w80);border:1px solid var(--w08)">${e(a)}</span>`).join('')}</div>`:''}`
+    : `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:16px;font-weight:700;color:var(--w55)">— Ingen aktive Meta-ads</div>
+        <div style="font-size:11px;color:var(--w35);margin-top:4px">Tjekket ${ageLabel}</div>
+      </div>`;
+  return verdictBlock+`<div style="display:flex;gap:6px;align-items:center">
+      <button class="btn btn-sm" style="flex:1;justify-content:center" onclick="checkAds('${c.cvr}',${JSON.stringify(c.name||'').replace(/"/g,'&quot;')})">Tjek igen</button>
+      <a href="${adsLibraryUrl}" target="_blank" class="btn btn-sm" style="flex:1;justify-content:center;text-decoration:none">Åbn i Ad Library →</a>
+    </div>`;
+}
+
+function refreshMetaAdsSection(cvr){
+  if(!selCo||selCo.cvr!==cvr)return;
+  const wrap=document.getElementById('meta-ads-wrap-'+cvr);
+  if(wrap)wrap.innerHTML=renderMetaAdsSection(selCo);
+}
+
+// Bulk-fetch the cached verdicts for everything currently in `res` / `leads`
+// in one round-trip. Called when entering a view so pills paint immediately.
+async function loadMetaAdsForVisible(){
+  const cvrs=new Set();
+  for(const c of res)cvrs.add(c.cvr);
+  for(const c of leads)cvrs.add(c.cvr);
+  if(cvrs.size===0)return;
+  try{
+    const r=await fetch(`/api/ads-status?cvrs=${[...cvrs].join(',')}`,{headers:ah()});
+    const d=await r.json();
+    for(const cvr of Object.keys(d))metaAds[cvr]=d[cvr];
+    render();
+  }catch(ex){/* silent */}
+}
 
 // ── CUSTOMERS PAGE ───────────────────────────────────────────────────────────
 async function addCustomerFromInput(){
@@ -1992,6 +2128,8 @@ function sv(v){
     }
     rSB();render();
     if(v==='leads'&&aiEnabled)setTimeout(fetchEnrichStatus,100);
+    // Paint cached Meta-ads verdicts for visible rows in one round-trip.
+    setTimeout(loadMetaAdsForVisible,150);
   } else if(v==='customers'){
     if(custPage)custPage.style.display='flex';custPage.style.flexDirection='column';
     renderCustomersPage();
@@ -2243,7 +2381,8 @@ function showToast(msg,dur=2500){
 // ── TABLE ─────────────────────────────────────────────────────────────────────
 function rTbl(){
   const hideOwned=document.getElementById('f-hide-owned')?.checked;
-  const visRes=hideOwned?res.filter(c=>{const ow=leadOwners[c.cvr]||[];return !ow.some(o=>o.id!==currentUser?.id);}):res;
+  let visRes=hideOwned?res.filter(c=>{const ow=leadOwners[c.cvr]||[];return !ow.some(o=>o.id!==currentUser?.id);}):res;
+  if(metaOnlyFilter)visRes=visRes.filter(c=>metaAds[c.cvr]?.verdict===true);
 
   document.getElementById('thead').innerHTML=`<tr>
     <th style="width:28px"><input type="checkbox" class="cb" onchange="togAll(this)"></th>
@@ -2255,7 +2394,8 @@ function rTbl(){
     <th class="sort${sC==='city'?' sorted':''}" style="width:8%" onclick="setSort('city')">By ${si('city')}</th>
     <th class="sort${sC==='emp'?' sorted':''}" style="width:42px" onclick="setSort('emp')">Ans. ${si('emp')}</th>
     <th class="sort${sC==='omsaetning'?' sorted':''}" style="width:78px" onclick="setSort('omsaetning')">Omsætning ${si('omsaetning')}</th>
-    <th class="sort${sC==='ind'?' sorted':''}" style="width:14%" onclick="setSort('ind')">Branche ${si('ind')}</th>
+    <th class="sort${sC==='ind'?' sorted':''}" style="width:12%" onclick="setSort('ind')">Branche ${si('ind')}</th>
+    <th class="sort${sC==='ads'?' sorted':''}" style="width:88px" onclick="setSort('ads')" title="Aktive Meta-ads">Meta ads ${si('ads')}</th>
     <th style="width:50px"></th>
   </tr>`;
 
@@ -2271,6 +2411,7 @@ function rTbl(){
       <td style="color:var(--gray)">${c.emps}</td>
       <td style="font-weight:600;font-size:11.5px;color:${c.omsaetning>0?'var(--pdarker)':'var(--gray2)'}">${fmtKr(c.omsaetning)}</td>
       <td style="color:var(--gray);font-size:11.5px" title="${e(c.ind)}">${trunc(c.ind,18)}</td>
+      <td onclick="event.stopPropagation()">${adsPill(c.cvr, c.name)}</td>
       <td style="overflow:visible;text-overflow:clip" onclick="event.stopPropagation()">
         <div style="display:flex;gap:3px;align-items:center">
           ${isL(c.cvr)?'<button class="ib added" title="I leads">✓</button>':`<button class="ib" onclick="showListPicker(['${c.cvr}'])" title="Tilføj lead">+</button>`}
@@ -2288,7 +2429,8 @@ function rTbl(){
 }
 
 function rLeads(){
-  const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
+  let vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
+  if(metaOnlyFilter)vis=vis.filter(l=>metaAds[l.cvr]?.verdict===true);
   const ai=aiEnabled;
   const colCount=ai?14:12;
   if(!vis.length){
@@ -2306,7 +2448,8 @@ function rLeads(){
     <th class="sort${sC==='city'?' sorted':''}" style="width:8%" onclick="setSort('city')">By ${si('city')}</th>
     <th class="sort${sC==='emp'?' sorted':''}" style="width:42px" onclick="setSort('emp')">Ans. ${si('emp')}</th>
     <th class="sort${sC==='omsaetning'?' sorted':''}" style="width:78px" onclick="setSort('omsaetning')">Omsætning ${si('omsaetning')}</th>
-    <th class="sort${sC==='ind'?' sorted':''}" style="width:${ai?'10%':'14%'}" onclick="setSort('ind')">Branche ${si('ind')}</th>
+    <th class="sort${sC==='ind'?' sorted':''}" style="width:${ai?'10%':'12%'}" onclick="setSort('ind')">Branche ${si('ind')}</th>
+    <th class="sort${sC==='ads'?' sorted':''}" style="width:88px" onclick="setSort('ads')" title="Aktive Meta-ads">Meta ads ${si('ads')}</th>
     ${ai?`<th class="sort${sC==='icp'?' sorted':''}" style="width:100px" onclick="setSort('icp')">ICP ${si('icp')}</th>
     <th style="width:60px">Status</th>`:''}
     <th style="width:75px">Tilføjet</th>
@@ -2324,6 +2467,7 @@ function rLeads(){
       <td style="color:var(--gray)">${c.emps}</td>
       <td style="font-weight:600;font-size:11.5px;color:${c.omsaetning>0?'var(--pdarker)':'var(--gray2)'}">${fmtKr(c.omsaetning)}</td>
       <td style="color:var(--gray);font-size:11.5px" title="${e(c.ind)}">${trunc(c.ind,ai?14:18)||'—'}</td>
+      <td onclick="event.stopPropagation()">${adsPill(c.cvr, c.name)}</td>
       ${ai?`<td>${icpCell(c.cvr)}</td><td>${recBadge(c.cvr)}</td>`:''}
       <td style="color:var(--gray2);font-size:11px">${c.addedAt?new Date(c.addedAt).toLocaleDateString('da-DK'):'—'}</td>
       <td onclick="event.stopPropagation()"><button class="ib rm" onclick="remL('${c.cvr}')" title="Fjern">✕</button></td>
@@ -2423,12 +2567,8 @@ function showDp(c){
           <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="remL('${c.cvr}')">Fjern fra leads</button>`
           :`<button class="btn btn-primary" style="width:100%;justify-content:center" onclick="showListPicker(['${c.cvr}'])">+ Tilføj til leads</button>`}
       </div>
-      <div id="ai-enrich-wrap-${c.cvr}" style="margin-top:10px">
-        <button class="btn btn-sm" style="width:100%;justify-content:center;gap:6px;background:linear-gradient(135deg,var(--p1),var(--p3));color:#fff;border:none" onclick="runEnrich('${c.cvr}')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-          AI Lead Score
-        </button>
-      </div>
+      <div class="dp-section" style="margin-top:14px">Meta-ads</div>
+      <div id="meta-ads-wrap-${c.cvr}">${renderMetaAdsSection(c)}</div>
     </div>
 
     <!-- FINANS TAB -->

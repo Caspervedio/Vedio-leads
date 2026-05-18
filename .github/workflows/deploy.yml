@@ -42,7 +42,7 @@ jobs:
             --image "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$SERVICE:${{ github.sha }}" \
             --allow-unauthenticated \
             --port 3000 \
-            --memory 512Mi \
+            --memory 1Gi \
             --cpu 1 \
             --min-instances 0 \
             --max-instances 1 \
