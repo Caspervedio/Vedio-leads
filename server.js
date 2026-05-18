@@ -7,8 +7,10 @@ const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, "data.json");
-const USERS_FILE = path.join(__dirname, "users.json");
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+const DATA_FILE = path.join(DATA_DIR, "data.json");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 app.use(cors());
 app.use(express.json());
@@ -65,7 +67,7 @@ function loadUsers() {
 }
 
 function getUserDataFile(userId) {
-  return path.join(__dirname, `data_${userId}.json`);
+  return path.join(DATA_DIR, `data_${userId}.json`);
 }
 
 function loadUserData(userId) {
@@ -1250,7 +1252,7 @@ app.get("/api/status", async (req, res) => {
 });
 
 // ── Gmail Integration ─────────────────────────────────────────────────────────
-const GMAIL_CONFIG_FILE = path.join(__dirname, "gmail_oauth.json");
+const GMAIL_CONFIG_FILE = path.join(DATA_DIR, "gmail_oauth.json");
 
 function loadGmailConfig() {
   try { if (fs.existsSync(GMAIL_CONFIG_FILE)) return JSON.parse(fs.readFileSync(GMAIL_CONFIG_FILE, "utf-8")); } catch (e) {}
@@ -1591,12 +1593,12 @@ const ICP_DEFINITION = {
 };
 
 // ── Enrichment DB (JSON file + 5min hot cache) ──────────────────────────────
-const ENRICHMENTS_FILE = path.join(__dirname, 'data_enrichments.json');
+const ENRICHMENTS_FILE = path.join(DATA_DIR, 'data_enrichments.json');
 const ENRICH_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days before re-enriching
 const ENRICH_HOT_TTL = 5 * 60 * 1000; // 5 min in-memory hot cache
 
 // ── ICP Settings (persisted to file) ─────────────────────────────────────────
-const ICP_FILE = path.join(__dirname, 'data_icp.json');
+const ICP_FILE = path.join(DATA_DIR, 'data_icp.json');
 let _icpCache = null;
 let _icpCacheTs = 0;
 const ICP_CACHE_TTL = 5 * 60 * 1000; // 5 min cache
