@@ -48,8 +48,11 @@ jobs:
             --max-instances 1 \
             --add-volume "name=data,type=cloud-storage,bucket=$BUCKET" \
             --add-volume-mount "volume=data,mount-path=/data" \
-            --set-env-vars "DATA_DIR=/data,NODE_ENV=production" \
-            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest"
+            --network=default \
+            --subnet=leads-egress \
+            --vpc-egress=all-traffic \
+            --set-env-vars "DATA_DIR=/data,NODE_ENV=production,CVR_PROVIDER=datafordeler" \
+            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,DATAFORDELER_KEY=datafordeler-key:latest"
 
       - name: Show service URL
         run: gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)'
