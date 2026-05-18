@@ -796,10 +796,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div class="fp-section">
           <div class="fp-section-title">Generelt</div>
           <div class="fl">Inkluder søgeord</div>
-          <input class="fi" id="q" placeholder="CVR, navn, website…" autocomplete="off">
+          <input class="fi" id="q" placeholder="CVR, navn, website…" autocomplete="off" onkeydown="if(event.key==='Enter')runFilterSearch()">
           <div class="fl">Ekskluder søgeord</div>
-          <input class="fi" id="q-ex" placeholder="Holding, udlejning…" autocomplete="off">
-          <div style="margin:8px 0"><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--pdarker);cursor:pointer"><input type="checkbox" id="f-hide-owned" onchange="applyF()"> Skjul andres leads</label></div>
+          <input class="fi" id="q-ex" placeholder="Holding, udlejning…" autocomplete="off" onkeydown="if(event.key==='Enter')runFilterSearch()">
+          <div style="margin:8px 0"><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--pdarker);cursor:pointer"><input type="checkbox" id="f-hide-owned"> Skjul andres leads</label></div>
           <div class="fl">Reklamebeskyttelse</div>
           <div class="rk-grp">
             <button class="rk-btn on" id="rk-alle" onclick="setRk('alle')">Alle</button>
@@ -810,21 +810,21 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div class="fp-section">
           <div class="fp-section-title">Virksomhedsoplysninger</div>
           <div class="fl">Virksomhedsform</div>
-          <select class="fs" id="f-form" onchange="applyF()">
+          <select class="fs" id="f-form">
             <option value="">Alle former</option>
             <option value="ApS">ApS</option><option value="A/S">A/S</option>
             <option value="I/S">I/S</option><option value="Enkeltmands">Enkeltmands</option>
           </select>
           <div class="fl">Ansatte</div>
-          <div class="frow"><input class="fi" id="fe1" type="number" placeholder="Fra" onchange="applyF()"><span>–</span><input class="fi" id="fe2" type="number" placeholder="Til" onchange="applyF()"></div>
+          <div class="frow"><input class="fi" id="fe1" type="number" placeholder="Fra" onkeydown="if(event.key==='Enter')runFilterSearch()"><span>–</span><input class="fi" id="fe2" type="number" placeholder="Til" onkeydown="if(event.key==='Enter')runFilterSearch()"></div>
           <div class="fl">Egenkapital over (kr.)</div>
-          <input class="fi" id="f-eq" type="number" placeholder="0" onchange="applyF()">
+          <input class="fi" id="f-eq" type="number" placeholder="0" onkeydown="if(event.key==='Enter')runFilterSearch()">
           <div class="fl">Resultat over (kr.)</div>
-          <input class="fi" id="f-res" type="number" placeholder="0" onchange="applyF()">
+          <input class="fi" id="f-res" type="number" placeholder="0" onkeydown="if(event.key==='Enter')runFilterSearch()">
           <div class="fl">Virksomhedens alder (mdr.)</div>
-          <div class="frow"><input class="fi" id="fam" type="number" placeholder="Min" onchange="applyF()"><span>–</span><input class="fi" id="faM" type="number" placeholder="Max" onchange="applyF()"></div>
+          <div class="frow"><input class="fi" id="fam" type="number" placeholder="Min" onkeydown="if(event.key==='Enter')runFilterSearch()"><span>–</span><input class="fi" id="faM" type="number" placeholder="Max" onkeydown="if(event.key==='Enter')runFilterSearch()"></div>
           <div class="fl">Branche</div>
-          <select class="fs" id="f-b" onchange="applyF()">
+          <select class="fs" id="f-b">
             <option value="">Alle brancher</option>
             <option value="41">Byggeri & anlæg</option>
             <option value="43">Håndværk & installation</option>
@@ -848,19 +848,20 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
             <option value="96">Frisør & personlig pleje</option>
           </select>
           <div class="fl">Stiftet (år)</div>
-          <div class="frow"><input class="fi" id="fy1" type="number" placeholder="2000" onchange="applyF()"><span>–</span><input class="fi" id="fy2" type="number" placeholder="2025" onchange="applyF()"></div>
+          <div class="frow"><input class="fi" id="fy1" type="number" placeholder="2000" onkeydown="if(event.key==='Enter')runFilterSearch()"><span>–</span><input class="fi" id="fy2" type="number" placeholder="2025" onkeydown="if(event.key==='Enter')runFilterSearch()"></div>
         </div>
         <div class="fp-section">
           <div class="fp-section-title">Område</div>
           <div class="fl">Inkluder by</div>
-          <input class="fi" id="f-ci" placeholder="Aalborg" autocomplete="off" onchange="applyF()">
+          <input class="fi" id="f-ci" placeholder="Aalborg" autocomplete="off" onkeydown="if(event.key==='Enter')runFilterSearch()">
           <div class="fl">Ekskluder by</div>
-          <input class="fi" id="f-cx" placeholder="København" autocomplete="off" onchange="applyF()">
+          <input class="fi" id="f-cx" placeholder="København" autocomplete="off" onkeydown="if(event.key==='Enter')runFilterSearch()">
           <div class="fl">Postnr. interval</div>
-          <div class="frow"><input class="fi" id="fzm" type="number" placeholder="5000" onchange="applyF()"><span>–</span><input class="fi" id="fzM" type="number" placeholder="5999" onchange="applyF()"></div>
+          <div class="frow"><input class="fi" id="fzm" type="number" placeholder="5000" onkeydown="if(event.key==='Enter')runFilterSearch()"><span>–</span><input class="fi" id="fzM" type="number" placeholder="5999" onkeydown="if(event.key==='Enter')runFilterSearch()"></div>
         </div>
-        <div class="fp-footer">
-          <button class="btn btn-sm" style="width:100%;justify-content:center" onclick="resetF()">Nulstil alle filtre</button>
+        <div class="fp-footer" style="display:flex;gap:8px">
+          <button class="btn btn-sm" style="flex:1;justify-content:center" onclick="resetF()">Nulstil</button>
+          <button class="btn btn-primary btn-sm" style="flex:2;justify-content:center" onclick="runFilterSearch()">Søg</button>
         </div>
       </div>
     </div>
@@ -1213,7 +1214,7 @@ async function doLogin(){
         authToken=d.token;currentUser=d.user;
         localStorage.setItem('vl_token',authToken);
         showApp();await loadUserState();sv('search');
-        setTimeout(()=>{['q','q-ex','f-ci','f-cx','qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
+        setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
         return;
       }
     }catch(err){}
@@ -1236,7 +1237,7 @@ async function doLogin(){
   }catch(e){}
   showApp();rSB();
   res=[];render();
-  setTimeout(()=>{['q','q-ex','f-ci','f-cx','qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
+  setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
 }
 
 async function logout(){
@@ -1289,7 +1290,7 @@ async function loadUserState(){
           await loadUserState();
           sv('search');
           setTimeout(()=>{
-            ['q','q-ex','f-ci','f-cx','qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
+            ['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
           },80);
           return;
         } else {
@@ -1504,14 +1505,20 @@ function clearApiError(){
   if(el)el.style.display='none';
 }
 
-function setRk(v){['alle','skjul','kun'].forEach(k=>document.getElementById('rk-'+k).classList.toggle('on',k===v));applyF();}
-function tChipTech(el,name){techSel.has(name)?(techSel.delete(name),el.classList.remove('on')):(techSel.add(name),el.classList.add('on'));applyF();}
+function setRk(v){['alle','skjul','kun'].forEach(k=>document.getElementById('rk-'+k).classList.toggle('on',k===v));}
+function tChipTech(el,name){techSel.has(name)?(techSel.delete(name),el.classList.remove('on')):(techSel.add(name),el.classList.add('on'));}
+// Click handler for the Søg button in the filter popover footer — runs the
+// current filter state on demand and closes the popover so results are visible.
+function runFilterSearch(){applyF();togFilterPop();}
 function resetF(){
   ['q','q-ex','f-ci','f-cx','qs','fe1','fe2','fy1','fy2','f-eq','f-res','fam','faM','fzm','fzM'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  document.getElementById('f-form').value='';document.getElementById('f-b').value='';
+  const ff=document.getElementById('f-form');if(ff)ff.value='';
+  const fb=document.getElementById('f-b');if(fb)fb.value='';
+  const ho=document.getElementById('f-hide-owned');if(ho)ho.checked=false;
   techSel.clear();
   document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
-  setRk('alle');applyF();
+  ['alle','skjul','kun'].forEach(k=>{const el=document.getElementById('rk-'+k);if(el)el.classList.toggle('on',k==='alle')});
+  applyF();
 }
 
 function togAcc(id){
