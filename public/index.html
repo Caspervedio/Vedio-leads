@@ -1566,6 +1566,12 @@ function setMetaOnlyFilter(on){metaOnlyFilter=!!on;render();}
 function adsPill(cvr,name){
   const m=metaAds[cvr];
   if(!m){
+    // Leads view auto-checks on entry, so an unchecked row is a transient
+    // state — show a pending dot instead of a question mark to avoid the
+    // misleading "click me" affordance. Search view keeps the manual button.
+    if(aView==='leads'){
+      return `<span style="font-size:10px;color:var(--w35);font-weight:600" title="Tjekkes automatisk…">⏳ —</span>`;
+    }
     return `<button class="ib" style="font-size:10px;padding:2px 8px;border-radius:11px" onclick="checkAds('${cvr}',${JSON.stringify(name||'').replace(/"/g,'&quot;')})" title="Tjek Meta ads">?</button>`;
   }
   if(m._loading){
@@ -1664,19 +1670,48 @@ function refreshMetaAdsSection(cvr){
   if(wrap)wrap.innerHTML=renderMetaAdsSection(selCo);
 }
 
-// Bulk-fetch the cached verdicts for everything currently in `res` / `leads`
-// in one round-trip. Called when entering a view so pills paint immediately.
+// Two-phase fill for the Meta-ads column:
+//   1. fetch what we already have cached (instant, 1 round-trip)
+//   2. in the leads view only, auto-batch the rest in the background so
+//      pills end up green/grey without the user having to click each row
+// We skip auto-checking in the search view because search results can be
+// 500+ companies — scraping them all would take an hour and waste the
+// Cloud Run instance. Search results still get a manual `?` button.
 async function loadMetaAdsForVisible(){
   const cvrs=new Set();
   for(const c of res)cvrs.add(c.cvr);
   for(const c of leads)cvrs.add(c.cvr);
   if(cvrs.size===0)return;
+  // Phase 1: load cached statuses
   try{
     const r=await fetch(`/api/ads-status?cvrs=${[...cvrs].join(',')}`,{headers:ah()});
     const d=await r.json();
     for(const cvr of Object.keys(d))metaAds[cvr]=d[cvr];
     render();
   }catch(ex){/* silent */}
+  // Phase 2: auto-batch uncached (leads view only)
+  if(aView!=='leads')return;
+  const lookup={};for(const c of res)lookup[c.cvr]=c.name;for(const c of leads)lookup[c.cvr]=c.name;
+  const uncached=[...cvrs].filter(cvr=>!metaAds[cvr]).map(cvr=>({cvr,name:lookup[cvr]})).filter(it=>it.name);
+  if(uncached.length===0)return;
+  // Cap auto-check at 50 to stay inside Cloud Run's 300 s request timeout
+  // (≈ 5 s per company → 250 s for 50). For bigger lead lists the user can
+  // still hit the bulk button manually with smaller selections.
+  const items=uncached.slice(0,50);
+  for(const it of items)metaAds[it.cvr]={_loading:true};render();
+  try{
+    const r=await fetch('/api/check-ads-batch',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({items})});
+    const d=await r.json();
+    for(const cvr of Object.keys(d)){
+      const v=d[cvr];
+      if(v.verdict===null)metaAds[cvr]={error:v.reason||'fejl'};
+      else metaAds[cvr]={verdict:v.verdict,matched:v.matched||0,total:v.total||0,advertisers:v.advertisers||[],checkedAt:new Date().toISOString()};
+    }
+    render();
+  }catch(ex){
+    for(const it of items)if(metaAds[it.cvr]?._loading)metaAds[it.cvr]={error:ex.message};
+    render();
+  }
 }
 
 // ── CUSTOMERS PAGE ───────────────────────────────────────────────────────────
