@@ -174,10 +174,14 @@ async function lookupDatafordeler(cvr) {
   const eid = virk.id;
 
   // Trin 2: Hent relaterede entiteter parallelt
-  // CVR returnerer altid aktuel tilstand (registreringstid = NOW() pr. design)
+  // CVR_Navn returns historical names (e.g. CVR 55930317 has 3 entries spanning
+  // 1976→today: SANDER HANSESNS → SANDER HANSENS → BYGMA GRUPPEN A/S). The
+  // result is ordered chronologically so we fetch up to 50 and pick the last
+  // edge as the current legal name. The other entities are single-valued in
+  // practice but kept at first:1 to stay cheap.
   const w = `CVREnhedsId: { eq: "${eid}" }`;
   const [dNavn, dAdr, dTlf, dEmail, dBranche, dForm, dBesk] = await Promise.all([
-    dfGqlFetch(`{ CVR_Navn(first: 1, where: { ${w} }) { edges { node { vaerdi } } } }`),
+    dfGqlFetch(`{ CVR_Navn(first: 50, where: { ${w} }) { edges { node { vaerdi } } } }`),
     dfGqlFetch(`{ CVR_Adressering(first: 1, where: { ${w} }) { edges { node { CVRAdresse_vejnavn CVRAdresse_husnummerFra CVRAdresse_postnummer CVRAdresse_postdistrikt } } } }`),
     dfGqlFetch(`{ CVR_Telefonnummer(first: 1, where: { ${w} }) { edges { node { vaerdi } } } }`),
     dfGqlFetch(`{ CVR_e_mailadresse(first: 1, where: { ${w} }) { edges { node { vaerdi } } } }`),
@@ -212,7 +216,9 @@ function normalizeDatafordeler(virk, d) {
     : (besk.antal ? String(besk.antal) : "");
   return {
     cvr:         String(virk.CVRNummer || ""),
-    name:        d?.navn?.edges?.[0]?.node?.vaerdi || "",
+    // Use the LAST edge of CVR_Navn — historical names are returned in
+    // chronological order (oldest → current).
+    name:        d?.navn?.edges?.length ? d.navn.edges[d.navn.edges.length - 1].node.vaerdi || "" : "",
     address:     [adr.CVRAdresse_vejnavn, adr.CVRAdresse_husnummerFra].filter(Boolean).join(" "),
     zip:         String(adr.CVRAdresse_postnummer || ""),
     city:        adr.CVRAdresse_postdistrikt || "",
