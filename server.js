@@ -150,7 +150,7 @@ async function dfGqlFetch(gql) {
   });
   if (!res.ok) {
     const body = await res.text();
-    if (res.status === 401) throw new Error(`Datafordeler 401: ${body.substring(0, 200)}`);
+    if (res.status === 401) { console.error('[df 401 full body]', body); throw new Error(`Datafordeler 401: ${body.substring(0, 500)}`); }
     throw new Error(`Datafordeler GraphQL svarede ${res.status}: ${body.substring(0, 200)}`);
   }
   const json = await res.json();
