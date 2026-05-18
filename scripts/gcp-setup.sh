@@ -114,7 +114,7 @@ echo "   gcloud storage cp users.json gs://$BUCKET/users.json"
 echo "   (Drag-drop users.json into Cloud Shell first, or upload via the bucket UI.)"
 echo
 echo "2. Copy the contents of $KEY_FILE and add as a GitHub secret:"
-echo "   Repo: https://github.com/Vedio-dk/leads"
+echo "   Repo: https://github.com/Caspervedio/Vedio-leads"
 echo "   Settings → Secrets and variables → Actions → New repository secret"
 echo "   Name: GCP_SA_KEY"
 echo "   Value: <paste the entire JSON below>"
@@ -126,7 +126,7 @@ echo "─── END GCP_SA_KEY ────────────────�
 echo
 echo "3. After the secret is set, push a commit (or re-run the workflow"
 echo "   manually) to trigger deploy:"
-echo "     https://github.com/Vedio-dk/leads/actions"
+echo "     https://github.com/Caspervedio/Vedio-leads/actions"
 echo
 echo "4. ⚠️  Delete the local key file once stored in GitHub:"
 echo "     shred -u $KEY_FILE   # or: rm $KEY_FILE"

@@ -10,7 +10,7 @@ GitHub Actions builds and deploys on every push to `main`.
 1. Open Cloud Shell: <https://shell.cloud.google.com/?project=vedio-444210>
 2. Clone the repo and run the setup script:
    ```bash
-   git clone https://github.com/Vedio-dk/leads.git && cd leads
+   git clone https://github.com/Caspervedio/Vedio-leads.git && cd Vedio-leads
    bash scripts/gcp-setup.sh
    ```
    The script will prompt for the Gemini API key (input hidden).
@@ -24,7 +24,7 @@ After that, every push to `main` auto-deploys via `.github/workflows/deploy.yml`
 ## Manual redeploy
 
 Push to `main`, or trigger the workflow from
-<https://github.com/Vedio-dk/leads/actions/workflows/deploy.yml>.
+<https://github.com/Caspervedio/Vedio-leads/actions/workflows/deploy.yml>.
 
 ## Updating the Gemini API key
 
