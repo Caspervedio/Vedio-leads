@@ -2,25 +2,33 @@
 /**
  * Meta-first lead discovery.
  *
- * Walks facebook.com/ads/library with country=DK + active_status=active
- * (no keyword filter) and dedupes by advertiser page ID. For each unique
- * advertiser we then try an exact-name lookup in Datafordeler to enrich
- * with CVR / industry / employees / address — but advertisers that don't
- * match a Danish CVR are kept anyway, flagged as `cvrMatch: null` (foreign
- * brands targeting DK, individuals, non-corporate entities).
+ * Meta's Ad Library UI refuses to render results without a search seed
+ * ("Søg efter nøgleord eller en annoncør"). So we sweep through a list of
+ * short Danish-language seed terms (single letters by default), let the
+ * results render, and harvest the unique advertiser names visible across
+ * all of them.
  *
- * Why this replaces the old discover-ads.js:
- * - 100% hit rate (every entry is, by definition, currently advertising)
- * - No name-matching false positives (we have the actual page ID)
- * - Smaller dataset to scan (~10–30k DK active advertisers vs 85k CVRs)
- * - Works in one pass (~10–30 min) instead of weeks of rotation
+ * Advertiser extraction follows the recipe from the COO project's
+ * check-ads-status.ts: parse `document.body.innerText`, split by the
+ * "Sponsoreret" / "Sponsored" labels, and take the last non-empty line
+ * before each split as the advertiser page name. That dodges Meta's
+ * obfuscated class names which would otherwise break the scraper every
+ * 6 months.
+ *
+ * Each discovered advertiser is then exact-name-matched against
+ * Datafordeler for CVR / industry / employees enrichment. Foreign brands
+ * targeting DK (or non-corporate entities) stay in the dataset flagged
+ * as `cvrMatch: null` — caller can filter them out if they want strictly
+ * Danish CVRs.
  *
  * Env:
- *   DATAFORDELER_KEY   — same secret main service uses
- *   DATA_DIR           — GCS-mounted dir for state (default /data)
- *   SCROLL_PASSES      — number of scroll cycles (default 200 ≈ 6k cards)
- *   SCROLL_INTERVAL_MS — pause between scrolls (default 2500)
- *   POST_LOAD_WAIT_MS  — initial wait after navigation (default 6000)
+ *   DATAFORDELER_KEY    — Datafordeler GraphQL key
+ *   DATA_DIR            — GCS mount path (default /data)
+ *   SEEDS               — comma-separated seed terms (default: a..z + æ ø å)
+ *   SCROLLS_PER_SEED    — scroll passes per seed (default 12)
+ *   SCROLL_INTERVAL_MS  — pause between scrolls (default 2500)
+ *   POST_LOAD_WAIT_MS   — initial wait after navigation (default 6000)
+ *   ENRICH_CONCURRENCY  — parallel CVR lookups (default 5)
  */
 
 const { chromium } = require("playwright");
@@ -28,24 +36,47 @@ const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
 
+// ── config ─────────────────────────────────────────────────────────────────
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const ADVERTISERS_FILE = path.join(DATA_DIR, "discovery", "advertisers.json");
 const DEBUG_SAMPLE_FILE = path.join(DATA_DIR, "discovery", "debug_last_sample.json");
 
-const SCROLL_PASSES = Number(process.env.SCROLL_PASSES) || 200;
+const DEFAULT_SEEDS = "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,æ,ø,å";
+const SEEDS = (process.env.SEEDS || DEFAULT_SEEDS).split(",").map((s) => s.trim()).filter(Boolean);
+const SCROLLS_PER_SEED = Number(process.env.SCROLLS_PER_SEED) || 12;
 const SCROLL_INTERVAL_MS = Number(process.env.SCROLL_INTERVAL_MS) || 2500;
 const POST_LOAD_WAIT_MS = Number(process.env.POST_LOAD_WAIT_MS) || 6000;
+const SEED_GAP_MS = Number(process.env.SEED_GAP_MS) || 3000;
 const ENRICH_CONCURRENCY = Number(process.env.ENRICH_CONCURRENCY) || 5;
 
-// Walk the DK active commercial ads listing. is_targeted_country=false so
-// foreign-brand ads served to DK are also surfaced — caller can choose to
-// filter by `cvrMatch !== null` if they want strictly Danish entities.
-const META_URL =
-  "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&is_targeted_country=false&media_type=all";
+function seedUrl(q) {
+  const params = new URLSearchParams({
+    active_status: "active",
+    ad_type: "all",
+    country: "DK",
+    is_targeted_country: "false",
+    media_type: "all",
+    search_type: "keyword_unordered",
+    q,
+  });
+  return `https://www.facebook.com/ads/library/?${params}`;
+}
 
-// ── Datafordeler — same helpers as the legacy CVR-walk worker. Kept
-//    duplicated rather than imported to keep this script self-contained
-//    inside the Cloud Run Job image. ─────────────────────────────────────────
+// Per-advertiser deep-link (used by the UI later).
+function advertiserDeepLink(name) {
+  const params = new URLSearchParams({
+    active_status: "active",
+    ad_type: "all",
+    country: "DK",
+    is_targeted_country: "true",
+    media_type: "all",
+    search_type: "page",
+    q: name,
+  });
+  return `https://www.facebook.com/ads/library/?${params}`;
+}
+
+// ── Datafordeler ────────────────────────────────────────────────────────────
 function getDfGqlUrl() {
   const key = process.env.DATAFORDELER_KEY;
   if (!key) throw new Error("DATAFORDELER_KEY env var is required");
@@ -63,18 +94,24 @@ async function dfGqlFetch(gql) {
   return j.data;
 }
 
-// Best-effort exact-name lookup. Datafordeler only supports `eq` on
-// strings, so we try a few normalised variants and take the first hit.
 async function cvrLookupByName(advertiserName) {
+  // Datafordeler only supports `eq` on strings. Try a handful of normalised
+  // variants — the advertiser's FB-page name is often the brand without a
+  // legal suffix, so we add the common ones back when probing.
+  const trimmed = advertiserName.trim();
   const variants = [
-    advertiserName,
-    advertiserName.toUpperCase(),
-    advertiserName + " A/S",
-    advertiserName + " ApS",
-    advertiserName + " A/S".toUpperCase(),
-    advertiserName.replace(/\.dk$/i, ""),
+    trimmed,
+    trimmed.toUpperCase(),
+    `${trimmed} A/S`,
+    `${trimmed} ApS`,
+    `${trimmed.toUpperCase()} A/S`,
+    `${trimmed.toUpperCase()} APS`,
+    trimmed.replace(/\.dk$/i, ""),
+    trimmed.replace(/\.dk$/i, "") + " A/S",
+    trimmed.replace(/\.dk$/i, "") + " ApS",
   ];
   for (const v of variants) {
+    if (!v) continue;
     try {
       const r = await dfGqlFetch(
         `{ CVR_Navn(first: 5, where: { vaerdi: { eq: "${v.replace(/"/g, '\\"')}" } }) { edges { node { CVREnhedsId vaerdi } } } }`,
@@ -110,15 +147,86 @@ async function enrichByEnhedsId(enhedsId) {
   };
 }
 
-// ── Meta walk ───────────────────────────────────────────────────────────────
-// We extract everything we can from the rendered DOM. The Ad Library uses
-// obfuscated class names so we anchor on stable patterns: links that
-// reference `view_all_page_id=`, the "Library ID:" prefix, and the
-// "Sponsoreret" / "Sponsored" labels for advertiser-name extraction.
-//
-// First run also writes a debug_last_sample.json so we can see exactly
-// what the DOM looked like if our selectors miss everything.
-async function walkAdLibrary() {
+// ── Advertiser extraction ───────────────────────────────────────────────────
+// Same recipe as the COO project: split body innerText by the "Sponsoreret"
+// markers (or "Sponsored" in English locales — we set Danish but keep both
+// for robustness), and take the last non-empty line in each chunk as the
+// advertiser page name. Filters out junk lines that are clearly not names.
+function extractAdvertisersFromText(text) {
+  if (!text || (!/annoncebibliotek/i.test(text) && !/ad library/i.test(text))) {
+    return null; // page didn't render — caller should treat as bot challenge
+  }
+  const parts = text.split(/\bsponsoreret\b|\bsponsored\b/i);
+  if (parts.length < 2) return [];
+  const out = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const lines = parts[i].split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    const candidate = lines[lines.length - 1];
+    // Reject UI chrome / boilerplate that often shows up at the very top of
+    // the page before the first card.
+    if (looksLikeChrome(candidate)) continue;
+    out.push(candidate);
+  }
+  return out;
+}
+
+function looksLikeChrome(s) {
+  if (!s) return true;
+  if (s.length < 2 || s.length > 100) return true;
+  // Common Meta chrome strings. Add more here as we see them.
+  if (/^(metas|annoncebibliotek|rapport|api|brandet|log på|systemstatus|abonner|ofte|om annoncer|privatindstillinger|vilkår|cookies|søg|angiv|danmark|annoncekategori|udforsk|download|tilpas|brug|gå til|hvem|folk|alle|filter|udfyld|sortér)/i.test(s)) return true;
+  // Pure separator
+  if (/^[\s—–·•|]+$/.test(s)) return true;
+  return false;
+}
+
+// ── Meta walk: one seed at a time, scroll, harvest ──────────────────────────
+async function walkSeed(page, seed, advertisers) {
+  await page.goto(seedUrl(seed), { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForTimeout(POST_LOAD_WAIT_MS);
+
+  let lastTextLen = 0;
+  let stuckCount = 0;
+  const beforeCount = advertisers.size;
+  let didDebugDump = false;
+
+  for (let i = 0; i < SCROLLS_PER_SEED; i++) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(SCROLL_INTERVAL_MS);
+
+    const visibleText = await page.evaluate(() => document.body.innerText).catch(() => null);
+    const harvested = extractAdvertisersFromText(visibleText);
+    if (harvested == null) {
+      console.warn(`  [seed=${seed}] page didn't render the Ad Library — bot challenge?`);
+      if (!didDebugDump) {
+        try {
+          fs.mkdirSync(path.dirname(DEBUG_SAMPLE_FILE), { recursive: true });
+          fs.writeFileSync(DEBUG_SAMPLE_FILE, JSON.stringify({ seed, sample: (visibleText || "").slice(0, 1500) }, null, 2));
+          didDebugDump = true;
+        } catch (_) {}
+      }
+      break;
+    }
+    for (const name of harvested) {
+      const key = name.toLowerCase();
+      if (!advertisers.has(key)) advertisers.set(key, { name, firstSeenSeed: seed, firstSeenPass: i });
+    }
+    // Detect "no more results" by tracking body text length plateau.
+    const curLen = (visibleText || "").length;
+    if (curLen === lastTextLen) {
+      stuckCount++;
+      if (stuckCount >= 3) break; // 3 plateaus in a row → done with this seed
+    } else {
+      stuckCount = 0;
+      lastTextLen = curLen;
+    }
+  }
+  const gained = advertisers.size - beforeCount;
+  console.log(`  seed='${seed}' · +${gained} unique advertisers (total now ${advertisers.size})`);
+}
+
+async function walkMeta() {
   console.log(`[discover-advertisers] launching chromium…`);
   const browser = await chromium.launch({
     headless: true,
@@ -132,70 +240,17 @@ async function walkAdLibrary() {
   });
   const page = await ctx.newPage();
 
-  console.log(`[discover-advertisers] navigating to Ads Library…`);
-  await page.goto(META_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.waitForTimeout(POST_LOAD_WAIT_MS);
-
-  // Sanity check — is the Ads Library actually loaded (didn't hit a login
-  // wall / bot challenge)?
-  const initialText = await page.evaluate(() => document.body.innerText.slice(0, 600));
-  const okLoaded = /annoncebibliotek|ad library/i.test(initialText);
-  if (!okLoaded) {
-    console.error(`[discover-advertisers] ⚠ ads library not detected on initial load — saving sample for inspection`);
-    fs.mkdirSync(path.dirname(DEBUG_SAMPLE_FILE), { recursive: true });
-    fs.writeFileSync(DEBUG_SAMPLE_FILE, JSON.stringify({ url: META_URL, initialText }, null, 2));
-    await browser.close();
-    throw new Error("Ads Library page did not load — body text doesn't mention 'Annoncebibliotek' / 'Ad Library'");
-  }
-  console.log(`[discover-advertisers] page loaded — beginning ${SCROLL_PASSES} scroll passes…`);
-
-  // Map keyed by pageId (when we have it) or by normalised name (fallback).
-  const advertisers = new Map();
-
-  for (let i = 0; i < SCROLL_PASSES; i++) {
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(SCROLL_INTERVAL_MS);
-
-    const harvested = await page.evaluate(() => {
-      // Anchor 1: links that go straight to per-page ad views. These carry
-      // the page ID in a query param.
-      const pageLinks = Array.from(document.querySelectorAll('a[href*="view_all_page_id="]')).map((a) => ({
-        href: a.href,
-        text: (a.innerText || "").trim().slice(0, 120),
-      }));
-      // Anchor 2: visible "Library ID:" markers tell us how many cards
-      // are on the page (useful for diagnostics).
-      const libraryIdCount = (document.body.innerText.match(/Library ID|Bibliotek-ID/gi) || []).length;
-      return { pageLinks, libraryIdCount };
-    });
-
-    for (const link of harvested.pageLinks) {
-      const m = link.href.match(/view_all_page_id=(\d+)/);
-      if (!m) continue;
-      const pageId = m[1];
-      if (advertisers.has(pageId)) continue;
-      advertisers.set(pageId, {
-        pageId,
-        name: link.text || null,
-        href: link.href,
-        firstSeenPass: i,
-      });
+  const advertisers = new Map(); // normalised name → {name, firstSeenSeed, firstSeenPass}
+  for (let i = 0; i < SEEDS.length; i++) {
+    const seed = SEEDS[i];
+    console.log(`[discover-advertisers] seed ${i + 1}/${SEEDS.length}: '${seed}'`);
+    try {
+      await walkSeed(page, seed, advertisers);
+    } catch (e) {
+      console.error(`  seed='${seed}' failed: ${e.message}`);
     }
-
-    if (i % 20 === 0 || i === SCROLL_PASSES - 1) {
-      console.log(`  pass ${i + 1}/${SCROLL_PASSES} · cards-on-page=${harvested.libraryIdCount} · unique advertisers so far=${advertisers.size}`);
-    }
+    if (i < SEEDS.length - 1) await page.waitForTimeout(SEED_GAP_MS);
   }
-
-  // Save a debug sample of the final DOM state so we can iterate selectors
-  // without re-running the whole scrape.
-  const debugSample = await page.evaluate(() => ({
-    bodyTextHead: document.body.innerText.slice(0, 2000),
-    pageLinks: Array.from(document.querySelectorAll('a[href*="view_all_page_id="]')).slice(0, 5).map((a) => a.outerHTML.slice(0, 400)),
-  }));
-  fs.mkdirSync(path.dirname(DEBUG_SAMPLE_FILE), { recursive: true });
-  fs.writeFileSync(DEBUG_SAMPLE_FILE, JSON.stringify(debugSample, null, 2));
-
   await browser.close();
   return [...advertisers.values()];
 }
@@ -205,23 +260,22 @@ async function enrichAdvertisers(list) {
   console.log(`[discover-advertisers] enriching ${list.length} advertisers via Datafordeler…`);
   const enriched = [];
   let done = 0;
-  // Sequential with throttle is fine here — Datafordeler isn't the bottleneck
-  // and we're not trying to win latency wars.
   for (let i = 0; i < list.length; i += ENRICH_CONCURRENCY) {
     const batch = list.slice(i, i + ENRICH_CONCURRENCY);
     const results = await Promise.all(batch.map(async (a) => {
-      if (!a.name) return { ...a, cvrMatch: null };
+      const base = { ...a, deepLink: advertiserDeepLink(a.name) };
+      if (!a.name) return { ...base, cvrMatch: null };
       try {
         const hit = await cvrLookupByName(a.name);
-        if (!hit) return { ...a, cvrMatch: null };
+        if (!hit) return { ...base, cvrMatch: null };
         const cvr = await enrichByEnhedsId(hit.enhedsId);
         return {
-          ...a,
+          ...base,
           cvrMatch: { enhedsId: hit.enhedsId, matchedName: hit.matchedName, matchedVariant: hit.matchedVariant },
           ...cvr,
         };
       } catch (e) {
-        return { ...a, cvrMatch: null, enrichError: e.message };
+        return { ...base, cvrMatch: null, enrichError: e.message };
       }
     }));
     enriched.push(...results);
@@ -235,10 +289,11 @@ async function enrichAdvertisers(list) {
 
 async function main() {
   const startTime = Date.now();
-  console.log(`[discover-advertisers] start · scrolls=${SCROLL_PASSES} · interval=${SCROLL_INTERVAL_MS}ms`);
+  console.log(`[discover-advertisers] start · seeds=${SEEDS.length} · scrolls/seed=${SCROLLS_PER_SEED}`);
 
-  const advertisers = await walkAdLibrary();
-  console.log(`[discover-advertisers] walked Meta — ${advertisers.length} unique advertisers in ${((Date.now() - startTime) / 60000).toFixed(1)} min`);
+  const advertisers = await walkMeta();
+  const walkMin = ((Date.now() - startTime) / 60000).toFixed(1);
+  console.log(`[discover-advertisers] walked Meta — ${advertisers.length} unique advertisers in ${walkMin} min`);
 
   if (advertisers.length === 0) {
     console.error("[discover-advertisers] ⚠ no advertisers harvested — check debug_last_sample.json");
@@ -251,6 +306,7 @@ async function main() {
   fs.writeFileSync(ADVERTISERS_FILE, JSON.stringify({
     walkedAt: new Date(startTime).toISOString(),
     completedAt: new Date().toISOString(),
+    seedsUsed: SEEDS,
     totalUnique: enriched.length,
     cvrMatched: enriched.filter((a) => a.cvrMatch).length,
     advertisers: enriched,
