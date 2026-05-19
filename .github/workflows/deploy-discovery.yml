@@ -1,0 +1,66 @@
+name: Deploy Discovery Job
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/discover-ads.js"
+      - "Dockerfile.discovery"
+      - ".github/workflows/deploy-discovery.yml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: vedio-444210
+  REGION: europe-west1
+  JOB_NAME: lead-discovery
+  REPO: leads
+  BUCKET: vedio-leads-data
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build discovery image
+        run: |
+          gcloud builds submit \
+            --project "$PROJECT_ID" \
+            --tag "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/lead-discovery:${{ github.sha }}" \
+            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET \
+            -f Dockerfile.discovery \
+            .
+
+      - name: Deploy or update Cloud Run Job
+        run: |
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/lead-discovery:${{ github.sha }}"
+          # `gcloud run jobs deploy` creates the job if missing, updates it
+          # otherwise — same UX as `run deploy` for services.
+          gcloud run jobs deploy "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --task-timeout 3600 \
+            --max-retries 1 \
+            --cpu 2 \
+            --memory 2Gi \
+            --add-volume "name=data,type=cloud-storage,bucket=$BUCKET" \
+            --add-volume-mount "volume=data,mount-path=/data" \
+            --network=default \
+            --subnet=leads-egress \
+            --vpc-egress=all-traffic \
+            --set-env-vars "DATA_DIR=/data,DISCOVERY_BUCKET=$BUCKET,DISCOVERY_LIMIT=1000,CONCURRENCY=5" \
+            --set-secrets "DATAFORDELER_KEY=datafordeler-key:latest"
+
+      - name: Show job ARN
+        run: gcloud run jobs describe "$JOB_NAME" --project "$PROJECT_ID" --region "$REGION" --format='value(name)'

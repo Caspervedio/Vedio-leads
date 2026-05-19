@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+#
+# Lead Discovery scraper — Cloud Run Job image.
+#
+# Separate from the main service Dockerfile because:
+#  - Cloud Run Jobs are fire-and-forget batch tasks, no HTTP listener
+#  - The image only needs the scraper script + its deps, not the whole app
+#  - Independent versioning lets us tweak the scraper without redeploying
+#    the user-facing service
+#
+# Same Playwright base + chromium-bundled image the main service uses, so
+# the scrape behaviour matches what the manual /api/check-ads endpoint sees.
+
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
+WORKDIR /app
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY scripts/discover-ads.js ./scripts/discover-ads.js
+
+# Cloud Run Job calls this command on each task execution.
+CMD ["node", "scripts/discover-ads.js"]
