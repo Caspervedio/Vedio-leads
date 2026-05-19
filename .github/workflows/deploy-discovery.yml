@@ -5,8 +5,10 @@ on:
     branches: [main]
     paths:
       - "scripts/discover-ads.js"
+      - "scripts/discover-advertisers.js"
       - "Dockerfile.discovery"
       - ".github/workflows/deploy-discovery.yml"
+      - "cloudbuild-discovery.yaml"
       - "package.json"
       - "package-lock.json"
   workflow_dispatch:

@@ -20,6 +20,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY scripts/discover-ads.js ./scripts/discover-ads.js
+COPY scripts/discover-advertisers.js ./scripts/discover-advertisers.js
 
-# Cloud Run Job calls this command on each task execution.
-CMD ["node", "scripts/discover-ads.js"]
+# Default to the new Meta-first walk. Override DISCOVERY_MODE on the Job
+# (or in --update-env-vars on execute) to run the legacy CVR-walk if ever
+# needed for backfill: DISCOVERY_MODE=discover-ads
+ENV DISCOVERY_MODE=discover-advertisers
+CMD ["sh", "-c", "node scripts/${DISCOVERY_MODE}.js"]
