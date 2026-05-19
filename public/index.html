@@ -923,24 +923,33 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   </div>
 
   <!-- DISCOVERY PAGE -->
-  <div id="discovery-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--p7)">
-    <div style="max-width:800px;margin:0 auto;padding:28px 24px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+  <div id="discovery-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;gap:20px">
         <div>
-          <h2 style="font-size:20px;font-weight:800;color:var(--pdarker);margin:0 0 2px">Lead Discovery</h2>
-          <p style="font-size:12px;color:var(--gray);margin:0">AI-agenten finder virksomheder der ligner dine bedste kunder</p>
+          <div class="section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Lead Discovery</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Danske virksomheder med aktive Meta-ads</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Scrappes automatisk hver nat. Filtreret til aktive virksomheder med mindst 10 ansatte i B2C-tunge brancher. Kør agenten manuelt fra fanen herunder.</p>
         </div>
-        <button class="btn btn-primary btn-sm" id="disc-run-btn" style="background:linear-gradient(135deg,var(--p1),var(--p3));border:none;padding:10px 20px;font-size:13px;flex-shrink:0" onclick="startDiscoveryRun()">Kør agent nu</button>
+        <button class="btn btn-primary btn-sm" id="disc-run-btn" style="padding:10px 18px;font-size:13px;flex-shrink:0" onclick="manualDiscoveryRun()">Kør nu</button>
       </div>
-      <div id="disc-status-bar"></div>
-      <div id="disc-metrics-row"></div>
-      <div id="disc-customer-chips" style="margin-bottom:14px"></div>
-      <div style="background:var(--dark2);border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.04);overflow:hidden">
-        <div id="disc-tabs-wrap" style="padding:0 16px;border-bottom:1px solid var(--border)"></div>
-        <div id="disc-results-list" style="padding:0 16px 8px"></div>
+
+      <!-- Summary row -->
+      <div id="disc-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px"></div>
+
+      <!-- Tabs -->
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--w08);margin-bottom:18px">
+        <button class="disc-tab on" data-tab="ads" onclick="discSetTab('ads')" style="padding:10px 18px;font-size:12px;font-weight:700;letter-spacing:0.3px;color:var(--purple-light);background:transparent;border:none;border-bottom:2px solid var(--purple);margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🔥 Aktive annoncører</button>
+        <button class="disc-tab" data-tab="new" onclick="discSetTab('new')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">⚡ Nye annoncører</button>
+        <button class="disc-tab" data-tab="all" onclick="discSetTab('all')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">📡 Alle tjekkede</button>
+        <button class="disc-tab" data-tab="lookalike" onclick="discSetTab('lookalike')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🎯 Look-alikes</button>
       </div>
-      <div id="disc-feedback-card" style="margin-top:12px"></div>
-      <div id="disc-empty-state"></div>
+
+      <!-- Filter bar -->
+      <div id="disc-filter-bar" style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"></div>
+
+      <!-- Results -->
+      <div id="disc-results"></div>
     </div>
   </div>
 
@@ -1884,6 +1893,13 @@ let _discExpandedId=null;
 let _discPolling=false;
 
 async function renderDiscoveryPage(){
+  // Phase 1c: re-implemented to read from /api/discovery/* (the daily
+  // lead-discovery Cloud Run Job's output). The legacy AI-pattern flow
+  // below is dead code kept temporarily for git diff sanity — it will be
+  // pruned once the new UI proves stable.
+  return renderDiscoveryV2();
+}
+async function _legacyRenderDiscoveryPage(){
   if(!isServerMode)return;
   const [runR,custR,statsR]=await Promise.all([
     fetch('/api/discovery/run/current',{headers:ah()}).then(r=>r.ok?r.json():null).catch(()=>null),
@@ -2044,6 +2060,232 @@ async function renderDiscoveryPage(){
 
 function setDiscTab(tab){_discFeedbackTab=tab;renderDiscoveryPage();}
 function toggleDiscDetail(id){_discExpandedId=_discExpandedId===id?null:id;renderDiscoveryPage();}
+
+// ─── Phase 1c — new Lead Discovery (reads from /api/discovery/*) ────────────
+let _discState={tab:'ads',industry:'',city:'',empMin:'',minAds:'',q:'',sort:'ads',offset:0,limit:50};
+let _discCache={rows:[],total:0,summary:null};
+
+const DISC_INDUSTRY_GROUPS=[
+  {code:'',name:'Alle brancher'},
+  {code:'41',name:'Byggeri & anlæg'},
+  {code:'43',name:'Håndværk & installation'},
+  {code:'45',name:'Bilhandel & -værksted'},
+  {code:'46',name:'Engroshandel'},
+  {code:'47',name:'Detailhandel & butik'},
+  {code:'55',name:'Hotel & overnatning'},
+  {code:'56',name:'Restaurant & café'},
+  {code:'62',name:'IT & software'},
+  {code:'68',name:'Ejendom & udlejning'},
+  {code:'69',name:'Jura & revision'},
+  {code:'70',name:'Rådgivning & konsulent'},
+  {code:'71',name:'Arkitekt & ingeniør'},
+  {code:'73',name:'Reklame & marketing'},
+  {code:'77',name:'Udlejning & leasing'},
+  {code:'81',name:'Rengøring & service'},
+  {code:'86',name:'Sundhed'},
+  {code:'96',name:'Personlig pleje'},
+];
+
+async function renderDiscoveryV2(){
+  // Mount filter bar + initial frame so the user sees structure while data
+  // loads. Header summary + rows fill in via two concurrent fetches.
+  renderDiscoveryFilterBar();
+  document.getElementById('disc-summary').innerHTML='<div style="grid-column:1/-1;color:var(--w55);font-size:12px;padding:14px;text-align:center"><span class="search-spinner" style="display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:middle"></span>Henter data…</div>';
+  document.getElementById('disc-results').innerHTML='';
+  try{
+    const [sumR,rowsR]=await Promise.all([
+      fetch('/api/discovery/summary',{headers:ah()}).then(r=>r.json()),
+      fetchDiscoveryRows(),
+    ]);
+    _discCache.summary=sumR;
+    renderDiscoverySummary();
+    renderDiscoveryResults();
+  }catch(ex){
+    document.getElementById('disc-summary').innerHTML=`<div style="grid-column:1/-1;color:var(--red);font-size:12px;padding:14px;text-align:center">Kunne ikke hente data: ${e(ex.message)}</div>`;
+  }
+}
+
+async function fetchDiscoveryRows(){
+  const q=new URLSearchParams();
+  for(const k of ['tab','industry','city','empMin','minAds','q','sort','offset','limit']){
+    if(_discState[k]!==''&&_discState[k]!=null)q.set(k,_discState[k]);
+  }
+  // Look-alike is a placeholder tab — Phase 1d.
+  if(_discState.tab==='lookalike'){_discCache.rows=[];_discCache.total=0;return _discCache;}
+  const r=await fetch(`/api/discovery/companies?${q}`,{headers:ah()});
+  const d=await r.json();
+  _discCache.rows=d.rows||[];
+  _discCache.total=d.total||0;
+  return _discCache;
+}
+
+function renderDiscoverySummary(){
+  const s=_discCache.summary;if(!s)return;
+  const ago=s.lastRunCompletedAt?humanAgo(s.lastRunCompletedAt):'aldrig';
+  const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
+    <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${value}</div>
+    ${sub?`<div style="font-size:11px;color:var(--w55);margin-top:2px">${sub}</div>`:''}
+  </div>`;
+  document.getElementById('disc-summary').innerHTML=[
+    tile('Aktive annoncører',(s.totalActiveAdvertisers||0).toLocaleString('da-DK'),`af ${(s.totalChecked||0).toLocaleString('da-DK')} tjekkede`),
+    tile('Seneste kørsel',ago,s.lastRunCompletedAt?new Date(s.lastRunCompletedAt).toLocaleString('da-DK'):'—'),
+    tile('Sidste resultat',`${s.withAdsThisRun||0} / ${s.scrapedThisRun||0}`,`fandt ads · ${s.failThisRun||0} fejl`),
+    tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`≥10 ansatte i mål-brancher`),
+  ].join('');
+}
+
+function renderDiscoveryFilterBar(){
+  const bar=document.getElementById('disc-filter-bar');if(!bar)return;
+  const lookalike=_discState.tab==='lookalike';
+  if(lookalike){bar.innerHTML='<div style="color:var(--w55);font-size:12px;padding:6px 4px">Look-alikes kommer i næste fase — mappes ud fra dine bedste leads.</div>';return;}
+  const opts=DISC_INDUSTRY_GROUPS.map(g=>`<option value="${g.code}"${g.code===_discState.industry?' selected':''}>${g.name}</option>`).join('');
+  bar.innerHTML=`
+    <input id="disc-q" class="fi" placeholder="Søg på navn…" value="${e(_discState.q)}" style="flex:1;min-width:180px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
+    <select id="disc-industry" class="fs" style="background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif">${opts}</select>
+    <input id="disc-city" class="fi" placeholder="By" value="${e(_discState.city)}" style="width:140px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
+    <input id="disc-empmin" class="fi" placeholder="Min ansatte" type="number" value="${e(_discState.empMin)}" style="width:120px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
+    <input id="disc-minads" class="fi" placeholder="Min ads" type="number" value="${e(_discState.minAds)}" style="width:100px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
+    <button class="btn btn-primary btn-sm" style="padding:8px 18px" onclick="discApplyFilters()">Filtrer</button>
+    <button class="btn btn-sm" style="padding:8px 14px" onclick="discResetFilters()">Nulstil</button>
+  `;
+}
+
+function discApplyFilters(){
+  _discState.q=document.getElementById('disc-q')?.value.trim()||'';
+  _discState.industry=document.getElementById('disc-industry')?.value||'';
+  _discState.city=document.getElementById('disc-city')?.value.trim()||'';
+  _discState.empMin=document.getElementById('disc-empmin')?.value||'';
+  _discState.minAds=document.getElementById('disc-minads')?.value||'';
+  _discState.offset=0;
+  reloadDiscoveryRows();
+}
+
+function discResetFilters(){
+  _discState.q='';_discState.industry='';_discState.city='';_discState.empMin='';_discState.minAds='';_discState.offset=0;
+  renderDiscoveryFilterBar();
+  reloadDiscoveryRows();
+}
+
+async function reloadDiscoveryRows(){
+  document.getElementById('disc-results').innerHTML='<div style="text-align:center;padding:30px;color:var(--w55);font-size:12px"><span class="search-spinner" style="display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:middle"></span>Henter…</div>';
+  await fetchDiscoveryRows();
+  renderDiscoveryResults();
+}
+
+function discSetTab(tab){
+  if(_discState.tab===tab)return;
+  _discState.tab=tab;
+  _discState.offset=0;
+  document.querySelectorAll('.disc-tab').forEach(b=>{
+    const on=b.dataset.tab===tab;
+    b.classList.toggle('on',on);
+    b.style.color=on?'var(--purple-light)':'var(--w55)';
+    b.style.borderBottomColor=on?'var(--purple)':'transparent';
+    b.style.fontWeight=on?'700':'600';
+  });
+  renderDiscoveryFilterBar();
+  reloadDiscoveryRows();
+}
+
+function renderDiscoveryResults(){
+  const wrap=document.getElementById('disc-results');if(!wrap)return;
+  if(_discState.tab==='lookalike'){
+    wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center">
+      <div style="font-size:28px;margin-bottom:8px">🎯</div>
+      <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:6px">Look-alike scoring</div>
+      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Tilføj 3 eller flere leads til en liste, så finder Vedio virksomheder med samme branche, størrelse, region og ads-mønster. Kommer i næste fase.</div>
+    </div>`;
+    return;
+  }
+  if(_discCache.rows.length===0){
+    wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center;color:var(--w55);font-size:13px">
+      Ingen virksomheder matcher filtrene. Prøv at fjerne et eller flere.
+    </div>`;
+    return;
+  }
+  const flipsHint=_discState.tab==='new'?'<div style="font-size:11px;color:var(--w55);margin-bottom:10px">Virksomheder med aktive Meta-ads tjekket inden for de seneste 7 dage.</div>':'';
+  wrap.innerHTML=flipsHint+`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed</th>
+          <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">CVR</th>
+          <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">By</th>
+          <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Ansatte</th>
+          <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08);cursor:pointer" onclick="discSort('ads')">📢 Meta-ads</th>
+          <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${_discCache.rows.map(renderDiscoveryRow).join('')}
+      </tbody>
+    </table>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:12px;color:var(--w55)">
+    <div>Viser ${Math.min(_discState.offset+1,_discCache.total)}–${Math.min(_discState.offset+_discState.limit,_discCache.total)} af ${_discCache.total.toLocaleString('da-DK')}</div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm" ${_discState.offset===0?'disabled style="opacity:0.4"':''} onclick="discPage(-1)">← Forrige</button>
+      <button class="btn btn-sm" ${_discState.offset+_discState.limit>=_discCache.total?'disabled style="opacity:0.4"':''} onclick="discPage(1)">Næste →</button>
+    </div>
+  </div>`;
+}
+
+function renderDiscoveryRow(c){
+  const ads=c.ads||{};
+  const inLeads=leads.some(l=>l.cvr===c.cvr);
+  const verdictPill=ads.verdict===true
+    ? `<span class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700">📢 ${ads.matched||0} aktive</span>`
+    : `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:11px;font-weight:600">— Ingen ads</span>`;
+  return `<tr data-cvr="${c.cvr}" style="border-bottom:1px solid var(--w04)">
+    <td style="padding:12px 14px"><span style="font-weight:700;color:#fff;font-size:13px">${e(c.name)}</span>${c.brandName&&c.brandName.toLowerCase()!==c.name.toLowerCase()?`<div style="font-size:10.5px;color:var(--w35);margin-top:1px">Brand: ${e(c.brandName)}</div>`:''}</td>
+    <td style="padding:12px 14px;font-family:monospace;font-size:11px;color:var(--w35)">${c.cvr}</td>
+    <td style="padding:12px 14px;font-size:12px;color:var(--w80)">${e(c.city||'—')}</td>
+    <td style="padding:12px 14px;font-size:12px;color:var(--w80);text-align:right">${c.employees||'—'}</td>
+    <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
+    <td style="padding:12px 14px;text-align:right">
+      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+    </td>
+  </tr>`;
+}
+
+function discSort(key){
+  _discState.sort=_discState.sort===key?key+'-desc':key; // toggle isn't critical for v1
+  reloadDiscoveryRows();
+}
+
+function discPage(dir){
+  _discState.offset=Math.max(0,_discState.offset+dir*_discState.limit);
+  reloadDiscoveryRows();
+}
+
+async function discAddLead(cvr){
+  try{
+    // Re-use the existing add-to-leads flow. We hit /api/company first
+    // so we get a richer payload from Datafordeler (the discovery state
+    // only has the trimmed subset of fields).
+    const r=await fetch(`/api/company/${cvr}`,{headers:ah()});
+    const c=await r.json();
+    if(!c||c.error){showToast('Kunne ikke hente firma');return;}
+    await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify(c)});
+    leads.push(c);
+    showToast(`${c.name} tilføjet`);
+    renderDiscoveryResults();
+  }catch(ex){showToast('Fejl: '+ex.message);}
+}
+
+async function manualDiscoveryRun(){
+  showToast('Manuel kørsel skal startes via Cloud Run Jobs i GCP-konsollen.');
+}
+
+function humanAgo(iso){
+  const diff=Date.now()-new Date(iso).getTime();
+  if(diff<60000)return 'lige nu';
+  const m=Math.round(diff/60000);if(m<60)return `${m} min siden`;
+  const h=Math.round(m/60);if(h<24)return `${h} t siden`;
+  return `${Math.round(h/24)} dage siden`;
+}
+
 
 async function startDiscoveryRun(){
   try{

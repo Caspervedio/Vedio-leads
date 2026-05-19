@@ -1105,6 +1105,126 @@ app.post("/api/check-ads-batch", authMiddleware, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LEAD DISCOVERY — read endpoints
+// The lead-discovery Cloud Run Job (separate service) writes a single
+// state.json + daily flips_<date>.jsonl into the same bucket the main
+// service mounts. These endpoints just expose those files to the UI.
+// ─────────────────────────────────────────────────────────────────────────────
+const DISCOVERY_STATE_FILE = path.join(DATA_DIR, "discovery", "state.json");
+
+function loadDiscoveryState() {
+  return loadJsonFile(DISCOVERY_STATE_FILE, { companies: {} });
+}
+
+// GET /api/discovery/summary — top-line stats for the Discovery header
+app.get("/api/discovery/summary", authMiddleware, (req, res) => {
+  const s = loadDiscoveryState();
+  const companies = s.companies || {};
+  let totalActiveAdvertisers = 0;
+  let totalChecked = 0;
+  for (const cvr of Object.keys(companies)) {
+    const c = companies[cvr];
+    if (c?.ads) totalChecked++;
+    if (c?.ads?.verdict === true) totalActiveAdvertisers++;
+  }
+  res.json({
+    lastRunStartedAt: s.lastRunStartedAt || null,
+    lastRunCompletedAt: s.lastRunCompletedAt || null,
+    candidatePoolSize: s.candidatePoolSize || 0,
+    scrapedThisRun: s.scrapedThisRun || 0,
+    okThisRun: s.ok || 0,
+    failThisRun: s.fail || 0,
+    withAdsThisRun: s.withAds || 0,
+    totalChecked,
+    totalActiveAdvertisers,
+    nextRunAt: nextDailyRunTime(),
+  });
+});
+
+// Returns the next 02:00 Europe/Copenhagen as ISO. Not perfect for DST
+// edge cases — good enough for "next run in ~Nh" headline copy.
+function nextDailyRunTime() {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+  // 02:00 CET = 01:00 UTC (CEST is 00:00 UTC). Use 01:00 UTC as a stable approx.
+  next.setUTCHours(1);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString();
+}
+
+// GET /api/discovery/companies — filterable, paginated list. Query params:
+//   tab=ads|all|new          ads=only verdict:true (default), all=everything checked, new=flipped to true recently
+//   industry=412000          industry code prefix match (e.g. "41" matches all construction)
+//   city=Aalborg             substring match on city (case-insensitive)
+//   empMin / empMax          employee count bounds
+//   minAds                   minimum matched ad count
+//   q                        substring match on name (case-insensitive)
+//   sort=ads|emp|name        default: ads (descending)
+//   limit / offset           pagination (default 100 / 0)
+app.get("/api/discovery/companies", authMiddleware, (req, res) => {
+  const s = loadDiscoveryState();
+  const companies = Object.values(s.companies || {});
+  const { tab = "ads", industry = "", city = "", empMin, empMax, minAds, q = "", sort = "ads" } = req.query;
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const offset = Number(req.query.offset) || 0;
+
+  let rows = companies.filter((c) => c && c.cvr);
+  if (tab === "ads") rows = rows.filter((c) => c.ads?.verdict === true);
+  else if (tab === "new") {
+    const sevenDaysAgo = Date.now() - 7 * 86400_000;
+    rows = rows.filter((c) => c.ads?.verdict === true && c.ads?.checkedAt && new Date(c.ads.checkedAt).getTime() >= sevenDaysAgo);
+  }
+  if (industry) rows = rows.filter((c) => String(c.industry || "").startsWith(industry));
+  if (city) {
+    const needle = String(city).toLowerCase();
+    rows = rows.filter((c) => String(c.city || "").toLowerCase().includes(needle));
+  }
+  if (empMin) rows = rows.filter((c) => (c.employees || 0) >= Number(empMin));
+  if (empMax) rows = rows.filter((c) => (c.employees || 0) <= Number(empMax));
+  if (minAds) rows = rows.filter((c) => (c.ads?.matched || 0) >= Number(minAds));
+  if (q) {
+    const needle = String(q).toLowerCase();
+    rows = rows.filter((c) => String(c.name || "").toLowerCase().includes(needle));
+  }
+  if (sort === "ads") rows.sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0));
+  else if (sort === "emp") rows.sort((a, b) => (b.employees || 0) - (a.employees || 0));
+  else if (sort === "name") rows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  res.json({ total: rows.length, offset, limit, rows: rows.slice(offset, offset + limit) });
+});
+
+// GET /api/discovery/flips?days=7 — concatenated flip log entries for the
+// "Nye annoncører" tab. Each Cloud Run Job pass appends to flips_<date>.jsonl
+// in /data/discovery/. We just merge the last N days.
+app.get("/api/discovery/flips", authMiddleware, (req, res) => {
+  const days = Math.min(Number(req.query.days) || 7, 30);
+  const dir = path.join(DATA_DIR, "discovery");
+  const out = [];
+  try {
+    if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir).filter((f) => /^flips_\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
+      const cutoff = Date.now() - days * 86400_000;
+      for (const f of files) {
+        // File-name date is YYYY-MM-DD — quick window filter so we don't
+        // open files we'd just throw away.
+        const m = f.match(/flips_(\d{4}-\d{2}-\d{2})\.jsonl/);
+        if (!m) continue;
+        if (new Date(m[1] + "T00:00:00Z").getTime() < cutoff - 86400_000) continue;
+        const raw = fs.readFileSync(path.join(dir, f), "utf-8").trim().split(/\r?\n/).filter(Boolean);
+        for (const line of raw) {
+          try {
+            const entry = JSON.parse(line);
+            if (new Date(entry.at).getTime() >= cutoff) out.push(entry);
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (e) { console.error("[discovery] flips read:", e.message); }
+  out.sort((a, b) => new Date(b.at) - new Date(a.at));
+  res.json({ days, count: out.length, flips: out });
+});
+
 // ── Leads ─────────────────────────────────────────────────────────────────────
 
 // Get all users' claimed CVRs (for showing owner avatars on search results)
