@@ -880,12 +880,6 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <button class="btn btn-sm" onclick="togNL('nli2','inline-block')">+ Ny liste</button>
       <input id="nli2" class="llb-input" placeholder="Navn + Enter" style="display:none" autocomplete="off">
       <button class="btn btn-sm" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
-      <label class="ai-toggle" style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px">
-        <input type="checkbox" id="meta-only-toggle" onchange="setMetaOnlyFilter(this.checked)">
-        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        Kun virksomheder med aktive Meta-ads
-      </label>
-      <button class="btn btn-sm" id="ads-bulk-btn" onclick="checkAdsForSelected()" title="Tjek Meta-ads for valgte virksomheder (langsom: ~5 s pr. række)">📢 Tjek ads</button>
     </div>
   </div>
 
@@ -1543,9 +1537,6 @@ function sortR(){
     if(sC==='eq')return c.eq;
     if(sC==='omsaetning')return c.omsaetning;
     if(sC==='icp')return(enrichStatus[c.cvr]?.total_score)||0;
-    // Meta-ads sort: matched-count first, then 0 for negative, -1 for unchecked
-    // so checked-with-ads → checked-without-ads → never-checked.
-    if(sC==='ads'){const m=metaAds[c.cvr];if(!m||m._loading)return -1;return m.verdict?(m.matched||0):0;}
     return c[sC]||'';
   };
   res.sort((a,b)=>{const av=getSortVal(a),bv=getSortVal(b);return av<bv?-sD:av>bv?sD:0;});
@@ -2163,8 +2154,9 @@ function sv(v){
     }
     rSB();render();
     if(v==='leads'&&aiEnabled)setTimeout(fetchEnrichStatus,100);
-    // Paint cached Meta-ads verdicts for visible rows in one round-trip.
-    setTimeout(loadMetaAdsForVisible,150);
+    // Phase 1a: bulk-check on view entry removed. The Meta-ads signal now
+    // belongs in the Lead Discovery module (background scraper, separate
+    // service). Detail-panel still lazy-fetches per-CVR via /api/ads-status.
   } else if(v==='customers'){
     if(custPage)custPage.style.display='flex';custPage.style.flexDirection='column';
     renderCustomersPage();
@@ -2416,8 +2408,7 @@ function showToast(msg,dur=2500){
 // ── TABLE ─────────────────────────────────────────────────────────────────────
 function rTbl(){
   const hideOwned=document.getElementById('f-hide-owned')?.checked;
-  let visRes=hideOwned?res.filter(c=>{const ow=leadOwners[c.cvr]||[];return !ow.some(o=>o.id!==currentUser?.id);}):res;
-  if(metaOnlyFilter)visRes=visRes.filter(c=>metaAds[c.cvr]?.verdict===true);
+  const visRes=hideOwned?res.filter(c=>{const ow=leadOwners[c.cvr]||[];return !ow.some(o=>o.id!==currentUser?.id);}):res;
 
   document.getElementById('thead').innerHTML=`<tr>
     <th style="width:28px"><input type="checkbox" class="cb" onchange="togAll(this)"></th>
@@ -2429,8 +2420,7 @@ function rTbl(){
     <th class="sort${sC==='city'?' sorted':''}" style="width:8%" onclick="setSort('city')">By ${si('city')}</th>
     <th class="sort${sC==='emp'?' sorted':''}" style="width:42px" onclick="setSort('emp')">Ans. ${si('emp')}</th>
     <th class="sort${sC==='omsaetning'?' sorted':''}" style="width:78px" onclick="setSort('omsaetning')">Omsætning ${si('omsaetning')}</th>
-    <th class="sort${sC==='ind'?' sorted':''}" style="width:12%" onclick="setSort('ind')">Branche ${si('ind')}</th>
-    <th class="sort${sC==='ads'?' sorted':''}" style="width:88px" onclick="setSort('ads')" title="Aktive Meta-ads">Meta ads ${si('ads')}</th>
+    <th class="sort${sC==='ind'?' sorted':''}" style="width:14%" onclick="setSort('ind')">Branche ${si('ind')}</th>
     <th style="width:50px"></th>
   </tr>`;
 
@@ -2446,7 +2436,6 @@ function rTbl(){
       <td style="color:var(--gray)">${c.emps}</td>
       <td style="font-weight:600;font-size:11.5px;color:${c.omsaetning>0?'var(--pdarker)':'var(--gray2)'}">${fmtKr(c.omsaetning)}</td>
       <td style="color:var(--gray);font-size:11.5px" title="${e(c.ind)}">${trunc(c.ind,18)}</td>
-      <td onclick="event.stopPropagation()">${adsPill(c.cvr, c.name)}</td>
       <td style="overflow:visible;text-overflow:clip" onclick="event.stopPropagation()">
         <div style="display:flex;gap:3px;align-items:center">
           ${isL(c.cvr)?'<button class="ib added" title="I leads">✓</button>':`<button class="ib" onclick="showListPicker(['${c.cvr}'])" title="Tilføj lead">+</button>`}
@@ -2464,8 +2453,7 @@ function rTbl(){
 }
 
 function rLeads(){
-  let vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
-  if(metaOnlyFilter)vis=vis.filter(l=>metaAds[l.cvr]?.verdict===true);
+  const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);
   const ai=aiEnabled;
   const colCount=ai?14:12;
   if(!vis.length){
@@ -2483,8 +2471,7 @@ function rLeads(){
     <th class="sort${sC==='city'?' sorted':''}" style="width:8%" onclick="setSort('city')">By ${si('city')}</th>
     <th class="sort${sC==='emp'?' sorted':''}" style="width:42px" onclick="setSort('emp')">Ans. ${si('emp')}</th>
     <th class="sort${sC==='omsaetning'?' sorted':''}" style="width:78px" onclick="setSort('omsaetning')">Omsætning ${si('omsaetning')}</th>
-    <th class="sort${sC==='ind'?' sorted':''}" style="width:${ai?'10%':'12%'}" onclick="setSort('ind')">Branche ${si('ind')}</th>
-    <th class="sort${sC==='ads'?' sorted':''}" style="width:88px" onclick="setSort('ads')" title="Aktive Meta-ads">Meta ads ${si('ads')}</th>
+    <th class="sort${sC==='ind'?' sorted':''}" style="width:${ai?'10%':'14%'}" onclick="setSort('ind')">Branche ${si('ind')}</th>
     ${ai?`<th class="sort${sC==='icp'?' sorted':''}" style="width:100px" onclick="setSort('icp')">ICP ${si('icp')}</th>
     <th style="width:60px">Status</th>`:''}
     <th style="width:75px">Tilføjet</th>
@@ -2502,7 +2489,6 @@ function rLeads(){
       <td style="color:var(--gray)">${c.emps}</td>
       <td style="font-weight:600;font-size:11.5px;color:${c.omsaetning>0?'var(--pdarker)':'var(--gray2)'}">${fmtKr(c.omsaetning)}</td>
       <td style="color:var(--gray);font-size:11.5px" title="${e(c.ind)}">${trunc(c.ind,ai?14:18)||'—'}</td>
-      <td onclick="event.stopPropagation()">${adsPill(c.cvr, c.name)}</td>
       ${ai?`<td>${icpCell(c.cvr)}</td><td>${recBadge(c.cvr)}</td>`:''}
       <td style="color:var(--gray2);font-size:11px">${c.addedAt?new Date(c.addedAt).toLocaleDateString('da-DK'):'—'}</td>
       <td onclick="event.stopPropagation()"><button class="ib rm" onclick="remL('${c.cvr}')" title="Fjern">✕</button></td>
@@ -2552,6 +2538,14 @@ function hdDp(){
 
 function showDp(c){
   const dp=document.getElementById('dp');dp.classList.remove('h');
+  // Lazy-fetch cached Meta-ads verdict for just this CVR (cheap — single
+  // round-trip, no chromium launch). The full bulk scrape moved to the
+  // Lead Discovery background worker in Phase 1b.
+  if(!metaAds[c.cvr]){
+    fetch(`/api/ads-status/${c.cvr}`,{headers:ah()}).then(r=>r.json()).then(d=>{
+      if(d&&d.verdict!==undefined){metaAds[c.cvr]=d;refreshMetaAdsSection(c.cvr);}
+    }).catch(()=>{});
+  }
   const inL=isL(c.cvr);
   const notes=leadNotes[c.cvr]||'';
   const tags=(leadTags[c.cvr]||[]);
