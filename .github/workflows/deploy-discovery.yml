@@ -34,11 +34,11 @@ jobs:
 
       - name: Build discovery image
         run: |
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/lead-discovery:${{ github.sha }}"
           gcloud builds submit \
             --project "$PROJECT_ID" \
-            --tag "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/lead-discovery:${{ github.sha }}" \
-            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET \
-            -f Dockerfile.discovery \
+            --config cloudbuild-discovery.yaml \
+            --substitutions "_IMAGE=$IMAGE" \
             .
 
       - name: Deploy or update Cloud Run Job

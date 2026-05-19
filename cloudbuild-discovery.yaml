@@ -1,0 +1,23 @@
+# Cloud Build config for the lead-discovery image.
+#
+# `gcloud builds submit --tag` doesn't accept `-f Dockerfile.discovery`,
+# so we explicitly drive Docker via this config. The deploy-discovery
+# workflow passes _IMAGE as a substitution.
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "-f"
+      - Dockerfile.discovery
+      - "-t"
+      - ${_IMAGE}
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args: [push, "${_IMAGE}"]
+
+images:
+  - ${_IMAGE}
+
+options:
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
