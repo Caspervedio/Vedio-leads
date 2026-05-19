@@ -2065,6 +2065,14 @@ function toggleDiscDetail(id){_discExpandedId=_discExpandedId===id?null:id;rende
 let _discState={tab:'ads',industry:'',city:'',empMin:'',minAds:'',q:'',sort:'ads',offset:0,limit:50};
 let _discCache={rows:[],total:0,summary:null};
 
+// Same URL the discovery worker scrapes. Using brandName (what actually
+// matched the ads) so the user sees the exact result-set the count refers to.
+function adsLibraryUrl(c){
+  const q=c.brandName||c.name||'';
+  const params=new URLSearchParams({active_status:'active',ad_type:'all',country:'DK',is_targeted_country:'false',media_type:'all',search_type:'keyword_exact_phrase',q});
+  return 'https://www.facebook.com/ads/library/?'+params.toString();
+}
+
 const DISC_INDUSTRY_GROUPS=[
   {code:'',name:'Alle brancher'},
   {code:'41',name:'Byggeri & anlæg'},
@@ -2278,7 +2286,7 @@ function renderDiscoveryRow(c){
   const ads=c.ads||{};
   const inLeads=leads.some(l=>l.cvr===c.cvr);
   const verdictPill=ads.verdict===true
-    ? `<span class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700">📢 ${ads.matched||0} aktive</span>`
+    ? `<a href="${adsLibraryUrl(c)}" target="_blank" rel="noopener" class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700;text-decoration:none;transition:transform 0.1s,background 0.15s;cursor:pointer" title="Åbn i Meta Ad Library" onmouseover="this.style.background='rgba(124,58,237,0.28)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(124,58,237,0.18)';this.style.transform='translateY(0)'">📢 ${ads.matched||0} aktive ↗</a>`
     : `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:11px;font-weight:600">— Ingen ads</span>`;
   return `<tr data-cvr="${c.cvr}" style="border-bottom:1px solid var(--w04)">
     <td style="padding:12px 14px"><span style="font-weight:700;color:#fff;font-size:13px">${e(c.name)}</span>${c.brandName&&c.brandName.toLowerCase()!==c.name.toLowerCase()?`<div style="font-size:10.5px;color:var(--w35);margin-top:1px">Brand: ${e(c.brandName)}</div>`:''}</td>
@@ -2296,7 +2304,7 @@ function renderLookalikeRow(c){
   const ads=c.ads||{};
   const inLeads=leads.some(l=>l.cvr===c.cvr);
   const verdictPill=ads.verdict===true
-    ? `<span class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700">📢 ${ads.matched||0}</span>`
+    ? `<a href="${adsLibraryUrl(c)}" target="_blank" rel="noopener" class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700;text-decoration:none;transition:transform 0.1s,background 0.15s" title="Åbn i Meta Ad Library" onmouseover="this.style.background='rgba(124,58,237,0.28)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(124,58,237,0.18)';this.style.transform='translateY(0)'">📢 ${ads.matched||0} ↗</a>`
     : ads.verdict===false
     ? `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:11px;font-weight:600">—</span>`
     : `<span style="color:var(--w35);font-size:11px">?</span>`;
