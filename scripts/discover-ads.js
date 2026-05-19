@@ -139,20 +139,18 @@ function normalizeCompanyName(s) {
     .trim();
 }
 
+// Strict-match: exact equality OR brand-as-whole-word substring only if
+// the brand is ≥ 7 chars (avoids "beck" → "Beck Institute" false positives).
+// Stay in sync with the identically-named function in server.js.
 function advertiserMatchesCompany(advertiser, company) {
   const a = normalizeCompanyName(advertiser);
   const c = normalizeCompanyName(company);
   if (!a || !c) return false;
   if (a === c) return true;
-  if (c.length < 4) return false;
-  const aTokens = new Set(a.split(" ").filter((t) => t.length >= 4));
-  const cTokens = c.split(" ").filter((t) => t.length >= 4);
-  if (cTokens.some((t) => aTokens.has(t))) return true;
+  if (c.length < 7) return false;
   const aWord = ` ${a} `;
   const cWord = ` ${c} `;
-  if (aWord.includes(cWord)) return true;
-  if (c.length >= 6 && cWord.includes(aWord)) return true;
-  return false;
+  return aWord.includes(cWord);
 }
 
 function buildAdsUrl(name) {

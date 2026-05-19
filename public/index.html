@@ -2065,11 +2065,14 @@ function toggleDiscDetail(id){_discExpandedId=_discExpandedId===id?null:id;rende
 let _discState={tab:'ads',industry:'',city:'',empMin:'',minAds:'',q:'',sort:'ads',offset:0,limit:50};
 let _discCache={rows:[],total:0,summary:null};
 
-// Same URL the discovery worker scrapes. Using brandName (what actually
-// matched the ads) so the user sees the exact result-set the count refers to.
+// Deep-link to Meta's Ad Library filtered to advertiser/page name (not ad
+// copy). search_type=page narrows the result set dramatically — searching
+// 'BECK' on the keyword path returns unrelated brands whose ad copy
+// contains 'Beck', whereas search_type=page only matches pages named BECK*.
+// is_targeted_country=true further limits to ads served to DK viewers.
 function adsLibraryUrl(c){
   const q=c.brandName||c.name||'';
-  const params=new URLSearchParams({active_status:'active',ad_type:'all',country:'DK',is_targeted_country:'false',media_type:'all',search_type:'keyword_exact_phrase',q});
+  const params=new URLSearchParams({active_status:'active',ad_type:'all',country:'DK',is_targeted_country:'true',media_type:'all',search_type:'page',q});
   return 'https://www.facebook.com/ads/library/?'+params.toString();
 }
 

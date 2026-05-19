@@ -936,22 +936,29 @@ function normalizeCompanyName(s) {
     .trim();
 }
 
-// Token + substring match — same heuristic as the COO project's
-// `advertiserMatchesCompany`. Whole-word boundary check avoids "Bygma"
-// matching "Mybyg" or similar.
+// Strict-match: exact equality OR brand-as-whole-word substring for
+// brand names that are distinctive enough.
+//
+// Why strict: short, generic brand names ("BECK", "MASTER", "STAR") match
+// dozens of unrelated US/EU advertisers under the COO project's looser
+// token-overlap rule (verified on real data — BECK A/S was matching "Beck
+// Institute for Cognitive Behavior Therapy", "Brooks & Beck", etc.). The
+// false-positive rate made the count meaningless for short names.
+//
+// Trade-off: we lose some recall on edge cases like "Bygma Aalborg" being
+// a separate page name of the same company. Those need a manual override
+// per company once we add that surface.
 function advertiserMatchesCompany(advertiser, company) {
   const a = normalizeCompanyName(advertiser);
   const c = normalizeCompanyName(company);
   if (!a || !c) return false;
   if (a === c) return true;
-  if (c.length < 4) return false;
-  const aTokens = new Set(a.split(" ").filter((t) => t.length >= 4));
-  const cTokens = c.split(" ").filter((t) => t.length >= 4);
-  if (cTokens.some((t) => aTokens.has(t))) return true;
+  // Brand needs to be ≥ 7 chars before substring matching is allowed.
+  // 4–6 chars are too generic ("beck", "master", "vedio").
+  if (c.length < 7) return false;
   const aWord = ` ${a} `;
   const cWord = ` ${c} `;
   if (aWord.includes(cWord)) return true;
-  if (c.length >= 6 && cWord.includes(aWord)) return true;
   return false;
 }
 
