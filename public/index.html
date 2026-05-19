@@ -2107,11 +2107,21 @@ async function renderDiscoveryV2(){
 
 async function fetchDiscoveryRows(){
   const q=new URLSearchParams();
+  // Look-alike has a dedicated endpoint (content-based recommender against
+  // the caller's own leads). Different shape, different scoring.
+  if(_discState.tab==='lookalike'){
+    q.set('limit',_discState.limit);
+    const r=await fetch(`/api/discovery/lookalikes?${q}`,{headers:ah()});
+    const d=await r.json();
+    _discCache.rows=d.rows||[];
+    _discCache.total=d.total||0;
+    _discCache.lookalikeProfile=d.profile||null;
+    _discCache.seedSize=d.seedSize||0;
+    return _discCache;
+  }
   for(const k of ['tab','industry','city','empMin','minAds','q','sort','offset','limit']){
     if(_discState[k]!==''&&_discState[k]!=null)q.set(k,_discState[k]);
   }
-  // Look-alike is a placeholder tab — Phase 1d.
-  if(_discState.tab==='lookalike'){_discCache.rows=[];_discCache.total=0;return _discCache;}
   const r=await fetch(`/api/discovery/companies?${q}`,{headers:ah()});
   const d=await r.json();
   _discCache.rows=d.rows||[];
@@ -2191,11 +2201,44 @@ function discSetTab(tab){
 function renderDiscoveryResults(){
   const wrap=document.getElementById('disc-results');if(!wrap)return;
   if(_discState.tab==='lookalike'){
-    wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center">
-      <div style="font-size:28px;margin-bottom:8px">🎯</div>
-      <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:6px">Look-alike scoring</div>
-      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Tilføj 3 eller flere leads til en liste, så finder Vedio virksomheder med samme branche, størrelse, region og ads-mønster. Kommer i næste fase.</div>
-    </div>`;
+    const seed=_discCache.seedSize||0;
+    if(seed===0){
+      wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center">
+        <div style="font-size:28px;margin-bottom:8px">🎯</div>
+        <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:6px">Tilføj leads først</div>
+        <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Look-alike-modellen finder virksomheder som dine eksisterende leads — tilføj først nogle leads under <strong>Mine leads</strong>.</div>
+      </div>`;
+      return;
+    }
+    if(_discCache.rows.length===0){
+      wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center;color:var(--w55);font-size:13px">
+        Ingen kandidater scorer over 0 mod dine ${seed} leads. Det er sandsynligvis fordi pulje-buildet ikke er færdig endnu — vent til natten har kørt.
+      </div>`;
+      return;
+    }
+    const p=_discCache.lookalikeProfile||{};
+    const topInd=(p.topIndustries||[]).map(([k,n])=>`<span class="pill" style="background:rgba(124,58,237,0.15);color:var(--purple-soft);border:1px solid rgba(124,58,237,0.3);font-size:10.5px">${e(k)} (${n})</span>`).join(' ');
+    wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="font-size:11px;color:var(--w55)"><strong style="color:#fff">${seed}</strong> leads i seed · top brancher:</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${topInd||'<span style="color:var(--w35);font-size:11px">—</span>'}</div>
+      </div>
+      <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed</th>
+              <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">CVR</th>
+              <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">By</th>
+              <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Score</th>
+              <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Meta-ads</th>
+              <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${_discCache.rows.map(renderLookalikeRow).join('')}
+          </tbody>
+        </table>
+      </div>`;
     return;
   }
   if(_discCache.rows.length===0){
@@ -2242,6 +2285,26 @@ function renderDiscoveryRow(c){
     <td style="padding:12px 14px;font-family:monospace;font-size:11px;color:var(--w35)">${c.cvr}</td>
     <td style="padding:12px 14px;font-size:12px;color:var(--w80)">${e(c.city||'—')}</td>
     <td style="padding:12px 14px;font-size:12px;color:var(--w80);text-align:right">${c.employees||'—'}</td>
+    <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
+    <td style="padding:12px 14px;text-align:right">
+      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+    </td>
+  </tr>`;
+}
+
+function renderLookalikeRow(c){
+  const ads=c.ads||{};
+  const inLeads=leads.some(l=>l.cvr===c.cvr);
+  const verdictPill=ads.verdict===true
+    ? `<span class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700">📢 ${ads.matched||0}</span>`
+    : ads.verdict===false
+    ? `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:11px;font-weight:600">—</span>`
+    : `<span style="color:var(--w35);font-size:11px">?</span>`;
+  return `<tr data-cvr="${c.cvr}" style="border-bottom:1px solid var(--w04)">
+    <td style="padding:12px 14px"><span style="font-weight:700;color:#fff;font-size:13px">${e(c.name)}</span></td>
+    <td style="padding:12px 14px;font-family:monospace;font-size:11px;color:var(--w35)">${c.cvr}</td>
+    <td style="padding:12px 14px;font-size:12px;color:var(--w80)">${e(c.city||'—')}</td>
+    <td style="padding:12px 14px;text-align:right"><span style="font-weight:800;color:var(--purple-light);font-size:13px">${c._score||0}</span></td>
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right">
       ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}

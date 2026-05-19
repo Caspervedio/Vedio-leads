@@ -1194,6 +1194,87 @@ app.get("/api/discovery/companies", authMiddleware, (req, res) => {
   res.json({ total: rows.length, offset, limit, rows: rows.slice(offset, offset + limit) });
 });
 
+// GET /api/discovery/lookalikes — content-based recommender. Scores every
+// candidate in state.json against the caller's own leads (and optionally a
+// specific list) and returns the top matches that aren't already claimed.
+//
+// Signal mix (heuristic, will iterate):
+//   - 2-digit DB07 match     +30  · exact 6-digit match adds +20 more
+//   - Employee band overlap  +15  · (band = log2 buckets of headcount)
+//   - Postal code prefix     +10  · first 2 digits match
+//   - City exact (lowercased)+5
+//   - Running ads bonus      +20  · if candidate has verdict:true
+//   - Already-in-leads       skip · don't recommend something already added
+app.get("/api/discovery/lookalikes", authMiddleware, (req, res) => {
+  const userData = loadUserData(req.userId);
+  const myLeads = userData?.leads || [];
+  const listId = req.query.list || null;
+  const seed = listId ? myLeads.filter((l) => l.listId === listId) : myLeads;
+  if (seed.length === 0) return res.json({ rows: [], reason: "no leads to seed from" });
+
+  // Build profile vectors from the seed leads.
+  const seedIndustries = new Map();    // 2-digit prefix → count
+  const seedIndustries6 = new Map();   // full 6-digit → count
+  const seedZipPrefixes = new Map();   // 2-digit zip prefix → count
+  const seedCities = new Map();        // city → count
+  const seedEmpBands = new Map();      // log2 band → count
+  let withAdsCount = 0;
+  for (const l of seed) {
+    const ic = String(l.ic || l.industry || "");
+    if (ic) {
+      seedIndustries.set(ic.slice(0, 2), (seedIndustries.get(ic.slice(0, 2)) || 0) + 1);
+      if (ic.length >= 6) seedIndustries6.set(ic.slice(0, 6), (seedIndustries6.get(ic.slice(0, 6)) || 0) + 1);
+    }
+    const zip = String(l.zip || "");
+    if (zip.length >= 2) seedZipPrefixes.set(zip.slice(0, 2), (seedZipPrefixes.get(zip.slice(0, 2)) || 0) + 1);
+    const city = String(l.city || "").toLowerCase().trim();
+    if (city) seedCities.set(city, (seedCities.get(city) || 0) + 1);
+    const emp = Number(l.emp || l.employees || 0);
+    if (emp > 0) {
+      const band = Math.floor(Math.log2(emp + 1));
+      seedEmpBands.set(band, (seedEmpBands.get(band) || 0) + 1);
+    }
+  }
+
+  const claimed = new Set(myLeads.map((l) => l.cvr));
+  const candidates = Object.values(loadDiscoveryState().companies || {});
+
+  const scored = [];
+  for (const c of candidates) {
+    if (!c?.cvr || claimed.has(c.cvr)) continue;
+    let score = 0;
+    const ic = String(c.industry || "");
+    const ic2 = ic.slice(0, 2);
+    if (seedIndustries.has(ic2)) score += 30;
+    if (ic.length >= 6 && seedIndustries6.has(ic.slice(0, 6))) score += 20;
+    const zip2 = String(c.zip || "").slice(0, 2);
+    if (zip2 && seedZipPrefixes.has(zip2)) score += 10;
+    const city = String(c.city || "").toLowerCase().trim();
+    if (city && seedCities.has(city)) score += 5;
+    const emp = Number(c.employees || 0);
+    if (emp > 0) {
+      const band = Math.floor(Math.log2(emp + 1));
+      if (seedEmpBands.has(band)) score += 15;
+    }
+    if (c.ads?.verdict === true) score += 20;
+    if (score > 0) scored.push({ ...c, _score: score });
+  }
+  scored.sort((a, b) => b._score - a._score);
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  res.json({
+    seedSize: seed.length,
+    listId,
+    total: scored.length,
+    rows: scored.slice(0, limit),
+    profile: {
+      topIndustries: [...seedIndustries.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5),
+      topZipPrefixes: [...seedZipPrefixes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
+      topCities: [...seedCities.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
+      adsAsSeed: withAdsCount,
+    },
+  });
+});
+
 // GET /api/discovery/flips?days=7 — concatenated flip log entries for the
 // "Nye annoncører" tab. Each Cloud Run Job pass appends to flips_<date>.jsonl
 // in /data/discovery/. We just merge the last N days.
