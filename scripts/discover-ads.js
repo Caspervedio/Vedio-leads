@@ -46,7 +46,11 @@ const LIMIT = Number(process.env.DISCOVERY_LIMIT) || 1000;
 const CONCURRENCY = Number(process.env.CONCURRENCY) || 5;
 const META_DELAY_MS = 2500; // per-context delay — keeps total throughput ~CONCURRENCY/2.5 req/s
 const POST_LOAD_WAIT_MS = 4000;
-const MIN_EMPLOYEES = 10;
+// Employees filter: a confirmed ≥1 → MIN_EMPLOYEES gate; an entirely
+// missing CVR_Beskaeftigelse record → included (we can't tell, and the
+// scrape itself is the cheaper way to find out if they advertise).
+// Companies with a *confirmed* employee count below this drop out.
+const MIN_EMPLOYEES = 5;
 
 // Curated DB07 codes — industries where active Meta-ads is a strong B2B
 // signal. Skipped on purpose: holding companies (642010), shell-co
@@ -196,10 +200,11 @@ async function scrapePageWithContext(context, name) {
 
 // ── Datafordeler walk: build candidate pool ───────────────────────────────────
 async function fetchAllEnhedsIdsForCode(code) {
-  // Same pagination pattern as server.js's searchDatafordeler. Capped at
-  // 3 pages × 1000 = 3000 IDs per industry — enough headroom for the
-  // biggest target codes without burning quota.
-  const MAX_PAGES = 3;
+  // Pagination — Datafordeler caps `first` at 1000, and the largest DB07
+  // codes (412000 construction, 477110 clothing retail, …) have several
+  // thousand companies. 10 pages = up to 10k IDs per code; that's enough
+  // even for the broadest categories without burning quota.
+  const MAX_PAGES = 10;
   const ids = [];
   let cursor = null;
   for (let p = 0; p < MAX_PAGES; p++) {
@@ -254,15 +259,17 @@ async function enrichBatch(ids) {
   }
   return ids.map((eid) => {
     const names = namesByEid[eid] || [];
-    const empNode = empByEid[eid] || {};
-    const employees = empNode.antal || empNode.intervalFra || 0;
+    const empNode = empByEid[eid];
+    const hasEmpData = !!empNode;
+    const employees = empNode ? (empNode.antal || empNode.intervalFra || 0) : null;
     return {
       enhedsId: eid,
       cvr: String(cvrByEid[eid] || ""),
       name: names[names.length - 1] || "",
       status: statusByEid[eid] || "",
       founded: startByEid[eid] || "",
-      employees,
+      employees,        // null if no Beskaeftigelse record exists
+      hasEmpData,       // distinguishes "confirmed 0" from "unknown"
       city: addrByEid[eid]?.CVRAdresse_postdistrikt || "",
       zip: addrByEid[eid]?.CVRAdresse_postnummer || "",
     };
@@ -295,13 +302,20 @@ async function buildCandidatePool() {
     done += batch.length;
     if (done % 500 === 0) console.log(`  enriched ${done}/${allIds.length}`);
   }
-  // Filter to active + ≥MIN_EMPLOYEES + has a CVR
-  const filtered = enriched.filter(
-    (c) => c.status === "aktiv" && c.cvr && c.employees >= MIN_EMPLOYEES,
-  );
+  // Filter: must be active + have a CVR + either confirmed ≥MIN_EMPLOYEES
+  // or no employee data at all (rather than confirmed 0).
+  const filtered = enriched.filter((c) => {
+    if (c.status !== "aktiv" || !c.cvr) return false;
+    if (c.hasEmpData) return (c.employees || 0) >= MIN_EMPLOYEES;
+    return true; // unknown — keep, the scrape will tell us
+  });
   // Stable order — sort by CVR so runs are reproducible.
   filtered.sort((a, b) => a.cvr.localeCompare(b.cvr));
-  console.log(`[discover] candidate pool: ${filtered.length} (after active + ≥${MIN_EMPLOYEES} emp)`);
+  const breakdown = {
+    confirmedAtLeast: filtered.filter((c) => c.hasEmpData).length,
+    unknown:          filtered.filter((c) => !c.hasEmpData).length,
+  };
+  console.log(`[discover] candidate pool: ${filtered.length} (confirmed ≥${MIN_EMPLOYEES}: ${breakdown.confirmedAtLeast}, unknown emp: ${breakdown.unknown})`);
   return filtered;
 }
 
@@ -329,12 +343,20 @@ async function main() {
   console.log(`[discover] start · limit=${LIMIT} concurrency=${CONCURRENCY}`);
 
   const candidates = await buildCandidatePool();
-  // Trim to LIMIT for this pass. The order matters — sorted by CVR above, so
-  // we get reproducible coverage. (Future: prioritise stale entries first.)
-  const work = candidates.slice(0, LIMIT);
-  console.log(`[discover] scraping Meta-ads for ${work.length} companies…`);
-
   const prev = loadJson(STATE_FILE, { companies: {} }).companies || {};
+  // Rotation: prioritise companies we've never checked, then the
+  // ones whose last check is oldest. Daily passes therefore sweep
+  // through the full pool over multiple runs rather than rechecking
+  // the same alphabetical prefix every time.
+  candidates.sort((a, b) => {
+    const ta = prev[a.cvr]?.ads?.checkedAt ? new Date(prev[a.cvr].ads.checkedAt).getTime() : 0;
+    const tb = prev[b.cvr]?.ads?.checkedAt ? new Date(prev[b.cvr].ads.checkedAt).getTime() : 0;
+    return ta - tb; // ascending — never-checked (0) first, then oldest
+  });
+  const work = candidates.slice(0, LIMIT);
+  const neverChecked = work.filter((c) => !prev[c.cvr]?.ads?.checkedAt).length;
+  console.log(`[discover] scraping Meta-ads for ${work.length} companies (${neverChecked} never-checked, ${work.length - neverChecked} stale re-check)…`);
+
   const next = { ...prev };
   const metaAdsCache = loadJson(META_ADS_FILE, {});
   const flips = [];
