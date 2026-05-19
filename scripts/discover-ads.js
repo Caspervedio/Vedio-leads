@@ -36,12 +36,17 @@ const fetch = require("node-fetch");
 // ── config ────────────────────────────────────────────────────────────────────
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const STATE_FILE = path.join(DATA_DIR, "discovery", "state.json");
+const POOL_FILE = path.join(DATA_DIR, "discovery", "pool.json");
 const META_ADS_FILE = path.join(DATA_DIR, "meta_ads.json");
 const FLIPS_FILE = path.join(
   DATA_DIR,
   "discovery",
   `flips_${new Date().toISOString().slice(0, 10)}.jsonl`,
 );
+// Datafordeler walk + enrich for the full 80k+ candidate pool takes ~40
+// min. Caching it means the daily run is just a state.json read + scrape.
+// 7 days is plenty — CVR companies don't churn at human speed.
+const POOL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LIMIT = Number(process.env.DISCOVERY_LIMIT) || 1000;
 const CONCURRENCY = Number(process.env.CONCURRENCY) || 5;
 const META_DELAY_MS = 2500; // per-context delay — keeps total throughput ~CONCURRENCY/2.5 req/s
@@ -338,24 +343,52 @@ function appendJsonl(file, obj) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+async function loadOrBuildPool() {
+  // Use cached pool if it exists and is fresher than POOL_TTL_MS.
+  // FORCE_POOL_REFRESH=1 forces a full rebuild — useful for manual runs.
+  try {
+    if (fs.existsSync(POOL_FILE) && process.env.FORCE_POOL_REFRESH !== "1") {
+      const cached = JSON.parse(fs.readFileSync(POOL_FILE, "utf-8"));
+      const age = Date.now() - new Date(cached.builtAt).getTime();
+      if (age < POOL_TTL_MS) {
+        console.log(
+          `[discover] using cached pool (${cached.candidates.length} candidates, age ${Math.round(age / 3600_000)} h)`,
+        );
+        return cached.candidates;
+      }
+      console.log(`[discover] cached pool is stale (${Math.round(age / 3600_000)} h old) — rebuilding`);
+    }
+  } catch (e) { console.error("[discover] pool cache read failed:", e.message); }
+
+  const candidates = await buildCandidatePool();
+  saveJson(POOL_FILE, { builtAt: new Date().toISOString(), candidates });
+  return candidates;
+}
+
 async function main() {
   const startTime = Date.now();
   console.log(`[discover] start · limit=${LIMIT} concurrency=${CONCURRENCY}`);
 
-  const candidates = await buildCandidatePool();
+  const candidates = await loadOrBuildPool();
   const prev = loadJson(STATE_FILE, { companies: {} }).companies || {};
-  // Rotation: prioritise companies we've never checked, then the
-  // ones whose last check is oldest. Daily passes therefore sweep
-  // through the full pool over multiple runs rather than rechecking
-  // the same alphabetical prefix every time.
+  // Two-tier rotation by signal density:
+  //  1. confirmed ≥MIN_EMPLOYEES first (high prior probability of advertising)
+  //  2. unknown-employee long tail second (low prior — sole props, shells)
+  // Inside each tier, prioritise never-checked, then oldest.
   candidates.sort((a, b) => {
+    const tierA = a.hasEmpData ? 0 : 1;
+    const tierB = b.hasEmpData ? 0 : 1;
+    if (tierA !== tierB) return tierA - tierB;
     const ta = prev[a.cvr]?.ads?.checkedAt ? new Date(prev[a.cvr].ads.checkedAt).getTime() : 0;
     const tb = prev[b.cvr]?.ads?.checkedAt ? new Date(prev[b.cvr].ads.checkedAt).getTime() : 0;
-    return ta - tb; // ascending — never-checked (0) first, then oldest
+    return ta - tb;
   });
   const work = candidates.slice(0, LIMIT);
   const neverChecked = work.filter((c) => !prev[c.cvr]?.ads?.checkedAt).length;
-  console.log(`[discover] scraping Meta-ads for ${work.length} companies (${neverChecked} never-checked, ${work.length - neverChecked} stale re-check)…`);
+  const tier1 = work.filter((c) => c.hasEmpData).length;
+  console.log(
+    `[discover] scraping Meta-ads for ${work.length} companies (${tier1} confirmed-size, ${work.length - tier1} unknown-size, ${neverChecked} never-checked overall)…`,
+  );
 
   const next = { ...prev };
   const metaAdsCache = loadJson(META_ADS_FILE, {});
