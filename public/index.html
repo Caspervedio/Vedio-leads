@@ -4363,11 +4363,13 @@ function updateGmMatrixPreview(){
   const el=document.getElementById('gm-matrix-preview');if(!el)return;
   const cats=_gmState.categories.length;
   const cities=gmResolveCities().length;
-  const total=cats*cities;
-  if(total===0){
+  if(cats===0 || cities===0){
     el.innerHTML='<span style="color:var(--w35)">Vælg mindst én kategori og én by-gruppe (eller skriv en by) for at se mission-størrelsen.</span>';
   } else {
-    el.innerHTML=`Mission: <strong style="color:#fff">${cats} kategori${cats===1?'':'er'} × ${cities} by${cities===1?'':'er'} = ${total} søgninger</strong>. Hver søgning ~3 sek + CVR-match. Forventet kørselstid: ~${Math.ceil(total*4/60)} min.`;
+    // One batched OSM query per category covers all cities at once, so the
+    // request count is just `cats`. Each takes ~10-30s including CVR cross-match.
+    const eta = Math.max(1, Math.ceil(cats * 20 / 60));
+    el.innerHTML=`Mission: <strong style="color:#fff">${cats} kategori${cats===1?'':'er'} × ${cities} by${cities===1?'':'er'}</strong>. Batched i ${cats} OSM-kald. Forventet kørselstid: ~${eta} min.`;
   }
 }
 
@@ -4376,12 +4378,16 @@ async function gmRunAgent(){
   const statusEl=document.getElementById('gm-status');
   if(!out||!statusEl)return;
 
-  // Build mission list (category × city pairs)
+  // One mission per category — each batches ALL cities into a single OSM
+  // request. The previous approach of one request per (category, city)
+  // pair got throttled by Overpass after the first 2-3 cities, so the
+  // SDR saw partial results.
   let missions=[];
   if(_gmState.mode==='manual'){
     const q=_gmState.manualQ.trim();
     if(!q){showToast('Indtast en søgeterm');return;}
-    missions.push({q,city:_gmState.manualCity.trim()});
+    const c=_gmState.manualCity.trim();
+    missions.push({q, cities: c?[c]:[], catLabel:q});
   } else {
     if(!_gmState.categories.length){showToast('Vælg mindst én kategori');return;}
     const cities=gmResolveCities();
@@ -4389,54 +4395,49 @@ async function gmRunAgent(){
     for(const catId of _gmState.categories){
       const cat=GM_CATEGORIES.find(c=>c.id===catId);
       if(!cat)continue;
-      // Pass category id (OSM uses it to pick the right tag pairs server-side).
-      for(const city of cities)missions.push({category:catId,q:cat.q,city,catLabel:cat.label});
+      // ONE mission per category, with all cities batched into the request.
+      missions.push({category:catId, q:cat.q, cities, catLabel:cat.label});
     }
   }
   if(missions.length===0)return;
-  if(missions.length>50){showToast('Mission for stor (max 50 søgninger) — reducér kategorier eller by-gruppen');return;}
 
   _gmState.running=true;
   _gmCache.results=[];
   out.innerHTML='';
 
-  // Run missions sequentially with live progress. Each result merged into
-  // a name+CVR-keyed dedup map so we don't double-count brands listed in
-  // multiple cities.
   const seen=new Map(); // key = cvr || normalized(name)+city
   let done=0;
-  let firstStatus = null;
+  let errorMsg=null;
   try {
     for(const m of missions){
       done++;
-      statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent søger <strong style="color:#fff">${e(m.catLabel||m.q)}</strong> i <strong style="color:#fff">${e(m.city||'Danmark')}</strong> — ${done}/${missions.length}…`;
+      const citiesLabel = m.cities&&m.cities.length>1 ? `${m.cities.length} byer` : (m.cities?.[0]||'Danmark');
+      statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent søger <strong style="color:#fff">${e(m.catLabel||m.q)}</strong> · ${e(citiesLabel)} — ${done}/${missions.length}…`;
       try{
-        const body={q:m.q,city:m.city,limit:50};
+        const body={q:m.q, cities:m.cities||[], limit:200};
         if(m.category)body.category=m.category;
         const r=await fetch('/api/scrape/google-maps',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify(body)});
         const d=await r.json();
-        if(!r.ok&&!firstStatus){firstStatus=r.status;out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke søge')}</div>`;break;}
-        if(!r.ok)continue;
+        if(!r.ok){errorMsg=d.error||'Kunne ikke søge';continue;}
         for(const row of(d.results||[])){
-          const key=row.cvr||((row.name||'').toLowerCase()+'|'+(m.city||''));
-          if(!seen.has(key))seen.set(key,{...row,_category:m.catLabel||m.q,_city:m.city});
+          const key=row.cvr||((row.name||'').toLowerCase()+'|'+(row.city||''));
+          if(!seen.has(key))seen.set(key,{...row,_category:m.catLabel||m.q});
         }
         _gmCache.results=Array.from(seen.values());
-      }catch{/* skip individual failures */}
+      }catch(ex){errorMsg=ex.message;}
     }
     _gmState.lastRun=new Date().toISOString();
-    _gmState.running=false;
     _gmState.lastResultCount=_gmCache.results.length;
     gmSaveToStorage();
-    if(firstStatus!==503&&firstStatus!==500&&firstStatus!==400){
+    if(_gmCache.results.length===0 && errorMsg){
+      out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(errorMsg)}</div>`;
+    } else {
       const matched=_gmCache.results.filter(r=>r.cvr).length;
-      statusEl.innerHTML=`✓ Agent færdig — <strong style="color:#fff">${_gmCache.results.length}</strong> unikke leads (${matched} med CVR-match) fra ${missions.length} søgninger`;
+      statusEl.innerHTML=`✓ Agent færdig — <strong style="color:#fff">${_gmCache.results.length}</strong> unikke leads (${matched} med CVR-match)`;
       renderGoogleMapsResults();
     }
   } finally {
     _gmState.running=false;
-    // Re-render the form so the toggle status banner updates with the
-    // new last-run timestamp + count.
     setTimeout(()=>renderGoogleMapsForm(),100);
   }
 }

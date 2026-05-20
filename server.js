@@ -3763,15 +3763,32 @@ const OSM_CATEGORY_TAGS = {
   vvs:        [["craft","plumber"]],
 };
 
-function buildOsmQuery({ category, city, q, limit = 100 }) {
+function buildOsmQuery({ category, city, cities, q, limit = 100 }) {
   // Area clause: Danish municipalities show up in OSM under three naming
   // patterns depending on grammar — "Aarhus", "Aarhus Kommune", and
-  // "Københavns Kommune" (genitive). Union all three so any city name
-  // works. Fallback to all-of-Denmark when no city is given.
-  const safeCity = String(city || "").replace(/["\\]/g, "");
-  const areaClause = safeCity
-    ? `(area["name"="${safeCity}"];area["name"="${safeCity} Kommune"];area["name"="${safeCity}s Kommune"];)->.a;`
-    : `area["ISO3166-1"="DK"][admin_level=2]->.a;`;
+  // "Københavns Kommune" (genitive). Union all three for every requested
+  // city so we can batch multiple cities into a single Overpass call —
+  // Overpass fair-use is ~2 concurrent requests, so firing 10 city
+  // queries serially gets throttled. One big union query side-steps that.
+  // Fallback to all-of-Denmark when no city is given.
+  const cityList = Array.isArray(cities) && cities.length
+    ? cities
+    : (city ? [city] : []);
+  const safeCity = s => String(s).replace(/["\\]/g, "");
+  let areaClause;
+  if (cityList.length) {
+    const areaParts = [];
+    for (const c of cityList) {
+      const s = safeCity(c);
+      if (!s) continue;
+      areaParts.push(`area["name"="${s}"];`);
+      areaParts.push(`area["name"="${s} Kommune"];`);
+      areaParts.push(`area["name"="${s}s Kommune"];`);
+    }
+    areaClause = `(${areaParts.join("")})->.a;`;
+  } else {
+    areaClause = `area["ISO3166-1"="DK"][admin_level=2]->.a;`;
+  }
   // Build inner element queries from category tags. Always query both
   // node + way (POIs come in both representations).
   const parts = [];
@@ -3835,11 +3852,14 @@ app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
   try {
     const q = String(req.body?.q || "").trim();
     const city = String(req.body?.city || "").trim();
+    const cities = Array.isArray(req.body?.cities) ? req.body.cities.filter(Boolean) : null;
     const category = String(req.body?.category || "").trim();
-    const limit = Math.max(10, Math.min(200, parseInt(req.body?.limit || 50, 10)));
+    // Higher cap since we now batch all cities in one query (10 cities × 50
+    // = up to 500 candidates).
+    const limit = Math.max(10, Math.min(500, parseInt(req.body?.limit || 200, 10)));
     if (!q && !category) return res.status(400).json({ error: "Indtast en søgeterm eller vælg en kategori" });
 
-    const query = buildOsmQuery({ category, city, q, limit });
+    const query = buildOsmQuery({ category, city, cities, q, limit });
     if (!query) return res.status(400).json({ error: "Ukendt kategori — vælg en preset eller indtast søgeterm" });
 
     // Overpass requires Accept: application/json (otherwise returns
@@ -3874,23 +3894,31 @@ app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
       if (parsed.length >= limit) break;
     }
 
-    // CVR cross-match — same approach as the previous Google path.
+    // CVR cross-match — parallel workers so a batch of 200 results
+    // doesn't time out. 6-way concurrency mirrors Datafordeler's
+    // tolerance and the same pattern we use for the tech-stack agent.
     const stripSuffix = s => String(s||"").toLowerCase().replace(/\s+(aps|a\/s|i\/s|p\/s|k\/s|ivs|holding)\b.*$/i,"").trim();
-    const out = [];
-    for (const p of parsed) {
-      let cvr = null;
-      try {
-        const filters = { _from: 0, _size: 5 };
-        if (city || p.city) filters.city = city || p.city;
-        const matches = await searchDatafordeler(p.name, filters);
-        const rows = (matches && (matches.companies || matches.results || matches.rows)) || [];
-        const target = stripSuffix(p.name);
-        const hit = rows.find(c => stripSuffix(c.name) === target);
-        if (hit && hit.cvr) cvr = hit.cvr;
-      } catch { /* keep cvr=null */ }
-      out.push({ ...p, cvr });
+    const out = new Array(parsed.length);
+    const queue = parsed.map((p, i) => ({ p, i }));
+    async function cvrWorker() {
+      while (queue.length) {
+        const { p, i } = queue.shift();
+        let cvr = null;
+        try {
+          const filters = { _from: 0, _size: 5 };
+          if (p.city) filters.city = p.city;
+          else if (city) filters.city = city;
+          const matches = await searchDatafordeler(p.name, filters);
+          const rows = (matches && (matches.companies || matches.results || matches.rows)) || [];
+          const target = stripSuffix(p.name);
+          const hit = rows.find(c => stripSuffix(c.name) === target);
+          if (hit && hit.cvr) cvr = hit.cvr;
+        } catch { /* keep cvr=null */ }
+        out[i] = { ...p, cvr };
+      }
     }
-    res.json({ results: out, backend: "openstreetmap", scanned: elements.length });
+    await Promise.all(Array.from({ length: Math.min(6, parsed.length) }, cvrWorker));
+    res.json({ results: out, backend: "openstreetmap", scanned: elements.length, candidateCount: parsed.length });
   } catch (e) {
     console.error("[scrape/google-maps]", e.message);
     res.status(500).json({ error: e.message });
