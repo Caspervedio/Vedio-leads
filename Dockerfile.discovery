@@ -22,8 +22,14 @@ RUN npm ci --omit=dev
 COPY scripts/discover-ads.js ./scripts/discover-ads.js
 COPY scripts/discover-advertisers.js ./scripts/discover-advertisers.js
 
-# Default to the new Meta-first walk. Override DISCOVERY_MODE on the Job
-# (or in --update-env-vars on execute) to run the legacy CVR-walk if ever
-# needed for backfill: DISCOVERY_MODE=discover-ads
-ENV DISCOVERY_MODE=discover-advertisers
+# CVR-walk (discover-ads.js) is the primary path — verified Danish entities
+# with Meta-ads check is the lead-quality sweet spot. The Meta-first walker
+# (discover-advertisers.js) is kept in the image for future use (e.g. a
+# Phase-2 Danish-seed sweep to catch new Danish advertisers not yet
+# discovered via CVR), but it's not the default because Meta's country=DK
+# filter only restricts ad *targeting*, not advertiser nationality — so
+# most results are international noise.
+# Override with DISCOVERY_MODE=discover-advertisers when you want the
+# Meta-walk path.
+ENV DISCOVERY_MODE=discover-ads
 CMD ["sh", "-c", "node scripts/${DISCOVERY_MODE}.js"]

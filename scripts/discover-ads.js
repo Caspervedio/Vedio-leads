@@ -369,13 +369,24 @@ async function main() {
 
   const candidates = await loadOrBuildPool();
   const prev = loadJson(STATE_FILE, { companies: {} }).companies || {};
+  // BECK-bug fix: Datafordeler's CVR_Beskaeftigelse returns transient
+  // nulls (the same company can come back with employees=12 one day and
+  // employees=null the next). When pool.json was built we got null for
+  // some companies that we *already know* are confirmed-size from earlier
+  // scrapes. Merge state.json's known employees back in so they land in
+  // tier 1 instead of getting buried in the unknown long tail forever.
+  const isConfirmedSize = (c) => {
+    if (c.hasEmpData) return true;
+    const knownEmp = prev[c.cvr]?.employees;
+    return typeof knownEmp === "number" && knownEmp >= MIN_EMPLOYEES;
+  };
   // Two-tier rotation by signal density:
-  //  1. confirmed ≥MIN_EMPLOYEES first (high prior probability of advertising)
-  //  2. unknown-employee long tail second (low prior — sole props, shells)
+  //  1. confirmed ≥MIN_EMPLOYEES (high prior probability of advertising)
+  //  2. unknown-employee long tail (low prior — sole props, shells)
   // Inside each tier, prioritise never-checked, then oldest.
   candidates.sort((a, b) => {
-    const tierA = a.hasEmpData ? 0 : 1;
-    const tierB = b.hasEmpData ? 0 : 1;
+    const tierA = isConfirmedSize(a) ? 0 : 1;
+    const tierB = isConfirmedSize(b) ? 0 : 1;
     if (tierA !== tierB) return tierA - tierB;
     const ta = prev[a.cvr]?.ads?.checkedAt ? new Date(prev[a.cvr].ads.checkedAt).getTime() : 0;
     const tb = prev[b.cvr]?.ads?.checkedAt ? new Date(prev[b.cvr].ads.checkedAt).getTime() : 0;
