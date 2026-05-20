@@ -892,9 +892,6 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         </div>
       </div>
     </div>
-    <div style="margin-left:auto;display:flex;gap:5px;flex-wrap:wrap">
-      <button class="btn btn-primary btn-sm" onclick="addAll()">+ Tilføj alle</button>
-    </div>
   </div>
 
   <div class="stbar" id="stbar"></div>
@@ -914,6 +911,13 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   </div>
 
   <div class="body-wrap">
+    <!-- CVR Discovery hero — only shown on sv('search'). Hidden on sv('leads')
+         via JS in sv() since the leads view doesn't need this framing. -->
+    <div id="cvr-hero" style="display:none;padding:24px 24px 12px;background:var(--dark)">
+      <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🔎 Værktøj · CVR Discovery</div>
+      <h2 style="font-size:24px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Søg i alle aktive danske virksomheder</h2>
+      <p style="font-size:12.5px;color:var(--w55);margin:0;line-height:1.5;max-width:720px">Direkte lookup mod Datafordeler (CVR-registeret). Brug den når du har en specifik virksomhed i tankerne — eller når du vil eksplorere segmenter manuelt før du sætter en AI-agent på det. Filtrer i højre side, klik for detaljer, og send til Autodialer-køen.</p>
+    </div>
     <div class="tw">
       <table id="tbl"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
       <div id="load-more-wrap" style="display:none;padding:16px;text-align:center">
@@ -955,13 +959,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <!-- DISCOVERY PAGE -->
   <div id="discovery-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;gap:20px">
-        <div>
-          <div class="section-label" id="disc-section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Dashboard</div>
-          <h2 id="disc-page-title" style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Vedio Leads — auto-pipeline</h2>
-          <p id="disc-page-sub" style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Samlet overblik: ICP-klare leads, aktive annoncører, nye annoncører fra de seneste 7 dage, og Look-alike-matches. Data samles automatisk to gange dagligt fra alle lead-kilder.</p>
-        </div>
-        <button class="btn btn-primary btn-sm" id="disc-run-btn" style="padding:10px 18px;font-size:13px;flex-shrink:0" onclick="manualDiscoveryRun()">Kør nu</button>
+      <div style="margin-bottom:18px">
+        <div class="section-label" id="disc-section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Dashboard</div>
+        <h2 id="disc-page-title" style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Vedio Leads — auto-pipeline</h2>
+        <p id="disc-page-sub" style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Samlet overblik over alle leads pushet ind af dine AI Agents. Manuelle agent-kørsler sker fra hver agent's side — Dashboard er udelukkende til review.</p>
       </div>
 
       <!-- Auto-pipeline status banner — next run, queue counters, downstream status -->
@@ -2770,11 +2771,29 @@ async function renderLookalikePage(){
   renderLookalikeUI();
 }
 
+// Match-breadth: 'strict' returns only the top-scored matches, 'broad' loosens
+// the floor so the agent surfaces "near-miss" leads in adjacent industries
+// or regions the seed didn't cover. Stored on _laCache so the toggle survives
+// re-renders.
+if(typeof _laCache!=='undefined'&&_laCache&&!_laCache.breadth)_laCache.breadth='balanced';
+
 async function loadLookalikeData(){
   try{
-    const r=await fetch('/api/discovery/lookalikes?limit=100',{headers:ah()});
+    // Backend supports `breadth=strict|balanced|broad` — limits + score floor.
+    const breadth=(_laCache.breadth||'balanced');
+    const limit = breadth==='strict' ? 30 : breadth==='broad' ? 200 : 100;
+    const r=await fetch(`/api/discovery/lookalikes?limit=${limit}&breadth=${breadth}`,{headers:ah()});
     const d=await r.json();
-    _laCache.rows=d.rows||[];
+    let rows=d.rows||[];
+    // Client-side score floor based on breadth, since the backend ignores
+    // `breadth` for legacy compat. Strict = top 50% by score, Broad = all.
+    if(rows.length){
+      const max=rows[0]._score||1;
+      if(breadth==='strict')rows=rows.filter(r=>(r._score||0)>=max*0.7);
+      else if(breadth==='balanced')rows=rows.filter(r=>(r._score||0)>=max*0.35);
+      // broad keeps everything
+    }
+    _laCache.rows=rows;
     _laCache.profile=d.profile||null;
     _laCache.seedSize=d.seedSize||0;
     _laCache.lastRunAt=new Date().toISOString();
@@ -2783,6 +2802,11 @@ async function loadLookalikeData(){
     _laCache.profile=null;
     _laCache.seedSize=0;
   }
+}
+
+function laSetBreadth(b){
+  _laCache.breadth=b;
+  loadLookalikeData().then(renderLookalikeUI);
 }
 
 function renderLookalikeUI(){
@@ -2795,13 +2819,21 @@ function renderLookalikeUI(){
     : seed<5
     ? `<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fdba74;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚡ Du har ${seed} seed-leads — agenten arbejder bedre med 5–10. Tilføj flere kvalitetsleads til Min liste for skarpere matches.</div>`
     : `<div style="background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.25);color:#6ee7b7;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">✓ ${seed} seed-leads aktive. Agenten har nok at gå ud fra.</div>`;
-  seedCard.innerHTML=`<div style="display:flex;align-items:center;gap:14px">
-      <div style="width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-size:24px">🎯</div>
-      <div style="flex:1">
+  const breadth=_laCache.breadth||'balanced';
+  const bChip=(id,lbl,desc)=>`<button onclick="laSetBreadth('${id}')" title="${e(desc)}" style="padding:6px 13px;border-radius:9px;border:1px solid ${breadth===id?'rgba(124,58,237,0.5)':'var(--w08)'};background:${breadth===id?'rgba(124,58,237,0.18)':'transparent'};color:${breadth===id?'#fff':'var(--w55)'};font-size:11.5px;font-weight:${breadth===id?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif">${lbl}</button>`;
+  seedCard.innerHTML=`<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🎯</div>
+      <div style="flex:1;min-width:200px">
         <div style="font-size:13px;font-weight:700;color:#fff;letter-spacing:-0.2px">AI-agent status</div>
-        <div style="font-size:11.5px;color:var(--w55);margin-top:2px">${seed} seed-leads · ${_laCache.rows.length} match-kandidater fundet · sidst kørt ${_laCache.lastRunAt?humanAgo(_laCache.lastRunAt):'aldrig'}</div>
+        <div style="font-size:11.5px;color:var(--w55);margin-top:2px">${seed} seed-leads · ${_laCache.rows.length} match-kandidater · sidst kørt ${_laCache.lastRunAt?humanAgo(_laCache.lastRunAt):'aldrig'}</div>
       </div>
-      <button class="btn btn-sm" onclick="sv('leads')" style="padding:7px 13px">Administrer seed →</button>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-right:4px">Match-bredde</span>
+        ${bChip('strict','Strict','Kun de tætteste matches på dit seed (færre, men højere kvalitet)')}
+        ${bChip('balanced','Balanced','Standard — best mix af relevans og volumen')}
+        ${bChip('broad','Broad','Inkluder nær-misser i tilstødende brancher (oversete kandidater)')}
+      </div>
+      <button class="btn btn-sm" onclick="sv('leads')" style="padding:7px 13px;flex-shrink:0">Administrer seed →</button>
     </div>
     ${seedQualityHint}`;
   // Profile chips
@@ -3031,39 +3063,124 @@ function renderCsvUploadPage(){
 // Shopify D2C brands" or "we sell HubSpot consulting". This lets the SDR
 // paste a domain list (e.g. CVR-discovered companies' websites) and get
 // back a flagged sub-list filtered by stack signature.
+// Tech Stack Agent — preset missions.
+// Each mission encodes "find DK companies running X" so the SDR just picks
+// a vertical and clicks run. Custom-domains mode kept as advanced fallback.
+const TS_PRESETS = [
+  { id:'shopify-d2c',  label:'Shopify D2C-brands', sigs:['Shopify','WooCommerce','BigCommerce'],     emoji:'🛒', desc:'Webshops på Shopify/Woo/BigCommerce — primært D2C-brands.' },
+  { id:'hubspot',      label:'HubSpot-brugere',    sigs:['HubSpot'],                                  emoji:'🟧', desc:'Virksomheder der bruger HubSpot til marketing automation.' },
+  { id:'klaviyo',      label:'Klaviyo-brugere',    sigs:['Klaviyo'],                                  emoji:'✉️', desc:'E-mail-marketing via Klaviyo — næsten altid D2C.' },
+  { id:'wordpress',    label:'WordPress / Woo',    sigs:['WordPress','WooCommerce'],                 emoji:'⚙️', desc:'WordPress / WooCommerce sites — bredt SMB-segment.' },
+  { id:'modern-stack', label:'Modern stack',       sigs:['Next.js','Nuxt','React','Vercel'],          emoji:'⚡', desc:'Next.js / Nuxt / Vercel — tech-forward virksomheder.' },
+  { id:'paid-ads',     label:'Kører ads (DK)',     sigs:['Meta Pixel','GA4','Google Tag Manager','TikTok Pixel'], emoji:'📢', desc:'Tracker konversion — kører aktivt på paid social/search.' },
+  { id:'no-analytics', label:'Mangler analytics',  sigs:[],  negate:['GA4','Google Tag Manager'],     emoji:'❓', desc:'Sites uden GA4/GTM — mulig "vi mangler at måle"-pitch.' },
+];
+
+const _tsState = { mission: null, source: 'leads', customDomains: '', running: false, lastRun: null, results: [], stats: null };
+
 function renderTechStackPage(){
-  const wrap=document.getElementById('ts-form');if(!wrap)return;
+  const wrap=document.getElementById('ts-form');
+  if(!wrap)return;
   wrap.innerHTML=`
-    <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Domæner</div>
-    <textarea id="ts-domains" placeholder="eksempel.dk&#10;butik.com&#10;www.firma.dk" rows="8" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:12px 14px;font-family:'JetBrains Mono','Menlo',monospace;font-size:12.5px;resize:vertical;outline:none;transition:border 0.15s" onfocus="this.style.borderColor='var(--purple)'" onblur="this.style.borderColor='var(--w08)'"></textarea>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:12px;flex-wrap:wrap">
-      <div style="font-size:11px;color:var(--w55)">Et domæne pr. linje. Max 100 domæner pr. skan. Vi prober https først, derefter http.</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-sm" style="padding:8px 14px" onclick="tsLoadFromLeads()" title="Hent websites fra Min liste (kun leads med et website)">Hent fra Min liste</button>
-        <button class="btn btn-primary btn-sm" id="ts-scan-btn" style="padding:8px 18px" onclick="tsRunScan()">Scan tech-stack</button>
+    <!-- Mission selector -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Agent-mission</div>
+        <div style="font-size:11.5px;color:var(--w55);max-width:520px;line-height:1.5">Vælg et preset — agenten scanner automatisk dine eksisterende leads (eller hele CVR-puljen) og finder dem der matcher signaturet.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--w55)">
+        <span>Kilde:</span>
+        <select id="ts-source" onchange="_tsState.source=this.value" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;color:#fff;padding:6px 10px;font-family:'Outfit',sans-serif;font-size:11.5px;outline:none">
+          <option value="leads" ${_tsState.source==='leads'?'selected':''}>Mine leads (websites)</option>
+          <option value="custom" ${_tsState.source==='custom'?'selected':''}>Custom domænder…</option>
+        </select>
       </div>
     </div>
+    <div id="ts-missions" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:14px">
+      ${TS_PRESETS.map(p=>{
+        const sel=_tsState.mission===p.id;
+        return `<button class="ts-preset" data-id="${e(p.id)}" onclick="tsSelectMission('${e(p.id)}')" style="text-align:left;padding:14px;border-radius:12px;background:${sel?'rgba(124,58,237,0.18)':'var(--w04)'};border:1px solid ${sel?'rgba(124,58,237,0.5)':'var(--w08)'};color:#fff;cursor:pointer;font-family:'Outfit',sans-serif;transition:all 0.12s">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="font-size:18px">${p.emoji}</span>
+            <span style="font-size:13px;font-weight:800;letter-spacing:-0.2px">${e(p.label)}</span>
+          </div>
+          <div style="font-size:10.5px;color:var(--w55);line-height:1.5">${e(p.desc)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">
+            ${p.sigs.map(s=>`<span style="font-size:9.5px;padding:2px 7px;border-radius:8px;background:rgba(124,58,237,0.15);color:#c4b5fd;font-weight:700">${e(s)}</span>`).join('')}
+            ${(p.negate||[]).map(s=>`<span style="font-size:9.5px;padding:2px 7px;border-radius:8px;background:rgba(248,113,113,0.12);color:#fca5a5;font-weight:700;text-decoration:line-through">${e(s)}</span>`).join('')}
+          </div>
+        </button>`;
+      }).join('')}
+    </div>
+    <!-- Custom domains textarea (only shown when source=custom) -->
+    <div id="ts-custom-wrap" style="display:${_tsState.source==='custom'?'block':'none'};margin-bottom:14px">
+      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Custom domænder</div>
+      <textarea id="ts-domains" placeholder="eksempel.dk&#10;butik.com&#10;www.firma.dk" rows="5" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:12px 14px;font-family:'JetBrains Mono','Menlo',monospace;font-size:12.5px;resize:vertical;outline:none">${e(_tsState.customDomains||'')}</textarea>
+      <div style="font-size:10.5px;color:var(--w55);margin-top:6px">Et domæne pr. linje. Max 200 pr. kørsel.</div>
+    </div>
+    <!-- Status + run button -->
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:6px;border-top:1px solid var(--w04)">
+      <div id="ts-status" style="font-size:11.5px;color:var(--w55);min-height:18px">${_tsState.lastRun?`✓ Sidst kørt ${humanAgo(_tsState.lastRun)} · fandt ${_tsState.results.length} matches`:'Vælg en mission og klik <strong style="color:var(--w80)">▶ Kør agent</strong>.'}</div>
+      <button class="btn btn-primary btn-sm" id="ts-scan-btn" style="padding:10px 22px;font-size:13px" onclick="tsRunAgent()">▶ Kør agent</button>
+    </div>
   `;
-  document.getElementById('ts-results').innerHTML='';
+  // Re-bind: source select onchange toggles custom textarea visibility
+  document.getElementById('ts-source').addEventListener('change',(ev)=>{
+    _tsState.source=ev.target.value;
+    document.getElementById('ts-custom-wrap').style.display=ev.target.value==='custom'?'block':'none';
+  });
+  // Re-render past results if we have them
+  if(_tsState.results.length){
+    renderTechStackResults(_tsState.results);
+  } else {
+    document.getElementById('ts-results').innerHTML='';
+  }
 }
 
-function tsLoadFromLeads(){
-  const sites=(leads||[]).map(l=>l.website||l.hjemmeside||'').filter(s=>s&&s.length>3);
-  if(!sites.length){showToast('Ingen leads med website fundet på Min liste');return;}
-  document.getElementById('ts-domains').value=Array.from(new Set(sites)).join('\n');
-  showToast(`${sites.length} domæner indlæst fra Min liste`);
+function tsSelectMission(id){
+  _tsState.mission = (_tsState.mission===id) ? null : id;
+  // Re-render the missions grid only (cheaper than full re-render)
+  document.querySelectorAll('.ts-preset').forEach(b=>{
+    const sel=b.dataset.id===_tsState.mission;
+    b.style.background=sel?'rgba(124,58,237,0.18)':'var(--w04)';
+    b.style.borderColor=sel?'rgba(124,58,237,0.5)':'var(--w08)';
+  });
 }
 
-async function tsRunScan(){
-  const ta=document.getElementById('ts-domains');
+async function tsRunAgent(){
+  if(!_tsState.mission && _tsState.source!=='custom'){
+    showToast('Vælg en agent-mission først');
+    return;
+  }
   const btn=document.getElementById('ts-scan-btn');
+  const statusEl=document.getElementById('ts-status');
   const out=document.getElementById('ts-results');
-  if(!ta||!btn||!out)return;
-  const domains=ta.value.split(/[\n,;]/).map(s=>s.trim()).filter(Boolean);
-  if(!domains.length){showToast('Indtast mindst ét domæne');return;}
-  if(domains.length>100){showToast('Max 100 domæner pr. skan');return;}
-  btn.disabled=true;btn.textContent='Scanner…';
-  out.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px;display:flex;align-items:center;gap:12px;color:var(--w55);font-size:12.5px"><span class="search-spinner" style="width:18px;height:18px"></span>Scanner ${domains.length} domæner — kan tage 30–60 sek.</div>`;
+  if(!btn||!out)return;
+
+  // Resolve mission → signatures + source
+  const preset = TS_PRESETS.find(p=>p.id===_tsState.mission);
+  let domains = [];
+  if(_tsState.source==='custom'){
+    const text=document.getElementById('ts-domains')?.value||'';
+    _tsState.customDomains=text;
+    domains=text.split(/[\n,;]/).map(s=>s.trim()).filter(Boolean);
+    if(!domains.length){showToast('Indtast mindst ét domæne');return;}
+    if(domains.length>200){showToast('Max 200 domæner pr. kørsel');return;}
+  } else {
+    // Source = mine leads — agent pulls websites from leads array
+    domains = Array.from(new Set((leads||[]).map(l=>l.website||l.web||l.hjemmeside||'').filter(s=>s&&s.length>3)));
+    if(!domains.length){
+      showToast('Ingen leads med website endnu — tilføj leads fra en agent eller upload CSV med websites');
+      return;
+    }
+    if(domains.length>200) domains=domains.slice(0,200);
+  }
+
+  btn.disabled=true;btn.textContent='Agent arbejder…';
+  _tsState.running=true;
+  statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent scanner ${domains.length} domænder…`;
+  out.innerHTML='';
+
   try{
     const r=await fetch('/api/scrape/tech-stack',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({domains})});
     const d=await r.json();
@@ -3071,11 +3188,26 @@ async function tsRunScan(){
       out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke scanne')}</div>`;
       return;
     }
-    renderTechStackResults(d.results||[]);
+    // Mission filter: keep only rows matching the mission's signatures
+    // (and not matching any "negate" signature for missions like "missing analytics").
+    let rows = d.results || [];
+    if(preset){
+      rows = rows.filter(r=>{
+        const sigs = r.signatures||[];
+        if(preset.negate && preset.negate.some(n=>sigs.includes(n))) return false;
+        if(preset.sigs && preset.sigs.length) return preset.sigs.some(s=>sigs.includes(s));
+        return preset.negate ? true : false; // negate-only missions return everything
+      });
+    }
+    _tsState.results = rows;
+    _tsState.lastRun = new Date().toISOString();
+    _tsState.running = false;
+    statusEl.innerHTML = `✓ Agent færdig — fandt <strong style="color:#fff">${rows.length}</strong> matches af ${d.results.length} skannede domænder`;
+    renderTechStackResults(rows);
   }catch(ex){
     out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(ex.message)}</div>`;
   }finally{
-    btn.disabled=false;btn.textContent='Scan tech-stack';
+    btn.disabled=false;btn.textContent='▶ Kør agent';
   }
 }
 
@@ -3363,54 +3495,188 @@ function renderGoogleMapsConfigCard(){
   }
 }
 
+// ─ Maps Scraper Agent ────────────────────────────────────────────────────
+// Two modes:
+//  Agent-mode (default): SDR picks category-presets + city-presets, agent
+//  fires the matrix automatically (Restaurant × top-10 DK byer = 10 calls
+//  to Places, all merged + cross-matched against CVR + deduplicated).
+//  Manual: classic single-query box for one-off lookups.
+const GM_CATEGORIES = [
+  { id:'restaurant', label:'Restaurant', q:'restaurant', emoji:'🍽️' },
+  { id:'cafe',       label:'Café',       q:'café',       emoji:'☕' },
+  { id:'frisor',     label:'Frisør',     q:'frisør',     emoji:'💇' },
+  { id:'advokat',    label:'Advokat',    q:'advokat',    emoji:'⚖️' },
+  { id:'revisor',    label:'Revisor',    q:'revisor',    emoji:'📊' },
+  { id:'tandlæge',   label:'Tandlæge',   q:'tandlæge',   emoji:'🦷' },
+  { id:'fysio',      label:'Fysioterapeut', q:'fysioterapeut', emoji:'🏃' },
+  { id:'butik',      label:'Detailbutik', q:'butik',      emoji:'🛍️' },
+  { id:'auto',       label:'Autoværksted', q:'autoværksted', emoji:'🔧' },
+  { id:'tomrer',     label:'Tømrer',     q:'tømrer',     emoji:'🪚' },
+  { id:'el',         label:'Elektriker', q:'elektriker', emoji:'⚡' },
+  { id:'vvs',        label:'VVS',        q:'vvs installatør', emoji:'🚿' },
+];
+const GM_CITY_GROUPS = [
+  { id:'top10',  label:'Top 10 DK byer', cities:['København','Aarhus','Odense','Aalborg','Esbjerg','Randers','Kolding','Horsens','Vejle','Roskilde'], emoji:'🇩🇰' },
+  { id:'hovedstaden', label:'Hovedstaden', cities:['København','Frederiksberg','Lyngby','Hellerup','Hvidovre','Glostrup','Ballerup','Albertslund'], emoji:'🏙️' },
+  { id:'jylland', label:'Jylland', cities:['Aarhus','Aalborg','Esbjerg','Randers','Kolding','Horsens','Vejle','Herning','Viborg','Silkeborg','Fredericia'], emoji:'🏞️' },
+  { id:'fyn',    label:'Fyn',    cities:['Odense','Svendborg','Nyborg','Middelfart','Faaborg','Bogense'], emoji:'🌊' },
+];
+
+const _gmState = { mode:'agent', categories:[], cityGroup:null, customCity:'', manualQ:'', manualCity:'', running:false, lastRun:null, progress:null };
+
 function renderGoogleMapsForm(){
   const wrap=document.getElementById('gm-form');if(!wrap)return;
   wrap.innerHTML=`
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-      <div style="flex:2;min-width:200px">
-        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">Søgeterm</div>
-        <input id="gm-q" placeholder="frisør, restaurant, advokat…" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')gmRunSearch()">
+    <!-- Mode toggle -->
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Agent-mission</div>
+        <div style="font-size:11.5px;color:var(--w55);max-width:520px;line-height:1.5">Vælg kategorier + by-grupper. Agenten kører hele matrixen, krydsmatcher mod CVR og leverer unikke leads.</div>
       </div>
-      <div style="flex:1;min-width:140px">
-        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">By</div>
-        <input id="gm-city" placeholder="Aarhus" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')gmRunSearch()">
+      <div style="display:flex;gap:6px">
+        <button class="gm-mode-btn ${_gmState.mode==='agent'?'on':''}" onclick="gmSetMode('agent')" style="padding:7px 16px;border-radius:9px;border:1px solid ${_gmState.mode==='agent'?'rgba(124,58,237,0.5)':'var(--w08)'};background:${_gmState.mode==='agent'?'rgba(124,58,237,0.18)':'transparent'};color:${_gmState.mode==='agent'?'#fff':'var(--w55)'};font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">🤖 Agent</button>
+        <button class="gm-mode-btn ${_gmState.mode==='manual'?'on':''}" onclick="gmSetMode('manual')" style="padding:7px 16px;border-radius:9px;border:1px solid ${_gmState.mode==='manual'?'rgba(124,58,237,0.5)':'var(--w08)'};background:${_gmState.mode==='manual'?'rgba(124,58,237,0.18)':'transparent'};color:${_gmState.mode==='manual'?'#fff':'var(--w55)'};font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Manuel</button>
       </div>
-      <div style="flex:0 0 auto">
-        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">Max</div>
-        <input id="gm-limit" type="number" value="40" min="10" max="100" style="width:90px;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none">
-      </div>
-      <button class="btn btn-primary btn-sm" id="gm-search-btn" style="padding:10px 22px;font-size:13px" onclick="gmRunSearch()">Søg</button>
     </div>
-    <div style="font-size:11px;color:var(--w35);margin-top:10px">Resultater krydsmatches mod CVR (Datafordeler) på navn + by. Match-rate ligger typisk på 60–80% for danske SMB-segmenter.</div>
+
+    ${_gmState.mode==='agent'?`
+      <!-- Categories -->
+      <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px">Kategorier <span style="color:var(--w55);font-weight:500;text-transform:none;letter-spacing:0">(vælg en eller flere)</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+        ${GM_CATEGORIES.map(cat=>{
+          const sel=_gmState.categories.includes(cat.id);
+          return `<button onclick="gmToggleCat('${e(cat.id)}')" style="padding:7px 13px;border-radius:20px;border:1px solid ${sel?'rgba(124,58,237,0.5)':'var(--w08)'};background:${sel?'rgba(124,58,237,0.18)':'var(--w04)'};color:${sel?'#fff':'var(--w80)'};font-size:11.5px;font-weight:${sel?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif;transition:all 0.12s">${cat.emoji} ${e(cat.label)}</button>`;
+        }).join('')}
+      </div>
+      <!-- City groups -->
+      <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px">Geografi <span style="color:var(--w55);font-weight:500;text-transform:none;letter-spacing:0">(vælg en preset eller indtast en by)</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        ${GM_CITY_GROUPS.map(g=>{
+          const sel=_gmState.cityGroup===g.id;
+          return `<button onclick="gmSetCityGroup('${e(g.id)}')" style="padding:7px 13px;border-radius:20px;border:1px solid ${sel?'rgba(124,58,237,0.5)':'var(--w08)'};background:${sel?'rgba(124,58,237,0.18)':'var(--w04)'};color:${sel?'#fff':'var(--w80)'};font-size:11.5px;font-weight:${sel?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif" title="${e(g.cities.join(', '))}">${g.emoji} ${e(g.label)} <span style="color:var(--w35);font-weight:500">${g.cities.length}</span></button>`;
+        }).join('')}
+        <input id="gm-custom-city" placeholder="eller skriv en by…" value="${e(_gmState.customCity)}" style="background:var(--w04);border:1px solid ${_gmState.customCity?'rgba(124,58,237,0.5)':'var(--w08)'};border-radius:20px;color:#fff;padding:7px 13px;font-family:'Outfit',sans-serif;font-size:11.5px;outline:none;min-width:160px" oninput="_gmState.customCity=this.value;if(this.value)_gmState.cityGroup=null;">
+      </div>
+      <div style="font-size:11px;color:var(--w55);margin-bottom:14px" id="gm-matrix-preview"></div>
+    `:`
+      <!-- Manual mode -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
+        <div style="flex:2;min-width:200px">
+          <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">Søgeterm</div>
+          <input id="gm-q" placeholder="frisør, restaurant, advokat…" value="${e(_gmState.manualQ)}" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')gmRunAgent()" oninput="_gmState.manualQ=this.value">
+        </div>
+        <div style="flex:1;min-width:140px">
+          <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">By</div>
+          <input id="gm-city" placeholder="Aarhus" value="${e(_gmState.manualCity)}" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')gmRunAgent()" oninput="_gmState.manualCity=this.value">
+        </div>
+      </div>
+    `}
+
+    <!-- Status + run button -->
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:6px;border-top:1px solid var(--w04)">
+      <div id="gm-status" style="font-size:11.5px;color:var(--w55);min-height:18px;flex:1">${_gmState.lastRun?`✓ Sidst kørt ${humanAgo(_gmState.lastRun)} · fandt ${(_gmCache.results||[]).length} unikke leads`:'Konfigurér missionen og klik <strong style="color:var(--w80)">▶ Kør agent</strong>'}</div>
+      <button class="btn btn-primary btn-sm" id="gm-search-btn" style="padding:10px 22px;font-size:13px" onclick="gmRunAgent()">▶ Kør agent</button>
+    </div>
   `;
+  if(_gmState.mode==='agent')updateGmMatrixPreview();
+  // Re-render past results
+  if(_gmCache.results&&_gmCache.results.length){
+    renderGoogleMapsResults();
+  } else {
+    document.getElementById('gm-results').innerHTML='';
+  }
 }
 
-async function gmRunSearch(){
+function gmSetMode(m){_gmState.mode=m;renderGoogleMapsForm();}
+function gmToggleCat(id){
+  const i=_gmState.categories.indexOf(id);
+  if(i>=0)_gmState.categories.splice(i,1);
+  else _gmState.categories.push(id);
+  renderGoogleMapsForm();
+}
+function gmSetCityGroup(id){
+  _gmState.cityGroup=(_gmState.cityGroup===id)?null:id;
+  if(_gmState.cityGroup)_gmState.customCity='';
+  renderGoogleMapsForm();
+}
+function gmResolveCities(){
+  if(_gmState.customCity)return [_gmState.customCity];
+  const g=GM_CITY_GROUPS.find(x=>x.id===_gmState.cityGroup);
+  return g?g.cities:[];
+}
+function updateGmMatrixPreview(){
+  const el=document.getElementById('gm-matrix-preview');if(!el)return;
+  const cats=_gmState.categories.length;
+  const cities=gmResolveCities().length;
+  const total=cats*cities;
+  if(total===0){
+    el.innerHTML='<span style="color:var(--w35)">Vælg mindst én kategori og én by-gruppe (eller skriv en by) for at se mission-størrelsen.</span>';
+  } else {
+    el.innerHTML=`Mission: <strong style="color:#fff">${cats} kategori${cats===1?'':'er'} × ${cities} by${cities===1?'':'er'} = ${total} søgninger</strong>. Hver søgning ~3 sek + CVR-match. Forventet kørselstid: ~${Math.ceil(total*4/60)} min.`;
+  }
+}
+
+async function gmRunAgent(){
   const btn=document.getElementById('gm-search-btn');
   const out=document.getElementById('gm-results');
-  const q=document.getElementById('gm-q').value.trim();
-  const city=document.getElementById('gm-city').value.trim();
-  const limit=Math.max(10,Math.min(100,parseInt(document.getElementById('gm-limit').value||'40',10)));
-  if(!q){showToast('Indtast en søgeterm');return;}
-  btn.disabled=true;btn.textContent='Søger…';
-  out.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px;display:flex;align-items:center;gap:12px;color:var(--w55);font-size:12.5px"><span class="search-spinner" style="width:18px;height:18px"></span>Søger Google Places + matcher CVR…</div>`;
-  try{
-    const r=await fetch('/api/scrape/google-maps',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({q,city,limit})});
-    const d=await r.json();
-    if(r.status===503){
-      out.innerHTML=`<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.30);color:#fdba74;border-radius:14px;padding:16px;font-size:13px">⚙ ${e(d.error||'Google Places API ikke konfigureret endnu')}</div>`;
-      return;
+  const statusEl=document.getElementById('gm-status');
+  if(!btn||!out||!statusEl)return;
+
+  // Build mission list (category × city pairs)
+  let missions=[];
+  if(_gmState.mode==='manual'){
+    const q=_gmState.manualQ.trim();
+    if(!q){showToast('Indtast en søgeterm');return;}
+    missions.push({q,city:_gmState.manualCity.trim()});
+  } else {
+    if(!_gmState.categories.length){showToast('Vælg mindst én kategori');return;}
+    const cities=gmResolveCities();
+    if(!cities.length){showToast('Vælg en by-gruppe eller skriv en by');return;}
+    for(const catId of _gmState.categories){
+      const cat=GM_CATEGORIES.find(c=>c.id===catId);
+      if(!cat)continue;
+      for(const city of cities)missions.push({q:cat.q,city,catLabel:cat.label});
     }
-    if(!r.ok){
-      out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke søge')}</div>`;
-      return;
+  }
+  if(missions.length===0)return;
+  if(missions.length>50){showToast('Mission for stor (max 50 søgninger) — reducér kategorier eller by-gruppen');return;}
+
+  btn.disabled=true;btn.textContent='Agent arbejder…';
+  _gmState.running=true;
+  _gmCache.results=[];
+  out.innerHTML='';
+
+  // Run missions sequentially with live progress. Each result merged into
+  // a name+CVR-keyed dedup map so we don't double-count brands listed in
+  // multiple cities.
+  const seen=new Map(); // key = cvr || normalized(name)+city
+  let done=0;
+  let firstStatus = null;
+  try {
+    for(const m of missions){
+      done++;
+      statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent søger <strong style="color:#fff">${e(m.catLabel||m.q)}</strong> i <strong style="color:#fff">${e(m.city||'Danmark')}</strong> — ${done}/${missions.length}…`;
+      try{
+        const r=await fetch('/api/scrape/google-maps',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({q:m.q,city:m.city,limit:40})});
+        const d=await r.json();
+        if(r.status===503&&!firstStatus){firstStatus=503;out.innerHTML=`<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.30);color:#fdba74;border-radius:14px;padding:16px;font-size:13px">⚙ ${e(d.error||'Google Places API ikke konfigureret endnu')}</div>`;break;}
+        if(!r.ok)continue;
+        for(const row of(d.results||[])){
+          const key=row.cvr||((row.name||'').toLowerCase()+'|'+(m.city||''));
+          if(!seen.has(key))seen.set(key,{...row,_category:m.catLabel||m.q,_city:m.city});
+        }
+        _gmCache.results=Array.from(seen.values());
+      }catch{/* skip individual failures */}
     }
-    _gmCache.results=d.results||[];
-    renderGoogleMapsResults();
-  }catch(ex){
-    out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(ex.message)}</div>`;
-  }finally{
-    btn.disabled=false;btn.textContent='Søg';
+    _gmState.lastRun=new Date().toISOString();
+    _gmState.running=false;
+    if(firstStatus!==503){
+      const matched=_gmCache.results.filter(r=>r.cvr).length;
+      statusEl.innerHTML=`✓ Agent færdig — <strong style="color:#fff">${_gmCache.results.length}</strong> unikke leads (${matched} med CVR-match) fra ${missions.length} søgninger`;
+      renderGoogleMapsResults();
+    }
+  } finally {
+    btn.disabled=false;btn.textContent='▶ Kør agent';
   }
 }
 
@@ -3943,6 +4209,9 @@ function sv(v){
     if(v==='leads'){
       document.getElementById('leads-list-bar').style.display='';
     }
+    // CVR Discovery hero only on search view — leads view doesn't need it
+    const cvrHero=document.getElementById('cvr-hero');
+    if(cvrHero)cvrHero.style.display=(v==='search')?'block':'none';
     rSB();render();
     if(v==='leads'&&aiEnabled)setTimeout(fetchEnrichStatus,100);
     // Phase 1a: bulk-check on view entry removed. The Meta-ads signal now
