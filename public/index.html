@@ -170,8 +170,11 @@ body{font-family:'Outfit',system-ui,-apple-system,sans-serif;font-size:13px;font
 .selbar.h{display:none}
 
 /* BODY */
-.body-wrap{flex:1;display:flex;overflow:hidden;position:relative}
-.tw{flex:1;overflow:auto}
+/* flex-direction:column so the CVR Discovery hero stacks above the table
+   instead of competing with it for horizontal space. .tw still fills the
+   leftover height via flex:1. */
+.body-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.tw{flex:1;overflow:auto;min-height:0}
 
 /* TABLE */
 table{width:100%;border-collapse:collapse;table-layout:fixed}
