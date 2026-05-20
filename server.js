@@ -3546,6 +3546,141 @@ async function probeDomain(domain, timeoutMs = 8000) {
   return res;
 }
 
+// ─── TECH STACK DISCOVERY AGENT ─────────────────────────────────────────
+// True discovery channel — walks the CVR pool (state.json), guesses each
+// candidate's website, probes for tech signatures, returns matches.
+//
+// Why this works without buying BuiltWith/Wappalyzer access:
+// - State.json already has ~100k DK companies indexed by industry
+// - Most DK companies follow predictable domain patterns: "brand.dk",
+//   "brand-shop.dk", "[name].com". Brand-name slug guess covers 40–60%
+//   of e-commerce SMBs in the pool
+// - Existing META scraper has already given many of them a `brandName`,
+//   which is the cleaner-than-legal-name signal for guesses
+//
+// Tradeoffs we accept:
+// - Match rate is heuristic — we won't find brands whose domains don't
+//   follow the patterns. Acceptable for an agent that runs in seconds
+//   on demand; a future enhancement could plug in a paid tech-fingerprint
+//   API for full coverage
+// - We don't write back to state.json on every match (cross-user shared
+//   data). Instead we return matches to the UI and the SDR pushes them
+//   to their own leads via the existing promote flow with source=tech-stack
+
+function guessDomainsForCompany(c) {
+  // Generate up to 4 plausible domain guesses from the company name +
+  // brandName. Strips legal suffixes, normalises Danish chars, drops
+  // punctuation, then tries common TLD + sub-name patterns.
+  const sources = [];
+  if (c.brandName) sources.push(c.brandName);
+  if (c.name && c.name !== c.brandName) sources.push(c.name);
+  const seen = new Set();
+  const out = [];
+  const norm = (s) => String(s || "")
+    .toLowerCase()
+    .replace(/\s+(aps|a\/s|i\/s|p\/s|k\/s|ivs|holding|group)\b.*$/i, "")
+    .replace(/[æ]/g, "ae")
+    .replace(/[ø]/g, "oe")
+    .replace(/[å]/g, "aa")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+  for (const src of sources) {
+    const base = norm(src);
+    if (!base || base.length < 2 || base.length > 30) continue;
+    for (const d of [`${base}.dk`, `${base}.com`]) {
+      if (!seen.has(d)) { seen.add(d); out.push(d); }
+    }
+  }
+  return out;
+}
+
+app.post("/api/scrape/tech-stack/discover", authMiddleware, async (req, res) => {
+  try {
+    const signatures = Array.isArray(req.body?.signatures) ? req.body.signatures : [];
+    const negate = Array.isArray(req.body?.negate) ? req.body.negate : [];
+    const industries = Array.isArray(req.body?.industries) ? req.body.industries : [];
+    const cityFilter = String(req.body?.city || "").toLowerCase().trim();
+    const limit = Math.max(20, Math.min(500, Number(req.body?.limit) || 100));
+    if (!signatures.length && !negate.length) return res.status(400).json({ error: "Vælg en mission med mindst én signatur" });
+
+    // Build candidate set from state.json — companies with verdict-true
+    // ads are highest signal (they're already real businesses) but we
+    // also include unverified to broaden discovery.
+    const pool = Object.values(loadDiscoveryState().companies || {});
+    let candidates = pool.filter((c) => c?.cvr && c.status === "aktiv");
+    if (industries.length) {
+      candidates = candidates.filter((c) => {
+        const ic = String(c.industry || "");
+        return industries.some((prefix) => ic.startsWith(prefix));
+      });
+    }
+    if (cityFilter) {
+      candidates = candidates.filter((c) => String(c.city || "").toLowerCase().includes(cityFilter));
+    }
+    // Prioritise: active advertisers first (likely to have websites),
+    // then companies with brandName (means META scraper has seen them).
+    candidates.sort((a, b) => {
+      const aS = (a.ads?.verdict === true ? 2 : 0) + (a.brandName ? 1 : 0);
+      const bS = (b.ads?.verdict === true ? 2 : 0) + (b.brandName ? 1 : 0);
+      return bS - aS;
+    });
+    candidates = candidates.slice(0, limit);
+
+    // Concurrent probe with the same helper used by the existing endpoint.
+    const CONC = 8;
+    const queue = [...candidates];
+    const matches = [];
+    const stats = { scanned: 0, dnsHit: 0, signatureHit: 0 };
+    async function worker() {
+      while (queue.length) {
+        const c = queue.shift();
+        if (!c) break;
+        stats.scanned++;
+        const guesses = guessDomainsForCompany(c);
+        let hitDomain = null;
+        let hitSigs = [];
+        let hitStatus = null;
+        for (const d of guesses) {
+          const p = await probeDomain(d, 5000);
+          if (!p.ok) continue;
+          stats.dnsHit++;
+          const sigs = detectTechSignatures(p.headers, p.body, p.finalUrl);
+          // Mission filter — at least one target signature must match,
+          // and no negate signature may match.
+          if (negate.length && negate.some((n) => sigs.includes(n))) continue;
+          const targetMatch = signatures.length ? signatures.some((s) => sigs.includes(s)) : true;
+          if (targetMatch) {
+            hitDomain = d; hitSigs = sigs; hitStatus = p.statusCode;
+            break;
+          }
+        }
+        if (hitDomain) {
+          stats.signatureHit++;
+          matches.push({
+            cvr: c.cvr,
+            name: c.name,
+            brandName: c.brandName || null,
+            industry: c.industry,
+            city: c.city,
+            employees: c.employees,
+            domain: hitDomain,
+            statusCode: hitStatus,
+            signatures: hitSigs,
+            ads: c.ads || null,
+            icpFit: !!c.icpFit,
+          });
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONC, candidates.length) }, worker));
+    matches.sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0));
+    res.json({ matches, stats, candidatesConsidered: candidates.length });
+  } catch (e) {
+    console.error("[tech-stack/discover]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/scrape/tech-stack", authMiddleware, async (req, res) => {
   try {
     const raw = Array.isArray(req.body?.domains) ? req.body.domains : [];

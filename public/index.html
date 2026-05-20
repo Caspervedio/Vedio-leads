@@ -748,7 +748,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     </a>
     <a id="nv-la" onclick="sv('lookalike')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
-      Look-alike
+      Look-alike Finder
     </a>
     <a id="nv-gm" onclick="sv('google-maps')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1c-2.5 0-4.5 2-4.5 4.5 0 3 4.5 8 4.5 8s4.5-5 4.5-8C12.5 3 10.5 1 8 1z"/><circle cx="8" cy="5.5" r="1.5"/></svg>
@@ -756,7 +756,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     </a>
     <a id="nv-ts" onclick="sv('tech-stack')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="3" rx="0.5"/><rect x="2" y="6.5" width="12" height="3" rx="0.5"/><rect x="2" y="11" width="12" height="3" rx="0.5"/></svg>
-      Tech Stack
+      Tech Stack Scanner
     </a>
     <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Værktøjer</div>
     <a id="nv-csv" onclick="sv('csv-upload')">
@@ -1051,9 +1051,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <div id="tech-stack-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:900px;margin:0 auto;padding:28px 24px">
       <div style="margin-bottom:20px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Tech Stack</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Agent</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der skanner virksomheders hjemmesider for tech-stack — Shopify, HubSpot, Klaviyo, Webflow, WordPress, Magento m.fl. Skarpt til "vi sælger til Shopify D2C brands" type-segmentering. Output kan filtreres og lægges direkte i Autodialer.</p>
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Tech Stack Scanner</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Scanner</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:720px">Agenten finder <strong style="color:#fff">nye leads</strong> ved at gennemgå CVR-puljen, gætte hver virksomheds hjemmeside ud fra navn + brand, probe domænerne, og matche mod tech-signaturer som Shopify, HubSpot, Klaviyo m.fl. Resultater pushes til Dashboard som ny Tech Stack-kilde.</p>
       </div>
       <div id="ts-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
       <div id="ts-results"></div>
@@ -1094,8 +1094,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
       <!-- Header -->
       <div style="margin-bottom:18px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Look-alike</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Look-alike Agent</h2>
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Look-alike Finder</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Look-alike Finder</h2>
         <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agenten lærer fra dine eksisterende leads og finder lignende danske virksomheder i kandidatpuljen — branche, region, størrelse og ads-mønster matches mod hver kandidat. Tilføj 5–10 kvalitetsleads som seed for skarpest output.</p>
       </div>
 
@@ -3376,9 +3376,10 @@ function renderCsvUploadPage(){
 // Shopify D2C brands" or "we sell HubSpot consulting". This lets the SDR
 // paste a domain list (e.g. CVR-discovered companies' websites) and get
 // back a flagged sub-list filtered by stack signature.
-// Tech Stack Agent — preset missions.
-// Each mission encodes "find DK companies running X" so the SDR just picks
-// a vertical and clicks run. Custom-domains mode kept as advanced fallback.
+// Tech Stack Scanner — discovery channel.
+// Each preset is a "mission" — agent walks the CVR pool, guesses each
+// candidate's website from its name+brand, probes the domain, and matches
+// against signatures. Returns NEW leads not yet in user's queue.
 const TS_PRESETS = [
   { id:'shopify-d2c',  label:'Shopify D2C-brands', sigs:['Shopify','WooCommerce','BigCommerce'],     emoji:'🛒', desc:'Webshops på Shopify/Woo/BigCommerce — primært D2C-brands.' },
   { id:'hubspot',      label:'HubSpot-brugere',    sigs:['HubSpot'],                                  emoji:'🟧', desc:'Virksomheder der bruger HubSpot til marketing automation.' },
@@ -3389,27 +3390,43 @@ const TS_PRESETS = [
   { id:'no-analytics', label:'Mangler analytics',  sigs:[],  negate:['GA4','Google Tag Manager'],     emoji:'❓', desc:'Sites uden GA4/GTM — mulig "vi mangler at måle"-pitch.' },
 ];
 
-const _tsState = { mission: null, source: 'leads', customDomains: '', running: false, lastRun: null, results: [], stats: null };
+// DB07 industry groups for the target-industries chip selector.
+// Defaults to e-commerce-tunge sektorer hvor Shopify/HubSpot/Klaviyo
+// findes oftest. SDR kan vælge yderligere brancher manuelt.
+const TS_INDUSTRY_PRESETS = [
+  { code:'47', label:'Detailhandel', default:true },
+  { code:'46', label:'Engroshandel', default:true },
+  { code:'56', label:'Restaurant & café', default:false },
+  { code:'73', label:'Reklame & marketing', default:false },
+  { code:'70', label:'Rådgivning', default:false },
+  { code:'62', label:'IT & software', default:false },
+  { code:'96', label:'Personlig pleje', default:false },
+  { code:'45', label:'Bilhandel', default:false },
+  { code:'55', label:'Hotel & overnatning', default:false },
+  { code:'86', label:'Sundhed', default:false },
+];
+
+const _tsState = {
+  mission: null,
+  industries: TS_INDUSTRY_PRESETS.filter(i=>i.default).map(i=>i.code),
+  city: '',
+  limit: 200,
+  running: false,
+  lastRun: null,
+  results: [],
+  stats: null,
+};
 
 function renderTechStackPage(){
   const wrap=document.getElementById('ts-form');
   if(!wrap)return;
   wrap.innerHTML=`
-    <!-- Mission selector -->
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap">
-      <div>
-        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Agent-mission</div>
-        <div style="font-size:11.5px;color:var(--w55);max-width:520px;line-height:1.5">Vælg et preset — agenten scanner automatisk dine eksisterende leads (eller hele CVR-puljen) og finder dem der matcher signaturet.</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--w55)">
-        <span>Kilde:</span>
-        <select id="ts-source" onchange="_tsState.source=this.value" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;color:#fff;padding:6px 10px;font-family:'Outfit',sans-serif;font-size:11.5px;outline:none">
-          <option value="leads" ${_tsState.source==='leads'?'selected':''}>Mine leads (websites)</option>
-          <option value="custom" ${_tsState.source==='custom'?'selected':''}>Custom domænder…</option>
-        </select>
-      </div>
+    <!-- Mission row -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Agent-mission</div>
+      <div style="font-size:11.5px;color:var(--w55);max-width:660px;line-height:1.5;margin-bottom:10px">Vælg en mission — agenten gennemgår CVR-puljen i de valgte brancher, gætter hver virksomheds website (fra navn + brand), prober domænerne, og returnerer dem der matcher.</div>
     </div>
-    <div id="ts-missions" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:14px">
+    <div id="ts-missions" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:18px">
       ${TS_PRESETS.map(p=>{
         const sel=_tsState.mission===p.id;
         return `<button class="ts-preset" data-id="${e(p.id)}" onclick="tsSelectMission('${e(p.id)}')" style="text-align:left;padding:14px;border-radius:12px;background:${sel?'rgba(124,58,237,0.18)':'var(--w04)'};border:1px solid ${sel?'rgba(124,58,237,0.5)':'var(--w08)'};color:#fff;cursor:pointer;font-family:'Outfit',sans-serif;transition:all 0.12s">
@@ -3425,23 +3442,40 @@ function renderTechStackPage(){
         </button>`;
       }).join('')}
     </div>
-    <!-- Custom domains textarea (only shown when source=custom) -->
-    <div id="ts-custom-wrap" style="display:${_tsState.source==='custom'?'block':'none'};margin-bottom:14px">
-      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Custom domænder</div>
-      <textarea id="ts-domains" placeholder="eksempel.dk&#10;butik.com&#10;www.firma.dk" rows="5" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:12px 14px;font-family:'JetBrains Mono','Menlo',monospace;font-size:12.5px;resize:vertical;outline:none">${e(_tsState.customDomains||'')}</textarea>
-      <div style="font-size:10.5px;color:var(--w55);margin-top:6px">Et domæne pr. linje. Max 200 pr. kørsel.</div>
+
+    <!-- Target industries -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px">Mål-brancher <span style="color:var(--w55);font-weight:500;text-transform:none;letter-spacing:0">(vælg en eller flere — agenten kigger kun her)</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${TS_INDUSTRY_PRESETS.map(ind=>{
+          const sel=_tsState.industries.includes(ind.code);
+          return `<button onclick="tsToggleInd('${e(ind.code)}')" style="padding:6px 12px;border-radius:20px;border:1px solid ${sel?'rgba(124,58,237,0.5)':'var(--w08)'};background:${sel?'rgba(124,58,237,0.18)':'var(--w04)'};color:${sel?'#fff':'var(--w80)'};font-size:11px;font-weight:${sel?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif;transition:all 0.12s">${e(ind.label)} <span style="opacity:0.55;font-weight:500">${ind.code}xx</span></button>`;
+        }).join('')}
+      </div>
     </div>
+
+    <!-- Scope row: city + limit -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">By (valgfrit)</div>
+        <input id="ts-city" placeholder="Aarhus, København, Aalborg…" value="${e(_tsState.city)}" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" oninput="_tsState.city=this.value">
+      </div>
+      <div style="flex:0 0 auto">
+        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">Max virksomheder</div>
+        <select id="ts-limit" onchange="_tsState.limit=Number(this.value)" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none">
+          <option value="100" ${_tsState.limit===100?'selected':''}>100 — hurtig (~30s)</option>
+          <option value="200" ${_tsState.limit===200?'selected':''}>200 — standard (~1m)</option>
+          <option value="500" ${_tsState.limit===500?'selected':''}>500 — bredt (~3m)</option>
+        </select>
+      </div>
+    </div>
+
     <!-- Status + run button -->
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:6px;border-top:1px solid var(--w04)">
-      <div id="ts-status" style="font-size:11.5px;color:var(--w55);min-height:18px">${_tsState.lastRun?`✓ Sidst kørt ${humanAgo(_tsState.lastRun)} · fandt ${_tsState.results.length} matches`:'Vælg en mission og klik <strong style="color:var(--w80)">▶ Kør agent</strong>.'}</div>
-      <button class="btn btn-primary btn-sm" id="ts-scan-btn" style="padding:10px 22px;font-size:13px" onclick="tsRunAgent()">▶ Kør agent</button>
+      <div id="ts-status" style="font-size:11.5px;color:var(--w55);min-height:18px">${_tsState.lastRun?`✓ Sidst kørt ${humanAgo(_tsState.lastRun)} · fandt ${_tsState.results.length} matches${_tsState.stats?` af ${_tsState.stats.candidatesConsidered||0} virksomheder`:''}`:'Vælg en mission og klik <strong style="color:var(--w80)">▶ Find nye leads</strong>.'}</div>
+      <button class="btn btn-primary btn-sm" id="ts-scan-btn" style="padding:10px 22px;font-size:13px" onclick="tsRunAgent()">▶ Find nye leads</button>
     </div>
   `;
-  // Re-bind: source select onchange toggles custom textarea visibility
-  document.getElementById('ts-source').addEventListener('change',(ev)=>{
-    _tsState.source=ev.target.value;
-    document.getElementById('ts-custom-wrap').style.display=ev.target.value==='custom'?'block':'none';
-  });
   // Re-render past results if we have them
   if(_tsState.results.length){
     renderTechStackResults(_tsState.results);
@@ -3452,7 +3486,6 @@ function renderTechStackPage(){
 
 function tsSelectMission(id){
   _tsState.mission = (_tsState.mission===id) ? null : id;
-  // Re-render the missions grid only (cheaper than full re-render)
   document.querySelectorAll('.ts-preset').forEach(b=>{
     const sel=b.dataset.id===_tsState.mission;
     b.style.background=sel?'rgba(124,58,237,0.18)':'var(--w04)';
@@ -3460,9 +3493,20 @@ function tsSelectMission(id){
   });
 }
 
+function tsToggleInd(code){
+  const i=_tsState.industries.indexOf(code);
+  if(i>=0)_tsState.industries.splice(i,1);
+  else _tsState.industries.push(code);
+  renderTechStackPage();
+}
+
 async function tsRunAgent(){
-  if(!_tsState.mission && _tsState.source!=='custom'){
+  if(!_tsState.mission){
     showToast('Vælg en agent-mission først');
+    return;
+  }
+  if(!_tsState.industries.length){
+    showToast('Vælg mindst én mål-branche');
     return;
   }
   const btn=document.getElementById('ts-scan-btn');
@@ -3470,109 +3514,96 @@ async function tsRunAgent(){
   const out=document.getElementById('ts-results');
   if(!btn||!out)return;
 
-  // Resolve mission → signatures + source
   const preset = TS_PRESETS.find(p=>p.id===_tsState.mission);
-  let domains = [];
-  if(_tsState.source==='custom'){
-    const text=document.getElementById('ts-domains')?.value||'';
-    _tsState.customDomains=text;
-    domains=text.split(/[\n,;]/).map(s=>s.trim()).filter(Boolean);
-    if(!domains.length){showToast('Indtast mindst ét domæne');return;}
-    if(domains.length>200){showToast('Max 200 domæner pr. kørsel');return;}
-  } else {
-    // Source = mine leads — agent pulls websites from leads array
-    domains = Array.from(new Set((leads||[]).map(l=>l.website||l.web||l.hjemmeside||'').filter(s=>s&&s.length>3)));
-    if(!domains.length){
-      showToast('Ingen leads med website endnu — tilføj leads fra en agent eller upload CSV med websites');
-      return;
-    }
-    if(domains.length>200) domains=domains.slice(0,200);
-  }
+  if(!preset){showToast('Mission ikke fundet');return;}
 
   btn.disabled=true;btn.textContent='Agent arbejder…';
   _tsState.running=true;
-  statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent scanner ${domains.length} domænder…`;
+  statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent gennemgår CVR-puljen og prober domæner — kan tage 1–3 min for ${_tsState.limit} virksomheder.`;
   out.innerHTML='';
 
   try{
-    const r=await fetch('/api/scrape/tech-stack',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({domains})});
+    const r=await fetch('/api/scrape/tech-stack/discover',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({
+      signatures: preset.sigs||[],
+      negate: preset.negate||[],
+      industries: _tsState.industries,
+      city: _tsState.city||'',
+      limit: _tsState.limit,
+    })});
     const d=await r.json();
     if(!r.ok){
       out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke scanne')}</div>`;
       return;
     }
-    // Mission filter: keep only rows matching the mission's signatures
-    // (and not matching any "negate" signature for missions like "missing analytics").
-    let rows = d.results || [];
-    if(preset){
-      rows = rows.filter(r=>{
-        const sigs = r.signatures||[];
-        if(preset.negate && preset.negate.some(n=>sigs.includes(n))) return false;
-        if(preset.sigs && preset.sigs.length) return preset.sigs.some(s=>sigs.includes(s));
-        return preset.negate ? true : false; // negate-only missions return everything
-      });
-    }
-    _tsState.results = rows;
+    _tsState.results = d.matches || [];
+    _tsState.stats = { ...d.stats, candidatesConsidered: d.candidatesConsidered };
     _tsState.lastRun = new Date().toISOString();
     _tsState.running = false;
-    statusEl.innerHTML = `✓ Agent færdig — fandt <strong style="color:#fff">${rows.length}</strong> matches af ${d.results.length} skannede domænder`;
-    renderTechStackResults(rows);
+    const dnsHit = d.stats?.dnsHit||0;
+    const matched = d.matches?.length||0;
+    statusEl.innerHTML = `✓ Agent færdig — gennemgik <strong style="color:#fff">${d.candidatesConsidered||0}</strong> virksomheder, fandt <strong style="color:#fff">${dnsHit}</strong> aktive domæner, <strong style="color:#fff">${matched}</strong> matchede signaturet`;
+    renderTechStackResults(_tsState.results);
   }catch(ex){
     out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(ex.message)}</div>`;
   }finally{
-    btn.disabled=false;btn.textContent='▶ Kør agent';
+    btn.disabled=false;btn.textContent='▶ Find nye leads';
   }
 }
 
-function renderTechStackResults(rows){
+function renderTechStackResults(matches){
   const out=document.getElementById('ts-results');if(!out)return;
-  if(!rows.length){out.innerHTML='<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:24px;text-align:center;color:var(--w55);font-size:13px">Ingen resultater.</div>';return;}
-  // Tech Stack scans the user's own leads (default source). Each result
-  // row maps back to a lead via domain → lead.website match. We surface
-  // the lead's company name + CVR so the SDR sees "this is BECK A/S,
-  // already in your leads — tagged Shopify". Plus a tag-button that
-  // saves the signatures on the lead so Autodialer can filter by stack.
-  const domToLead = new Map();
-  for(const l of (leads||[])){
-    const dom = String(l.website||l.web||l.hjemmeside||'').toLowerCase().replace(/^https?:\/\/|^www\./g,'').replace(/\/.*$/,'').trim();
-    if(dom) domToLead.set(dom, l);
+  if(!matches.length){
+    out.innerHTML='<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:32px;text-align:center;color:var(--w55);font-size:13px;line-height:1.5">Ingen matches denne kørsel. Prøv en bredere branche, en anden mission, eller en større <em>Max virksomheder</em>-grænse — agenten gætter ikke domæner for alle virksomheder.</div>';
+    return;
   }
   // Aggregate counts by signature for the summary header.
   const sigCounts={};
-  for(const r of rows)for(const s of(r.signatures||[]))sigCounts[s]=(sigCounts[s]||0)+1;
+  for(const r of matches)for(const s of(r.signatures||[]))sigCounts[s]=(sigCounts[s]||0)+1;
   const sortedSigs=Object.entries(sigCounts).sort((a,b)=>b[1]-a[1]);
-  const sigChips=sortedSigs.map(([k,n])=>`<button onclick="tsFilterAutodialerByStack('${e(k)}')" title="Filtrér Autodialer-køen til leads med ${e(k)}" style="padding:5px 12px;border-radius:20px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.32);color:#c4b5fd;font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">${e(k)} <span style="color:var(--w55);font-weight:500">${n}</span></button>`).join(' ');
+  const sigChips=sortedSigs.slice(0,12).map(([k,n])=>`<span style="padding:4px 11px;border-radius:18px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.32);color:#c4b5fd;font-size:11.5px;font-weight:700">${e(k)} <span style="color:var(--w55);font-weight:500">${n}</span></span>`).join(' ');
+  // Which CVRs are already in user's leads (for "✓ I leads" indicator)?
+  const inLeads = new Set((leads||[]).map(l=>l.cvr));
   out.innerHTML=`
-    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px">
-        <div>
-          <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase">Detekterede signaturer</div>
-          <div style="font-size:11.5px;color:var(--w55);margin-top:2px">Klik på en signatur for at filtrere Autodialer-køen.</div>
-        </div>
+    <div style="background:linear-gradient(135deg,rgba(124,58,237,0.10),rgba(124,58,237,0.02));border:1px solid rgba(124,58,237,0.25);border-radius:14px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:10px;font-weight:800;color:var(--purple-light);letter-spacing:1.2px;text-transform:uppercase">🤖 Nye leads fundet</div>
+        <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${matches.length}</div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">${sigChips||'<span style="color:var(--w55);font-size:12px">Ingen kendte signaturer detekteret</span>'}</div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Detekterede signaturer</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">${sigChips||'<span style="color:var(--w55);font-size:11.5px">—</span>'}</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="tsAddAllToQueue()" style="padding:9px 18px;font-size:12.5px;flex-shrink:0">➕ Send alle til Autodialer</button>
     </div>
     <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
         <thead>
           <tr>
-            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed / domæne</th>
-            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Status</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">By · CVR</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Domæne</th>
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Tech-signatur</th>
+            <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Meta-ads</th>
             <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
           </tr>
         </thead>
         <tbody>
-          ${rows.map(r=>{
-            const lead=domToLead.get(String(r.domain||'').toLowerCase());
-            const sigs=(r.signatures||[]).map(s=>`<span style="display:inline-block;padding:2px 8px;border-radius:12px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.32);font-size:10.5px;font-weight:700;margin-right:4px;margin-bottom:2px">${e(s)}</span>`).join('');
-            const status=r.error?`<span style="color:#fca5a5;font-size:11px">⚠ ${e(r.error)}</span>`:r.statusCode?`<span style="color:${r.statusCode<400?'#6ee7b7':'#fca5a5'};font-size:11px;font-weight:600">${r.statusCode}</span>`:`<span style="color:var(--w35);font-size:11px">—</span>`;
-            const action=lead?`<button class="btn btn-sm" onclick="tsTagLeadWithStack('${e(lead.cvr)}',${JSON.stringify(r.signatures||[]).replace(/"/g,'&quot;')})" title="Gem tech-stack på lead så Autodialer kan filtrere" style="padding:5px 11px;font-size:10.5px">🏷 Tag lead</button>`:'<span style="font-size:10.5px;color:var(--w35)">—</span>';
-            const nameCell=lead?`<div style="font-size:12.5px;font-weight:700;color:#fff">${e(lead.name||r.domain)}</div><div style="font-family:monospace;font-size:10px;color:var(--w35);margin-top:1px"><a href="${e(r.finalUrl||('https://'+r.domain))}" target="_blank" rel="noopener" style="color:var(--w55);text-decoration:none">${e(r.domain)}</a></div>`:`<a href="${e(r.finalUrl||('https://'+r.domain))}" target="_blank" rel="noopener" style="font-family:monospace;font-size:11.5px;color:#fff;text-decoration:none;border-bottom:1px dotted var(--w35)">${e(r.domain)}</a>`;
-            return `<tr style="border-bottom:1px solid var(--w04)">
-              <td style="padding:11px 14px">${nameCell}</td>
-              <td style="padding:11px 14px">${status}</td>
-              <td style="padding:11px 14px">${sigs||'<span style="color:var(--w35);font-size:11px">Ingen kendte signaturer</span>'}</td>
+          ${matches.map(r=>{
+            const sigs=(r.signatures||[]).slice(0,5).map(s=>`<span style="display:inline-block;padding:2px 8px;border-radius:12px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.32);font-size:10.5px;font-weight:700;margin-right:3px;margin-bottom:2px">${e(s)}</span>`).join('');
+            const ads=r.ads?.matched||0;
+            const adsCell = r.ads?.verdict===true
+              ? `<span style="padding:3px 9px;border-radius:14px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700">📢 ${ads}</span>`
+              : `<span style="font-size:11px;color:var(--w35)">—</span>`;
+            const inQ = inLeads.has(r.cvr);
+            const action = inQ
+              ? '<span style="font-size:11px;color:#6ee7b7;font-weight:700">✓ I leads</span>'
+              : `<button class="btn btn-primary btn-sm" onclick="tsAddOne('${e(r.cvr)}')" style="padding:5px 12px;font-size:11px">📞 Til kø</button>`;
+            return `<tr style="border-bottom:1px solid var(--w04);${r.icpFit?'background:rgba(52,211,153,0.03)':''}">
+              <td style="padding:11px 14px">${r.icpFit?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399;margin-right:6px;vertical-align:middle" title="ICP-klar"></span>':''}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(r.name||'—')}</span>${r.brandName&&r.brandName.toLowerCase()!==(r.name||'').toLowerCase()?`<div style="font-size:10.5px;color:var(--w35);margin-top:1px">Brand: ${e(r.brandName)}</div>`:''}</td>
+              <td style="padding:11px 14px"><div style="font-size:11.5px;color:var(--w80)">${e(r.city||'—')}</div><div style="font-family:monospace;font-size:10px;color:var(--w35);margin-top:1px">${r.cvr}</div></td>
+              <td style="padding:11px 14px"><a href="https://${e(r.domain)}" target="_blank" rel="noopener" style="font-family:monospace;font-size:11px;color:#c4b5fd;text-decoration:none;border-bottom:1px dotted var(--w35)">${e(r.domain)}</a></td>
+              <td style="padding:11px 14px">${sigs||'<span style="color:var(--w35);font-size:11px">—</span>'}</td>
+              <td style="padding:11px 14px;text-align:right">${adsCell}</td>
               <td style="padding:11px 14px;text-align:right">${action}</td>
             </tr>`;
           }).join('')}
@@ -3582,24 +3613,45 @@ function renderTechStackResults(rows){
   `;
 }
 
-async function tsTagLeadWithStack(cvr, signatures){
-  // Persist signatures on the lead. Autodialer's filter UI will read
-  // lead.techStack[] and surface "kun Shopify" filters.
+async function tsAddOne(cvr){
   try{
-    await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({techStack:signatures})});
-    const l=leads.find(x=>x.cvr===cvr);
-    if(l)l.techStack=signatures;
-    showToast(`✓ Tagged med: ${signatures.join(', ')||'ingen signaturer'}`);
+    const r=await fetch(`/api/company/${cvr}`,{headers:ah()});
+    const c=await r.json();
+    if(!c||c.error){showToast('Kunne ikke hente firma');return;}
+    // Find the discovered match to copy domain + signatures into the lead.
+    const match=(_tsState.results||[]).find(x=>x.cvr===cvr);
+    const company={...c, web: match?.domain||c.web||'', techStack: match?.signatures||[]};
+    await fetch('/api/leads',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({company, source:'tech-stack'})});
+    leads.push({...company, source:'tech-stack'});
+    showToast(`${c.name} tilføjet til Autodialer`);
+    renderTechStackResults(_tsState.results);
   }catch(ex){showToast('Fejl: '+ex.message);}
 }
 
-function tsFilterAutodialerByStack(sig){
-  // Jump to Autodialer with a stack filter prefill. We store the filter
-  // on the cache so Autodialer can read it on render.
-  _adState = _adState || {};
-  _adState.stackFilter = sig;
-  showToast(`Filtrerer Autodialer på "${sig}"…`);
-  sv('autodialer');
+async function tsAddAllToQueue(){
+  const results=_tsState.results||[];
+  const inLeads=new Set(leads.map(l=>l.cvr));
+  const toAdd=results.filter(r=>!inLeads.has(r.cvr));
+  if(!toAdd.length){showToast('Alle matches er allerede i Autodialer-køen');return;}
+  if(!confirm(`Send ${toAdd.length} nye leads til Autodialer-køen?\n\nDe får source=tech-stack og signaturer gemt så Autodialer kan filtrere.`))return;
+  let ok=0;
+  const statusEl=document.getElementById('ts-status');
+  for(const m of toAdd){
+    try{
+      const r=await fetch(`/api/company/${m.cvr}`,{headers:ah()});
+      const c=await r.json();
+      if(c&&!c.error){
+        const company={...c, web: m.domain||c.web||'', techStack: m.signatures||[]};
+        await fetch('/api/leads',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({company, source:'tech-stack'})});
+        leads.push({...company, source:'tech-stack'});
+        ok++;
+        if(statusEl)statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Tilføjer ${ok}/${toAdd.length}…`;
+      }
+    }catch{}
+  }
+  showToast(`✓ ${ok} af ${toAdd.length} tilføjet til Autodialer`);
+  if(statusEl)statusEl.innerHTML=`✓ Agent færdig — ${ok} nye leads i Autodialer-køen`;
+  renderTechStackResults(_tsState.results);
 }
 
 // ─── META SCRAPER PAGE ──────────────────────────────────────────────────
