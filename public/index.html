@@ -3607,14 +3607,14 @@ function renderTechStackPage(){
       </div>
     </div>
 
-    <!-- Manual nudge (Agent ON/OFF toggle lives in the page header top-right) -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--w04)">
+    <!-- Status line (Agent ON/OFF toggle lives in the page header top-right.
+         Clicking a mission card auto-fires the agent — see tsSelectMission.) -->
+    <div style="padding-top:10px;border-top:1px solid var(--w04)">
       <div id="ts-status" style="font-size:11.5px;color:var(--w55);line-height:1.5">
         ${_tsState.lastRun
           ? `Sidst kørt <strong style="color:#fff">${humanAgo(_tsState.lastRun)}</strong> · <strong style="color:#fff">${_tsState.lastResultCount||0}</strong> matches`
-          : `Vælg mission + brancher, og slå <strong style="color:var(--w80)">Agent ON</strong> i toppen — eller klik <strong style="color:var(--w80)">↻ Kør nu</strong> for at teste`}
+          : `Vælg en mission ovenfor — agenten starter automatisk.`}
       </div>
-      <button class="btn btn-sm" id="ts-scan-btn" style="padding:8px 16px;font-size:12px" onclick="tsRunAgent()" title="Kør agent én gang nu med ovenstående mission">↻ Kør nu</button>
     </div>
   `;
   // Mount the Agent ON/OFF toggle in the page header
@@ -3638,13 +3638,35 @@ function renderTechStackPage(){
 }
 
 function tsSelectMission(id){
-  _tsState.mission = (_tsState.mission===id) ? null : id;
+  const wasSelected = _tsState.mission===id;
+  _tsState.mission = wasSelected ? null : id;
   tsSaveToStorage();
   document.querySelectorAll('.ts-preset').forEach(b=>{
     const sel=b.dataset.id===_tsState.mission;
     b.style.background=sel?'rgba(124,58,237,0.18)':'var(--w04)';
     b.style.borderColor=sel?'rgba(124,58,237,0.5)':'var(--w08)';
   });
+  // Clicking a mission card kicks the agent off — replaces the legacy
+  // "↻ Kør nu" button. Skip on deselect (clicking the same card again)
+  // and when no industries are configured (nothing for the agent to walk).
+  if(!wasSelected && _tsState.mission && _tsState.industries.length){
+    // Auto-flip the toggle ON so the SDR's intent ("I picked a mission")
+    // matches the agent state. Refresh the header toggle widget so it
+    // reflects the new state without losing the mission grid we just
+    // updated above.
+    if(!_tsState.auto){
+      _tsState.auto = true;
+      tsSaveToStorage();
+      const toggleEl = document.getElementById('ts-agent-toggle');
+      if(toggleEl){
+        toggleEl.innerHTML = agentToggleHtml({
+          id:'ts-auto', on:true, onChange:'tsToggleAuto()',
+          statusText:'Auto-kørsel aktiv · scanner nu…'
+        });
+      }
+    }
+    tsRunAgent();
+  }
 }
 
 function tsToggleInd(code){
@@ -3664,15 +3686,13 @@ async function tsRunAgent(){
     showToast('Vælg mindst én mål-branche');
     return;
   }
-  const btn=document.getElementById('ts-scan-btn');
   const statusEl=document.getElementById('ts-status');
   const out=document.getElementById('ts-results');
-  if(!btn||!out)return;
+  if(!out)return;
 
   const preset = TS_PRESETS.find(p=>p.id===_tsState.mission);
   if(!preset){showToast('Mission ikke fundet');return;}
 
-  btn.disabled=true;btn.textContent='Agent arbejder…';
   _tsState.running=true;
   statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent gennemgår CVR-puljen og prober domæner — kan tage 1–3 min for ${_tsState.limit} virksomheder.`;
   out.innerHTML='';
@@ -3703,7 +3723,18 @@ async function tsRunAgent(){
   }catch(ex){
     out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(ex.message)}</div>`;
   }finally{
-    btn.disabled=false;btn.textContent='↻ Kør nu';
+    _tsState.running=false;
+    // Refresh the header toggle so the status banner picks up the new
+    // last-run timestamp + count.
+    const toggleEl = document.getElementById('ts-agent-toggle');
+    if(toggleEl){
+      const statusText = _tsState.auto
+        ? (_tsState.lastRun
+          ? `Auto-kørsel aktiv · sidst kørt <strong style="color:#fff">${humanAgo(_tsState.lastRun)}</strong> · <strong style="color:#fff">${_tsState.lastResultCount||0}</strong> matches`
+          : `Auto-kørsel aktiv · venter på første kørsel`)
+        : `Manuel · sidst kørt ${humanAgo(_tsState.lastRun)}`;
+      toggleEl.innerHTML = agentToggleHtml({ id:'ts-auto', on:_tsState.auto, onChange:'tsToggleAuto()', statusText });
+    }
   }
 }
 
@@ -4278,14 +4309,14 @@ function renderGoogleMapsForm(){
       </div>
     `}
 
-    <!-- Manual nudge (the Agent ON/OFF toggle lives in the page header top-right) -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--w04)">
+    <!-- Status line (Agent ON/OFF toggle in the page header drives runs.
+         Toggling ON or opening the page with stale data fires the scan.) -->
+    <div style="padding-top:10px;border-top:1px solid var(--w04)">
       <div id="gm-status" style="font-size:11.5px;color:var(--w55);line-height:1.5">
         ${_gmState.lastRun
           ? `Sidst kørt <strong style="color:#fff">${humanAgo(_gmState.lastRun)}</strong> · <strong style="color:#fff">${_gmState.lastResultCount||0}</strong> leads`
-          : `Vælg mission + by, og slå <strong style="color:var(--w80)">Agent ON</strong> i toppen — eller klik <strong style="color:var(--w80)">↻ Kør nu</strong> for at teste`}
+          : `Vælg mission + by, og slå <strong style="color:var(--w80)">Agent ON</strong> i toppen`}
       </div>
-      <button class="btn btn-sm" id="gm-search-btn" style="padding:8px 16px;font-size:12px" onclick="gmRunAgent()" title="Kør agent én gang nu med ovenstående mission">↻ Kør nu</button>
     </div>
   `;
   // Mount the Agent ON/OFF toggle in the page header
@@ -4341,10 +4372,9 @@ function updateGmMatrixPreview(){
 }
 
 async function gmRunAgent(){
-  const btn=document.getElementById('gm-search-btn');
   const out=document.getElementById('gm-results');
   const statusEl=document.getElementById('gm-status');
-  if(!btn||!out||!statusEl)return;
+  if(!out||!statusEl)return;
 
   // Build mission list (category × city pairs)
   let missions=[];
@@ -4366,7 +4396,6 @@ async function gmRunAgent(){
   if(missions.length===0)return;
   if(missions.length>50){showToast('Mission for stor (max 50 søgninger) — reducér kategorier eller by-gruppen');return;}
 
-  btn.disabled=true;btn.textContent='Agent arbejder…';
   _gmState.running=true;
   _gmCache.results=[];
   out.innerHTML='';
@@ -4405,7 +4434,7 @@ async function gmRunAgent(){
       renderGoogleMapsResults();
     }
   } finally {
-    btn.disabled=false;btn.textContent='↻ Kør nu';
+    _gmState.running=false;
     // Re-render the form so the toggle status banner updates with the
     // new last-run timestamp + count.
     setTimeout(()=>renderGoogleMapsForm(),100);
