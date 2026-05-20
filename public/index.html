@@ -734,11 +734,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h4v6H2zM6 4h4v10H6zM10 1h4v13h-4z"/></svg>
       Dashboard
     </a>
-    <a id="nv-l" onclick="sv('leads')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
-      Min liste
+    <a id="nv-ad" onclick="sv('autodialer')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2h2l1.5 3.5L5 7c.7 2 2.3 3.6 4.3 4.3L11 10l3.5 1.5V14c0 .5-.5 1-1 1C8 14.5 1 7.5 0 2c0-.5.5-1 1-1z" transform="translate(1 0)"/></svg>
+      Autodialer
     </a>
-    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Lead-kilder</div>
+    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agents</div>
     <a id="nv-meta" onclick="sv('meta-scraper')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M3 8c0-3 2-5 5-5s5 2 5 5M3 8c0 3 2 5 5 5s5-2 5-5"/></svg>
       META Scraper
@@ -755,6 +755,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="3" rx="0.5"/><rect x="2" y="6.5" width="12" height="3" rx="0.5"/><rect x="2" y="11" width="12" height="3" rx="0.5"/></svg>
       Tech Stack Scanner
     </a>
+    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Værktøjer</div>
     <a id="nv-csv" onclick="sv('csv-upload')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 10V2M5 5l3-3 3 3M2 12v2h12v-2"/></svg>
       CSV Upload
@@ -763,6 +764,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="m11 11 3 3"/></svg>
       CVR Search
     </a>
+    <!-- Min liste retired from the sidebar — the Autodialer cockpit is now
+         the canonical "calling list" surface. The underlying leads page
+         remains reachable internally (e.g. Look-alike "Administrer seed →"
+         shortcut) so existing flows keep working. -->
+    <a id="nv-l" onclick="sv('leads')" style="display:none">Min liste</a>
     <!-- Mine kunder hidden — Twenty owns customers. -->
     <a id="nv-c" onclick="sv('customers')" style="display:none">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
@@ -951,9 +957,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;gap:20px">
         <div>
-          <div class="section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Dashboard</div>
-          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Vedio Leads — auto-pipeline</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Samlet overblik: ICP-klare leads, aktive annoncører, nye annoncører fra de seneste 7 dage, og Look-alike-matches. Data samles automatisk to gange dagligt fra alle lead-kilder.</p>
+          <div class="section-label" id="disc-section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Dashboard</div>
+          <h2 id="disc-page-title" style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Vedio Leads — auto-pipeline</h2>
+          <p id="disc-page-sub" style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Samlet overblik: ICP-klare leads, aktive annoncører, nye annoncører fra de seneste 7 dage, og Look-alike-matches. Data samles automatisk to gange dagligt fra alle lead-kilder.</p>
         </div>
         <button class="btn btn-primary btn-sm" id="disc-run-btn" style="padding:10px 18px;font-size:13px;flex-shrink:0" onclick="manualDiscoveryRun()">Kør nu</button>
       </div>
@@ -986,9 +992,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <div id="google-maps-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:900px;margin:0 auto;padding:28px 24px">
       <div style="margin-bottom:20px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🗺️ Lead-kilde</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Google Maps Scraper</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Find danske virksomheder per kategori og by via Google Places. Resultaterne matches mod CVR for berigelse, lander i puljen, og gennemgår samme ICP-gate som andre Lead-kilder.</p>
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Google Maps</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Google Maps Agent</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der finder danske virksomheder per kategori og by via Google Places, krydsmatcher dem mod CVR (Datafordeler) for berigelse, og leverer ICP-klare leads direkte til din Autodialer-kø.</p>
       </div>
       <div id="gm-config-card" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
       <div id="gm-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
@@ -1000,12 +1006,29 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <div id="tech-stack-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:900px;margin:0 auto;padding:28px 24px">
       <div style="margin-bottom:20px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🧱 Lead-kilde</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Scanner</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Skan virksomheders hjemmesider for tech-stack — Shopify, HubSpot, Klaviyo, Webflow, WordPress, Magento m.fl. Skarpt til "vi sælger til Shopify D2C brands" type-segmentering.</p>
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Tech Stack</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Agent</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der skanner virksomheders hjemmesider for tech-stack — Shopify, HubSpot, Klaviyo, Webflow, WordPress, Magento m.fl. Skarpt til "vi sælger til Shopify D2C brands" type-segmentering. Output kan filtreres og lægges direkte i Autodialer.</p>
       </div>
       <div id="ts-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
       <div id="ts-results"></div>
+    </div>
+  </div>
+
+  <!-- AUTODIALER PAGE -->
+  <div id="autodialer-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:1100px;margin:0 auto;padding:28px 24px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:18px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📞 Autodialer</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Din opkaldskø</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Alle leads du har lagt i kø står her. Start Cockpittet for at ringe igennem listen — disposér med tasterne 1–4, spring videre med pil-højre, og fjern tvivlsspørgsmål med auto-advance.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="ad-start-btn" style="padding:12px 22px;font-size:13.5px;flex-shrink:0;background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none" onclick="openCockpit()">▶ Start opkald</button>
+      </div>
+      <div id="ad-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px"></div>
+      <div id="ad-lists"></div>
+      <div id="ad-queue"></div>
     </div>
   </div>
 
@@ -1026,9 +1049,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:18px">
         <div>
-          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🎯 Look-alike Agent</div>
-          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">AI-agenten finder leads der ligner dine bedste</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Tilføj 5–10 kvalitetsleads til "Min liste" — agenten bruger dem som seed og scanner Discovery-puljen for virksomheder med samme branche, størrelse, region og ads-mønster. Den finder leads vi <em>ikke</em> allerede har, og scorer dem efter lighed.</p>
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Look-alike</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Look-alike Agent</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agenten finder leads der ligner dine bedste. Tilføj 5–10 kvalitetsleads som seed — agenten scanner kandidatpuljen for virksomheder med samme branche, størrelse, region og ads-mønster, og scorer dem efter lighed. Output lander direkte i Autodialer-køen.</p>
         </div>
         <button class="btn btn-primary btn-sm" id="la-refresh-btn" onclick="refreshLookalikeAgent()" style="padding:10px 18px;font-size:13px;flex-shrink:0">↻ Kør agent nu</button>
       </div>
@@ -3183,6 +3206,105 @@ async function gmAddAllMatched(){
   showToast(`✓ ${ok} af ${matched.length} tilføjet til Min liste`);
 }
 
+// ─── AUTODIALER PAGE ─────────────────────────────────────────────────────
+// Landing page for the cockpit (the call workflow). Replaces the old
+// "Min liste" surface in the sidebar — the SDR now lands here, picks the
+// list they want to dial, sees a summary of the queue, and starts the
+// cockpit with one click. The cockpit overlay is unchanged underneath.
+function renderAutodialerPage(){
+  const statsEl=document.getElementById('ad-stats');
+  const listsEl=document.getElementById('ad-lists');
+  const queueEl=document.getElementById('ad-queue');
+  if(!statsEl||!listsEl||!queueEl)return;
+  // Stats — queue size for the currently-selected list, total leads,
+  // last-called timestamp (best-effort: latest lastCallAt on any lead).
+  const filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads;
+  const calledToday=leads.filter(l=>l.lastCallAt&&(Date.now()-new Date(l.lastCallAt).getTime())<24*60*60*1000).length;
+  const dispositioned=leads.filter(l=>l.lastAction).length;
+  const lastCall=leads.reduce((m,l)=>{
+    if(!l.lastCallAt)return m;
+    const t=new Date(l.lastCallAt).getTime();
+    return (m&&m>t)?m:t;
+  },0);
+  const lastCallText=lastCall?humanAgo(new Date(lastCall).toISOString()):'—';
+  const tile=(label,value,sub,accent)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
+    <div style="font-size:22px;font-weight:900;color:${accent||'#fff'};letter-spacing:-0.5px">${value}</div>
+    ${sub?`<div style="font-size:11px;color:var(--w55);margin-top:2px">${sub}</div>`:''}
+  </div>`;
+  statsEl.innerHTML=[
+    tile('Klar i kø',filtered.length.toLocaleString('da-DK'),aList==='all'?'alle leads':`liste: ${lists.find(l=>l.id===aList)?.name||aList}`, 'var(--purple-light)'),
+    tile('Total leads',leads.length.toLocaleString('da-DK'),'i Vedio Leads'),
+    tile('Ringet i dag',calledToday.toLocaleString('da-DK'),dispositioned?`${dispositioned} dispositioneret i alt`:''),
+    tile('Sidst ringet',lastCallText,''),
+  ].join('');
+
+  // List selector — chips for each user-defined list + "Alle leads".
+  // Re-uses the same list state (`aList`) the cockpit reads from, so
+  // changing here changes the cockpit queue.
+  const listChip=(id,name,count,active)=>`<button onclick="adSetList('${e(id)}')" class="ad-chip" style="padding:7px 14px;border-radius:20px;border:1px solid ${active?'rgba(124,58,237,0.5)':'var(--w08)'};background:${active?'rgba(124,58,237,0.18)':'var(--w04)'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif;transition:all 0.12s">${e(name)} <span style="opacity:0.65;font-weight:500;margin-left:4px">${count}</span></button>`;
+  const userLists=Array.isArray(lists)?lists:[];
+  const chips=[
+    listChip('all','Alle leads',leads.length,aList==='all'||!aList),
+    ...userLists.map(l=>listChip(l.id,l.name,leads.filter(x=>x.listId===l.id).length,aList===l.id)),
+  ].join(' ');
+  listsEl.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:11px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase">Liste</span>
+    ${chips}
+    <span style="flex:1"></span>
+    <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:7px 14px">⬇ Eksportér</button>
+  </div>`;
+
+  // Queue preview — first 30 leads with name + CVR + last disposition.
+  // Clicking a row jumps the cockpit straight to that lead.
+  if(filtered.length===0){
+    queueEl.innerHTML=`<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:40px;text-align:center">
+      <div style="font-size:36px;margin-bottom:10px">📞</div>
+      <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Ingen leads i kø endnu</div>
+      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto 14px;line-height:1.5">Tilføj leads fra <strong>Dashboard</strong>, en AI Agent (META, Look-alike, Google Maps), eller upload en CSV-fil. Når du har noget i kø, kommer "Start opkald" til live.</div>
+      <div style="display:inline-flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="sv('discovery')" style="padding:8px 16px">→ Dashboard</button>
+        <button class="btn btn-sm" onclick="sv('csv-upload')" style="padding:8px 16px">📥 CSV Upload</button>
+      </div>
+    </div>`;
+    const adBtn=document.getElementById('ad-start-btn');if(adBtn){adBtn.disabled=true;adBtn.style.opacity='0.5';adBtn.style.cursor='not-allowed';}
+    return;
+  }
+  const adBtn=document.getElementById('ad-start-btn');if(adBtn){adBtn.disabled=false;adBtn.style.opacity='';adBtn.style.cursor='';}
+  const preview=filtered.slice(0,30);
+  const lastActionChip=(a)=>!a?'':`<span style="font-size:9.5px;padding:2px 6px;border-radius:6px;background:${lastActionColor(a,'bg')};color:${lastActionColor(a,'fg')};font-weight:700">${lastActionLabel(a)}</span>`;
+  queueEl.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">Forhåndsvisning · ${preview.length} af ${filtered.length}</div>
+      <button class="btn btn-primary btn-sm" onclick="openCockpit()" style="padding:6px 14px;font-size:11.5px">▶ Start opkald</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <tbody>
+        ${preview.map((l,i)=>`<tr onclick="adJumpToLead(${i})" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='transparent'">
+          <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
+          <td style="padding:10px 14px;font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</td>
+          <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
+          <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
+          <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
+          <td style="padding:10px 14px;text-align:right">${l.phone?`<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:11px;color:var(--purple-light);text-decoration:none">${e(l.phone)}</a>`:'<span style="font-size:10.5px;color:var(--w35)">ingen tlf</span>'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${filtered.length>preview.length?`<div style="padding:10px 16px;text-align:center;font-size:11px;color:var(--w55);border-top:1px solid var(--w08)">… og ${filtered.length-preview.length} mere — start cockpittet for hele listen</div>`:''}
+  </div>`;
+}
+
+function adSetList(id){aList=id;rSB();renderAutodialerPage();}
+function adJumpToLead(idx){
+  // Open cockpit at a specific position. Since openCockpit() rebuilds the
+  // queue from the current filtered list, we just set the resume marker
+  // to the lead at idx so it lands there.
+  const filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads;
+  const target=filtered[idx];
+  if(target)_cockpit.history.push(target.cvr);
+  openCockpit();
+}
+
 // ─── COCKPIT ──────────────────────────────────────────────────────────────
 // Single-screen call workflow. Filtered to the currently-active list (or
 // all leads if 'Alle leads' is selected). Action handlers are placeholders
@@ -3472,6 +3594,29 @@ async function applyFeedbackAdjustments(){
   }catch(e){showToast('Fejl: '+e.message);}
 }
 
+// Track previous view so we can restore Dashboard defaults after navigating
+// away from META Scraper (which overrides the disc-page header + tab).
+let _prevView = 'discovery';
+
+// Swap the header copy on the discovery-page DOM. Same DOM serves both the
+// Dashboard view (default copy) and the META Scraper agent view (forces
+// the 'Aktive annoncører' tab so the SDR lands on scraper output).
+function setDiscoveryHeader(mode){
+  const lbl=document.getElementById('disc-section-label');
+  const ttl=document.getElementById('disc-page-title');
+  const sub=document.getElementById('disc-page-sub');
+  if(!lbl||!ttl||!sub)return;
+  if(mode==='meta'){
+    lbl.textContent='🤖 AI Agent · META Scraper';
+    ttl.textContent='META Scraper Agent';
+    sub.innerHTML='Agenten scraper Meta Ad Library to gange dagligt og finder danske virksomheder med aktive annoncer. Resultaterne lander i tabellen nedenfor — filtrér efter branche/by/ansatte, og send ICP-klare leads videre til Autodialer-køen med ét klik.';
+  } else {
+    lbl.textContent='Dashboard';
+    ttl.textContent='Vedio Leads — auto-pipeline';
+    sub.textContent='Samlet overblik: ICP-klare leads, aktive annoncører, nye annoncører fra de seneste 7 dage, og Look-alike-matches. Data samles automatisk to gange dagligt fra alle lead-kilder.';
+  }
+}
+
 function sv(v){
   aView=v;
   // Sidebar nav active-state — Dashboard is the new home of the old "Lead
@@ -3486,6 +3631,7 @@ function sv(v){
   document.getElementById('nv-gm')?.classList.toggle('on',v==='google-maps');
   document.getElementById('nv-ts')?.classList.toggle('on',v==='tech-stack');
   document.getElementById('nv-csv')?.classList.toggle('on',v==='csv-upload');
+  document.getElementById('nv-ad')?.classList.toggle('on',v==='autodialer');
 
   selCo=null;hdDp();ckd.clear();upSel();
   const bw=document.querySelector('.body-wrap');
@@ -3498,6 +3644,7 @@ function sv(v){
   const gmPage=document.getElementById('google-maps-page');
   const tsPage=document.getElementById('tech-stack-page');
   const csvPage=document.getElementById('csv-upload-page');
+  const adPage=document.getElementById('autodialer-page');
 
   // Hide everything first
   bw.style.display='none';tb.style.display='none';
@@ -3511,6 +3658,7 @@ function sv(v){
   if(gmPage)gmPage.style.display='none';
   if(tsPage)tsPage.style.display='none';
   if(csvPage)csvPage.style.display='none';
+  if(adPage)adPage.style.display='none';
 
   if(v==='search'||v==='leads'){
     bw.style.display='';tb.style.display='';if(sb)sb.style.display='';if(selb)selb.style.display='';
@@ -3527,21 +3675,24 @@ function sv(v){
     renderCustomersPage();
   } else if(v==='discovery'){
     // Dashboard view — re-uses the existing Discovery V2 renderer.
-    // The page header inside discovery-page now reads "Dashboard" so the
-    // copy matches the new IA. Tabs stay (ICP-klar / Aktive / Nye / Alle /
-    // Look-alike) since they're useful pivot views *on the same dataset*.
+    // Header copy is set to the Dashboard framing and the default tab is
+    // 'icp'. Same DOM is repurposed by meta-scraper below with different
+    // copy + a forced 'ads' tab.
     if(discPage)discPage.style.display='flex';discPage.style.flexDirection='column';
+    setDiscoveryHeader('dashboard');
+    if(_discState.tab==='ads'&&_prevView==='meta-scraper')_discState.tab='icp';
     renderDiscoveryPage();
   } else if(v==='lookalike'){
     if(laPage)laPage.style.display='flex';laPage.style.flexDirection='column';
     renderLookalikePage();
   } else if(v==='meta-scraper'){
-    // META Scraper — same Discovery V2 data, but framed as "this is where
-    // the META Ad Library scraper feeds into". For now it routes to the
-    // same renderer; once we add per-source filtering on the backend
-    // (state.json companies tagged with source: 'meta-scraper' vs 'csv')
-    // we'll surface a source filter here.
+    // META Scraper — agentic framing on top of the same Discovery dataset
+    // (the daily scraper hits Meta Ad Library for every CVR in the pool).
+    // We force the 'Aktive annoncører' tab so the user lands on the
+    // scraper's primary output, and swap the page header to match.
     if(discPage)discPage.style.display='flex';discPage.style.flexDirection='column';
+    setDiscoveryHeader('meta');
+    _discState.tab='ads';
     renderDiscoveryPage();
   } else if(v==='google-maps'){
     if(gmPage)gmPage.style.display='flex';gmPage.style.flexDirection='column';
@@ -3552,7 +3703,11 @@ function sv(v){
   } else if(v==='csv-upload'){
     if(csvPage)csvPage.style.display='flex';csvPage.style.flexDirection='column';
     renderCsvUploadPage();
+  } else if(v==='autodialer'){
+    if(adPage)adPage.style.display='flex';adPage.style.flexDirection='column';
+    renderAutodialerPage();
   }
+  _prevView=v;
 }
 
 
