@@ -879,6 +879,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div class="llb-actions">
       <button class="btn btn-sm" onclick="togNL('nli2','inline-block')">+ Ny liste</button>
       <input id="nli2" class="llb-input" placeholder="Navn + Enter" style="display:none" autocomplete="off">
+      <button class="btn btn-sm" onclick="openCsvImport()" title="Upload en CSV-fil fra Sales Navigator, Apollo, Excel — hvad som helst">📥 Importer CSV</button>
+      <input id="csv-import-input" type="file" accept=".csv,text/csv" style="display:none" onchange="handleCsvFile(this.files[0])">
       <button class="btn btn-sm" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
     </div>
   </div>
@@ -2393,6 +2395,122 @@ function humanAgo(iso){
   const m=Math.round(diff/60000);if(m<60)return `${m} min siden`;
   const h=Math.round(m/60);if(h<24)return `${h} t siden`;
   return `${Math.round(h/24)} dage siden`;
+}
+
+// ── CSV import ─────────────────────────────────────────────────────────────
+// Accepts CSVs from Sales Navigator, Apollo, Excel — anything that exports
+// a header row + data rows. Headers are auto-matched to known field names
+// (Company / Account Name / CVR / Website / Phone / Email / …) so the SDR
+// doesn't have to map columns. Unmatched leads (no CVR found in
+// Datafordeler) are still kept — they get a 'csv-' synthetic key and
+// `unmatched: true` so we can offer manual fix-up later.
+function openCsvImport(){document.getElementById('csv-import-input').click();}
+
+function parseCsv(text){
+  // Lightweight RFC 4180-ish parser: handles quoted fields with embedded
+  // commas and escaped quotes ("" inside a quoted field).
+  const lines=text.replace(/^﻿/,'').split(/\r\n|\n|\r/).filter(l=>l.length>0);
+  if(!lines.length)return {headers:[],rows:[]};
+  const parseLine=(line)=>{
+    const out=[];let cur='';let q=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(q){
+        if(c==='"'&&line[i+1]==='"'){cur+='"';i++;}
+        else if(c==='"')q=false;
+        else cur+=c;
+      }else{
+        if(c==='"')q=true;
+        else if(c===',')(out.push(cur),cur='');
+        else cur+=c;
+      }
+    }
+    out.push(cur);
+    return out.map(s=>s.trim());
+  };
+  const headers=parseLine(lines[0]);
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    const fields=parseLine(lines[i]);
+    const row={};
+    headers.forEach((h,idx)=>{row[h]=fields[idx]||'';});
+    rows.push(row);
+  }
+  return {headers,rows};
+}
+
+// Map raw CSV rows to the canonical {name, cvr, website, phone, email, source} shape.
+// We accept a generous set of header aliases so Sales Navigator / Apollo /
+// custom Excel exports all just work.
+function normaliseCsvRows(rows){
+  const NAME_KEYS=['name','company','company name','account name','virksomhed','navn','firma'];
+  const CVR_KEYS=['cvr','cvr-nummer','cvr nummer','cvrnumber','registration','tax id'];
+  const WEB_KEYS=['website','url','domain','homepage','hjemmeside'];
+  const PHONE_KEYS=['phone','phone number','telefon','tlf','tlf-nr'];
+  const EMAIL_KEYS=['email','e-mail','mail'];
+  const CITY_KEYS=['city','by','location','headquarters','hq location'];
+  const IND_KEYS=['industry','branche','sector'];
+  const lk=(row,keys)=>{for(const k of keys){for(const rk of Object.keys(row)){if(rk.toLowerCase().trim()===k)return row[rk];}}return '';};
+  return rows.map(r=>({
+    name:   lk(r,NAME_KEYS),
+    cvr:    lk(r,CVR_KEYS),
+    website:lk(r,WEB_KEYS),
+    phone:  lk(r,PHONE_KEYS),
+    email:  lk(r,EMAIL_KEYS),
+    city:   lk(r,CITY_KEYS),
+    industry:lk(r,IND_KEYS),
+  })).filter(r=>r.name||r.cvr);
+}
+
+async function handleCsvFile(file){
+  if(!file)return;
+  if(file.size>5*1024*1024){showToast('CSV må højst være 5 MB');return;}
+  const text=await file.text();
+  const {headers,rows}=parseCsv(text);
+  const normalised=normaliseCsvRows(rows);
+  if(normalised.length===0){showToast('Ingen rækker fundet — har CSV en header med fx Company/CVR?');return;}
+  if(normalised.length>5000){showToast('Max 5000 rækker pr. import');return;}
+  showCsvPreview(file.name,headers,normalised);
+}
+
+function showCsvPreview(filename,headers,rows){
+  const bg=document.createElement('div');bg.className='modal-bg';bg.id='csv-preview-modal';
+  bg.innerHTML=`<div class="modal" style="width:560px;max-height:80vh;display:flex;flex-direction:column">
+    <h3 style="margin:0 0 4px">Importer CSV: ${e(filename)}</h3>
+    <p style="font-size:11.5px;color:var(--w55);margin:0 0 12px">Fundet <strong style="color:#fff">${rows.length}</strong> rækker · genkendte kolonner: ${headers.map(h=>e(h)).join(', ').slice(0,200)}</p>
+    <div style="font-size:11px;color:var(--w55);margin-bottom:8px">Forhåndsvisning (5 første):</div>
+    <div style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:var(--w80);max-height:240px;overflow:auto;margin-bottom:14px">
+      ${rows.slice(0,5).map(r=>`<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--w04)"><strong style="color:#fff">${e(r.name||'(intet navn)')}</strong>${r.cvr?` · CVR ${e(r.cvr)}`:''}${r.website?` · ${e(r.website)}`:''}</div>`).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--w35);margin-bottom:14px">Rækker uden CVR-match til Datafordeler bliver stadig importeret — med flag, så du kan rette dem manuelt senere.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="document.getElementById('csv-preview-modal').remove();document.getElementById('csv-import-input').value='';">Annullér</button>
+      <button class="btn btn-primary btn-sm" id="csv-import-confirm" onclick='runCsvImport(${JSON.stringify(rows).replace(/'/g,"&#39;")})'>Importér ${rows.length} virksomheder</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+}
+
+async function runCsvImport(rows){
+  const btn=document.getElementById('csv-import-confirm');
+  if(btn){btn.disabled=true;btn.textContent='Importerer…';}
+  try{
+    // Pass the currently selected list as the target, falling back to ungrouped.
+    const targetList=(aList&&aList!=='all')?aList:'ungrouped';
+    const r=await fetch('/api/leads/import',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({rows,listId:targetList})});
+    const d=await r.json();
+    if(!r.ok){showToast('Fejl: '+(d.error||'kunne ikke importere'));if(btn){btn.disabled=false;btn.textContent='Prøv igen';}return;}
+    document.getElementById('csv-preview-modal')?.remove();
+    document.getElementById('csv-import-input').value='';
+    showToast(`✓ ${d.imported} importeret · ${d.matched} med CVR · ${d.unmatched} uden · ${d.alreadyExists} duplikater`);
+    // Refresh leads view
+    const leadsR=await fetch('/api/leads',{headers:ah()});
+    const ld=await leadsR.json();
+    leads=ld.leads||[];render();
+  }catch(ex){
+    showToast('Fejl: '+ex.message);
+    if(btn){btn.disabled=false;btn.textContent='Prøv igen';}
+  }
 }
 
 

@@ -1392,6 +1392,118 @@ app.post("/api/leads", authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/leads/import — bulk-import a CSV-derived list of companies.
+//
+// Body: { rows: [{ name, cvr?, website?, phone?, email?, source? }, ...], listId? }
+// Per row:
+//   - If `cvr` is present (8 digits) → fetch enrichment from Datafordeler
+//   - Else try exact-name match in Datafordeler. If found → enrich. If not
+//     → still create the lead with whatever fields the CSV gave us, flagged
+//     as `unmatched: true` so the UI can offer manual CVR fill-in later.
+//
+// Source defaults to "csv". Source preserved on the lead so we know which
+// channel surfaced it (sales-navigator / apollo / partner-list / etc).
+app.post("/api/leads/import", authMiddleware, async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  if (!rows || rows.length === 0) return res.status(400).json({ error: "rows[] mangler" });
+  if (rows.length > 5000) return res.status(413).json({ error: "Max 5000 rækker pr. import" });
+  const listId = req.body.listId || "ungrouped";
+  const d = loadUserData(req.userId);
+  const existing = new Set(d.leads.map((l) => l.cvr));
+  const now = new Date().toISOString();
+
+  const stats = { imported: 0, alreadyExists: 0, matched: 0, unmatched: 0, errors: 0, details: [] };
+
+  // Cap concurrent Datafordeler lookups so we don't hammer the API for big imports.
+  const CONC = 4;
+  const queue = [...rows];
+  const workers = Array.from({ length: CONC }, async () => {
+    while (queue.length > 0) {
+      const row = queue.shift();
+      if (!row) break;
+      try {
+        const name = String(row.name || row.company || row["Company Name"] || row["Account Name"] || "").trim();
+        const cvrRaw = String(row.cvr || row.CVR || "").replace(/\D/g, "");
+        if (!name && !cvrRaw) { stats.errors++; stats.details.push({ row, reason: "no name or CVR" }); continue; }
+
+        let company = null;
+        if (cvrRaw && /^\d{8}$/.test(cvrRaw)) {
+          // Try CVR lookup directly.
+          try { company = await lookupDatafordeler(cvrRaw); } catch (_) {}
+        }
+        if (!company && name) {
+          // Best-effort exact-name match (a few variants for the common A/S / ApS suffix dance).
+          const variants = [name, `${name} A/S`, `${name} ApS`, name.toUpperCase(), `${name.toUpperCase()} A/S`];
+          for (const v of variants) {
+            try {
+              const r = await dfGqlFetch(
+                `{ CVR_Navn(first: 3, where: { vaerdi: { eq: "${v.replace(/"/g, '\\"')}" } }) { edges { node { CVREnhedsId vaerdi } } } }`,
+              );
+              const hit = r?.CVR_Navn?.edges?.[0]?.node;
+              if (hit) {
+                // Get CVR number from enhedsId
+                const r2 = await dfGqlFetch(
+                  `{ CVR_Virksomhed(first: 1, where: { id: { eq: "${hit.CVREnhedsId}" } }) { edges { node { CVRNummer } } } }`,
+                );
+                const cvrNr = r2?.CVR_Virksomhed?.edges?.[0]?.node?.CVRNummer;
+                if (cvrNr) { company = await lookupDatafordeler(String(cvrNr)).catch(() => null); }
+              }
+              if (company) break;
+            } catch (_) {}
+          }
+        }
+
+        if (company) {
+          if (existing.has(company.cvr)) { stats.alreadyExists++; continue; }
+          d.leads.push({
+            ...company,
+            // CSV-provided fields override Datafordeler ones (the user knows their leads).
+            web: row.website || row.URL || row.domain || company.web,
+            ph: row.phone || company.ph,
+            em: row.email || company.em,
+            listId,
+            addedAt: now,
+            source: row.source || "csv",
+          });
+          existing.add(company.cvr);
+          stats.imported++;
+          stats.matched++;
+        } else {
+          // Unmatched — still keep the row so the SDR can act on it (Kaspr lookup
+          // by name etc.). Generate a synthetic key so we don't collide with real CVRs.
+          const syntheticCvr = "csv-" + (cvrRaw || name.replace(/\s+/g, "-")).slice(0, 40);
+          if (existing.has(syntheticCvr)) { stats.alreadyExists++; continue; }
+          d.leads.push({
+            cvr: syntheticCvr,
+            name,
+            web: row.website || row.URL || row.domain || "",
+            ph: row.phone || "",
+            em: row.email || "",
+            city: row.city || "",
+            ind: row.industry || "",
+            unmatched: true,
+            listId,
+            addedAt: now,
+            source: row.source || "csv",
+          });
+          existing.add(syntheticCvr);
+          stats.imported++;
+          stats.unmatched++;
+        }
+      } catch (e) {
+        stats.errors++;
+        stats.details.push({ row, reason: e.message });
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  saveUserData(req.userId, d);
+  // Trim details to avoid blowing up the response
+  stats.details = stats.details.slice(0, 20);
+  res.json(stats);
+});
+
 app.delete("/api/leads/:cvr", authMiddleware, (req, res) => {
   const d = loadUserData(req.userId);
   d.leads = d.leads.filter((l) => l.cvr !== req.params.cvr);
