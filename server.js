@@ -1187,7 +1187,7 @@ function nextDailyRunTime() {
 app.get("/api/discovery/companies", authMiddleware, (req, res) => {
   const s = loadDiscoveryState();
   const companies = Object.values(s.companies || {});
-  const { tab = "ads", industry = "", city = "", empMin, empMax, minAds, q = "", sort = "ads" } = req.query;
+  const { tab = "ads", industry = "", city = "", empMin, empMax, minAds, q = "", sort = "ads", source = "" } = req.query;
   const limit = Math.min(Number(req.query.limit) || 100, 500);
   const offset = Number(req.query.offset) || 0;
 
@@ -1200,6 +1200,15 @@ app.get("/api/discovery/companies", authMiddleware, (req, res) => {
   else if (tab === "new") {
     const sevenDaysAgo = Date.now() - 7 * 86400_000;
     rows = rows.filter((c) => c.ads?.verdict === true && c.ads?.checkedAt && new Date(c.ads.checkedAt).getTime() >= sevenDaysAgo);
+  }
+  // Source filter — Dashboard's source-tabs map (meta/maps/tech/csv...) to
+  // the lead's `source` tag. Existing pool entries don't carry an explicit
+  // source field — they all came from the CVR-walk + Meta scraper, so we
+  // treat undefined as 'meta-scraper'. New leads from Google Maps / Tech
+  // Stack / CSV scrapers will carry their own source tag and surface under
+  // their respective tabs once those agents start writing to the pool.
+  if (source) {
+    rows = rows.filter((c) => (c.source || "meta-scraper") === source);
   }
   if (industry) rows = rows.filter((c) => String(c.industry || "").startsWith(industry));
   if (city) {
