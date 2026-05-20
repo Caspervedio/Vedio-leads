@@ -1158,15 +1158,21 @@ app.get("/api/discovery/summary", authMiddleware, (req, res) => {
   });
 });
 
-// Returns the next 02:00 Europe/Copenhagen as ISO. Not perfect for DST
-// edge cases — good enough for "next run in ~Nh" headline copy.
+// Returns the next 06:00 or 12:00 Europe/Copenhagen run as ISO. Not perfect
+// for DST edge cases — good enough for "om N timer" headline copy.
 function nextDailyRunTime() {
   const now = new Date();
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
-  // 02:00 CET = 01:00 UTC (CEST is 00:00 UTC). Use 01:00 UTC as a stable approx.
-  next.setUTCHours(1);
-  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-  return next.toISOString();
+  // Copenhagen is UTC+1 (CET, winter) or UTC+2 (CEST, summer). Approximate via
+  // both candidates: 06:00 local ≈ 04:00 UTC (CEST) / 05:00 UTC (CET);
+  // 12:00 local ≈ 10:00 UTC (CEST) / 11:00 UTC (CET). For headline copy the
+  // CEST values are good enough year-round (off by 1h in winter, harmless).
+  const hoursUtc = [4, 10];
+  for (const h of hoursUtc) {
+    const c = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, 0, 0));
+    if (c > now) return c.toISOString();
+  }
+  // Past noon — next run is tomorrow at 04:00 UTC (06:00 Copenhagen)
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 4, 0, 0)).toISOString();
 }
 
 // GET /api/discovery/companies — filterable, paginated list. Query params:

@@ -736,7 +736,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     </a>
     <a id="nv-l" onclick="sv('leads')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
-      Mine leads
+      Min liste
     </a>
     <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agent</div>
     <!-- Mine kunder removed — Twenty owns customers. This app is the lead generator.
@@ -943,6 +943,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <button class="btn btn-primary btn-sm" id="disc-run-btn" style="padding:10px 18px;font-size:13px;flex-shrink:0" onclick="manualDiscoveryRun()">Kør nu</button>
       </div>
 
+      <!-- Auto-pipeline status banner — next run, queue counters, downstream status -->
+      <div id="disc-autoflow" style="margin-bottom:14px"></div>
+
       <!-- Summary row -->
       <div id="disc-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px"></div>
 
@@ -971,7 +974,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div>
           <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🎯 Look-alike Agent</div>
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">AI-agenten finder leads der ligner dine bedste</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Tilføj 5–10 kvalitetsleads til "Mine leads" — agenten bruger dem som seed og scanner Discovery-puljen for virksomheder med samme branche, størrelse, region og ads-mønster. Den finder leads vi <em>ikke</em> allerede har, og scorer dem efter lighed.</p>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Tilføj 5–10 kvalitetsleads til "Min liste" — agenten bruger dem som seed og scanner Discovery-puljen for virksomheder med samme branche, størrelse, region og ads-mønster. Den finder leads vi <em>ikke</em> allerede har, og scorer dem efter lighed.</p>
         </div>
         <button class="btn btn-primary btn-sm" id="la-refresh-btn" onclick="refreshLookalikeAgent()" style="padding:10px 18px;font-size:13px;flex-shrink:0">↻ Kør agent nu</button>
       </div>
@@ -2219,6 +2222,38 @@ async function fetchDiscoveryRows(){
 function renderDiscoverySummary(){
   const s=_discCache.summary;if(!s)return;
   const ago=s.lastRunCompletedAt?humanAgo(s.lastRunCompletedAt):'aldrig';
+  // Auto-flow status banner: next run + queue counters
+  const autoflowEl=document.getElementById('disc-autoflow');
+  if(autoflowEl){
+    const nextRun=s.nextRunAt?new Date(s.nextRunAt):null;
+    const nextRunLocal=nextRun?nextRun.toLocaleString('da-DK',{weekday:'short',hour:'2-digit',minute:'2-digit'}):'—';
+    const mins=nextRun?Math.max(0,Math.round((nextRun.getTime()-Date.now())/60000)):0;
+    const inText=mins<60?`om ${mins} min`:mins<1440?`om ${Math.round(mins/60)} t`:`om ${Math.round(mins/1440)} dage`;
+    const pending=s.pendingPushToCloudTalk||0;
+    const queueColor=pending>0?'var(--purple-light)':'var(--w55)';
+    const phaseCStatus=`<span style="font-size:10px;padding:2px 7px;border-radius:5px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-weight:700;letter-spacing:0.3px">⏸ Phase C ikke aktiv</span>`;
+    autoflowEl.innerHTML=`<div style="background:linear-gradient(135deg,rgba(124,58,237,0.10),rgba(124,58,237,0.02));border:1px solid rgba(124,58,237,0.25);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <div style="width:34px;height:34px;border-radius:9px;background:rgba(124,58,237,0.18);display:flex;align-items:center;justify-content:center;font-size:16px">⚡</div>
+        <div>
+          <div style="font-size:11.5px;font-weight:800;color:#fff;letter-spacing:0.2px">Auto-pipeline</div>
+          <div style="font-size:10.5px;color:var(--w55);margin-top:1px">Kører 06:00 + 12:00 dagligt</div>
+        </div>
+      </div>
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Næste kørsel</div>
+        <div style="font-size:13px;font-weight:700;color:#fff">${nextRunLocal} <span style="color:var(--w55);font-weight:500;font-size:11.5px">· ${inText}</span></div>
+      </div>
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Klar til CloudTalk</div>
+        <div style="font-size:13px;font-weight:700;color:${queueColor}">${pending.toLocaleString('da-DK')} leads ${phaseCStatus}</div>
+      </div>
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Senest kørt</div>
+        <div style="font-size:13px;font-weight:700;color:#fff">${ago}<span style="color:var(--w55);font-weight:500;font-size:11.5px">${s.scrapedThisRun?` · ${s.scrapedThisRun} scrapet · ${s.withAdsThisRun||0} ads`:''}</span></div>
+      </div>
+    </div>`;
+  }
   const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
     <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${value}</div>
@@ -2293,7 +2328,7 @@ function renderDiscoveryResults(){
       wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center">
         <div style="font-size:28px;margin-bottom:8px">🎯</div>
         <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:6px">Tilføj leads først</div>
-        <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Look-alike-modellen finder virksomheder som dine eksisterende leads — tilføj først nogle leads under <strong>Mine leads</strong>.</div>
+        <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Look-alike-modellen finder virksomheder som dine eksisterende leads — tilføj først nogle leads under <strong>Min liste</strong>.</div>
       </div>`;
       return;
     }
@@ -2520,7 +2555,7 @@ function humanAgo(iso){
 }
 
 // ─── LOOK-ALIKE AGENT ────────────────────────────────────────────────────
-// Standalone page (sidebar nav 'nv-la'). Uses Mine leads as the seed set
+// Standalone page (sidebar nav 'nv-la'). Uses Min liste as the seed set
 // and surfaces similar-scoring Discovery companies via the existing
 // /api/discovery/lookalikes endpoint. Frames it as an AI agent the SDR
 // feeds with quality seeds — agent works in the background between runs.
@@ -2564,9 +2599,9 @@ function renderLookalikeUI(){
   const profileWrap=document.getElementById('la-profile');
   const seed=_laCache.seedSize;
   const seedQualityHint=seed===0
-    ? `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚠ Ingen seed-leads endnu — tilføj 5–10 kvalitetsleads til Mine leads, så agenten har noget at lære af.</div>`
+    ? `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚠ Ingen seed-leads endnu — tilføj 5–10 kvalitetsleads til Min liste, så agenten har noget at lære af.</div>`
     : seed<5
-    ? `<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fdba74;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚡ Du har ${seed} seed-leads — agenten arbejder bedre med 5–10. Tilføj flere kvalitetsleads til Mine leads for skarpere matches.</div>`
+    ? `<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fdba74;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚡ Du har ${seed} seed-leads — agenten arbejder bedre med 5–10. Tilføj flere kvalitetsleads til Min liste for skarpere matches.</div>`
     : `<div style="background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.25);color:#6ee7b7;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">✓ ${seed} seed-leads aktive. Agenten har nok at gå ud fra.</div>`;
   seedCard.innerHTML=`<div style="display:flex;align-items:center;gap:14px">
       <div style="width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-size:24px">🎯</div>
