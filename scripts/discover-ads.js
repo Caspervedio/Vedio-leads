@@ -43,10 +43,13 @@ const FLIPS_FILE = path.join(
   "discovery",
   `flips_${new Date().toISOString().slice(0, 10)}.jsonl`,
 );
-// Datafordeler walk + enrich for the full 80k+ candidate pool takes ~40
-// min. Caching it means the daily run is just a state.json read + scrape.
-// 7 days is plenty — CVR companies don't churn at human speed.
-const POOL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Datafordeler walk + enrich for the full 100k+ candidate pool takes ~2
+// hours. The daily run uses the cached pool so it's just state.json read
+// + scrape. 30 days is fine — CVR companies don't churn fast enough to
+// matter at the lead-discovery scale, and we save 2 hours of compute per
+// rebuild cycle. Set FORCE_POOL_REFRESH=1 on a manual run for an early
+// rebuild when the industry list or filter logic changes.
+const POOL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const LIMIT = Number(process.env.DISCOVERY_LIMIT) || 1000;
 // Concurrency 8 keeps total Meta-request rate at ~3.2/s
 // (8 contexts × 1 req per 2.5s delay). Below the threshold where Meta

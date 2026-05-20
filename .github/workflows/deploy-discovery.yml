@@ -52,7 +52,7 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --image "$IMAGE" \
-            --task-timeout 3600 \
+            --task-timeout 7200 \
             --max-retries 1 \
             --cpu 2 \
             --memory 3Gi \
