@@ -1036,13 +1036,16 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     </div>
   </div>
 
-  <!-- GOOGLE MAPS SCRAPER PAGE -->
+  <!-- MAPS SCRAPER PAGE (OpenStreetMap) -->
   <div id="google-maps-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:900px;margin:0 auto;padding:28px 24px">
       <div style="margin-bottom:20px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Google Maps</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Google Maps Agent</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der finder danske virksomheder per kategori og by via Google Places, krydsmatcher dem mod CVR (Datafordeler) for berigelse, og leverer ICP-klare leads direkte til din Autodialer-kø.</p>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light)">🤖 AI Agent · Maps Scraper</div>
+          <span style="font-size:9.5px;font-weight:800;letter-spacing:0.8px;padding:3px 9px;border-radius:6px;background:rgba(52,211,153,0.15);color:#6ee7b7;border:1px solid rgba(52,211,153,0.3);text-transform:uppercase">FREE · OSM</span>
+        </div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Maps Scraper Agent</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der finder danske virksomheder per kategori og by via <strong style="color:#fff">OpenStreetMap</strong> (gratis, ingen API-cost), krydsmatcher dem mod CVR (Datafordeler) for berigelse, og leverer ICP-klare leads direkte til din Autodialer-kø.</p>
       </div>
       <div id="gm-config-card" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
       <div id="gm-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
@@ -2632,7 +2635,7 @@ function renderDiscoveryResults(){
     // filter combo" situation. Source-specific messaging when the user
     // has narrowed to a single agent that's not yet wired.
     const sourceEmpty = {
-      maps: 'Ingen leads fra Maps Scraper endnu. Kør agenten under <strong>AI Agents → Maps Scraper</strong> for at finde virksomheder via Google Places.',
+      maps: 'Ingen leads fra Maps Scraper endnu. Slå agenten ON under <strong>AI Agents → Maps Scraper</strong> for at finde danske virksomheder via OpenStreetMap.',
       tech: 'Ingen leads fra Tech Stack Agent endnu. Kør agenten under <strong>AI Agents → Tech Stack</strong> for at indeksere websites og scanne tech-signaturer.',
       csv:  'Ingen CSV-importerede leads endnu. Upload en CSV-fil under <strong>Værktøjer → CSV Analyse</strong>.',
     };
@@ -3995,29 +3998,21 @@ async function msSearchBrand() {
   }
 }
 
-// ─── GOOGLE MAPS SCRAPER PAGE ───────────────────────────────────────────
-// Skeleton UI for Google Places. Until the Places API key is provisioned
-// in Secret Manager, the backend returns 503 with a clear "not configured"
-// payload — the UI shows a config-required banner instead of running.
-//
-// When the key lands, the user types a search term ("frisør", "restaurant"
-// etc.) + a city ("Aarhus") and we run Places Text Search, cross-match each
-// result against Datafordeler by name+city to recover CVR, then submit the
-// CVR list into the pool so the next discovery run picks them up.
-const _gmCache={configured:null,results:[]};
+// ─── MAPS SCRAPER PAGE ──────────────────────────────────────────────────
+// Backed by OpenStreetMap Overpass API (free, no API key) — see server.js
+// for the OSM tag mappings + query builder. The UI lets the SDR pick
+// presets (category × city) or run a free-text manual search; results
+// cross-match against Datafordeler by name+city to recover CVR before
+// landing in the SDR's leads list with source='google-maps'.
+// OSM backend is always available (no API key required), so we hard-code
+// configured=true and skip the legacy status probe.
+const _gmCache={configured:true,results:[]};
 
 async function renderGoogleMapsPage(){
   // Hydrate state from localStorage so the Auto toggle + last mission
   // survive reloads + cross-tab.
   gmLoadFromStorage();
-  // Probe configuration status on first mount.
-  if(_gmCache.configured===null){
-    try{
-      const r=await fetch('/api/scrape/google-maps/status',{headers:ah()});
-      const d=await r.json();
-      _gmCache.configured=!!d.configured;
-    }catch{_gmCache.configured=false;}
-  }
+  // OSM backend is always available — no status probe needed.
   renderGoogleMapsConfigCard();
   renderGoogleMapsForm();
   document.getElementById('gm-results').innerHTML='';
@@ -4491,7 +4486,7 @@ function renderAutodialerPage(){
     queueEl.innerHTML=`<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:40px;text-align:center">
       <div style="font-size:36px;margin-bottom:10px">📞</div>
       <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Ingen leads i kø endnu</div>
-      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto 14px;line-height:1.5">Tilføj leads fra <strong>Dashboard</strong>, en AI Agent (META, Look-alike, Google Maps), eller upload en CSV-fil. Når du har noget i kø, kommer "Start opkald" til live.</div>
+      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto 14px;line-height:1.5">Tilføj leads fra <strong>Dashboard</strong>, en AI Agent (META Scraper, Look-alike, Maps, Tech Stack), eller upload en CSV-fil. Når du har noget i kø, kommer "Start opkald" til live.</div>
       <div style="display:inline-flex;gap:8px">
         <button class="btn btn-primary btn-sm" onclick="sv('discovery')" style="padding:8px 16px">→ Dashboard</button>
         <button class="btn btn-sm" onclick="sv('csv-upload')" style="padding:8px 16px">📥 CSV Upload</button>
