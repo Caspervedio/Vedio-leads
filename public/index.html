@@ -1132,28 +1132,35 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 <div class="dp h" id="dp" style="position:fixed;right:0;top:0;bottom:0;z-index:200;background:var(--dark2);box-shadow:-6px 0 32px rgba(0,0,0,.6);border-left:1px solid var(--border);display:flex;flex-direction:column"></div>
 
 <!-- COCKPIT OVERLAY — fullscreen call-workflow view. Toggled from Mine Leads.
-     Action handlers are placeholder toasts until Phase C (CloudTalk) + D (Twenty)
-     wire them to real APIs. Keyboard shortcuts: 1=interested, 2=voicemail,
-     3=no-answer, 4=not-relevant, → next, ← prev, esc=close, ?=help. -->
+     Disposition state machine: Start Dialer → 'dialing' → SDR makes call →
+     SDR clicks a disposition → 'pending' → auto-advance to next lead (unless
+     paused). Twenty push is a manual button on Interesseret leads (not
+     automatic). Keyboard: 1=interested, 2=SMS, 3=no-answer (→ callback
+     picker), 4=not-relevant, → next, ← prev, esc=close, ?=help. -->
 <div id="cockpit" style="display:none;position:fixed;inset:0;z-index:300;background:var(--dark);font-family:'Outfit',sans-serif;flex-direction:column">
-  <!-- Cockpit toolbar -->
+  <!-- Autodialer toolbar -->
   <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--w08);background:rgba(13,10,20,0.95);flex-shrink:0">
     <div style="display:flex;align-items:center;gap:8px">
       <div style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#7c3aed 0%,#a78bfa 100%);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#fff">▶</div>
       <div>
-        <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px">Ringe-cockpit</div>
+        <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px">Autodialer</div>
         <div id="cockpit-progress" style="font-size:10.5px;color:var(--w55)">0 / 0 leads</div>
       </div>
     </div>
+    <!-- Start / Pause controls -->
+    <div style="display:flex;align-items:center;gap:6px;margin-left:18px;padding-left:18px;border-left:1px solid var(--w08)">
+      <button id="cockpit-start-btn" onclick="cockpitStartDialer()" style="background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none;border-radius:9px;padding:9px 18px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(124,58,237,0.25)">▶ Start Dialer</button>
+      <button id="cockpit-pause-btn" onclick="cockpitPauseDialer()" style="display:none;background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏸ Pause</button>
+      <div id="cockpit-dialer-state" style="font-size:11px;color:var(--w55);margin-left:4px"></div>
+    </div>
     <div style="flex:1"></div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--w80);cursor:pointer;user-select:none">
-      <input type="checkbox" id="cockpit-autoadvance" checked style="accent-color:var(--purple)">
-      Auto-spring til næste
-    </label>
+    <!-- Manual call / SMS -->
+    <button class="btn btn-sm" onclick="cockpitOpenManualCall()" title="Indtast et nummer og ring manuelt" style="padding:8px 12px">📞 Manuelt opkald</button>
+    <button class="btn btn-sm" onclick="cockpitOpenManualSms()" title="Indtast et nummer og send SMS manuelt" style="padding:8px 12px">💬 Manuel SMS</button>
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
-    <button class="btn btn-sm" onclick="closeCockpit()">Luk cockpit (esc)</button>
+    <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
   </div>
-  <!-- Cockpit body: queue (left) + lead detail (right) -->
+  <!-- Autodialer body: queue (left) + lead detail (right) -->
   <div style="flex:1;display:flex;overflow:hidden">
     <div id="cockpit-queue" style="width:300px;flex-shrink:0;border-right:1px solid var(--w08);overflow-y:auto;background:var(--dark2)"></div>
     <div id="cockpit-detail" style="flex:1;overflow-y:auto;padding:24px 28px"></div>
@@ -4684,18 +4691,38 @@ const _cockpit={open:false,queue:[],idx:0,history:[]};
 
 function openCockpit(){
   // Build queue from the leads currently visible in the user's selected list.
-  const filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads;
-  if(filtered.length===0){showToast('Ingen leads i den valgte liste — tilføj nogen først');return;}
-  _cockpit.queue=[...filtered];
+  let base=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
+  // Hide leads scheduled for a future callback — they're not actionable
+  // right now. They re-appear once callback_at <= now.
+  const now=Date.now();
+  base=base.filter(l=>{
+    if(!l.callback_at) return true;
+    return new Date(l.callback_at).getTime() <= now;
+  });
+  // Sort: callbacks-due-now first (time-sensitive), then ICP-klar, then
+  // ad-count, then insertion order. Matches the priority sort on the
+  // Autodialer landing page.
+  const priority=(l)=>{
+    let p=0;
+    if(l.callback_at && new Date(l.callback_at).getTime() <= now) p += 5000;
+    if(l.icpFit) p += 1000;
+    p += Math.min(l.adsMatched||0, 100);
+    return p;
+  };
+  base.sort((a,b)=>priority(b)-priority(a));
+  if(base.length===0){showToast('Ingen leads klar — tilføj eller vent på callbacks');return;}
+  _cockpit.queue=base;
   // Resume at last viewed lead if we have history; else start at 0.
   const lastCvr=_cockpit.history[_cockpit.history.length-1];
   const resumeIdx=lastCvr?_cockpit.queue.findIndex(l=>l.cvr===lastCvr):-1;
   _cockpit.idx=resumeIdx>=0?resumeIdx:0;
   _cockpit.open=true;
+  _cockpit.dialerState='idle'; // every reopen starts fresh
   const el=document.getElementById('cockpit');
   el.style.display='flex';
   document.body.style.overflow='hidden';
   renderCockpit();
+  cockpitUpdateToolbarButtons();
   // Keyboard shortcuts only active while cockpit is open
   document.addEventListener('keydown',cockpitKeyHandler);
 }
@@ -4716,7 +4743,7 @@ function cockpitKeyHandler(ev){
   if(ev.key==='ArrowLeft'){cockpitPrev();ev.preventDefault();return;}
   if(ev.key==='?'||(ev.key==='/'&&ev.shiftKey)){cockpitShowHelp();ev.preventDefault();return;}
   if(ev.key>='1'&&ev.key<='4'){
-    const map={'1':'interested','2':'voicemail','3':'no-answer','4':'not-relevant'};
+    const map={'1':'interested','2':'sms','3':'no-answer','4':'not-relevant'};
     cockpitDisposition(map[ev.key]);
     ev.preventDefault();
   }
@@ -4724,9 +4751,22 @@ function cockpitKeyHandler(ev){
 
 function cockpitCurrent(){return _cockpit.queue[_cockpit.idx]||null;}
 function cockpitNext(){
+  // Guard: when we're mid-call ('dialing') or waiting for disposition
+  // ('pending') after a call, block next-lead navigation until the SDR
+  // selects a disposition. This enforces "an action needs to be taken
+  // from 'Efter kald — vælg disposition' before continuing".
+  const c=cockpitCurrent();
+  if(c && (_cockpit.dialerState==='dialing' || _cockpit.dialerState==='pending') && !c.lastAction){
+    showToast('Vælg en disposition før du går videre');
+    return;
+  }
   if(_cockpit.idx<_cockpit.queue.length-1){
     _cockpit.idx++;
+    if(_cockpit.dialerState==='dialing' || _cockpit.dialerState==='pending'){
+      _cockpit.dialerState='dialing';
+    }
     renderCockpit();
+    cockpitUpdateToolbarButtons();
   }else{showToast('Sidste lead i køen');}
 }
 function cockpitPrev(){
@@ -4762,11 +4802,11 @@ function renderCockpitQueue(){
   }).join('');
 }
 
-function lastActionLabel(a){return{'interested':'✓ Interesseret','voicemail':'☎ Voicemail','no-answer':'✕ Ikke svar','not-relevant':'– Ikke relevant'}[a]||a;}
+function lastActionLabel(a){return{'interested':'✓ Interesseret','sms':'💬 Sendt SMS','no-answer':'✕ Ingen svar','not-relevant':'– Ikke relevant'}[a]||a;}
 function lastActionColor(a,which){
   const map={
     'interested':{bg:'rgba(52,211,153,0.18)',fg:'#34d399'},
-    'voicemail':{bg:'rgba(251,146,60,0.18)',fg:'#fb923c'},
+    'sms':{bg:'rgba(167,139,250,0.18)',fg:'#a78bfa'},
     'no-answer':{bg:'rgba(96,165,250,0.18)',fg:'#60a5fa'},
     'not-relevant':{bg:'rgba(148,163,184,0.15)',fg:'#94a3b8'},
   };return (map[a]||{bg:'var(--w04)',fg:'var(--w55)'})[which];
@@ -4814,26 +4854,39 @@ function renderCockpitDetail(c){
         </div>
       </div>
 
-      <!-- Call status placeholder (will be live-driven by CloudTalk webhooks once wired) -->
+      <!-- Call status — driven by Start Dialer state machine -->
       <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px;color:var(--w55);font-size:12.5px">
         <span style="font-size:18px">📞</span>
-        <span style="flex:1">Ingen aktivt kald — CloudTalk-integration mangler endnu (Phase C). Brug "Send til dialer" når den er klar.</span>
+        <span style="flex:1" id="cockpit-call-status-text">${cockpitCallStatusText(c)}</span>
+        ${c.ph?`<a href="tel:${c.ph}" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;text-decoration:none;font-family:monospace">${fp(c.ph)}</a>`:''}
       </div>
 
-      <!-- Pre-call actions -->
-      <div style="display:flex;gap:10px;margin-bottom:18px">
-        <button onclick="cockpitSendToDialer()" style="flex:1;background:var(--purple);border:none;border-radius:11px;padding:14px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(124,58,237,0.3)">📞 Send til CloudTalk</button>
-        <button onclick="cockpitSendSms()" style="flex:1;background:var(--dark2);border:1px solid var(--w08);border-radius:11px;padding:14px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer">💬 Send SMS</button>
-      </div>
-
-      <!-- Post-call disposition actions -->
+      <!-- Post-call disposition. Required before next call — guarded by
+           _cockpit.requireDisposition. Voicemail removed; SMS lives here
+           in slot 2 with the same icon-card style as the other actions. -->
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Efter kald — vælg disposition</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
-        ${action('✓','Interesseret → push til Twenty','1','cockpitDisposition(\'interested\')')}
-        ${action('☎','Voicemail → fyr SMS-skabelon af','2','cockpitDisposition(\'voicemail\')')}
+      <div id="cockpit-disposition-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
+        ${action('✓','Interesseret','1','cockpitDisposition(\'interested\')')}
+        ${action('💬','Send SMS','2','cockpitDisposition(\'sms\')')}
         ${action('✕','Ingen svar → planlæg callback','3','cockpitDisposition(\'no-answer\')')}
         ${action('–','Ikke relevant → arkivér','4','cockpitDisposition(\'not-relevant\')')}
       </div>
+
+      <!-- Twenty push — manual trigger, NOT automatic on "Interesseret".
+           Only enabled when lead is dispositioned as interested. -->
+      ${c.lastAction==='interested' && !c.twenty_opportunity_id ? `
+        <div style="background:linear-gradient(135deg,rgba(96,165,250,0.10),rgba(96,165,250,0.02));border:1px solid rgba(96,165,250,0.30);border-radius:11px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+          <span style="font-size:18px">🎯</span>
+          <div style="flex:1">
+            <div style="font-size:12.5px;font-weight:800;color:#fff">Klar til Twenty</div>
+            <div style="font-size:11px;color:var(--w55);margin-top:2px">Leadet er markeret som <strong style="color:#6ee7b7">Interesseret</strong>. Push manuelt til Twenty når du er klar — push'er ikke automatisk.</div>
+          </div>
+          <button onclick="cockpitPushToTwenty()" style="background:#60a5fa;border:none;border-radius:9px;padding:9px 16px;color:#0d0a14;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer">→ Push til Twenty</button>
+        </div>
+      `:''}
+      ${c.twenty_opportunity_id ? `
+        <div style="background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.30);border-radius:11px;padding:11px 16px;margin-bottom:18px;font-size:12px;color:#bfdbfe">🎯 Pushet til Twenty${c.twenty_url?` · <a href="${e(c.twenty_url)}" target="_blank" rel="noopener" style="color:#60a5fa;font-weight:700">Åbn opportunity →</a>`:''}</div>
+      `:''}
 
       <!-- Notes -->
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px">Noter</div>
@@ -4847,52 +4900,295 @@ function renderCockpitDetail(c){
     </div>`;
 }
 
-// Action handlers — placeholders until Phase C (CloudTalk) and D (Twenty) wire
-// them to real APIs. Each one logs the action on the lead so the queue row
-// shows the verdict chip.
-function cockpitSendToDialer(){
-  const c=cockpitCurrent();if(!c)return;
-  showToast('Phase C: Sender til CloudTalk (placeholder) — vent på CloudTalk-integration');
+// ─── Dialer state machine ───────────────────────────────────────────────
+// _cockpit.dialerState transitions:
+//   'idle'       — landed in cockpit, queue loaded but nothing calling
+//   'dialing'    — Start Dialer pressed; current lead is "calling"
+//   'pending'    — call ended; disposition required before next call
+//   'paused'     — Pause pressed; freeze auto-advance even with disposition set
+//
+// The user's hard requirement: after a call ends, no advance to next lead
+// until a disposition is selected. That's enforced by transitioning into
+// 'pending' on Start (we treat Start → next-lead as "call ended, please
+// disposition") and refusing cockpitNext from 'pending' unless lastAction
+// is set on the current lead.
+
+if(!_cockpit.dialerState) _cockpit.dialerState = 'idle';
+if(!_cockpit.requireDisposition) _cockpit.requireDisposition = false;
+
+function cockpitCallStatusText(c){
+  if(!c) return 'Ingen aktivt lead.';
+  if(_cockpit.dialerState==='paused') return '⏸ Pause — klik Start Dialer for at fortsætte.';
+  if(_cockpit.dialerState==='idle')   return 'Klik <strong style="color:var(--w80)">▶ Start Dialer</strong> for at begynde at ringe igennem køen.';
+  if(_cockpit.dialerState==='dialing') return `📞 Ringer til <strong style="color:#fff">${e(c.name)}</strong> — vælg disposition når kaldet slutter.`;
+  if(_cockpit.dialerState==='pending') return '⚠ Kald afsluttet — <strong style="color:#fdba74">vælg disposition</strong> før du går videre.';
+  return '';
 }
-function cockpitSendSms(){
-  const c=cockpitCurrent();if(!c)return;
-  showToast('Phase C: Sender SMS (placeholder) — vent på CloudTalk-integration');
+
+function cockpitUpdateToolbarButtons(){
+  const startBtn = document.getElementById('cockpit-start-btn');
+  const pauseBtn = document.getElementById('cockpit-pause-btn');
+  const stateEl  = document.getElementById('cockpit-dialer-state');
+  if(!startBtn || !pauseBtn) return;
+  const s = _cockpit.dialerState;
+  if(s==='dialing' || s==='pending'){
+    startBtn.style.display = 'none';
+    pauseBtn.style.display = '';
+  } else {
+    startBtn.style.display = '';
+    pauseBtn.style.display = 'none';
+    startBtn.textContent = (s==='paused') ? '▶ Fortsæt' : '▶ Start Dialer';
+  }
+  if(stateEl){
+    const map = { idle:'Klar', dialing:'Ringer…', pending:'Venter disposition', paused:'Pause' };
+    stateEl.textContent = map[s]||'';
+  }
 }
+
+function cockpitStartDialer(){
+  const c = cockpitCurrent();
+  if(!c){showToast('Køen er tom — tilføj leads først');return;}
+  // If we're in 'pending' and disposition isn't set yet, can't advance.
+  if(_cockpit.dialerState==='pending' && !c.lastAction){
+    showToast('Vælg en disposition før du fortsætter');
+    return;
+  }
+  // Resuming from paused → just unfreeze + re-enter dialing on current lead.
+  // From idle → start dialing the current lead.
+  _cockpit.dialerState = 'dialing';
+  // When CloudTalk integration lands, this is where the API call goes.
+  // For now: SDR calls via the tel: link in the call-status banner.
+  showToast(`📞 Ringer til ${c.name} — klik dispositions-knap når kaldet slutter`);
+  cockpitUpdateToolbarButtons();
+  renderCockpit();
+}
+
+function cockpitPauseDialer(){
+  _cockpit.dialerState = 'paused';
+  showToast('⏸ Pause — auto-advance frosset');
+  cockpitUpdateToolbarButtons();
+  renderCockpit();
+}
+
+// ─── Disposition handling ───────────────────────────────────────────────
 async function cockpitDisposition(action){
   const c=cockpitCurrent();if(!c)return;
-  // Save the disposition on the lead so it's visible in the queue chip + persists.
+  // Persist disposition on the lead.
   try{
     await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:action,lastDispositionAt:new Date().toISOString()})});
     c.lastAction=action;c.lastDispositionAt=new Date().toISOString();
   }catch(_){}
-  // "Interesseret" → auto-push to Twenty. The backend endpoint already
-  // handles the "not configured" case gracefully (marks the lead as
-  // queued so Phase D can replay later when credentials land).
-  if(action==='interested'){
-    try{
-      const r=await fetch('/api/twenty/push',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr:c.cvr,disposition:'interested',notes:c.notes||''})});
-      const d=await r.json();
-      if(r.ok){
-        c.twenty_opportunity_id=d.opportunity?.id;
-        c.twenty_url=d.opportunity?.url;
-        showToast(`✓ Pushet til Twenty — ${c.name}`);
-      } else if(r.status===503&&d.queued){
-        c.twenty_queued_at=new Date().toISOString();
-        showToast('✓ Markeret som interesseret — auto-push til Twenty når Phase D er live');
-      } else {
-        showToast('Disposition gemt · Twenty-push fejlede: '+(d.error||'ukendt'));
-      }
-    }catch(ex){
-      showToast('Disposition gemt · Twenty-push fejlede: '+ex.message);
-    }
-  }else{
-    showToast(`Disposition: ${lastActionLabel(action)}`);
+
+  // Disposition-specific side effects.
+  if(action==='sms'){
+    // SMS disposition — open the SMS composer for this lead. Until CloudTalk
+    // SMS API is wired, this is a tel:sms link.
+    cockpitOpenSmsForLead(c);
+  } else if(action==='no-answer'){
+    // Schedule callback — answers the "what happens when they don't pick up"
+    // question. Open the callback chooser; the lead gets a callback_at
+    // timestamp + stays in the queue. Autodialer surfaces callbacks when
+    // their time arrives.
+    cockpitOpenCallbackPicker(c);
+  } else if(action==='interested'){
+    showToast(`✓ Markeret som interesseret — klik "Push til Twenty" når du er klar (push'er ikke automatisk)`);
+  } else if(action==='not-relevant'){
+    showToast('— Arkiveret');
   }
-  renderCockpitQueue();
-  if(document.getElementById('cockpit-autoadvance')?.checked){
-    setTimeout(()=>cockpitNext(),350);
+
+  // Transition: pending → dialing-of-next (only after disposition is set)
+  _cockpit.dialerState = 'pending';
+  renderCockpit();
+  cockpitUpdateToolbarButtons();
+
+  // Auto-advance policy:
+  //  - 'interested' → STAY on lead. SDR needs to manually click "Push til
+  //    Twenty" + write notes. SDR clicks Next manually when done.
+  //  - 'sms'        → STAY on lead. The SMS modal is open; SDR finishes,
+  //    then advances manually (or fires another disposition).
+  //  - 'no-answer'  → callback picker handles the next step. Auto-advance
+  //    once the picker closes (handled in cockpitSetCallback).
+  //  - 'not-relevant' → safe to auto-advance immediately.
+  if(action==='not-relevant'){
+    setTimeout(()=>{
+      if(_cockpit.dialerState!=='paused' && _cockpit.dialerState!=='idle'){
+        cockpitAdvanceAfterDisposition();
+      }
+    },600);
   }
 }
+
+function cockpitAdvanceAfterDisposition(){
+  // Move to next lead and immediately enter 'dialing' state. If we hit
+  // the end of the queue, fall back to idle.
+  if(_cockpit.idx < _cockpit.queue.length - 1){
+    _cockpit.idx++;
+    _cockpit.dialerState = 'dialing';
+    showToast(`📞 Næste lead: ${cockpitCurrent()?.name||''}`);
+    renderCockpit();
+    cockpitUpdateToolbarButtons();
+  } else {
+    _cockpit.dialerState = 'idle';
+    showToast('✓ Færdig med køen');
+    cockpitUpdateToolbarButtons();
+  }
+}
+
+// Manual Twenty push — replaces the previous auto-push on Interesseret.
+async function cockpitPushToTwenty(){
+  const c=cockpitCurrent();if(!c)return;
+  try{
+    const r=await fetch('/api/twenty/push',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr:c.cvr,disposition:'interested',notes:c.notes||''})});
+    const d=await r.json();
+    if(r.ok){
+      c.twenty_opportunity_id=d.opportunity?.id;
+      c.twenty_url=d.opportunity?.url;
+      showToast(`✓ Pushet til Twenty — ${c.name}`);
+    } else if(r.status===503&&d.queued){
+      c.twenty_queued_at=new Date().toISOString();
+      showToast('✓ Køet til Twenty — auto-push når Phase D er live');
+    } else {
+      showToast('Twenty-push fejlede: '+(d.error||'ukendt'));
+    }
+    renderCockpit();
+  }catch(ex){showToast('Fejl: '+ex.message);}
+}
+
+// ─── Callback flow — "What happens when a lead doesn't answer?" ─────────
+// SDR picks "Ingen svar" → modal offers 15min / 1t / 4t / I morgen / Aldrig.
+// Lead gets a callback_at timestamp; appears at the top of the queue when
+// that time arrives.
+function cockpitOpenCallbackPicker(c){
+  const opts = [
+    { lbl:'om 15 min',  ms: 15*60*1000 },
+    { lbl:'om 1 time',  ms: 60*60*1000 },
+    { lbl:'om 4 timer', ms: 4*60*60*1000 },
+    { lbl:'i morgen kl. 09',  ms: 0, tomorrow:true },
+    { lbl:'Aldrig — bare arkivér', ms: -1 },
+  ];
+  const bg=document.createElement('div');
+  bg.className='modal-bg'; bg.id='cb-modal';
+  bg.innerHTML=`<div class="modal" style="width:380px;padding:22px 26px">
+    <h3 style="margin:0 0 4px;font-size:16px;color:#fff">Ring tilbage</h3>
+    <p style="font-size:12px;color:var(--w55);margin:0 0 16px;line-height:1.5">Hvornår skal <strong style="color:#fff">${e(c.name)}</strong> tilbage i kø?</p>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      ${opts.map((o,i)=>`<button onclick="cockpitSetCallback(${i})" style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer;text-align:left" onmouseover="this.style.borderColor='rgba(124,58,237,0.4)'" onmouseout="this.style.borderColor='var(--w08)'">${e(o.lbl)}<span style="color:var(--w35);font-size:11px">→</span></button>`).join('')}
+    </div>
+  </div>`;
+  bg.onclick=(ev)=>{if(ev.target===bg)bg.remove();};
+  document.body.appendChild(bg);
+  _cockpit.callbackOptions = opts;
+}
+
+async function cockpitSetCallback(idx){
+  const c=cockpitCurrent();if(!c)return;
+  const opts=_cockpit.callbackOptions||[];
+  const o=opts[idx]; if(!o)return;
+  document.getElementById('cb-modal')?.remove();
+  let callbackAt=null;
+  if(o.ms===-1){
+    // "Never" = treat as archive, no callback
+    showToast('Lead arkiveret — ingen callback');
+  } else if(o.tomorrow){
+    const t=new Date();
+    t.setDate(t.getDate()+1);
+    t.setHours(9,0,0,0);
+    callbackAt=t.toISOString();
+  } else {
+    callbackAt=new Date(Date.now()+o.ms).toISOString();
+  }
+  if(callbackAt){
+    try{
+      await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({callback_at:callbackAt})});
+      c.callback_at=callbackAt;
+      showToast(`📅 Callback planlagt ${humanFutureTime(callbackAt)}`);
+    }catch(ex){showToast('Fejl: '+ex.message);}
+  }
+  // Auto-advance now that the SDR has fully handled the lead.
+  setTimeout(()=>{
+    if(_cockpit.dialerState!=='paused' && _cockpit.dialerState!=='idle'){
+      cockpitAdvanceAfterDisposition();
+    }
+  },300);
+}
+
+function humanFutureTime(iso){
+  const d=new Date(iso);
+  const now=new Date();
+  const diffMins=Math.round((d.getTime()-now.getTime())/60000);
+  if(diffMins<60) return `om ${diffMins} min`;
+  if(diffMins<1440) return `om ${Math.round(diffMins/60)} t`;
+  return `i morgen kl. ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+// ─── SMS composer ───────────────────────────────────────────────────────
+function cockpitOpenSmsForLead(c){
+  cockpitOpenSmsModal({ phone: c.ph||'', name: c.name||'', cvr: c.cvr||'' });
+}
+
+function cockpitOpenSmsModal(prefill){
+  const bg=document.createElement('div');
+  bg.className='modal-bg'; bg.id='sms-modal';
+  bg.innerHTML=`<div class="modal" style="width:440px;padding:22px 26px">
+    <h3 style="margin:0 0 4px;font-size:16px;color:#fff">Send SMS</h3>
+    <p style="font-size:12px;color:var(--w55);margin:0 0 14px">${prefill.name?`Til <strong style="color:#fff">${e(prefill.name)}</strong>`:'Indtast modtagernummer og besked'}</p>
+    <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Telefonnummer</div>
+    <input id="sms-phone" type="tel" value="${e(prefill.phone||'')}" placeholder="+45 …" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;margin-bottom:12px">
+    <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Besked</div>
+    <textarea id="sms-text" rows="4" placeholder="Hej, jeg prøvede at ringe…" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;resize:vertical;margin-bottom:14px"></textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('sms-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer">Annullér</button>
+      <button onclick="cockpitSendSmsConfirm('${e(prefill.cvr||'')}')" style="background:#7c3aed;border:none;border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">💬 Send</button>
+    </div>
+  </div>`;
+  bg.onclick=(ev)=>{if(ev.target===bg)bg.remove();};
+  document.body.appendChild(bg);
+}
+
+async function cockpitSendSmsConfirm(cvr){
+  const phone=document.getElementById('sms-phone')?.value.trim()||'';
+  const text=document.getElementById('sms-text')?.value.trim()||'';
+  if(!phone){showToast('Indtast nummer');return;}
+  if(!text){showToast('Skriv en besked');return;}
+  // CloudTalk SMS not wired yet — use the device's native sms: link as
+  // stopgap so the SDR can send from their phone. When Phase C lands,
+  // swap this for a POST /api/cloudtalk/sms call.
+  const url=`sms:${phone}${navigator.userAgent.match(/iPhone|iPad|iPod|Mac/)?'&':'?'}body=${encodeURIComponent(text)}`;
+  window.location.href=url;
+  if(cvr){
+    try{await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({last_sms_at:new Date().toISOString()})});}catch{}
+  }
+  document.getElementById('sms-modal')?.remove();
+  showToast('SMS åbnet — send fra din enhed (CloudTalk SMS-API ankommer i Phase C)');
+}
+
+// ─── Manual call/SMS — toolbar buttons ──────────────────────────────────
+function cockpitOpenManualCall(){
+  const bg=document.createElement('div');
+  bg.className='modal-bg'; bg.id='mc-modal';
+  bg.innerHTML=`<div class="modal" style="width:380px;padding:22px 26px">
+    <h3 style="margin:0 0 4px;font-size:16px;color:#fff">Manuelt opkald</h3>
+    <p style="font-size:12px;color:var(--w55);margin:0 0 14px">Indtast et nummer og ring uden at gå gennem køen.</p>
+    <input id="mc-phone" type="tel" placeholder="+45 …" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:11px 14px;font-family:'Outfit',sans-serif;font-size:13.5px;outline:none;margin-bottom:14px" autofocus>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('mc-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer">Annullér</button>
+      <button onclick="cockpitManualCallConfirm()" style="background:#7c3aed;border:none;border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">📞 Ring</button>
+    </div>
+  </div>`;
+  bg.onclick=(ev)=>{if(ev.target===bg)bg.remove();};
+  document.body.appendChild(bg);
+  setTimeout(()=>document.getElementById('mc-phone')?.focus(),50);
+}
+function cockpitManualCallConfirm(){
+  const phone=document.getElementById('mc-phone')?.value.trim()||'';
+  if(!phone){showToast('Indtast nummer');return;}
+  document.getElementById('mc-modal')?.remove();
+  window.location.href='tel:'+phone;
+}
+function cockpitOpenManualSms(){
+  cockpitOpenSmsModal({ phone:'', name:'', cvr:'' });
+}
+
 async function cockpitSaveNote(text){
   const c=cockpitCurrent();if(!c)return;
   try{
@@ -4901,7 +5197,7 @@ async function cockpitSaveNote(text){
   }catch(_){}
 }
 function cockpitShowHelp(){
-  showToast('Genveje: 1=Interesseret · 2=Voicemail · 3=Ingen svar · 4=Ikke relevant · → næste · ← forrige · esc=luk');
+  showToast('Genveje: 1=Interesseret · 2=SMS · 3=Ingen svar · 4=Ikke relevant · → næste · ← forrige · esc=luk');
 }
 async function startDiscoveryRun(){
   try{
