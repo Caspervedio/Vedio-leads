@@ -1119,10 +1119,66 @@ app.post("/api/check-ads-batch", authMiddleware, async (req, res) => {
 // service mounts. These endpoints just expose those files to the UI.
 // ─────────────────────────────────────────────────────────────────────────────
 const DISCOVERY_STATE_FILE = path.join(DATA_DIR, "discovery", "state.json");
+const DISCOVERY_CONFIG_FILE = path.join(DATA_DIR, "discovery", "config.json");
 
 function loadDiscoveryState() {
   return loadJsonFile(DISCOVERY_STATE_FILE, { companies: {} });
 }
+
+// Agent runtime config — the discover-ads.js Cloud Run Job reads this on
+// startup, falls back to env-var defaults if missing. Keeps the SDR in
+// control of the knobs without redeploying.
+const DISCOVERY_CONFIG_DEFAULTS = {
+  minEmployees: 3,         // tier-1 gate (confirmed headcount)
+  icpMinAds: 3,            // min Meta-ads to qualify as ICP
+  icpMinEmployees: 5,      // min employees (when known) for ICP
+  scrapeLimit: 1000,       // max companies scraped per run
+  concurrency: 8,          // parallel Playwright contexts
+  poolTtlDays: 30,         // candidate-pool refresh interval
+};
+function loadDiscoveryConfig() {
+  // loadJsonFile returns the default if the file doesn't exist; spread it
+  // over our defaults so missing keys still get sane values.
+  return { ...DISCOVERY_CONFIG_DEFAULTS, ...loadJsonFile(DISCOVERY_CONFIG_FILE, {}) };
+}
+function saveDiscoveryConfig(config) {
+  const dir = path.dirname(DISCOVERY_CONFIG_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(DISCOVERY_CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+// GET /api/discovery/config — return current agent settings
+app.get("/api/discovery/config", authMiddleware, (req, res) => {
+  res.json(loadDiscoveryConfig());
+});
+
+// PUT /api/discovery/config — partial update; whitelisted keys + value
+// clamps so a bad input can't break the agent.
+app.put("/api/discovery/config", authMiddleware, (req, res) => {
+  try {
+    const current = loadDiscoveryConfig();
+    const body = req.body || {};
+    const clamp = (v, lo, hi, fallback) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(lo, Math.min(hi, Math.round(n)));
+    };
+    const updated = {
+      ...current,
+      ...(body.minEmployees !== undefined && { minEmployees: clamp(body.minEmployees, 0, 1000, current.minEmployees) }),
+      ...(body.icpMinAds !== undefined && { icpMinAds: clamp(body.icpMinAds, 0, 100, current.icpMinAds) }),
+      ...(body.icpMinEmployees !== undefined && { icpMinEmployees: clamp(body.icpMinEmployees, 0, 1000, current.icpMinEmployees) }),
+      ...(body.scrapeLimit !== undefined && { scrapeLimit: clamp(body.scrapeLimit, 10, 5000, current.scrapeLimit) }),
+      ...(body.concurrency !== undefined && { concurrency: clamp(body.concurrency, 1, 16, current.concurrency) }),
+      ...(body.poolTtlDays !== undefined && { poolTtlDays: clamp(body.poolTtlDays, 1, 90, current.poolTtlDays) }),
+    };
+    saveDiscoveryConfig(updated);
+    res.json({ ok: true, config: updated, appliesAt: "next run" });
+  } catch (e) {
+    console.error("[discovery/config] save failed:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // GET /api/discovery/summary — top-line stats for the Discovery header
 app.get("/api/discovery/summary", authMiddleware, (req, res) => {

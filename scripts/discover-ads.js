@@ -49,23 +49,37 @@ const FLIPS_FILE = path.join(
 // matter at the lead-discovery scale, and we save 2 hours of compute per
 // rebuild cycle. Set FORCE_POOL_REFRESH=1 on a manual run for an early
 // rebuild when the industry list or filter logic changes.
-const POOL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const LIMIT = Number(process.env.DISCOVERY_LIMIT) || 1000;
+// Agent runtime config — loaded from /data/discovery/config.json (the main
+// service writes it from the UI). Env-var fallback keeps the worker
+// runnable in dev and as a safety net if the config file is missing.
+function loadAgentConfig() {
+  try {
+    const p = path.join(DATA_DIR, "discovery", "config.json");
+    if (fs.existsSync(p)) {
+      const cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+      console.log(`[discover] loaded agent config from ${p}:`, cfg);
+      return cfg;
+    }
+  } catch (e) {
+    console.warn("[discover] config.json load failed, using env defaults:", e.message);
+  }
+  return {};
+}
+const AGENT_CFG = loadAgentConfig();
+const POOL_TTL_MS = (AGENT_CFG.poolTtlDays || 30) * 24 * 60 * 60 * 1000;
+const LIMIT = AGENT_CFG.scrapeLimit || Number(process.env.DISCOVERY_LIMIT) || 1000;
 // Concurrency 8 keeps total Meta-request rate at ~3.2/s
 // (8 contexts × 1 req per 2.5s delay). Below the threshold where Meta
 // throws bot challenges; above 5 we comfortably finish 1000 scrapes
 // inside the 1-hour Cloud Run Job timeout.
-const CONCURRENCY = Number(process.env.CONCURRENCY) || 8;
+const CONCURRENCY = AGENT_CFG.concurrency || Number(process.env.CONCURRENCY) || 8;
 const META_DELAY_MS = 2500; // per-context delay — keeps total throughput ~CONCURRENCY/2.5 req/s
 const POST_LOAD_WAIT_MS = 4000;
 // Employees filter: a confirmed ≥1 → MIN_EMPLOYEES gate; an entirely
 // missing CVR_Beskaeftigelse record → included (we can't tell, and the
 // scrape itself is the cheaper way to find out if they advertise).
 // Companies with a *confirmed* employee count below this drop out.
-// Lowered from 5 to 3 to grow tier-1 (active Danish entities likely to
-// advertise) — 3+ employees still filters out lifestyle sole-props
-// while catching small but real B2C/B2B shops.
-const MIN_EMPLOYEES = 3;
+const MIN_EMPLOYEES = AGENT_CFG.minEmployees ?? 3;
 
 // Curated DB07 codes — industries where active Meta-ads is a strong B2B
 // signal. Skipped on purpose: holding companies (642010), shell-co
@@ -487,10 +501,10 @@ async function main() {
             });
           }
           // ICP-fit gate — automatic rule that decides whether this lead
-          // should auto-flow into CloudTalk (Phase C). Tunable constants
-          // here so we can tweak without code review later.
-          const ICP_MIN_MATCHED_ADS = 3;
-          const ICP_MIN_EMPLOYEES_KNOWN = 5;
+          // should auto-flow into CloudTalk (Phase C). Knobs are read from
+          // the runtime agent config (UI-editable) with safe defaults.
+          const ICP_MIN_MATCHED_ADS = AGENT_CFG.icpMinAds ?? 3;
+          const ICP_MIN_EMPLOYEES_KNOWN = AGENT_CFG.icpMinEmployees ?? 5;
           const icpFit =
             r.verdict === true &&
             (r.matched || 0) >= ICP_MIN_MATCHED_ADS &&
