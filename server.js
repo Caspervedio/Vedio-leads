@@ -3287,6 +3287,217 @@ app.post('/api/enrich/batch', authMiddleware, async (req, res) => {
   }
 });
 
+// ─── TECH STACK SCANNER ──────────────────────────────────────────────────
+// POST /api/scrape/tech-stack { domains: ['foo.dk', 'bar.com', ...] }
+// Probes each domain (https first, http fallback), pulls headers + a small
+// slice of HTML, and matches against a signature table for common D2C/B2B
+// platforms. No external API keys — works today.
+//
+// The signatures are intentionally conservative — we'd rather miss a
+// detection than mislabel a non-Shopify site as Shopify. Each rule is a
+// pair: (regex on combined headers+body OR explicit header check). If
+// multiple sigs match we return them all so the SDR can filter.
+const TECH_STACK_SIGNATURES = [
+  // ── E-commerce platforms (the most valuable signal for D2C ICPs) ──
+  { name: "Shopify", test: (h, b, url) => /\.myshopify\.com|shopify\.com\/s\/|cdn\.shopify\.com/i.test(b) || /^shopify/i.test(h["x-shopid"]||"") || /shopify/i.test(h["x-shopify-stage"]||"") || /shopify/i.test(h["server"]||"") },
+  { name: "WooCommerce", test: (h, b) => /woocommerce|wc-ajax|wc_add_to_cart/i.test(b) },
+  { name: "Magento", test: (h, b) => /magento|\/mage\/|Mage\.Cookies/i.test(b) || /magento/i.test(h["x-magento-cache-debug"]||"") },
+  { name: "BigCommerce", test: (h, b) => /bigcommerce\.com|bc-sf-filter/i.test(b) },
+  { name: "Squarespace", test: (h, b) => /squarespace|static1\.squarespace|sqsp/i.test(b) || /squarespace/i.test(h["server"]||"") },
+  { name: "Wix", test: (h, b) => /wix\.com|wixstatic|wixsite/i.test(b) || /wix/i.test(h["x-wix-request-id"]||"") },
+  { name: "Webflow", test: (h, b) => /webflow\.com|wf-loaded|webflow\.js/i.test(b) || /webflow/i.test(h["x-served-by"]||"") },
+  // ── CMS ──
+  { name: "WordPress", test: (h, b) => /wp-content\/|wp-includes\/|wordpress/i.test(b) },
+  { name: "Drupal", test: (h, b) => /drupal\.js|sites\/all\/|drupal-settings/i.test(b) || /drupal/i.test(h["x-generator"]||"") },
+  // ── Marketing automation / email ──
+  { name: "HubSpot", test: (h, b) => /js\.hs-scripts\.com|hubspot|hsforms|_hsq/i.test(b) },
+  { name: "Klaviyo", test: (h, b) => /klaviyo|static\.klaviyo|a\.klaviyo/i.test(b) },
+  { name: "Mailchimp", test: (h, b) => /mailchimp|chimpstatic|mc-validate/i.test(b) },
+  { name: "ActiveCampaign", test: (h, b) => /activecampaign|trackcmp/i.test(b) },
+  { name: "Pardot", test: (h, b) => /pardot|pi\.pardot/i.test(b) },
+  // ── Analytics / tracking ──
+  { name: "GA4", test: (h, b) => /gtag\(['"]config['"],\s*['"]G-/i.test(b) || /googletagmanager\.com\/gtag\/js\?id=G-/i.test(b) },
+  { name: "Meta Pixel", test: (h, b) => /fbq\(|connect\.facebook\.net\/.+\/fbevents/i.test(b) },
+  { name: "TikTok Pixel", test: (h, b) => /analytics\.tiktok\.com|ttq\.track/i.test(b) },
+  { name: "Google Tag Manager", test: (h, b) => /googletagmanager\.com\/gtm\.js/i.test(b) },
+  { name: "Hotjar", test: (h, b) => /static\.hotjar|hjid/i.test(b) },
+  // ── Frameworks / infra (less ICP-relevant but useful for tech-buyer segmentation) ──
+  { name: "Next.js", test: (h, b) => /_next\/static|__NEXT_DATA__/i.test(b) || /next/i.test(h["x-powered-by"]||"") },
+  { name: "Nuxt", test: (h, b) => /__NUXT__|_nuxt\//i.test(b) },
+  { name: "React", test: (h, b) => /<div[^>]+id=['"]?(root|app|__next)['"]?[^>]*><\/div>.*react/i.test(b) },
+  { name: "Cloudflare", test: (h) => /cloudflare/i.test(h["server"]||"") || !!h["cf-ray"] },
+  { name: "Vercel", test: (h) => /vercel/i.test(h["server"]||"") || !!h["x-vercel-id"] },
+];
+
+function detectTechSignatures(headers, body, url) {
+  const out = [];
+  // Normalise header keys to lowercase so signature checks don't have to
+  // worry about casing.
+  const h = {};
+  for (const [k, v] of Object.entries(headers || {})) h[k.toLowerCase()] = String(v);
+  for (const sig of TECH_STACK_SIGNATURES) {
+    try {
+      if (sig.test(h, body || "", url || "")) out.push(sig.name);
+    } catch { /* one bad regex shouldn't kill the whole scan */ }
+  }
+  return out;
+}
+
+function normaliseDomain(raw) {
+  // Strip protocol, path, trailing slash. Accept "https://foo.dk/bar" or "foo.dk".
+  let d = String(raw || "").trim().toLowerCase();
+  d = d.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+  return d;
+}
+
+async function probeDomain(domain, timeoutMs = 8000) {
+  const tryFetch = async (proto) => {
+    const url = `${proto}://${domain}`;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        signal: ctrl.signal,
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; VedioLeadsBot/1.0)" },
+      });
+      const headers = {};
+      r.headers.forEach((v, k) => { headers[k] = v; });
+      // Cap the body at 256 KB — signatures usually appear in <head> or
+      // first few KB of <body>, no need to slurp megabytes.
+      const text = (await r.text()).slice(0, 256 * 1024);
+      return { ok: true, statusCode: r.status, finalUrl: r.url, headers, body: text };
+    } catch (e) {
+      return { ok: false, error: e.name === "AbortError" ? "timeout" : e.message };
+    } finally { clearTimeout(t); }
+  };
+  // HTTPS first — that's the modern default and where the rich
+  // signatures live (CSP headers, etc.). Fall back to HTTP only on TLS
+  // failure or DNS-level errors.
+  let res = await tryFetch("https");
+  if (!res.ok) res = await tryFetch("http");
+  return res;
+}
+
+app.post("/api/scrape/tech-stack", authMiddleware, async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.domains) ? req.body.domains : [];
+    const domains = raw.map(normaliseDomain).filter(d => d && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(d));
+    if (!domains.length) return res.status(400).json({ error: "Ingen gyldige domæner" });
+    if (domains.length > 100) return res.status(400).json({ error: "Max 100 domæner pr. skan" });
+
+    // Concurrency 6 — keeps us under most rate-limiters while finishing
+    // 100 domains in ~30s on average.
+    const CONC = 6;
+    const queue = [...domains];
+    const results = new Array(domains.length);
+    const idxMap = new Map(); domains.forEach((d, i) => idxMap.set(d, i));
+
+    async function worker() {
+      while (queue.length) {
+        const d = queue.shift();
+        const i = idxMap.get(d);
+        const p = await probeDomain(d);
+        if (!p.ok) {
+          results[i] = { domain: d, error: p.error };
+        } else {
+          results[i] = {
+            domain: d,
+            statusCode: p.statusCode,
+            finalUrl: p.finalUrl,
+            signatures: detectTechSignatures(p.headers, p.body, p.finalUrl),
+          };
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONC, domains.length) }, worker));
+    res.json({ results });
+  } catch (e) {
+    console.error("[scrape/tech-stack]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── GOOGLE MAPS SCRAPER (skeleton) ──────────────────────────────────────
+// Requires a Google Places API key in env GOOGLE_PLACES_KEY (provisioned
+// from Secret Manager). Until that's wired the endpoint returns a 503
+// with status payload so the frontend can show a "not configured" hint.
+//
+// When live: Places Text Search → for each result, look up CVR via the
+// existing Datafordeler search helper by name+city. Results land in the
+// response with cvr filled when matched.
+app.get("/api/scrape/google-maps/status", authMiddleware, (req, res) => {
+  res.json({ configured: !!process.env.GOOGLE_PLACES_KEY });
+});
+
+app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
+  if (!process.env.GOOGLE_PLACES_KEY) {
+    return res.status(503).json({
+      error: "Google Places API ikke konfigureret. Tilføj GOOGLE_PLACES_KEY via Secret Manager (google-places-key).",
+      configured: false,
+    });
+  }
+  try {
+    const q = String(req.body?.q || "").trim();
+    const city = String(req.body?.city || "").trim();
+    const limit = Math.max(10, Math.min(100, parseInt(req.body?.limit || 40, 10)));
+    if (!q) return res.status(400).json({ error: "Indtast en søgeterm" });
+
+    // Places Text Search (the v1 endpoint). Country restriction via
+    // 'region=dk' biases (but doesn't strictly limit) to Denmark; city
+    // term in the query is the more reliable filter.
+    const query = city ? `${q} ${city} Denmark` : `${q} Denmark`;
+    const placesResults = [];
+    let pageToken = null;
+    while (placesResults.length < limit) {
+      const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
+      url.searchParams.set("query", query);
+      url.searchParams.set("key", process.env.GOOGLE_PLACES_KEY);
+      url.searchParams.set("region", "dk");
+      if (pageToken) url.searchParams.set("pagetoken", pageToken);
+      const r = await fetch(url.toString());
+      const d = await r.json();
+      if (d.status && d.status !== "OK" && d.status !== "ZERO_RESULTS") {
+        return res.status(502).json({ error: `Places API: ${d.status} ${d.error_message || ""}` });
+      }
+      for (const p of (d.results || [])) {
+        if (placesResults.length >= limit) break;
+        placesResults.push({ name: p.name, address: p.formatted_address, placeId: p.place_id });
+      }
+      if (!d.next_page_token || placesResults.length >= limit) break;
+      pageToken = d.next_page_token;
+      // Google requires a short delay before next_page_token is usable.
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // CVR cross-match — opportunistically search Datafordeler by name.
+    // We re-use the same searchDatafordeler helper that /api/search calls.
+    // Failures are non-fatal: unmatched rows still come back, just without
+    // a CVR. We tighten the match: name has to roughly equal the Places
+    // name (after lowercasing + stripping legal-form suffixes).
+    const stripSuffix = s => String(s||"").toLowerCase().replace(/\s+(aps|a\/s|i\/s|p\/s|k\/s|ivs|holding)\b.*$/i,"").trim();
+    const out = [];
+    for (const r of placesResults) {
+      let cvr = null;
+      try {
+        const filters = { _from: 0, _size: 5 };
+        if (city) filters.city = city;
+        const matches = await searchDatafordeler(r.name, filters);
+        const rows = (matches && (matches.companies || matches.results || matches.rows)) || [];
+        const target = stripSuffix(r.name);
+        const hit = rows.find(c => stripSuffix(c.name) === target);
+        if (hit && hit.cvr) cvr = hit.cvr;
+      } catch { /* keep cvr=null */ }
+      out.push({ name: r.name, address: r.address, placeId: r.placeId, cvr });
+    }
+    res.json({ results: out });
+  } catch (e) {
+    console.error("[scrape/google-maps]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`\n🎯 Vedio Sales kører på http://localhost:${PORT}`);
   console.log(`📡 CVR-provider: datafordeler`);

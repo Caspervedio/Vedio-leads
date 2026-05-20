@@ -730,30 +730,43 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   </div>
 
   <nav class="sb-nav">
-    <a class="on" id="nv-s" onclick="sv('search')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="m11 11 3 3"/></svg>
-      Søg virksomheder
+    <a class="on" id="nv-d" onclick="sv('discovery')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h4v6H2zM6 4h4v10H6zM10 1h4v13h-4z"/></svg>
+      Dashboard
     </a>
     <a id="nv-l" onclick="sv('leads')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h8M2 12h6"/></svg>
       Min liste
     </a>
-    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agent</div>
-    <!-- Mine kunder removed — Twenty owns customers. This app is the lead generator.
-         Element kept hidden so sv('customers') paths don't break if anything still calls it. -->
-    <a id="nv-c" onclick="sv('customers')" style="display:none">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
-      Mine kunder <span id="cust-count" style="font-size:9px;background:var(--p6);color:var(--p1);padding:1px 5px;border-radius:8px;margin-left:4px"></span>
+    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Lead-kilder</div>
+    <a id="nv-meta" onclick="sv('meta-scraper')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M3 8c0-3 2-5 5-5s5 2 5 5M3 8c0 3 2 5 5 5s5-2 5-5"/></svg>
+      META Scraper
     </a>
-    <a id="nv-d" onclick="sv('discovery')"><span id="disc-pulse" class="pulse-dot" style="display:none"></span>
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1v14M1 8h14M4 4l8 8M12 4l-8 8"/></svg>
-      Lead discovery
-    </a>
-    <!-- Look-alike Agent is now a tab inside Lead Discovery — sidebar nav
-         removed. Element kept hidden so sv('lookalike') paths don't break. -->
-    <a id="nv-la" onclick="sv('lookalike')" style="display:none">
+    <a id="nv-la" onclick="sv('lookalike')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
       Look-alike Agent
+    </a>
+    <a id="nv-gm" onclick="sv('google-maps')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1c-2.5 0-4.5 2-4.5 4.5 0 3 4.5 8 4.5 8s4.5-5 4.5-8C12.5 3 10.5 1 8 1z"/><circle cx="8" cy="5.5" r="1.5"/></svg>
+      Google Maps
+    </a>
+    <a id="nv-ts" onclick="sv('tech-stack')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="3" rx="0.5"/><rect x="2" y="6.5" width="12" height="3" rx="0.5"/><rect x="2" y="11" width="12" height="3" rx="0.5"/></svg>
+      Tech Stack Scanner
+    </a>
+    <a id="nv-csv" onclick="sv('csv-upload')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 10V2M5 5l3-3 3 3M2 12v2h12v-2"/></svg>
+      CSV Upload
+    </a>
+    <a id="nv-s" onclick="sv('search')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="m11 11 3 3"/></svg>
+      CVR Search
+    </a>
+    <!-- Mine kunder hidden — Twenty owns customers. -->
+    <a id="nv-c" onclick="sv('customers')" style="display:none">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z"/></svg>
+      Mine kunder
     </a>
   </nav>
 
@@ -938,9 +951,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;gap:20px">
         <div>
-          <div class="section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Lead Discovery</div>
-          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Danske virksomheder med aktive Meta-ads</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Scrappes automatisk hver nat. Filtreret til aktive virksomheder med mindst 10 ansatte i B2C-tunge brancher. Kør agenten manuelt fra fanen herunder.</p>
+          <div class="section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Dashboard</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Vedio Leads — auto-pipeline</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Samlet overblik: ICP-klare leads, aktive annoncører, nye annoncører fra de seneste 7 dage, og Look-alike-matches. Data samles automatisk to gange dagligt fra alle lead-kilder.</p>
         </div>
         <button class="btn btn-primary btn-sm" id="disc-run-btn" style="padding:10px 18px;font-size:13px;flex-shrink:0" onclick="manualDiscoveryRun()">Kør nu</button>
       </div>
@@ -966,6 +979,45 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 
       <!-- Results -->
       <div id="disc-results"></div>
+    </div>
+  </div>
+
+  <!-- GOOGLE MAPS SCRAPER PAGE -->
+  <div id="google-maps-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:900px;margin:0 auto;padding:28px 24px">
+      <div style="margin-bottom:20px">
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🗺️ Lead-kilde</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Google Maps Scraper</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Find danske virksomheder per kategori og by via Google Places. Resultaterne matches mod CVR for berigelse, lander i puljen, og gennemgår samme ICP-gate som andre Lead-kilder.</p>
+      </div>
+      <div id="gm-config-card" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
+      <div id="gm-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
+      <div id="gm-results"></div>
+    </div>
+  </div>
+
+  <!-- TECH STACK SCANNER PAGE -->
+  <div id="tech-stack-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:900px;margin:0 auto;padding:28px 24px">
+      <div style="margin-bottom:20px">
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🧱 Lead-kilde</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Scanner</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Skan virksomheders hjemmesider for tech-stack — Shopify, HubSpot, Klaviyo, Webflow, WordPress, Magento m.fl. Skarpt til "vi sælger til Shopify D2C brands" type-segmentering.</p>
+      </div>
+      <div id="ts-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
+      <div id="ts-results"></div>
+    </div>
+  </div>
+
+  <!-- CSV UPLOAD PAGE -->
+  <div id="csv-upload-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:900px;margin:0 auto;padding:28px 24px">
+      <div style="margin-bottom:20px">
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📥 Lead-kilde</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">CSV Upload</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Upload en CSV-eksport fra Sales Navigator, Apollo, Excel — hvad som helst. Genkendte kolonner: Company / CVR / Website / Phone / Email / City / Industry. Rækker uden CVR-match bliver stadig importeret, flagget som unmatched.</p>
+      </div>
+      <div id="csv-page-body" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:24px 28px"></div>
     </div>
   </div>
 
@@ -2813,6 +2865,324 @@ async function runCsvImport(rows){
   }
 }
 
+// ─── CSV UPLOAD PAGE ─────────────────────────────────────────────────────
+// Dedicated landing page under the new IA. Re-uses the existing
+// openCsvImport → parseCsv → showCsvPreview → runCsvImport pipeline, just
+// surfaces it with proper framing + drag-drop affordance + a description
+// of what gets matched. The hidden <input id="csv-import-input"> stays
+// where it is so the legacy "Importer CSV" button on the Min liste bar
+// keeps working.
+function renderCsvUploadPage(){
+  const wrap=document.getElementById('csv-page-body');if(!wrap)return;
+  wrap.innerHTML=`
+    <div style="display:flex;align-items:flex-start;gap:18px;margin-bottom:18px;flex-wrap:wrap">
+      <div style="flex:1;min-width:280px">
+        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Sådan virker det</div>
+        <ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--w80);line-height:1.6">
+          <li>Upload en CSV-eksport fra Sales Navigator, Apollo, Excel, HubSpot eller hvor som helst.</li>
+          <li>Vi mapper kolonner automatisk — Company, CVR, Website, Phone, Email, City, Industry.</li>
+          <li>Rækker med gyldigt 8-cifret CVR matches mod Datafordeler (Datafordeler beriger med ansatte, branche, status).</li>
+          <li>Rækker uden CVR-match importeres alligevel — de får et <code>unmatched</code>-flag så du kan rette dem manuelt senere.</li>
+          <li>Importerede leads lander direkte på <em>Min liste</em>.</li>
+        </ol>
+      </div>
+      <div style="flex:1;min-width:280px">
+        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Genkendte kolonnenavne</div>
+        <div style="font-size:11.5px;color:var(--w55);line-height:1.6">
+          <strong style="color:var(--w80)">Company</strong>: name, company, account name, virksomhed, navn, firma<br>
+          <strong style="color:var(--w80)">CVR</strong>: cvr, cvr-nummer, cvrnumber, registration<br>
+          <strong style="color:var(--w80)">Website</strong>: website, url, domain, homepage<br>
+          <strong style="color:var(--w80)">Phone</strong>: phone, telefon, tlf<br>
+          <strong style="color:var(--w80)">Email</strong>: email, e-mail, mail<br>
+          <strong style="color:var(--w80)">City</strong>: city, by, location<br>
+          <strong style="color:var(--w80)">Industry</strong>: industry, branche, sector
+        </div>
+      </div>
+    </div>
+    <div id="csv-dropzone" style="border:2px dashed rgba(124,58,237,0.4);border-radius:14px;padding:36px 24px;text-align:center;background:rgba(124,58,237,0.05);transition:background 0.15s,border-color 0.15s;cursor:pointer" onclick="openCsvImport()">
+      <div style="font-size:38px;margin-bottom:10px">📥</div>
+      <div style="font-size:15px;font-weight:800;color:#fff;margin-bottom:6px">Vælg en CSV-fil</div>
+      <div style="font-size:11.5px;color:var(--w55);margin-bottom:14px">Eller træk filen herhen — max 5 MB · 5000 rækker</div>
+      <button class="btn btn-primary btn-sm" style="padding:9px 20px;font-size:12.5px" onclick="event.stopPropagation();openCsvImport()">Vælg fil</button>
+    </div>
+    <div style="font-size:11px;color:var(--w35);margin-top:14px;text-align:center">CSV-filen behandles lokalt i din browser indtil du bekræfter — intet sendes til serveren før du klikker "Importér".</div>
+  `;
+  // Drag-drop affordance — hand the file to the existing pipeline.
+  const dz=document.getElementById('csv-dropzone');
+  if(dz){
+    dz.addEventListener('dragover',(ev)=>{ev.preventDefault();dz.style.background='rgba(124,58,237,0.12)';dz.style.borderColor='var(--purple-light)';});
+    dz.addEventListener('dragleave',()=>{dz.style.background='rgba(124,58,237,0.05)';dz.style.borderColor='rgba(124,58,237,0.4)';});
+    dz.addEventListener('drop',(ev)=>{
+      ev.preventDefault();dz.style.background='rgba(124,58,237,0.05)';dz.style.borderColor='rgba(124,58,237,0.4)';
+      const file=ev.dataTransfer.files&&ev.dataTransfer.files[0];
+      if(file)handleCsvFile(file);
+    });
+  }
+}
+
+// ─── TECH STACK SCANNER PAGE ────────────────────────────────────────────
+// HTTP-probes a list of domains (one per line, or paste from CSV) and
+// detects common D2C / B2B tech: Shopify, HubSpot, Klaviyo, Webflow,
+// WordPress, Magento, Salesforce Pardot, Mailchimp etc.
+// Backend endpoint: POST /api/scrape/tech-stack { domains: ['foo.com', …] }
+//
+// Why this exists: lots of our prospect conversations are "we sell to
+// Shopify D2C brands" or "we sell HubSpot consulting". This lets the SDR
+// paste a domain list (e.g. CVR-discovered companies' websites) and get
+// back a flagged sub-list filtered by stack signature.
+function renderTechStackPage(){
+  const wrap=document.getElementById('ts-form');if(!wrap)return;
+  wrap.innerHTML=`
+    <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Domæner</div>
+    <textarea id="ts-domains" placeholder="eksempel.dk&#10;butik.com&#10;www.firma.dk" rows="8" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:12px 14px;font-family:'JetBrains Mono','Menlo',monospace;font-size:12.5px;resize:vertical;outline:none;transition:border 0.15s" onfocus="this.style.borderColor='var(--purple)'" onblur="this.style.borderColor='var(--w08)'"></textarea>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:12px;flex-wrap:wrap">
+      <div style="font-size:11px;color:var(--w55)">Et domæne pr. linje. Max 100 domæner pr. skan. Vi prober https først, derefter http.</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" style="padding:8px 14px" onclick="tsLoadFromLeads()" title="Hent websites fra Min liste (kun leads med et website)">Hent fra Min liste</button>
+        <button class="btn btn-primary btn-sm" id="ts-scan-btn" style="padding:8px 18px" onclick="tsRunScan()">Scan tech-stack</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('ts-results').innerHTML='';
+}
+
+function tsLoadFromLeads(){
+  const sites=(leads||[]).map(l=>l.website||l.hjemmeside||'').filter(s=>s&&s.length>3);
+  if(!sites.length){showToast('Ingen leads med website fundet på Min liste');return;}
+  document.getElementById('ts-domains').value=Array.from(new Set(sites)).join('\n');
+  showToast(`${sites.length} domæner indlæst fra Min liste`);
+}
+
+async function tsRunScan(){
+  const ta=document.getElementById('ts-domains');
+  const btn=document.getElementById('ts-scan-btn');
+  const out=document.getElementById('ts-results');
+  if(!ta||!btn||!out)return;
+  const domains=ta.value.split(/[\n,;]/).map(s=>s.trim()).filter(Boolean);
+  if(!domains.length){showToast('Indtast mindst ét domæne');return;}
+  if(domains.length>100){showToast('Max 100 domæner pr. skan');return;}
+  btn.disabled=true;btn.textContent='Scanner…';
+  out.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px;display:flex;align-items:center;gap:12px;color:var(--w55);font-size:12.5px"><span class="search-spinner" style="width:18px;height:18px"></span>Scanner ${domains.length} domæner — kan tage 30–60 sek.</div>`;
+  try{
+    const r=await fetch('/api/scrape/tech-stack',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({domains})});
+    const d=await r.json();
+    if(!r.ok){
+      out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke scanne')}</div>`;
+      return;
+    }
+    renderTechStackResults(d.results||[]);
+  }catch(ex){
+    out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(ex.message)}</div>`;
+  }finally{
+    btn.disabled=false;btn.textContent='Scan tech-stack';
+  }
+}
+
+function renderTechStackResults(rows){
+  const out=document.getElementById('ts-results');if(!out)return;
+  if(!rows.length){out.innerHTML='<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:24px;text-align:center;color:var(--w55);font-size:13px">Ingen resultater.</div>';return;}
+  // Aggregate counts by signature for the summary header.
+  const sigCounts={};
+  for(const r of rows)for(const s of(r.signatures||[]))sigCounts[s]=(sigCounts[s]||0)+1;
+  const sortedSigs=Object.entries(sigCounts).sort((a,b)=>b[1]-a[1]);
+  const sigChips=sortedSigs.map(([k,n])=>`<span style="padding:5px 12px;border-radius:20px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.32);color:#c4b5fd;font-size:11.5px;font-weight:700">${e(k)} <span style="color:var(--w55);font-weight:500">${n}</span></span>`).join(' ');
+  out.innerHTML=`
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Fundet i ${rows.length} domæner</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${sigChips||'<span style="color:var(--w55);font-size:12px">Ingen kendte signaturer detekteret</span>'}</div>
+    </div>
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Domæne</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Status</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Tech-signatur</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>{
+            const sigs=(r.signatures||[]).map(s=>`<span style="display:inline-block;padding:2px 8px;border-radius:12px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.32);font-size:10.5px;font-weight:700;margin-right:4px;margin-bottom:2px">${e(s)}</span>`).join('');
+            const status=r.error?`<span style="color:#fca5a5;font-size:11px">⚠ ${e(r.error)}</span>`:r.statusCode?`<span style="color:${r.statusCode<400?'#6ee7b7':'#fca5a5'};font-size:11px;font-weight:600">${r.statusCode}</span>`:`<span style="color:var(--w35);font-size:11px">—</span>`;
+            return `<tr style="border-bottom:1px solid var(--w04)">
+              <td style="padding:11px 14px;font-family:monospace;font-size:11.5px;color:#fff"><a href="${e(r.finalUrl||('https://'+r.domain))}" target="_blank" rel="noopener" style="color:#fff;text-decoration:none;border-bottom:1px dotted var(--w35)">${e(r.domain)}</a></td>
+              <td style="padding:11px 14px">${status}</td>
+              <td style="padding:11px 14px">${sigs||'<span style="color:var(--w35);font-size:11px">Ingen kendte signaturer</span>'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ─── GOOGLE MAPS SCRAPER PAGE ───────────────────────────────────────────
+// Skeleton UI for Google Places. Until the Places API key is provisioned
+// in Secret Manager, the backend returns 503 with a clear "not configured"
+// payload — the UI shows a config-required banner instead of running.
+//
+// When the key lands, the user types a search term ("frisør", "restaurant"
+// etc.) + a city ("Aarhus") and we run Places Text Search, cross-match each
+// result against Datafordeler by name+city to recover CVR, then submit the
+// CVR list into the pool so the next discovery run picks them up.
+const _gmCache={configured:null,results:[]};
+
+async function renderGoogleMapsPage(){
+  // Probe configuration status on first mount.
+  if(_gmCache.configured===null){
+    try{
+      const r=await fetch('/api/scrape/google-maps/status',{headers:ah()});
+      const d=await r.json();
+      _gmCache.configured=!!d.configured;
+    }catch{_gmCache.configured=false;}
+  }
+  renderGoogleMapsConfigCard();
+  renderGoogleMapsForm();
+  document.getElementById('gm-results').innerHTML='';
+}
+
+function renderGoogleMapsConfigCard(){
+  const wrap=document.getElementById('gm-config-card');if(!wrap)return;
+  if(_gmCache.configured){
+    wrap.innerHTML=`<div style="display:flex;align-items:center;gap:12px">
+      <span style="font-size:18px">✓</span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:800;color:#fff">Google Places API klar</div>
+        <div style="font-size:11.5px;color:var(--w55);margin-top:1px">Søgninger forbruger Places-kreditter. Hold dig under 100 resultater pr. søgning for at undgå overforbrug.</div>
+      </div>
+    </div>`;
+  } else {
+    wrap.innerHTML=`<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.30);border-radius:12px;padding:14px 18px">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <span style="font-size:20px">⚙</span>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:800;color:#fdba74">Google Places API ikke konfigureret endnu</div>
+          <div style="font-size:11.5px;color:var(--w55);margin-top:4px;line-height:1.5">For at aktivere Google Maps-scraping skal en Places API-nøgle tilføjes i GCP Secret Manager (secret: <code style="background:var(--w04);padding:1px 5px;border-radius:4px">google-places-key</code>). Indtil det er gjort, viser knappen "Søg" en stub.</div>
+        </div>
+      </div>
+    </div>`;
+  }
+}
+
+function renderGoogleMapsForm(){
+  const wrap=document.getElementById('gm-form');if(!wrap)return;
+  wrap.innerHTML=`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:2;min-width:200px">
+        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">Søgeterm</div>
+        <input id="gm-q" placeholder="frisør, restaurant, advokat…" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')gmRunSearch()">
+      </div>
+      <div style="flex:1;min-width:140px">
+        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">By</div>
+        <input id="gm-city" placeholder="Aarhus" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')gmRunSearch()">
+      </div>
+      <div style="flex:0 0 auto">
+        <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin-bottom:5px">Max</div>
+        <input id="gm-limit" type="number" value="40" min="10" max="100" style="width:90px;background:var(--w04);border:1px solid var(--w08);border-radius:10px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none">
+      </div>
+      <button class="btn btn-primary btn-sm" id="gm-search-btn" style="padding:10px 22px;font-size:13px" onclick="gmRunSearch()">Søg</button>
+    </div>
+    <div style="font-size:11px;color:var(--w35);margin-top:10px">Resultater krydsmatches mod CVR (Datafordeler) på navn + by. Match-rate ligger typisk på 60–80% for danske SMB-segmenter.</div>
+  `;
+}
+
+async function gmRunSearch(){
+  const btn=document.getElementById('gm-search-btn');
+  const out=document.getElementById('gm-results');
+  const q=document.getElementById('gm-q').value.trim();
+  const city=document.getElementById('gm-city').value.trim();
+  const limit=Math.max(10,Math.min(100,parseInt(document.getElementById('gm-limit').value||'40',10)));
+  if(!q){showToast('Indtast en søgeterm');return;}
+  btn.disabled=true;btn.textContent='Søger…';
+  out.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px;display:flex;align-items:center;gap:12px;color:var(--w55);font-size:12.5px"><span class="search-spinner" style="width:18px;height:18px"></span>Søger Google Places + matcher CVR…</div>`;
+  try{
+    const r=await fetch('/api/scrape/google-maps',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({q,city,limit})});
+    const d=await r.json();
+    if(r.status===503){
+      out.innerHTML=`<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.30);color:#fdba74;border-radius:14px;padding:16px;font-size:13px">⚙ ${e(d.error||'Google Places API ikke konfigureret endnu')}</div>`;
+      return;
+    }
+    if(!r.ok){
+      out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke søge')}</div>`;
+      return;
+    }
+    _gmCache.results=d.results||[];
+    renderGoogleMapsResults();
+  }catch(ex){
+    out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(ex.message)}</div>`;
+  }finally{
+    btn.disabled=false;btn.textContent='Søg';
+  }
+}
+
+function renderGoogleMapsResults(){
+  const out=document.getElementById('gm-results');if(!out)return;
+  const rows=_gmCache.results;
+  if(!rows.length){
+    out.innerHTML='<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:24px;text-align:center;color:var(--w55);font-size:13px">Ingen resultater fundet.</div>';
+    return;
+  }
+  const matched=rows.filter(r=>r.cvr).length;
+  out.innerHTML=`
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+      <div><div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Fundet på Maps</div><div style="font-size:22px;font-weight:900;color:#fff">${rows.length}</div></div>
+      <div><div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Med CVR-match</div><div style="font-size:22px;font-weight:900;color:var(--purple-light)">${matched}</div></div>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary btn-sm" style="padding:8px 18px" onclick="gmAddAllMatched()">+ Tilføj ${matched} til Min liste</button>
+    </div>
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Navn</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Adresse</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">CVR</th>
+            <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r,i)=>`<tr style="border-bottom:1px solid var(--w04)">
+            <td style="padding:11px 14px;font-size:12.5px;color:#fff;font-weight:700">${e(r.name||'—')}</td>
+            <td style="padding:11px 14px;font-size:11.5px;color:var(--w55)">${e(r.address||'—')}</td>
+            <td style="padding:11px 14px;font-family:monospace;font-size:11px;color:${r.cvr?'var(--purple-light)':'var(--w35)'}">${r.cvr||'<span style=\"color:var(--w35)\">— ingen match</span>'}</td>
+            <td style="padding:11px 14px;text-align:right">${r.cvr?`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="gmAddOne(${i})">📞 Til kø</button>`:'<span style="font-size:11px;color:var(--w35)">—</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function gmAddOne(idx){
+  const r=_gmCache.results[idx];if(!r||!r.cvr)return;
+  try{
+    const cr=await fetch(`/api/company/${r.cvr}`,{headers:ah()});
+    const c=await cr.json();
+    if(!c||c.error){showToast('Kunne ikke hente firma');return;}
+    await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify(c)});
+    leads.push(c);
+    showToast(`${c.name} tilføjet`);
+  }catch(ex){showToast('Fejl: '+ex.message);}
+}
+
+async function gmAddAllMatched(){
+  const matched=_gmCache.results.filter(r=>r.cvr);
+  if(!matched.length){showToast('Ingen CVR-matches at tilføje');return;}
+  if(!confirm(`Tilføj ${matched.length} virksomheder til Min liste?`))return;
+  let ok=0;
+  for(const r of matched){
+    try{
+      const cr=await fetch(`/api/company/${r.cvr}`,{headers:ah()});
+      const c=await cr.json();
+      if(c&&!c.error){
+        await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify(c)});
+        leads.push(c);ok++;
+      }
+    }catch{}
+  }
+  showToast(`✓ ${ok} af ${matched.length} tilføjet til Min liste`);
+}
+
 // ─── COCKPIT ──────────────────────────────────────────────────────────────
 // Single-screen call workflow. Filtered to the currently-active list (or
 // all leads if 'Alle leads' is selected). Action handlers are placeholders
@@ -3104,11 +3474,18 @@ async function applyFeedbackAdjustments(){
 
 function sv(v){
   aView=v;
+  // Sidebar nav active-state — Dashboard is the new home of the old "Lead
+  // discovery" page. Lead-source pages each get their own nav highlight so
+  // the SDR always knows which tool they're inside.
   document.getElementById('nv-s').classList.toggle('on',v==='search');
   document.getElementById('nv-l').classList.toggle('on',v==='leads');
   document.getElementById('nv-c')?.classList.toggle('on',v==='customers');
   document.getElementById('nv-d')?.classList.toggle('on',v==='discovery');
   document.getElementById('nv-la')?.classList.toggle('on',v==='lookalike');
+  document.getElementById('nv-meta')?.classList.toggle('on',v==='meta-scraper');
+  document.getElementById('nv-gm')?.classList.toggle('on',v==='google-maps');
+  document.getElementById('nv-ts')?.classList.toggle('on',v==='tech-stack');
+  document.getElementById('nv-csv')?.classList.toggle('on',v==='csv-upload');
 
   selCo=null;hdDp();ckd.clear();upSel();
   const bw=document.querySelector('.body-wrap');
@@ -3118,6 +3495,9 @@ function sv(v){
   const custPage=document.getElementById('customers-page');
   const discPage=document.getElementById('discovery-page');
   const laPage=document.getElementById('lookalike-page');
+  const gmPage=document.getElementById('google-maps-page');
+  const tsPage=document.getElementById('tech-stack-page');
+  const csvPage=document.getElementById('csv-upload-page');
 
   // Hide everything first
   bw.style.display='none';tb.style.display='none';
@@ -3128,6 +3508,9 @@ function sv(v){
   if(custPage)custPage.style.display='none';
   if(discPage)discPage.style.display='none';
   if(laPage)laPage.style.display='none';
+  if(gmPage)gmPage.style.display='none';
+  if(tsPage)tsPage.style.display='none';
+  if(csvPage)csvPage.style.display='none';
 
   if(v==='search'||v==='leads'){
     bw.style.display='';tb.style.display='';if(sb)sb.style.display='';if(selb)selb.style.display='';
@@ -3143,11 +3526,32 @@ function sv(v){
     if(custPage)custPage.style.display='flex';custPage.style.flexDirection='column';
     renderCustomersPage();
   } else if(v==='discovery'){
+    // Dashboard view — re-uses the existing Discovery V2 renderer.
+    // The page header inside discovery-page now reads "Dashboard" so the
+    // copy matches the new IA. Tabs stay (ICP-klar / Aktive / Nye / Alle /
+    // Look-alike) since they're useful pivot views *on the same dataset*.
     if(discPage)discPage.style.display='flex';discPage.style.flexDirection='column';
     renderDiscoveryPage();
   } else if(v==='lookalike'){
     if(laPage)laPage.style.display='flex';laPage.style.flexDirection='column';
     renderLookalikePage();
+  } else if(v==='meta-scraper'){
+    // META Scraper — same Discovery V2 data, but framed as "this is where
+    // the META Ad Library scraper feeds into". For now it routes to the
+    // same renderer; once we add per-source filtering on the backend
+    // (state.json companies tagged with source: 'meta-scraper' vs 'csv')
+    // we'll surface a source filter here.
+    if(discPage)discPage.style.display='flex';discPage.style.flexDirection='column';
+    renderDiscoveryPage();
+  } else if(v==='google-maps'){
+    if(gmPage)gmPage.style.display='flex';gmPage.style.flexDirection='column';
+    renderGoogleMapsPage();
+  } else if(v==='tech-stack'){
+    if(tsPage)tsPage.style.display='flex';tsPage.style.flexDirection='column';
+    renderTechStackPage();
+  } else if(v==='csv-upload'){
+    if(csvPage)csvPage.style.display='flex';csvPage.style.flexDirection='column';
+    renderCsvUploadPage();
   }
 }
 
