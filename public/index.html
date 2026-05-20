@@ -2076,15 +2076,17 @@ function adsLibraryUrl(c){
   return 'https://www.facebook.com/ads/library/?'+params.toString();
 }
 
-// Plain deep-link to LinkedIn's company search. We don't scrape LinkedIn —
-// just hand the SDR off to their own session. Brand name is more useful
-// here than legal name because LinkedIn searches against display names.
-function linkedInUrl(c){
+// Deep-link to LinkedIn's company search — but framed as the "Kaspr"
+// enrichment path because Kaspr's Chrome extension auto-activates on
+// LinkedIn company pages. Real Kaspr-API integration lives in Phase B
+// (server-side, persists contacts to our DB). This is the stopgap so
+// SDRs can already use the workflow today.
+function kasprUrl(c){
   const q=c.brandName||c.name||'';
   return 'https://www.linkedin.com/search/results/companies/?keywords='+encodeURIComponent(q);
 }
-function linkedInButtonHTML(c){
-  return `<a href="${linkedInUrl(c)}" target="_blank" rel="noopener" title="Søg på LinkedIn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:8px;background:rgba(10,102,194,0.14);border:1px solid rgba(10,102,194,0.3);color:#60a5fa;font-size:11px;font-weight:600;text-decoration:none;transition:background 0.15s" onmouseover="this.style.background='rgba(10,102,194,0.22)'" onmouseout="this.style.background='rgba(10,102,194,0.14)'">in →</a>`;
+function kasprButtonHTML(c){
+  return `<a href="${kasprUrl(c)}" target="_blank" rel="noopener" title="Find kontakter via Kaspr (åbner LinkedIn — Kaspr-udvidelsen aktiveres på firmasiden)" style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:8px;background:rgba(124,58,237,0.14);border:1px solid rgba(124,58,237,0.32);color:#c4b5fd;font-size:11px;font-weight:700;letter-spacing:0.2px;text-decoration:none;transition:background 0.15s,transform 0.1s" onmouseover="this.style.background='rgba(124,58,237,0.24)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(124,58,237,0.14)';this.style.transform='translateY(0)'">🔍 Kaspr</a>`;
 }
 
 const DISC_INDUSTRY_GROUPS=[
@@ -2310,7 +2312,7 @@ function renderDiscoveryRow(c){
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right">
       <div style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">
-        ${linkedInButtonHTML(c)}
+        ${kasprButtonHTML(c)}
         ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
       </div>
     </td>
@@ -2333,7 +2335,7 @@ function renderLookalikeRow(c){
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right">
       <div style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">
-        ${linkedInButtonHTML(c)}
+        ${kasprButtonHTML(c)}
         ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
       </div>
     </td>
