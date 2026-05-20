@@ -55,7 +55,7 @@ jobs:
             --task-timeout 3600 \
             --max-retries 1 \
             --cpu 2 \
-            --memory 2Gi \
+            --memory 3Gi \
             --add-volume "name=data,type=cloud-storage,bucket=$BUCKET" \
             --add-volume-mount "volume=data,mount-path=/data" \
             --network=default \

@@ -48,14 +48,21 @@ const FLIPS_FILE = path.join(
 // 7 days is plenty — CVR companies don't churn at human speed.
 const POOL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LIMIT = Number(process.env.DISCOVERY_LIMIT) || 1000;
-const CONCURRENCY = Number(process.env.CONCURRENCY) || 5;
+// Concurrency 8 keeps total Meta-request rate at ~3.2/s
+// (8 contexts × 1 req per 2.5s delay). Below the threshold where Meta
+// throws bot challenges; above 5 we comfortably finish 1000 scrapes
+// inside the 1-hour Cloud Run Job timeout.
+const CONCURRENCY = Number(process.env.CONCURRENCY) || 8;
 const META_DELAY_MS = 2500; // per-context delay — keeps total throughput ~CONCURRENCY/2.5 req/s
 const POST_LOAD_WAIT_MS = 4000;
 // Employees filter: a confirmed ≥1 → MIN_EMPLOYEES gate; an entirely
 // missing CVR_Beskaeftigelse record → included (we can't tell, and the
 // scrape itself is the cheaper way to find out if they advertise).
 // Companies with a *confirmed* employee count below this drop out.
-const MIN_EMPLOYEES = 5;
+// Lowered from 5 to 3 to grow tier-1 (active Danish entities likely to
+// advertise) — 3+ employees still filters out lifestyle sole-props
+// while catching small but real B2C/B2B shops.
+const MIN_EMPLOYEES = 3;
 
 // Curated DB07 codes — industries where active Meta-ads is a strong B2B
 // signal. Skipped on purpose: holding companies (642010), shell-co
@@ -66,30 +73,46 @@ const TARGET_INDUSTRY_CODES = [
   "412000", "432100", "432200", "433100", "433200", "433410", "439990",
   // Auto
   "451120", "452010",
-  // Engros & detail
+  // Engros & detail (online retail added: 478910, 478990)
   "461900", "464210", "465100", "466900", "467310", "467400",
   "471900", "477110", "477120", "477610", "475400",
-  // Hotel & restaurant
+  "478910", "478990",
+  // Hotel, restaurant & catering
   "551000", "551010", "551020", "551110", "551120",
   "561010", "561020", "563000", "563010",
+  "562900",
   // Transport (ekskl. taxa)
   "494100",
-  // IT, software, web
+  // IT, software, web (host/portal added: 631100, 631200)
   "620100", "620200", "621000", "622000",
+  "631100", "631200",
+  // Forlag & medier (publishing, film/video — directly relevant for Vedio's
+  // ICP), music, broadcasting
+  "581300", "581400",
+  "591100", "591200", "592000",
+  "600100", "601000",
   // Ejendom & service
   "681000", "682030", "682040", "683110", "683210",
-  // Rådgivning, jura, revision
+  // Rådgivning, jura, revision, engineering, R&D
   "691000", "692000", "702000", "702200", "702100", "701020",
-  "711100", "711210",
+  "711100", "711200", "711210", "712000",
+  "722000",
   // Reklame, marketing, design
   "731000", "733000",
+  // Translation & other professional services
+  "743000", "749000",
   // Udlejning & rejse
   "773200", "773300", "773400", "773900", "773990",
   "791100", "791200",
+  // Education (other / driving schools / language)
+  "855900",
   // Rengøring & service
   "812100",
-  // Sundhed & personlig service
-  "862100", "869090", "869900", "960210",
+  // Sundhed & personlig service (vet, beauty, fitness added)
+  "752000",
+  "862100", "869090", "869900", "960210", "960400",
+  // Sports, fitness & entertainment
+  "900400", "931100", "931200", "931300", "932100",
 ];
 
 // ── Datafordeler helpers (duplicated from server.js — Cloud Run Job runs
