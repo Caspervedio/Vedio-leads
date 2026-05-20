@@ -749,7 +749,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1v14M1 8h14M4 4l8 8M12 4l-8 8"/></svg>
       Lead discovery
     </a>
-    <a id="nv-la" onclick="sv('lookalike')">
+    <!-- Look-alike Agent is now a tab inside Lead Discovery — sidebar nav
+         removed. Element kept hidden so sv('lookalike') paths don't break. -->
+    <a id="nv-la" onclick="sv('lookalike')" style="display:none">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
       Look-alike Agent
     </a>
@@ -955,7 +957,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <button class="disc-tab" data-tab="ads" onclick="discSetTab('ads')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🔥 Aktive annoncører</button>
         <button class="disc-tab" data-tab="new" onclick="discSetTab('new')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">⚡ Nye annoncører</button>
         <button class="disc-tab" data-tab="all" onclick="discSetTab('all')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">📡 Alle tjekkede</button>
-        <!-- Look-alike tab removed — Look-alike Agent is now a top-level sidebar nav item -->
+        <button class="disc-tab" data-tab="lookalike" onclick="discSetTab('lookalike')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🎯 Look-alike Agent</button>
 
       </div>
 
@@ -2270,11 +2272,15 @@ function renderDiscoverySummary(){
 function renderDiscoveryFilterBar(){
   const bar=document.getElementById('disc-filter-bar');if(!bar)return;
   const lookalike=_discState.tab==='lookalike';
-  if(lookalike){bar.innerHTML='<div style="color:var(--w55);font-size:12px;padding:6px 4px">Look-alikes kommer i næste fase — mappes ud fra dine bedste leads.</div>';return;}
+  // Hide filters in the Look-alike Agent tab — agent surfaces matches by
+  // similarity score, not industry/city filters. The seed-status hero card
+  // (rendered inside disc-results) does its own messaging.
+  if(lookalike){bar.style.display='none';return;}
+  bar.style.display='';
   const opts=DISC_INDUSTRY_GROUPS.map(g=>`<option value="${g.code}"${g.code===_discState.industry?' selected':''}>${g.name}</option>`).join('');
   bar.innerHTML=`
     <input id="disc-q" class="fi" placeholder="Søg på navn…" value="${e(_discState.q)}" style="flex:1;min-width:180px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
-    <select id="disc-industry" class="fs" style="background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif">${opts}</select>
+    <select id="disc-industry" class="fs" onchange="discApplyFilters()" style="background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif">${opts}</select>
     <input id="disc-city" class="fi" placeholder="By" value="${e(_discState.city)}" style="width:140px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
     <input id="disc-empmin" class="fi" placeholder="Min ansatte" type="number" value="${e(_discState.empMin)}" style="width:120px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
     <input id="disc-minads" class="fi" placeholder="Min ads" type="number" value="${e(_discState.minAds)}" style="width:100px;background:var(--w04);border:1px solid var(--w08);color:#fff;border-radius:8px;padding:8px 12px;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter')discApplyFilters()">
@@ -2323,35 +2329,57 @@ function discSetTab(tab){
 function renderDiscoveryResults(){
   const wrap=document.getElementById('disc-results');if(!wrap)return;
   if(_discState.tab==='lookalike'){
+    // Rich agent UX inside the Discovery tab: seed-status hero card,
+    // 'agent har lært' profile chips, then matches table. Same look as
+    // the previous standalone page but framed as a Discovery tab.
     const seed=_discCache.seedSize||0;
+    const p=_discCache.lookalikeProfile||{};
+    const seedQualityHint=seed===0
+      ? `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚠ Ingen seed-leads endnu — tilføj 5–10 kvalitetsleads til <strong>Min liste</strong>, så agenten har noget at lære af.</div>`
+      : seed<5
+      ? `<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fdba74;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚡ Du har ${seed} seed-leads — agenten arbejder bedre med 5–10. Tilføj flere kvalitetsleads til Min liste for skarpere matches.</div>`
+      : `<div style="background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.25);color:#6ee7b7;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">✓ ${seed} seed-leads aktive. Agenten har nok at gå ud fra.</div>`;
+    const topInd=(p.topIndustries||[]).map(([k,n])=>`<span style="padding:4px 10px;border-radius:20px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.3);color:#c4b5fd;font-size:11px;font-weight:700">${e(k)} <span style="color:var(--w55);font-weight:500">${n}×</span></span>`).join(' ');
+    const topZip=(p.topZipPrefixes||[]).map(([k,n])=>`<span style="padding:4px 10px;border-radius:20px;background:var(--w04);border:1px solid var(--w08);color:var(--w80);font-size:11px;font-weight:600">${e(k)}xxx <span style="color:var(--w35)">${n}×</span></span>`).join(' ');
+    const seedCard=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div style="width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-size:24px">🎯</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:700;color:#fff;letter-spacing:-0.2px">Look-alike Agent · status</div>
+            <div style="font-size:11.5px;color:var(--w55);margin-top:2px">${seed} seed-leads · ${_discCache.rows.length} match-kandidater fundet</div>
+          </div>
+          <button class="btn btn-sm" onclick="sv('leads')" style="padding:7px 13px">Administrer seed →</button>
+          <button class="btn btn-primary btn-sm" onclick="reloadDiscoveryRows()" style="padding:7px 13px">↻ Kør agent</button>
+        </div>
+        ${seedQualityHint}
+      </div>
+      ${(topInd||topZip)?`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 2px;margin-bottom:14px">
+        <span style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">Agent har lært:</span>
+        ${topInd}
+        ${topZip}
+      </div>`:''}`;
     if(seed===0){
-      wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center">
+      wrap.innerHTML=seedCard+`<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:40px;text-align:center">
         <div style="font-size:28px;margin-bottom:8px">🎯</div>
-        <div style="font-size:16px;font-weight:700;color:#fff;margin-bottom:6px">Tilføj leads først</div>
-        <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Look-alike-modellen finder virksomheder som dine eksisterende leads — tilføj først nogle leads under <strong>Min liste</strong>.</div>
+        <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Tilføj seed-leads først</div>
+        <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto">Look-alike-modellen finder virksomheder der ligner dine bedste. Tilføj først 5–10 kvalitetsleads til Min liste.</div>
       </div>`;
       return;
     }
     if(_discCache.rows.length===0){
-      wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:40px;text-align:center;color:var(--w55);font-size:13px">
-        Ingen kandidater scorer over 0 mod dine ${seed} leads. Det er sandsynligvis fordi pulje-buildet ikke er færdig endnu — vent til natten har kørt.
+      wrap.innerHTML=seedCard+`<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:40px;text-align:center;color:var(--w55);font-size:13px">
+        Ingen match-kandidater endnu. Det kan være pulje-buildet ikke er færdig, eller dine seed-leads ikke matcher virksomheder i Discovery-datasættet endnu. Kør agenten igen efter næste cron-kørsel.
       </div>`;
       return;
     }
-    const p=_discCache.lookalikeProfile||{};
-    const topInd=(p.topIndustries||[]).map(([k,n])=>`<span class="pill" style="background:rgba(124,58,237,0.15);color:var(--purple-soft);border:1px solid rgba(124,58,237,0.3);font-size:10.5px">${e(k)} (${n})</span>`).join(' ');
-    wrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <div style="font-size:11px;color:var(--w55)"><strong style="color:#fff">${seed}</strong> leads i seed · top brancher:</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">${topInd||'<span style="color:var(--w35);font-size:11px">—</span>'}</div>
-      </div>
-      <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+    wrap.innerHTML=seedCard+`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
         <table style="width:100%;border-collapse:collapse">
           <thead>
             <tr>
               <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed</th>
               <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">CVR</th>
               <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">By</th>
-              <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Score</th>
+              <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Match-score</th>
               <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Meta-ads</th>
               <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
             </tr>
@@ -2399,7 +2427,18 @@ function renderDiscoveryResults(){
 function renderDiscoveryRow(c){
   const ads=c.ads||{};
   const inLeads=leads.some(l=>l.cvr===c.cvr);
-  const icpChip=c.icpFit?`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);margin-left:6px" title="Opfylder ICP-reglerne — auto-push til CloudTalk når Phase C er klar">📌 ICP</span>`:'';
+  // Lifecycle chip: show where in the funnel each lead currently is.
+  // Order matters — later stages override earlier (a lead in Twenty was
+  // also once 'ICP-klar', but we want to show its current state).
+  let chip='';
+  if(c.twenty_opportunity_id){
+    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);margin-left:6px" title="Pushet til Twenty CRM">🎯 I Twenty</span>`;
+  }else if(c.pushed_to_cloudtalk_at){
+    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);margin-left:6px" title="I CloudTalk-køen siden ${e((c.pushed_to_cloudtalk_at||'').slice(0,10))}">📞 I dialer</span>`;
+  }else if(c.icpFit){
+    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);margin-left:6px" title="Opfylder ICP-reglerne — auto-push til CloudTalk når Phase C er klar">📌 ICP-klar</span>`;
+  }
+  const icpChip=chip;
   const verdictPill=ads.verdict===true
     ? `<a href="${adsLibraryUrl(c)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700;text-decoration:none;transition:transform 0.1s,background 0.15s;cursor:pointer" title="Åbn i Meta Ad Library" onmouseover="this.style.background='rgba(124,58,237,0.28)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(124,58,237,0.18)';this.style.transform='translateY(0)'">📢 ${ads.matched||0} aktive ↗</a>`
     : `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:11px;font-weight:600">— Ingen ads</span>`;

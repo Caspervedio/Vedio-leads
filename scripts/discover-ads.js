@@ -76,10 +76,25 @@ const TARGET_INDUSTRY_CODES = [
   "412000", "432100", "432200", "433100", "433200", "433410", "439990",
   // Auto
   "451120", "452010",
-  // Engros & detail (online retail added: 478910, 478990)
+  // Engros & detail — broadened to catch all retail subsectors that
+  // commonly run e-commerce + Meta ads. Covers 47.4 (computer/electronics
+  // retail), 47.5 (textile/hardware/home goods), 47.6 (books/sport/games),
+  // 47.7 (specialty: cosmetics/jewelry/pets/flowers etc), plus the 47.9
+  // 'not-in-store' codes for pure online retail.
   "461900", "464210", "465100", "466900", "467310", "467400",
-  "471900", "477110", "477120", "477610", "475400",
-  "478910", "478990",
+  // 47.1 generalist
+  "471900",
+  // 47.4 information & communications equipment retail
+  "474100", "474200", "474300",
+  // 47.5 home goods retail
+  "475100", "475200", "475300", "475400", "475900",
+  // 47.6 cultural & recreation retail
+  "476100", "476200", "476400", "476500",
+  // 47.7 specialty retail (cosmetics, pharma, watches, eyewear, pets etc)
+  "477110", "477120", "477300", "477400", "477500", "477610", "477620",
+  "477710", "477820", "477830", "477890", "477990",
+  // 47.9 not-in-store retail (mail order, internet retail, market stalls)
+  "478100", "478910", "478990",
   // Hotel, restaurant & catering
   "551000", "551010", "551020", "551110", "551120",
   "561010", "561020", "563000", "563010",
