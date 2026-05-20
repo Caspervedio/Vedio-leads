@@ -1253,6 +1253,7 @@ app.get("/api/discovery/lookalikes", authMiddleware, (req, res) => {
   const seedZipPrefixes = new Map();   // 2-digit zip prefix → count
   const seedCities = new Map();        // city → count
   const seedEmpBands = new Map();      // log2 band → count
+  const candidatesById = (loadDiscoveryState().companies || {});
   let withAdsCount = 0;
   for (const l of seed) {
     const ic = String(l.ic || l.industry || "");
@@ -1269,43 +1270,66 @@ app.get("/api/discovery/lookalikes", authMiddleware, (req, res) => {
       const band = Math.floor(Math.log2(emp + 1));
       seedEmpBands.set(band, (seedEmpBands.get(band) || 0) + 1);
     }
+    // Cross-reference state.json — does this seed lead have active Meta ads?
+    const matched = l.cvr ? candidatesById[l.cvr] : null;
+    if (matched?.ads?.verdict === true) withAdsCount++;
   }
 
   const claimed = new Set(myLeads.map((l) => l.cvr));
-  const candidates = Object.values(loadDiscoveryState().companies || {});
+  const candidates = Object.values(candidatesById);
+
+  // Max-possible score with the current signal weights — used to normalise
+  // _score → percentage on the frontend. If we ever add/remove signals,
+  // update this number to match.
+  const MAX_SCORE = 30 + 20 + 10 + 5 + 15 + 20; // 100
 
   const scored = [];
   for (const c of candidates) {
     if (!c?.cvr || claimed.has(c.cvr)) continue;
     let score = 0;
+    const reasons = []; // human-readable hints — fed to the UI's "why this match?"
     const ic = String(c.industry || "");
     const ic2 = ic.slice(0, 2);
-    if (seedIndustries.has(ic2)) score += 30;
-    if (ic.length >= 6 && seedIndustries6.has(ic.slice(0, 6))) score += 20;
+    if (seedIndustries.has(ic2)) { score += 30; reasons.push("branche"); }
+    if (ic.length >= 6 && seedIndustries6.has(ic.slice(0, 6))) { score += 20; reasons.push("eksakt branche"); }
     const zip2 = String(c.zip || "").slice(0, 2);
-    if (zip2 && seedZipPrefixes.has(zip2)) score += 10;
+    if (zip2 && seedZipPrefixes.has(zip2)) { score += 10; reasons.push("region"); }
     const city = String(c.city || "").toLowerCase().trim();
-    if (city && seedCities.has(city)) score += 5;
+    if (city && seedCities.has(city)) { score += 5; reasons.push("by"); }
     const emp = Number(c.employees || 0);
     if (emp > 0) {
       const band = Math.floor(Math.log2(emp + 1));
-      if (seedEmpBands.has(band)) score += 15;
+      if (seedEmpBands.has(band)) { score += 15; reasons.push("størrelse"); }
     }
-    if (c.ads?.verdict === true) score += 20;
-    if (score > 0) scored.push({ ...c, _score: score });
+    if (c.ads?.verdict === true) { score += 20; reasons.push("ads"); }
+    if (score > 0) scored.push({ ...c, _score: score, _scorePct: Math.round((score / MAX_SCORE) * 100), _reasons: reasons });
   }
   scored.sort((a, b) => b._score - a._score);
+
+  // Optional server-side breadth filter. Until we tune the floor per-customer
+  // these defaults track the client-side heuristic — they're meant to keep
+  // request payloads small for strict/balanced, big for broad.
+  const breadth = String(req.query.breadth || "balanced");
+  const top = scored[0]?._score || 0;
+  let filtered = scored;
+  if (breadth === "strict") filtered = scored.filter(r => r._score >= top * 0.7);
+  else if (breadth === "balanced") filtered = scored.filter(r => r._score >= top * 0.35);
+
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   res.json({
     seedSize: seed.length,
     listId,
-    total: scored.length,
-    rows: scored.slice(0, limit),
+    breadth,
+    maxScore: MAX_SCORE,
+    total: filtered.length,
+    rows: filtered.slice(0, limit),
     profile: {
       topIndustries: [...seedIndustries.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5),
       topZipPrefixes: [...seedZipPrefixes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
       topCities: [...seedCities.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
+      topEmpBands: [...seedEmpBands.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3),
       adsAsSeed: withAdsCount,
+      seedCount: seed.length,
     },
   });
 });
