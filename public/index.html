@@ -2076,6 +2076,17 @@ function adsLibraryUrl(c){
   return 'https://www.facebook.com/ads/library/?'+params.toString();
 }
 
+// Plain deep-link to LinkedIn's company search. We don't scrape LinkedIn —
+// just hand the SDR off to their own session. Brand name is more useful
+// here than legal name because LinkedIn searches against display names.
+function linkedInUrl(c){
+  const q=c.brandName||c.name||'';
+  return 'https://www.linkedin.com/search/results/companies/?keywords='+encodeURIComponent(q);
+}
+function linkedInButtonHTML(c){
+  return `<a href="${linkedInUrl(c)}" target="_blank" rel="noopener" title="Søg på LinkedIn" style="display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:8px;background:rgba(10,102,194,0.14);border:1px solid rgba(10,102,194,0.3);color:#60a5fa;font-size:11px;font-weight:600;text-decoration:none;transition:background 0.15s" onmouseover="this.style.background='rgba(10,102,194,0.22)'" onmouseout="this.style.background='rgba(10,102,194,0.14)'">in →</a>`;
+}
+
 const DISC_INDUSTRY_GROUPS=[
   {code:'',name:'Alle brancher'},
   {code:'41',name:'Byggeri & anlæg'},
@@ -2298,7 +2309,10 @@ function renderDiscoveryRow(c){
     <td style="padding:12px 14px;font-size:12px;color:var(--w80);text-align:right">${c.employees||'—'}</td>
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right">
-      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+      <div style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">
+        ${linkedInButtonHTML(c)}
+        ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+      </div>
     </td>
   </tr>`;
 }
@@ -2318,7 +2332,10 @@ function renderLookalikeRow(c){
     <td style="padding:12px 14px;text-align:right"><span style="font-weight:800;color:var(--purple-light);font-size:13px">${c._score||0}</span></td>
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right">
-      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+      <div style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">
+        ${linkedInButtonHTML(c)}
+        ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+      </div>
     </td>
   </tr>`;
 }
