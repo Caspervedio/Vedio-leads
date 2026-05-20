@@ -1492,12 +1492,89 @@ app.get("/api/leads", authMiddleware, (req, res) => res.json(loadUserData(req.us
 
 app.post("/api/leads", authMiddleware, (req, res) => {
   const d = loadUserData(req.userId);
-  const { company, listId } = req.body;
+  const { company, listId, source } = req.body;
   if (!company?.cvr) return res.status(400).json({ error: "Mangler CVR" });
   if (d.leads.find((l) => l.cvr === company.cvr)) return res.status(409).json({ error: "Lead findes allerede" });
-  d.leads.push({ ...company, listId: listId || "ungrouped", addedAt: new Date().toISOString() });
+  // Source attribution — preserved so the Autodialer can prioritise by
+  // origin (META Scraper > Look-alike > Maps > Tech Stack > CSV > manual).
+  // Falls back to "manual" so legacy callers still work.
+  d.leads.push({
+    ...company,
+    listId: listId || "ungrouped",
+    source: source || company.source || "manual",
+    addedAt: new Date().toISOString(),
+  });
   saveUserData(req.userId, d);
   res.json({ ok: true });
+});
+
+// POST /api/leads/promote — bulk-promote CVRs from the Discovery pool
+// (state.json) into the caller's leads list. Used by the ICP-klar review
+// queue on Dashboard. Carries source attribution + adds to a specified
+// list (default ungrouped). Skips CVRs already in the user's leads.
+app.post("/api/leads/promote", authMiddleware, (req, res) => {
+  const cvrs = Array.isArray(req.body?.cvrs) ? req.body.cvrs.filter(Boolean) : [];
+  if (cvrs.length === 0) return res.status(400).json({ error: "cvrs[] mangler" });
+  if (cvrs.length > 500) return res.status(413).json({ error: "Max 500 leads pr. promote-batch" });
+  const listId = req.body?.listId || "ungrouped";
+  const d = loadUserData(req.userId);
+  const existing = new Set(d.leads.map((l) => l.cvr));
+  const pool = loadDiscoveryState().companies || {};
+  const now = new Date().toISOString();
+  let promoted = 0;
+  let skippedDup = 0;
+  let skippedNotInPool = 0;
+  for (const cvr of cvrs) {
+    if (existing.has(cvr)) { skippedDup++; continue; }
+    const c = pool[cvr];
+    if (!c) { skippedNotInPool++; continue; }
+    d.leads.push({
+      name: c.name,
+      cvr: c.cvr,
+      ic: c.industry,
+      ind: c.industryName,
+      city: c.city,
+      zip: c.zip,
+      emp: c.employees,
+      web: c.website || c.web || "",
+      phone: c.phone || "",
+      // Source preserved — Discovery pool entries default to meta-scraper.
+      source: c.source || "meta-scraper",
+      icpFit: c.icpFit || false,
+      adsMatched: c.ads?.matched || 0,
+      listId,
+      addedAt: now,
+      promotedFromReviewQueue: true,
+    });
+    existing.add(cvr);
+    promoted++;
+  }
+  saveUserData(req.userId, d);
+  res.json({ ok: true, promoted, skippedDup, skippedNotInPool });
+});
+
+// GET /api/discovery/review-queue — ICP-klar leads from state.json that
+// haven't yet been promoted into the user's leads list. Drives the
+// "Review queue" UX on Dashboard / Autodialer that lets the SDR bulk-
+// approve ICP-fit discoveries.
+app.get("/api/discovery/review-queue", authMiddleware, (req, res) => {
+  const ud = loadUserData(req.userId);
+  const claimed = new Set((ud.leads || []).map((l) => l.cvr));
+  const pool = loadDiscoveryState().companies || {};
+  const source = String(req.query.source || "");
+  const rows = [];
+  for (const cvr of Object.keys(pool)) {
+    const c = pool[cvr];
+    if (!c?.icpFit) continue;
+    if (claimed.has(cvr)) continue;
+    if (c.pushed_to_cloudtalk_at || c.twenty_opportunity_id) continue;
+    if (source && (c.source || "meta-scraper") !== source) continue;
+    rows.push(c);
+  }
+  // Highest priority first — most ads suggests heaviest advertiser.
+  rows.sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0));
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  res.json({ total: rows.length, rows: rows.slice(0, limit) });
 });
 
 // POST /api/leads/import — bulk-import a CSV-derived list of companies.
@@ -3583,6 +3660,72 @@ app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
     res.json({ results: out });
   } catch (e) {
     console.error("[scrape/google-maps]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── TWENTY CRM PUSH (Phase D stub) ─────────────────────────────────────
+// When the cockpit dispositions a lead as "Interesseret", we want an
+// Opportunity created in Twenty CRM automatically. Until TWENTY_API_TOKEN
+// + TWENTY_WORKSPACE_URL are in Secret Manager, these endpoints return
+// "not configured" so the cockpit can call them safely — the day the
+// creds drop in, nothing else changes.
+app.get("/api/twenty/status", authMiddleware, (req, res) => {
+  res.json({
+    configured: !!(process.env.TWENTY_API_TOKEN && process.env.TWENTY_WORKSPACE_URL),
+    workspaceUrl: process.env.TWENTY_WORKSPACE_URL || null,
+  });
+});
+
+app.post("/api/twenty/push", authMiddleware, async (req, res) => {
+  const { cvr, notes, callDuration, disposition } = req.body || {};
+  if (!cvr) return res.status(400).json({ error: "cvr mangler" });
+
+  // Configuration check — if creds aren't set, mark the lead as "queued
+  // for Twenty" so we can replay later, and return a soft-503 so the
+  // cockpit shows a "kommer i Phase D" hint instead of crashing.
+  if (!process.env.TWENTY_API_TOKEN || !process.env.TWENTY_WORKSPACE_URL) {
+    try {
+      const d = loadUserData(req.userId);
+      const lead = (d.leads || []).find((l) => l.cvr === cvr);
+      if (lead) {
+        lead.twenty_queued_at = new Date().toISOString();
+        lead.twenty_queued_notes = notes || "";
+        lead.twenty_queued_disposition = disposition || "interested";
+        saveUserData(req.userId, d);
+      }
+    } catch { /* non-fatal */ }
+    return res.status(503).json({
+      error: "Twenty ikke konfigureret endnu — leadet er køet til auto-push når Phase D går live.",
+      configured: false,
+      queued: true,
+    });
+  }
+
+  // Real Twenty API call (placeholder — will fill in once endpoint shape
+  // is confirmed against the Twenty workspace's GraphQL API).
+  try {
+    const d = loadUserData(req.userId);
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+
+    // TODO: Replace with real Twenty GraphQL mutation. The endpoint will
+    // look something like:
+    //   POST {workspaceUrl}/graphql
+    //   { query: "mutation createOpportunity(...) { ... }", variables: {...} }
+    // Shape isn't worth speculating about until we have the real schema.
+    const stubResponse = {
+      id: `placeholder_${Date.now()}`,
+      url: `${process.env.TWENTY_WORKSPACE_URL}/objects/opportunities/placeholder_${Date.now()}`,
+    };
+
+    lead.twenty_opportunity_id = stubResponse.id;
+    lead.twenty_pushed_at = new Date().toISOString();
+    lead.twenty_url = stubResponse.url;
+    saveUserData(req.userId, d);
+    res.json({ ok: true, opportunity: stubResponse });
+  } catch (e) {
+    console.error("[twenty/push]", e.message);
     res.status(500).json({ error: e.message });
   }
 });

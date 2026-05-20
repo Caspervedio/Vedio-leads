@@ -971,6 +971,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <!-- Summary row -->
       <div id="disc-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px"></div>
 
+      <!-- ICP-klar review queue — the bridge between Discovery pool and
+           Autodialer. Shows leads the agents have ICP-flagged but the SDR
+           hasn't yet promoted. Bulk-approve sends them to user.leads. -->
+      <div id="disc-review-queue" style="margin-bottom:18px"></div>
+
       <!-- Source-filter tabs — Dashboard is now ONE unified pool of leads
            pushed in from every AI Agent. Tabs let the SDR see where each
            lead came from. Default = "Alle" (everything across sources). -->
@@ -2295,21 +2300,114 @@ const DISC_INDUSTRY_GROUPS=[
 
 async function renderDiscoveryV2(){
   // Mount filter bar + initial frame so the user sees structure while data
-  // loads. Header summary + rows fill in via two concurrent fetches.
+  // loads. Header summary + rows fill in via three concurrent fetches.
   renderDiscoveryFilterBar();
   document.getElementById('disc-summary').innerHTML='<div style="grid-column:1/-1;color:var(--w55);font-size:12px;padding:14px;text-align:center"><span class="search-spinner" style="display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:middle"></span>Henter data…</div>';
   document.getElementById('disc-results').innerHTML='';
+  const rqEl=document.getElementById('disc-review-queue');
+  if(rqEl)rqEl.innerHTML='';
   try{
-    const [sumR,rowsR]=await Promise.all([
+    const [sumR,rowsR,rqR]=await Promise.all([
       fetch('/api/discovery/summary',{headers:ah()}).then(r=>r.json()),
       fetchDiscoveryRows(),
+      fetch('/api/discovery/review-queue?limit=200',{headers:ah()}).then(r=>r.json()).catch(()=>({rows:[]})),
     ]);
     _discCache.summary=sumR;
+    _discCache.reviewQueue=rqR.rows||[];
     renderDiscoverySummary();
+    renderReviewQueue();
     renderDiscoveryResults();
   }catch(ex){
     document.getElementById('disc-summary').innerHTML=`<div style="grid-column:1/-1;color:var(--red);font-size:12px;padding:14px;text-align:center">Kunne ikke hente data: ${e(ex.message)}</div>`;
   }
+}
+
+function renderReviewQueue(){
+  const el=document.getElementById('disc-review-queue');
+  if(!el)return;
+  const rows=_discCache.reviewQueue||[];
+  if(rows.length===0){el.innerHTML='';return;}
+  // Selected CVRs survive re-renders via _discCache
+  if(!_discCache.reviewSelected)_discCache.reviewSelected=new Set();
+  const sel=_discCache.reviewSelected;
+  // Default: all selected when first opening
+  if(sel.size===0)for(const r of rows)sel.add(r.cvr);
+  const preview=rows.slice(0,8);
+  el.innerHTML=`
+    <div style="background:linear-gradient(135deg,rgba(52,211,153,0.08),rgba(52,211,153,0.02));border:1px solid rgba(52,211,153,0.25);border-radius:14px;padding:16px 18px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:240px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="font-size:10px;font-weight:800;color:#34d399;letter-spacing:1.2px;text-transform:uppercase">📌 ICP-klar review queue</span>
+            <span style="font-size:11px;color:var(--w55);padding:2px 8px;border-radius:8px;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);font-weight:700">${rows.length}</span>
+          </div>
+          <div style="font-size:12px;color:var(--w80);line-height:1.5;max-width:680px">Agenterne har fundet <strong style="color:#fff">${rows.length}</strong> ICP-kvalificerede leads der ikke er i din Autodialer-kø endnu. Godkend dem her — så sendes de samlet til køen (og auto-pushes til CloudTalk + Twenty når Phase C/D er aktive).</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-sm" onclick="rqSelectNone()" style="padding:7px 13px">Fravælg alle</button>
+          <button class="btn btn-sm" onclick="rqSelectAll()" style="padding:7px 13px">Vælg alle</button>
+          <button class="btn btn-primary btn-sm" onclick="rqPromoteSelected()" style="padding:7px 16px;background:linear-gradient(135deg,#34d399,#10b981);border:none">▶ Send <span id="rq-count">${sel.size}</span> til Autodialer</button>
+        </div>
+      </div>
+      <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse">
+          <tbody>
+            ${preview.map(c=>{
+              const checked = sel.has(c.cvr);
+              const ads=(c.ads&&c.ads.matched)||0;
+              return `<tr onclick="rqToggle('${e(c.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='rgba(52,211,153,0.04)'" onmouseout="this.style.background='transparent'">
+                <td style="padding:9px 14px;width:28px"><input type="checkbox" ${checked?'checked':''} onchange="rqToggle('${e(c.cvr)}')" onclick="event.stopPropagation()" style="accent-color:#34d399;cursor:pointer"></td>
+                <td style="padding:9px 14px">${sourceBadge(c)}<span style="font-weight:700;color:#fff;font-size:12.5px">${e(c.name||'—')}</span></td>
+                <td style="padding:9px 14px;font-size:11.5px;color:var(--w80)">${e(c.city||'—')}</td>
+                <td style="padding:9px 14px;font-size:11.5px;color:var(--w80)">${c.employees||'—'} ansatte</td>
+                <td style="padding:9px 14px;text-align:right"><span style="font-size:11px;padding:3px 9px;border-radius:10px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.32);font-weight:700">📢 ${ads}</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        ${rows.length>preview.length?`<div style="padding:10px 14px;text-align:center;font-size:11px;color:var(--w55);border-top:1px solid var(--w04)">+ ${rows.length-preview.length} flere — alle inkluderes når du klikker "Send"</div>`:''}
+      </div>
+    </div>`;
+}
+
+function rqUpdateCount(){
+  const el=document.getElementById('rq-count');
+  if(el)el.textContent=String((_discCache.reviewSelected||new Set()).size);
+}
+function rqToggle(cvr){
+  if(!_discCache.reviewSelected)_discCache.reviewSelected=new Set();
+  const s=_discCache.reviewSelected;
+  if(s.has(cvr))s.delete(cvr);else s.add(cvr);
+  rqUpdateCount();
+}
+function rqSelectAll(){
+  _discCache.reviewSelected=new Set((_discCache.reviewQueue||[]).map(r=>r.cvr));
+  renderReviewQueue();
+}
+function rqSelectNone(){
+  _discCache.reviewSelected=new Set();
+  renderReviewQueue();
+}
+async function rqPromoteSelected(){
+  const sel=_discCache.reviewSelected||new Set();
+  if(sel.size===0){showToast('Vælg mindst ét lead først');return;}
+  const cvrs=Array.from(sel);
+  if(!confirm(`Send ${cvrs.length} leads til Autodialer-køen?\n\nDe lander i din "Alle leads" og kan ringes med det samme.`))return;
+  try{
+    const r=await fetch('/api/leads/promote',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvrs})});
+    const d=await r.json();
+    if(!r.ok){showToast('Fejl: '+(d.error||'kunne ikke promote'));return;}
+    showToast(`✓ ${d.promoted} sendt til Autodialer${d.skippedDup?` · ${d.skippedDup} duplikater sprunget over`:''}`);
+    // Refresh leads + review queue
+    const ld=await fetch('/api/leads',{headers:ah()});
+    const userData=await ld.json();
+    leads=userData.leads||[];
+    _discCache.reviewSelected=new Set();
+    const rqR=await fetch('/api/discovery/review-queue?limit=200',{headers:ah()});
+    const rqD=await rqR.json();
+    _discCache.reviewQueue=rqD.rows||[];
+    renderReviewQueue();
+  }catch(ex){showToast('Fejl: '+ex.message);}
 }
 
 async function fetchDiscoveryRows(){
@@ -2729,18 +2827,22 @@ function openDiscoveryDetail(cvr){
   document.body.appendChild(bg);
 }
 
-async function discAddLead(cvr){
+async function discAddLead(cvr, sourceOverride){
   try{
     // Re-use the existing add-to-leads flow. We hit /api/company first
     // so we get a richer payload from Datafordeler (the discovery state
-    // only has the trimmed subset of fields).
+    // only has the trimmed subset of fields). Source tag is inferred
+    // from the calling page when not explicitly passed.
     const r=await fetch(`/api/company/${cvr}`,{headers:ah()});
     const c=await r.json();
     if(!c||c.error){showToast('Kunne ikke hente firma');return;}
-    await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify(c)});
-    leads.push(c);
+    // Infer source from current view if caller didn't specify
+    const sourceMap={'lookalike':'lookalike','google-maps':'google-maps','tech-stack':'tech-stack','csv-upload':'csv','meta-scraper':'meta-scraper','discovery':'meta-scraper','search':'manual'};
+    const source=sourceOverride||sourceMap[aView]||'meta-scraper';
+    await fetch('/api/leads',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({company:c, source})});
+    leads.push({...c, source});
     showToast(`${c.name} tilføjet`);
-    renderDiscoveryResults();
+    if(aView==='discovery'||aView==='meta-scraper')renderDiscoveryResults();
   }catch(ex){showToast('Fejl: '+ex.message);}
 }
 
@@ -3422,39 +3524,79 @@ async function tsRunAgent(){
 function renderTechStackResults(rows){
   const out=document.getElementById('ts-results');if(!out)return;
   if(!rows.length){out.innerHTML='<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:24px;text-align:center;color:var(--w55);font-size:13px">Ingen resultater.</div>';return;}
+  // Tech Stack scans the user's own leads (default source). Each result
+  // row maps back to a lead via domain → lead.website match. We surface
+  // the lead's company name + CVR so the SDR sees "this is BECK A/S,
+  // already in your leads — tagged Shopify". Plus a tag-button that
+  // saves the signatures on the lead so Autodialer can filter by stack.
+  const domToLead = new Map();
+  for(const l of (leads||[])){
+    const dom = String(l.website||l.web||l.hjemmeside||'').toLowerCase().replace(/^https?:\/\/|^www\./g,'').replace(/\/.*$/,'').trim();
+    if(dom) domToLead.set(dom, l);
+  }
   // Aggregate counts by signature for the summary header.
   const sigCounts={};
   for(const r of rows)for(const s of(r.signatures||[]))sigCounts[s]=(sigCounts[s]||0)+1;
   const sortedSigs=Object.entries(sigCounts).sort((a,b)=>b[1]-a[1]);
-  const sigChips=sortedSigs.map(([k,n])=>`<span style="padding:5px 12px;border-radius:20px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.32);color:#c4b5fd;font-size:11.5px;font-weight:700">${e(k)} <span style="color:var(--w55);font-weight:500">${n}</span></span>`).join(' ');
+  const sigChips=sortedSigs.map(([k,n])=>`<button onclick="tsFilterAutodialerByStack('${e(k)}')" title="Filtrér Autodialer-køen til leads med ${e(k)}" style="padding:5px 12px;border-radius:20px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.32);color:#c4b5fd;font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">${e(k)} <span style="color:var(--w55);font-weight:500">${n}</span></button>`).join(' ');
   out.innerHTML=`
     <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Fundet i ${rows.length} domæner</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px">
+        <div>
+          <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1px;text-transform:uppercase">Detekterede signaturer</div>
+          <div style="font-size:11.5px;color:var(--w55);margin-top:2px">Klik på en signatur for at filtrere Autodialer-køen.</div>
+        </div>
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px">${sigChips||'<span style="color:var(--w55);font-size:12px">Ingen kendte signaturer detekteret</span>'}</div>
     </div>
     <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
         <thead>
           <tr>
-            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Domæne</th>
+            <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed / domæne</th>
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Status</th>
             <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Tech-signatur</th>
+            <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map(r=>{
+            const lead=domToLead.get(String(r.domain||'').toLowerCase());
             const sigs=(r.signatures||[]).map(s=>`<span style="display:inline-block;padding:2px 8px;border-radius:12px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.32);font-size:10.5px;font-weight:700;margin-right:4px;margin-bottom:2px">${e(s)}</span>`).join('');
             const status=r.error?`<span style="color:#fca5a5;font-size:11px">⚠ ${e(r.error)}</span>`:r.statusCode?`<span style="color:${r.statusCode<400?'#6ee7b7':'#fca5a5'};font-size:11px;font-weight:600">${r.statusCode}</span>`:`<span style="color:var(--w35);font-size:11px">—</span>`;
+            const action=lead?`<button class="btn btn-sm" onclick="tsTagLeadWithStack('${e(lead.cvr)}',${JSON.stringify(r.signatures||[]).replace(/"/g,'&quot;')})" title="Gem tech-stack på lead så Autodialer kan filtrere" style="padding:5px 11px;font-size:10.5px">🏷 Tag lead</button>`:'<span style="font-size:10.5px;color:var(--w35)">—</span>';
+            const nameCell=lead?`<div style="font-size:12.5px;font-weight:700;color:#fff">${e(lead.name||r.domain)}</div><div style="font-family:monospace;font-size:10px;color:var(--w35);margin-top:1px"><a href="${e(r.finalUrl||('https://'+r.domain))}" target="_blank" rel="noopener" style="color:var(--w55);text-decoration:none">${e(r.domain)}</a></div>`:`<a href="${e(r.finalUrl||('https://'+r.domain))}" target="_blank" rel="noopener" style="font-family:monospace;font-size:11.5px;color:#fff;text-decoration:none;border-bottom:1px dotted var(--w35)">${e(r.domain)}</a>`;
             return `<tr style="border-bottom:1px solid var(--w04)">
-              <td style="padding:11px 14px;font-family:monospace;font-size:11.5px;color:#fff"><a href="${e(r.finalUrl||('https://'+r.domain))}" target="_blank" rel="noopener" style="color:#fff;text-decoration:none;border-bottom:1px dotted var(--w35)">${e(r.domain)}</a></td>
+              <td style="padding:11px 14px">${nameCell}</td>
               <td style="padding:11px 14px">${status}</td>
               <td style="padding:11px 14px">${sigs||'<span style="color:var(--w35);font-size:11px">Ingen kendte signaturer</span>'}</td>
+              <td style="padding:11px 14px;text-align:right">${action}</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     </div>
   `;
+}
+
+async function tsTagLeadWithStack(cvr, signatures){
+  // Persist signatures on the lead. Autodialer's filter UI will read
+  // lead.techStack[] and surface "kun Shopify" filters.
+  try{
+    await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({techStack:signatures})});
+    const l=leads.find(x=>x.cvr===cvr);
+    if(l)l.techStack=signatures;
+    showToast(`✓ Tagged med: ${signatures.join(', ')||'ingen signaturer'}`);
+  }catch(ex){showToast('Fejl: '+ex.message);}
+}
+
+function tsFilterAutodialerByStack(sig){
+  // Jump to Autodialer with a stack filter prefill. We store the filter
+  // on the cache so Autodialer can read it on render.
+  _adState = _adState || {};
+  _adState.stackFilter = sig;
+  showToast(`Filtrerer Autodialer på "${sig}"…`);
+  sv('autodialer');
 }
 
 // ─── META SCRAPER PAGE ──────────────────────────────────────────────────
@@ -3994,8 +4136,8 @@ async function gmAddOne(idx){
     const cr=await fetch(`/api/company/${r.cvr}`,{headers:ah()});
     const c=await cr.json();
     if(!c||c.error){showToast('Kunne ikke hente firma');return;}
-    await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify(c)});
-    leads.push(c);
+    await fetch('/api/leads',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({company:c, source:'google-maps'})});
+    leads.push({...c, source:'google-maps'});
     showToast(`${c.name} tilføjet`);
   }catch(ex){showToast('Fejl: '+ex.message);}
 }
@@ -4003,19 +4145,19 @@ async function gmAddOne(idx){
 async function gmAddAllMatched(){
   const matched=_gmCache.results.filter(r=>r.cvr);
   if(!matched.length){showToast('Ingen CVR-matches at tilføje');return;}
-  if(!confirm(`Tilføj ${matched.length} virksomheder til Min liste?`))return;
+  if(!confirm(`Tilføj ${matched.length} virksomheder til Autodialer-køen?`))return;
   let ok=0;
   for(const r of matched){
     try{
       const cr=await fetch(`/api/company/${r.cvr}`,{headers:ah()});
       const c=await cr.json();
       if(c&&!c.error){
-        await fetch('/api/leads',{method:'POST',headers:ah(),body:JSON.stringify(c)});
-        leads.push(c);ok++;
+        await fetch('/api/leads',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({company:c, source:'google-maps'})});
+        leads.push({...c, source:'google-maps'});ok++;
       }
     }catch{}
   }
-  showToast(`✓ ${ok} af ${matched.length} tilføjet til Min liste`);
+  showToast(`✓ ${ok} af ${matched.length} tilføjet til Autodialer`);
 }
 
 // ─── AUTODIALER PAGE ─────────────────────────────────────────────────────
@@ -4023,6 +4165,9 @@ async function gmAddAllMatched(){
 // "Min liste" surface in the sidebar — the SDR now lands here, picks the
 // list they want to dial, sees a summary of the queue, and starts the
 // cockpit with one click. The cockpit overlay is unchanged underneath.
+// Autodialer state — sort + source filter so the queue isn't random.
+if(typeof _adState==='undefined') var _adState={ sort:'priority', sourceFilter:'all', stackFilter:'' };
+
 function renderAutodialerPage(){
   const statsEl=document.getElementById('ad-stats');
   const listsEl=document.getElementById('ad-lists');
@@ -4030,7 +4175,32 @@ function renderAutodialerPage(){
   if(!statsEl||!listsEl||!queueEl)return;
   // Stats — queue size for the currently-selected list, total leads,
   // last-called timestamp (best-effort: latest lastCallAt on any lead).
-  const filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads;
+  let filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
+  // Apply source filter
+  if(_adState.sourceFilter&&_adState.sourceFilter!=='all'){
+    filtered=filtered.filter(l=>(l.source||'manual')===_adState.sourceFilter);
+  }
+  // Apply tech-stack filter (set by Tech Stack Scanner page)
+  if(_adState.stackFilter){
+    filtered=filtered.filter(l=>Array.isArray(l.techStack)&&l.techStack.includes(_adState.stackFilter));
+  }
+  // Sort — priority (ICP-klar first, then ads count, then added date) is
+  // the default smart sort. Manual sorts: source, ads, added, name.
+  const priority = (l) => {
+    let p = 0;
+    if(l.icpFit) p += 1000;
+    p += Math.min(l.adsMatched||0, 100);
+    return p;
+  };
+  if(_adState.sort==='priority'){
+    filtered.sort((a,b)=>priority(b)-priority(a));
+  } else if(_adState.sort==='ads'){
+    filtered.sort((a,b)=>(b.adsMatched||0)-(a.adsMatched||0));
+  } else if(_adState.sort==='added'){
+    filtered.sort((a,b)=>String(b.addedAt||'').localeCompare(String(a.addedAt||'')));
+  } else if(_adState.sort==='name'){
+    filtered.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  }
   const calledToday=leads.filter(l=>l.lastCallAt&&(Date.now()-new Date(l.lastCallAt).getTime())<24*60*60*1000).length;
   const dispositioned=leads.filter(l=>l.lastAction).length;
   const lastCall=leads.reduce((m,l)=>{
@@ -4060,12 +4230,45 @@ function renderAutodialerPage(){
     listChip('all','Alle leads',leads.length,aList==='all'||!aList),
     ...userLists.map(l=>listChip(l.id,l.name,leads.filter(x=>x.listId===l.id).length,aList===l.id)),
   ].join(' ');
-  listsEl.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-    <span style="font-size:11px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase">Liste</span>
-    ${chips}
-    <span style="flex:1"></span>
-    <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:7px 14px">⬇ Eksportér</button>
-  </div>`;
+  // Source counts for the filter chips
+  const srcCounts={};
+  for(const l of leads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
+  const srcDef=[
+    ['all','Alle',leads.length],
+    ['meta-scraper','META',srcCounts['meta-scraper']||0],
+    ['lookalike','Look-alike',srcCounts['lookalike']||0],
+    ['google-maps','Maps',srcCounts['google-maps']||0],
+    ['tech-stack','Tech',srcCounts['tech-stack']||0],
+    ['csv','CSV',srcCounts['csv']||0],
+    ['manual','Manuel',srcCounts['manual']||0],
+  ];
+  const srcChip=(id,lbl,cnt)=>{
+    const active=_adState.sourceFilter===id;
+    if(cnt===0&&id!=='all')return '';
+    return `<button onclick="adSetSourceFilter('${id}')" style="padding:5px 11px;border-radius:8px;border:1px solid ${active?'rgba(124,58,237,0.5)':'var(--w08)'};background:${active?'rgba(124,58,237,0.18)':'transparent'};color:${active?'#fff':'var(--w55)'};font-size:11px;font-weight:${active?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif">${e(lbl)} <span style="opacity:0.6">${cnt}</span></button>`;
+  };
+  listsEl.innerHTML=`
+    <!-- Lists row -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Liste</span>
+      ${chips}
+      <span style="flex:1"></span>
+      <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:6px 12px">⬇ Eksportér</button>
+    </div>
+    <!-- Filter + sort row -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kilde</span>
+      ${srcDef.map(([id,lbl,cnt])=>srcChip(id,lbl,cnt)).join(' ')}
+      <span style="flex:1"></span>
+      ${_adState.stackFilter?`<button onclick="_adState.stackFilter='';renderAutodialerPage()" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(124,58,237,0.5);background:rgba(124,58,237,0.18);color:#fff;font-size:11px;font-weight:700;cursor:pointer">Tech: ${e(_adState.stackFilter)} ✕</button>`:''}
+      <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">Sortér</span>
+      <select id="ad-sort" onchange="_adState.sort=this.value;renderAutodialerPage()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;color:#fff;padding:5px 10px;font-family:'Outfit',sans-serif;font-size:11.5px;outline:none;cursor:pointer">
+        <option value="priority" ${_adState.sort==='priority'?'selected':''}>Prioritet (ICP først)</option>
+        <option value="ads" ${_adState.sort==='ads'?'selected':''}>Flest ads</option>
+        <option value="added" ${_adState.sort==='added'?'selected':''}>Senest tilføjet</option>
+        <option value="name" ${_adState.sort==='name'?'selected':''}>Navn (A-Å)</option>
+      </select>
+    </div>`;
 
   // Queue preview — first 30 leads with name + CVR + last disposition.
   // Clicking a row jumps the cockpit straight to that lead.
@@ -4092,14 +4295,17 @@ function renderAutodialerPage(){
     </div>
     <table style="width:100%;border-collapse:collapse">
       <tbody>
-        ${preview.map((l,i)=>`<tr onclick="adJumpToLead(${i})" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='transparent'">
-          <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
-          <td style="padding:10px 14px;font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</td>
-          <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
-          <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
-          <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
-          <td style="padding:10px 14px;text-align:right">${l.phone?`<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:11px;color:var(--purple-light);text-decoration:none">${e(l.phone)}</a>`:'<span style="font-size:10.5px;color:var(--w35)">ingen tlf</span>'}</td>
-        </tr>`).join('')}
+        ${preview.map((l,i)=>{
+          const icpDot = l.icpFit ? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399;margin-right:6px;vertical-align:middle" title="ICP-klar"></span>` : '';
+          return `<tr onclick="adJumpToLead(${i})" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${l.icpFit?';background:rgba(52,211,153,0.04)':''}" onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'">
+            <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
+            <td style="padding:10px 14px">${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span></td>
+            <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
+            <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
+            <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
+            <td style="padding:10px 14px;text-align:right">${l.phone?`<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:11px;color:var(--purple-light);text-decoration:none">${e(l.phone)}</a>`:'<span style="font-size:10.5px;color:var(--w35)">ingen tlf</span>'}</td>
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>
     ${filtered.length>preview.length?`<div style="padding:10px 16px;text-align:center;font-size:11px;color:var(--w55);border-top:1px solid var(--w08)">… og ${filtered.length-preview.length} mere — start cockpittet for hele listen</div>`:''}
@@ -4107,6 +4313,7 @@ function renderAutodialerPage(){
 }
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
+function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
 function adJumpToLead(idx){
   // Open cockpit at a specific position. Since openCockpit() rebuilds the
   // queue from the current filtered list, we just set the resume marker
@@ -4308,8 +4515,26 @@ async function cockpitDisposition(action){
     await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:action,lastDispositionAt:new Date().toISOString()})});
     c.lastAction=action;c.lastDispositionAt=new Date().toISOString();
   }catch(_){}
+  // "Interesseret" → auto-push to Twenty. The backend endpoint already
+  // handles the "not configured" case gracefully (marks the lead as
+  // queued so Phase D can replay later when credentials land).
   if(action==='interested'){
-    showToast('Phase D: Push til Twenty (placeholder) — vent på Twenty-integration');
+    try{
+      const r=await fetch('/api/twenty/push',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr:c.cvr,disposition:'interested',notes:c.notes||''})});
+      const d=await r.json();
+      if(r.ok){
+        c.twenty_opportunity_id=d.opportunity?.id;
+        c.twenty_url=d.opportunity?.url;
+        showToast(`✓ Pushet til Twenty — ${c.name}`);
+      } else if(r.status===503&&d.queued){
+        c.twenty_queued_at=new Date().toISOString();
+        showToast('✓ Markeret som interesseret — auto-push til Twenty når Phase D er live');
+      } else {
+        showToast('Disposition gemt · Twenty-push fejlede: '+(d.error||'ukendt'));
+      }
+    }catch(ex){
+      showToast('Disposition gemt · Twenty-push fejlede: '+ex.message);
+    }
   }else{
     showToast(`Disposition: ${lastActionLabel(action)}`);
   }
