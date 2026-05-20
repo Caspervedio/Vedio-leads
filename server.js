@@ -1130,10 +1130,17 @@ app.get("/api/discovery/summary", authMiddleware, (req, res) => {
   const companies = s.companies || {};
   let totalActiveAdvertisers = 0;
   let totalChecked = 0;
+  let icpQualified = 0;
+  let pendingPushToCloudTalk = 0;
   for (const cvr of Object.keys(companies)) {
     const c = companies[cvr];
     if (c?.ads) totalChecked++;
     if (c?.ads?.verdict === true) totalActiveAdvertisers++;
+    if (c?.icpFit) {
+      icpQualified++;
+      // Pending = ICP-fit, not already pushed, not already in Twenty.
+      if (!c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id) pendingPushToCloudTalk++;
+    }
   }
   res.json({
     lastRunStartedAt: s.lastRunStartedAt || null,
@@ -1145,6 +1152,8 @@ app.get("/api/discovery/summary", authMiddleware, (req, res) => {
     withAdsThisRun: s.withAds || 0,
     totalChecked,
     totalActiveAdvertisers,
+    icpQualified,
+    pendingPushToCloudTalk,
     nextRunAt: nextDailyRunTime(),
   });
 });
@@ -1178,6 +1187,10 @@ app.get("/api/discovery/companies", authMiddleware, (req, res) => {
 
   let rows = companies.filter((c) => c && c.cvr);
   if (tab === "ads") rows = rows.filter((c) => c.ads?.verdict === true);
+  else if (tab === "icp") {
+    // ICP-qualified leads that haven't yet been pushed downstream.
+    rows = rows.filter((c) => c.icpFit && !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id);
+  }
   else if (tab === "new") {
     const sevenDaysAgo = Date.now() - 7 * 86400_000;
     rows = rows.filter((c) => c.ads?.verdict === true && c.ads?.checkedAt && new Date(c.ads.checkedAt).getTime() >= sevenDaysAgo);

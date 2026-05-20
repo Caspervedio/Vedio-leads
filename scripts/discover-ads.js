@@ -471,6 +471,18 @@ async function main() {
               prev_checked: previously.ads?.checkedAt || null,
             });
           }
+          // ICP-fit gate — automatic rule that decides whether this lead
+          // should auto-flow into CloudTalk (Phase C). Tunable constants
+          // here so we can tweak without code review later.
+          const ICP_MIN_MATCHED_ADS = 3;
+          const ICP_MIN_EMPLOYEES_KNOWN = 5;
+          const icpFit =
+            r.verdict === true &&
+            (r.matched || 0) >= ICP_MIN_MATCHED_ADS &&
+            !!c.cvr &&
+            c.status === "aktiv" &&
+            (c.employees == null || c.employees >= ICP_MIN_EMPLOYEES_KNOWN);
+
           next[c.cvr] = {
             cvr: c.cvr,
             enhedsId: c.enhedsId,
@@ -489,6 +501,12 @@ async function main() {
               advertisers: r.advertisers || [],
               checkedAt: new Date().toISOString(),
             },
+            // Pipeline-state fields. icpFit gates the auto-push to CloudTalk;
+            // pushed_to_cloudtalk_at + twenty_opportunity_id (set by Phase C
+            // and Phase D when wired) protect against duplicates downstream.
+            icpFit,
+            pushed_to_cloudtalk_at: previously?.pushed_to_cloudtalk_at || null,
+            twenty_opportunity_id: previously?.twenty_opportunity_id || null,
           };
           // Also update the main service's meta_ads.json so its detail
           // panel reflects fresh data without a separate API call.

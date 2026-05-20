@@ -749,6 +749,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1v14M1 8h14M4 4l8 8M12 4l-8 8"/></svg>
       Lead discovery
     </a>
+    <a id="nv-la" onclick="sv('lookalike')">
+      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
+      Look-alike Agent
+    </a>
   </nav>
 
   <div class="sb-filters" id="sb-filters" style="display:none"></div>
@@ -912,7 +916,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div style="font-size:11px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Tilføj kunde</div>
         <div style="display:flex;gap:8px">
           <input class="fi" id="cust-cvr-input" placeholder="Indtast CVR-nummer (8 cifre)" style="flex:1;font-size:13px;border:1.5px solid var(--p1);background:var(--p7);border-radius:8px;padding:10px 14px" onkeydown="if(event.key==='Enter')addCustomerFromInput()">
-          <button class="btn btn-primary btn-sm" onclick="addCustomerFromInput()" style="padding:10px 20px;font-size:13px">+ Tilføj</button>
+          <button class="btn btn-primary btn-sm" onclick="addCustomerFromInput()" style="padding:10px 20px;font-size:13px">📞 Til kø</button>
         </div>
         <div id="cust-add-msg" style="font-size:11px;margin-top:6px;min-height:16px"></div>
       </div>
@@ -944,10 +948,12 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 
       <!-- Tabs -->
       <div style="display:flex;gap:0;border-bottom:1px solid var(--w08);margin-bottom:18px">
-        <button class="disc-tab on" data-tab="ads" onclick="discSetTab('ads')" style="padding:10px 18px;font-size:12px;font-weight:700;letter-spacing:0.3px;color:var(--purple-light);background:transparent;border:none;border-bottom:2px solid var(--purple);margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🔥 Aktive annoncører</button>
+        <button class="disc-tab on" data-tab="icp" onclick="discSetTab('icp')" style="padding:10px 18px;font-size:12px;font-weight:700;letter-spacing:0.3px;color:var(--purple-light);background:transparent;border:none;border-bottom:2px solid var(--purple);margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">📌 ICP-klar</button>
+        <button class="disc-tab" data-tab="ads" onclick="discSetTab('ads')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🔥 Aktive annoncører</button>
         <button class="disc-tab" data-tab="new" onclick="discSetTab('new')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">⚡ Nye annoncører</button>
         <button class="disc-tab" data-tab="all" onclick="discSetTab('all')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">📡 Alle tjekkede</button>
-        <button class="disc-tab" data-tab="lookalike" onclick="discSetTab('lookalike')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🎯 Look-alikes</button>
+        <!-- Look-alike tab removed — Look-alike Agent is now a top-level sidebar nav item -->
+
       </div>
 
       <!-- Filter bar -->
@@ -955,6 +961,29 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 
       <!-- Results -->
       <div id="disc-results"></div>
+    </div>
+  </div>
+
+  <!-- LOOK-ALIKE AGENT PAGE -->
+  <div id="lookalike-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:18px">
+        <div>
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🎯 Look-alike Agent</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">AI-agenten finder leads der ligner dine bedste</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Tilføj 5–10 kvalitetsleads til "Mine leads" — agenten bruger dem som seed og scanner Discovery-puljen for virksomheder med samme branche, størrelse, region og ads-mønster. Den finder leads vi <em>ikke</em> allerede har, og scorer dem efter lighed.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="la-refresh-btn" onclick="refreshLookalikeAgent()" style="padding:10px 18px;font-size:13px;flex-shrink:0">↻ Kør agent nu</button>
+      </div>
+
+      <!-- Seed leads summary -->
+      <div id="la-seed-card" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:18px"></div>
+
+      <!-- Profile chips (top industries, regions etc derived from seed) -->
+      <div id="la-profile" style="margin-bottom:14px"></div>
+
+      <!-- Results -->
+      <div id="la-results"></div>
     </div>
   </div>
 
@@ -2096,7 +2125,7 @@ function setDiscTab(tab){_discFeedbackTab=tab;renderDiscoveryPage();}
 function toggleDiscDetail(id){_discExpandedId=_discExpandedId===id?null:id;renderDiscoveryPage();}
 
 // ─── Phase 1c — new Lead Discovery (reads from /api/discovery/*) ────────────
-let _discState={tab:'ads',industry:'',city:'',empMin:'',minAds:'',q:'',sort:'ads',offset:0,limit:50};
+let _discState={tab:'icp',industry:'',city:'',empMin:'',minAds:'',q:'',sort:'ads',offset:0,limit:50};
 let _discCache={rows:[],total:0,summary:null};
 
 // Deep-link to Meta's Ad Library filtered to advertiser/page name (not ad
@@ -2197,9 +2226,9 @@ function renderDiscoverySummary(){
   </div>`;
   document.getElementById('disc-summary').innerHTML=[
     tile('Aktive annoncører',(s.totalActiveAdvertisers||0).toLocaleString('da-DK'),`af ${(s.totalChecked||0).toLocaleString('da-DK')} tjekkede`),
+    tile('📌 ICP-kvalificerede',(s.icpQualified||0).toLocaleString('da-DK'),`${(s.pendingPushToCloudTalk||0)} klar til CloudTalk-push`),
     tile('Seneste kørsel',ago,s.lastRunCompletedAt?new Date(s.lastRunCompletedAt).toLocaleString('da-DK'):'—'),
-    tile('Sidste resultat',`${s.withAdsThisRun||0} / ${s.scrapedThisRun||0}`,`fandt ads · ${s.failThisRun||0} fejl`),
-    tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`≥10 ansatte i mål-brancher`),
+    tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`aktive virksomheder i mål-brancher`),
   ].join('');
 }
 
@@ -2335,17 +2364,18 @@ function renderDiscoveryResults(){
 function renderDiscoveryRow(c){
   const ads=c.ads||{};
   const inLeads=leads.some(l=>l.cvr===c.cvr);
+  const icpChip=c.icpFit?`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);margin-left:6px" title="Opfylder ICP-reglerne — auto-push til CloudTalk når Phase C er klar">📌 ICP</span>`:'';
   const verdictPill=ads.verdict===true
     ? `<a href="${adsLibraryUrl(c)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="pill" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);font-size:11px;font-weight:700;text-decoration:none;transition:transform 0.1s,background 0.15s;cursor:pointer" title="Åbn i Meta Ad Library" onmouseover="this.style.background='rgba(124,58,237,0.28)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(124,58,237,0.18)';this.style.transform='translateY(0)'">📢 ${ads.matched||0} aktive ↗</a>`
     : `<span class="pill" style="background:var(--w04);color:var(--w55);border:1px solid var(--w08);font-size:11px;font-weight:600">— Ingen ads</span>`;
   return `<tr data-cvr="${c.cvr}" onclick="openDiscoveryDetail('${c.cvr}')" style="border-bottom:1px solid var(--w04);cursor:pointer">
-    <td style="padding:12px 14px"><span style="font-weight:700;color:#fff;font-size:13px">${e(c.name)}</span>${c.brandName&&c.brandName.toLowerCase()!==c.name.toLowerCase()?`<div style="font-size:10.5px;color:var(--w35);margin-top:1px">Brand: ${e(c.brandName)}</div>`:''}</td>
+    <td style="padding:12px 14px"><span style="font-weight:700;color:#fff;font-size:13px">${e(c.name)}</span>${icpChip}${c.brandName&&c.brandName.toLowerCase()!==c.name.toLowerCase()?`<div style="font-size:10.5px;color:var(--w35);margin-top:1px">Brand: ${e(c.brandName)}</div>`:''}</td>
     <td style="padding:12px 14px;font-family:monospace;font-size:11px;color:var(--w35)">${c.cvr}</td>
     <td style="padding:12px 14px;font-size:12px;color:var(--w80)">${e(c.city||'—')}</td>
     <td style="padding:12px 14px;font-size:12px;color:var(--w80);text-align:right">${c.employees||'—'}</td>
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right" onclick="event.stopPropagation()">
-      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">📞 Til kø</button>`}
     </td>
   </tr>`;
 }
@@ -2365,7 +2395,7 @@ function renderLookalikeRow(c){
     <td style="padding:12px 14px;text-align:right"><span style="font-weight:800;color:var(--purple-light);font-size:13px">${c._score||0}</span></td>
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right" onclick="event.stopPropagation()">
-      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">+ Tilføj</button>`}
+      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">📞 Til kø</button>`}
     </td>
   </tr>`;
 }
@@ -2438,7 +2468,7 @@ function openDiscoveryDetail(cvr){
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Kontakter (Kaspr)</div>
       ${contactsSection}
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
-        ${inLeads?'<span style="font-size:12px;color:var(--green);font-weight:700;padding:10px 14px">✓ Allerede i dine leads</span>':`<button class="btn btn-primary btn-sm" style="padding:9px 18px;font-size:12.5px" onclick="discAddLead('${c.cvr}');document.getElementById('disc-detail-modal').remove();">+ Tilføj til leads</button>`}
+        ${inLeads?'<span style="font-size:12px;color:var(--green);font-weight:700;padding:10px 14px">✓ Allerede i dine leads</span>':`<button class="btn btn-primary btn-sm" style="padding:9px 18px;font-size:12.5px" onclick="discAddLead('${c.cvr}');document.getElementById('disc-detail-modal').remove();">📞 Til kø</button>`}
         <button class="btn btn-sm" style="padding:9px 16px" onclick="document.getElementById('disc-detail-modal').remove()">Luk</button>
       </div>
     </div>
@@ -2487,6 +2517,110 @@ function humanAgo(iso){
   const m=Math.round(diff/60000);if(m<60)return `${m} min siden`;
   const h=Math.round(m/60);if(h<24)return `${h} t siden`;
   return `${Math.round(h/24)} dage siden`;
+}
+
+// ─── LOOK-ALIKE AGENT ────────────────────────────────────────────────────
+// Standalone page (sidebar nav 'nv-la'). Uses Mine leads as the seed set
+// and surfaces similar-scoring Discovery companies via the existing
+// /api/discovery/lookalikes endpoint. Frames it as an AI agent the SDR
+// feeds with quality seeds — agent works in the background between runs.
+
+const _laCache={rows:[],profile:null,seedSize:0,lastRunAt:null};
+
+async function renderLookalikePage(){
+  const seedCard=document.getElementById('la-seed-card');
+  const resultsWrap=document.getElementById('la-results');
+  const profileWrap=document.getElementById('la-profile');
+  if(!seedCard||!resultsWrap)return;
+  // Header: seed status (filled in after the fetch)
+  seedCard.innerHTML=`<div style="display:flex;align-items:center;gap:14px;color:var(--w55);font-size:13px">
+    <span class="search-spinner" style="width:18px;height:18px"></span>
+    <span>Henter status fra Look-alike Agent…</span>
+  </div>`;
+  profileWrap.innerHTML='';
+  resultsWrap.innerHTML='';
+  await loadLookalikeData();
+  renderLookalikeUI();
+}
+
+async function loadLookalikeData(){
+  try{
+    const r=await fetch('/api/discovery/lookalikes?limit=100',{headers:ah()});
+    const d=await r.json();
+    _laCache.rows=d.rows||[];
+    _laCache.profile=d.profile||null;
+    _laCache.seedSize=d.seedSize||0;
+    _laCache.lastRunAt=new Date().toISOString();
+  }catch(ex){
+    _laCache.rows=[];
+    _laCache.profile=null;
+    _laCache.seedSize=0;
+  }
+}
+
+function renderLookalikeUI(){
+  const seedCard=document.getElementById('la-seed-card');
+  const resultsWrap=document.getElementById('la-results');
+  const profileWrap=document.getElementById('la-profile');
+  const seed=_laCache.seedSize;
+  const seedQualityHint=seed===0
+    ? `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚠ Ingen seed-leads endnu — tilføj 5–10 kvalitetsleads til Mine leads, så agenten har noget at lære af.</div>`
+    : seed<5
+    ? `<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.25);color:#fdba74;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">⚡ Du har ${seed} seed-leads — agenten arbejder bedre med 5–10. Tilføj flere kvalitetsleads til Mine leads for skarpere matches.</div>`
+    : `<div style="background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.25);color:#6ee7b7;padding:9px 14px;border-radius:9px;font-size:12px;margin-top:10px">✓ ${seed} seed-leads aktive. Agenten har nok at gå ud fra.</div>`;
+  seedCard.innerHTML=`<div style="display:flex;align-items:center;gap:14px">
+      <div style="width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-size:24px">🎯</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:700;color:#fff;letter-spacing:-0.2px">AI-agent status</div>
+        <div style="font-size:11.5px;color:var(--w55);margin-top:2px">${seed} seed-leads · ${_laCache.rows.length} match-kandidater fundet · sidst kørt ${_laCache.lastRunAt?humanAgo(_laCache.lastRunAt):'aldrig'}</div>
+      </div>
+      <button class="btn btn-sm" onclick="sv('leads')" style="padding:7px 13px">Administrer seed →</button>
+    </div>
+    ${seedQualityHint}`;
+  // Profile chips
+  const p=_laCache.profile||{};
+  const topInd=(p.topIndustries||[]).map(([k,n])=>`<span style="padding:4px 10px;border-radius:20px;background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.3);color:#c4b5fd;font-size:11px;font-weight:700">${e(k)} <span style="color:var(--w55);font-weight:500">${n}×</span></span>`).join(' ');
+  const topZip=(p.topZipPrefixes||[]).map(([k,n])=>`<span style="padding:4px 10px;border-radius:20px;background:var(--w04);border:1px solid var(--w08);color:var(--w80);font-size:11px;font-weight:600">${e(k)}xxx <span style="color:var(--w35)">${n}×</span></span>`).join(' ');
+  profileWrap.innerHTML=(topInd||topZip)?`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 2px">
+      <span style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">Agent har lært:</span>
+      ${topInd}
+      ${topZip}
+    </div>`:'';
+  // Results table
+  if(_laCache.rows.length===0){
+    resultsWrap.innerHTML=`<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:42px;text-align:center">
+      <div style="font-size:30px;margin-bottom:8px">🔍</div>
+      <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Agenten har endnu ikke fundet matches</div>
+      <div style="font-size:12px;color:var(--w55);max-width:380px;margin:0 auto">Det kan være pulje-builden ikke er færdig endnu, eller dine seed-leads matcher ikke virksomheder i Discovery-datasættet endnu. Tjek igen efter en kørsel.</div>
+    </div>`;
+    return;
+  }
+  resultsWrap.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Virksomhed</th>
+          <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">CVR</th>
+          <th style="text-align:left;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">By</th>
+          <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Score</th>
+          <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Meta-ads</th>
+          <th style="text-align:right;padding:10px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08)">Handling</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${_laCache.rows.map(renderLookalikeRow).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function refreshLookalikeAgent(){
+  const btn=document.getElementById('la-refresh-btn');
+  if(btn){btn.disabled=true;btn.textContent='Kører…';}
+  await loadLookalikeData();
+  renderLookalikeUI();
+  if(btn){btn.disabled=false;btn.textContent='↻ Kør agent nu';}
+  showToast('Agent kørt — fandt '+_laCache.rows.length+' match-kandidater');
 }
 
 // ── CSV import ─────────────────────────────────────────────────────────────
@@ -2900,6 +3034,7 @@ function sv(v){
   document.getElementById('nv-l').classList.toggle('on',v==='leads');
   document.getElementById('nv-c')?.classList.toggle('on',v==='customers');
   document.getElementById('nv-d')?.classList.toggle('on',v==='discovery');
+  document.getElementById('nv-la')?.classList.toggle('on',v==='lookalike');
 
   selCo=null;hdDp();ckd.clear();upSel();
   const bw=document.querySelector('.body-wrap');
@@ -2908,6 +3043,7 @@ function sv(v){
   const selb=document.getElementById('selbar');
   const custPage=document.getElementById('customers-page');
   const discPage=document.getElementById('discovery-page');
+  const laPage=document.getElementById('lookalike-page');
 
   // Hide everything first
   bw.style.display='none';tb.style.display='none';
@@ -2917,6 +3053,7 @@ function sv(v){
   document.getElementById('leads-list-bar').style.display='none';
   if(custPage)custPage.style.display='none';
   if(discPage)discPage.style.display='none';
+  if(laPage)laPage.style.display='none';
 
   if(v==='search'||v==='leads'){
     bw.style.display='';tb.style.display='';if(sb)sb.style.display='';if(selb)selb.style.display='';
@@ -2934,6 +3071,9 @@ function sv(v){
   } else if(v==='discovery'){
     if(discPage)discPage.style.display='flex';discPage.style.flexDirection='column';
     renderDiscoveryPage();
+  } else if(v==='lookalike'){
+    if(laPage)laPage.style.display='flex';laPage.style.flexDirection='column';
+    renderLookalikePage();
   }
 }
 
@@ -3365,7 +3505,7 @@ function showDp(c){
           <button class="btn btn-sm" style="width:100%;justify-content:center;gap:6px" onclick="openEditLead('${c.cvr}')">Rediger oplysninger</button>
           <button class="btn" style="width:100%;justify-content:center;color:var(--green);border-color:rgba(22,163,74,.3)" disabled>✓ Allerede i leads</button>
           <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="remL('${c.cvr}')">Fjern fra leads</button>`
-          :`<button class="btn btn-primary" style="width:100%;justify-content:center" onclick="showListPicker(['${c.cvr}'])">+ Tilføj til leads</button>`}
+          :`<button class="btn btn-primary" style="width:100%;justify-content:center" onclick="showListPicker(['${c.cvr}'])">📞 Til kø</button>`}
       </div>
       <div class="dp-section" style="margin-top:14px">Meta-ads</div>
       <div id="meta-ads-wrap-${c.cvr}">${renderMetaAdsSection(c)}</div>
