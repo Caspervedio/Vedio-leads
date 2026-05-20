@@ -437,6 +437,11 @@ body::before{content:'';position:fixed;inset:0;opacity:0.10;mix-blend-mode:overl
 .sb-nav a:hover{color:#fff;background:rgba(124,58,237,0.10)}
 .sb-nav a.on{color:#fff;background:rgba(124,58,237,0.18);border:1px solid rgba(124,58,237,0.3)}
 .sb-nav a.on .ico{color:var(--purple-light)}
+/* Collapsible "Eksperimentelle" section header */
+#sb-exp-hdr:hover{color:var(--w80)}
+#sb-exp-hdr:hover #sb-exp-arrow{color:var(--w80)}
+#sb-exp-body a{margin-left:6px;border-left:1px solid var(--w08);padding-left:14px;font-size:13px}
+#sb-exp-body a .ico{opacity:0.7}
 
 /* Filter accordions in sidebar */
 .acc-hd{border-color:var(--w08)}
@@ -741,22 +746,14 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2h2l1.5 3.5L5 7c.7 2 2.3 3.6 4.3 4.3L11 10l3.5 1.5V14c0 .5-.5 1-1 1C8 14.5 1 7.5 0 2c0-.5.5-1 1-1z" transform="translate(1 0)"/></svg>
       Autodialer
     </a>
-    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agents</div>
+    <!-- AI Agent (singular) — META Scraper is the daily-driver autonomous
+         agent. Look-alike / Maps / Tech Stack moved into "Eksperimentelle"
+         below after the channel audit — they add complexity without
+         materially helping the 30/day target until we have richer data. -->
+    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agent</div>
     <a id="nv-meta" onclick="sv('meta-scraper')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M3 8c0-3 2-5 5-5s5 2 5 5M3 8c0 3 2 5 5 5s5-2 5-5"/></svg>
       META Scraper
-    </a>
-    <a id="nv-la" onclick="sv('lookalike')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
-      Look-alike Finder
-    </a>
-    <a id="nv-gm" onclick="sv('google-maps')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1c-2.5 0-4.5 2-4.5 4.5 0 3 4.5 8 4.5 8s4.5-5 4.5-8C12.5 3 10.5 1 8 1z"/><circle cx="8" cy="5.5" r="1.5"/></svg>
-      Maps Scraper
-    </a>
-    <a id="nv-ts" onclick="sv('tech-stack')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="3" rx="0.5"/><rect x="2" y="6.5" width="12" height="3" rx="0.5"/><rect x="2" y="11" width="12" height="3" rx="0.5"/></svg>
-      Tech Stack Scanner
     </a>
     <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Værktøjer</div>
     <a id="nv-csv" onclick="sv('csv-upload')">
@@ -767,6 +764,27 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="m11 11 3 3"/></svg>
       CVR Discovery
     </a>
+    <!-- Eksperimentelle — collapsed by default; localStorage holds state.
+         The agents below still work, we're just keeping them out of the
+         daily-flow lineup until they earn their place back. -->
+    <div id="sb-exp-hdr" onclick="toggleExperimentalSection()" style="display:flex;align-items:center;justify-content:space-between;font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px;cursor:pointer;user-select:none">
+      <span>Eksperimentelle</span>
+      <span id="sb-exp-arrow" style="font-size:10px;transition:transform 0.18s;transform:rotate(-90deg)">▾</span>
+    </div>
+    <div id="sb-exp-body" style="display:none">
+      <a id="nv-la" onclick="sv('lookalike')">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
+        Look-alike Finder
+      </a>
+      <a id="nv-gm" onclick="sv('google-maps')">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1c-2.5 0-4.5 2-4.5 4.5 0 3 4.5 8 4.5 8s4.5-5 4.5-8C12.5 3 10.5 1 8 1z"/><circle cx="8" cy="5.5" r="1.5"/></svg>
+        Maps Scraper
+      </a>
+      <a id="nv-ts" onclick="sv('tech-stack')">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="3" rx="0.5"/><rect x="2" y="6.5" width="12" height="3" rx="0.5"/><rect x="2" y="11" width="12" height="3" rx="0.5"/></svg>
+        Tech Stack Scanner
+      </a>
+    </div>
     <!-- Min liste retired from the sidebar — the Autodialer cockpit is now
          the canonical "calling list" surface. The underlying leads page
          remains reachable internally (e.g. Look-alike "Administrer seed →"
@@ -5281,6 +5299,33 @@ async function applyFeedbackAdjustments(){
 // away from META Scraper (which overrides the disc-page header + tab).
 let _prevView = 'discovery';
 
+// "Eksperimentelle" sidebar section — collapsed by default. Auto-opens
+// when the SDR navigates into one of its agents so the highlight stays
+// visible. State persists across reloads.
+const SB_EXP_KEY = 'vedio.sidebar.experimentalOpen';
+function isExperimentalView(v){ return v==='lookalike'||v==='google-maps'||v==='tech-stack'; }
+function setExperimentalSectionOpen(open){
+  const body=document.getElementById('sb-exp-body');
+  const arrow=document.getElementById('sb-exp-arrow');
+  if(!body||!arrow)return;
+  body.style.display = open ? '' : 'none';
+  arrow.style.transform = open ? 'rotate(0deg)' : 'rotate(-90deg)';
+  try{ localStorage.setItem(SB_EXP_KEY, open?'1':'0'); }catch{}
+}
+function toggleExperimentalSection(){
+  const body=document.getElementById('sb-exp-body');
+  setExperimentalSectionOpen(body && body.style.display==='none');
+}
+// Restore section state on first load + force-open when entering an
+// experimental view.
+function syncExperimentalSection(v){
+  if(isExperimentalView(v)) { setExperimentalSectionOpen(true); return; }
+  try{
+    const saved = localStorage.getItem(SB_EXP_KEY);
+    if(saved!==null) setExperimentalSectionOpen(saved==='1');
+  }catch{}
+}
+
 // Swap the header copy on the discovery-page DOM. Same DOM serves both the
 // Dashboard view (default copy) and the META Scraper agent view (forces
 // the 'Aktive annoncører' tab so the SDR lands on scraper output).
@@ -5302,6 +5347,10 @@ function setDiscoveryHeader(mode){
 
 function sv(v){
   aView=v;
+  // Sync the collapsible "Eksperimentelle" section — force-open when the
+  // SDR navigates into one of its agents so the active highlight stays
+  // visible. Restore last-saved state otherwise.
+  syncExperimentalSection(v);
   // Sidebar nav active-state — Dashboard is the new home of the old "Lead
   // discovery" page. Lead-source pages each get their own nav highlight so
   // the SDR always knows which tool they're inside.
