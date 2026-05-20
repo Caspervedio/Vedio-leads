@@ -1313,6 +1313,57 @@ app.get("/api/discovery/flips", authMiddleware, (req, res) => {
   res.json({ days, count: out.length, flips: out });
 });
 
+// POST /api/discovery/run — trigger the lead-discovery Cloud Run Job on
+// demand. The main service's runtime SA already has roles/run.invoker on
+// the Job (granted by setup-discovery-scheduler.sh so Cloud Scheduler can
+// fire it) — we reuse the same auth path by fetching an OAuth token from
+// the Cloud Run instance's metadata server.
+const DISCOVERY_JOB_RUN_URL =
+  "https://europe-west1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/vedio-444210/jobs/lead-discovery:run";
+
+async function getInstanceOauthToken() {
+  // Available inside Cloud Run / Cloud Functions / GCE; absent on dev laptops.
+  const r = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    { headers: { "Metadata-Flavor": "Google" } },
+  ).catch(() => null);
+  if (!r || !r.ok) return null;
+  const j = await r.json();
+  return j.access_token || null;
+}
+
+app.post("/api/discovery/run", authMiddleware, async (req, res) => {
+  try {
+    const token = await getInstanceOauthToken();
+    if (!token) {
+      // Local dev — no metadata server. Don't pretend the Job started.
+      return res.status(503).json({ error: "Cloud Run metadata token unavailable (kører lokalt?)" });
+    }
+    // Allow callers to override env (e.g. force pool refresh from the UI).
+    const overrides = (req.body && req.body.overrides) || null;
+    const body = overrides
+      ? { overrides: { containerOverrides: [{ env: Object.entries(overrides).map(([name, value]) => ({ name, value: String(value) })) }] } }
+      : {};
+    const r = await fetch(DISCOVERY_JOB_RUN_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    if (!r.ok) {
+      console.error("[discovery/run] Cloud Run API error:", r.status, text.slice(0, 400));
+      return res.status(502).json({ error: `Cloud Run ${r.status}: ${text.slice(0, 200)}` });
+    }
+    // Parse just enough to surface the execution name for the toast.
+    let executionName = null;
+    try { executionName = JSON.parse(text).metadata?.name || null; } catch (_) {}
+    res.json({ ok: true, executionName });
+  } catch (e) {
+    console.error("[discovery/run] failed:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Leads ─────────────────────────────────────────────────────────────────────
 
 // Get all users' claimed CVRs (for showing owner avatars on search results)

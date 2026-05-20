@@ -2366,7 +2366,23 @@ async function discAddLead(cvr){
 }
 
 async function manualDiscoveryRun(){
-  showToast('Manuel kørsel skal startes via Cloud Run Jobs i GCP-konsollen.');
+  if(!confirm('Start ny lead-discovery kørsel nu?\n\nDen kører i baggrunden i ca. 35–45 min. Resultater dukker op løbende på dashboardet.'))return;
+  const btn=document.getElementById('disc-run-btn');
+  if(btn){btn.disabled=true;btn.textContent='Starter…';}
+  try{
+    const r=await fetch('/api/discovery/run',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    if(r.ok){
+      showToast('Scan startet — opdater dashboardet om 30–45 min for resultater');
+      if(btn){btn.textContent='Kørsel i gang';setTimeout(()=>{btn.disabled=false;btn.textContent='Kør nu';},3000);}
+    }else{
+      showToast('Kunne ikke starte: '+(d.error||'ukendt fejl'));
+      if(btn){btn.disabled=false;btn.textContent='Kør nu';}
+    }
+  }catch(ex){
+    showToast('Fejl: '+ex.message);
+    if(btn){btn.disabled=false;btn.textContent='Kør nu';}
+  }
 }
 
 function humanAgo(iso){
