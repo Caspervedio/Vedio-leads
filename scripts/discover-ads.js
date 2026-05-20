@@ -420,6 +420,13 @@ async function loadOrBuildPool() {
 
 async function main() {
   const startTime = Date.now();
+  // Honour the UI toggle — when the SDR flips META Scraper to OFF in
+  // the app, AGENT_CFG.enabled is set to false. Worker exits cleanly so
+  // Cloud Run Job doesn't burn compute on a paused agent.
+  if (AGENT_CFG.enabled === false) {
+    console.log("[discover] agent disabled via config.enabled=false — exiting cleanly");
+    return;
+  }
   console.log(`[discover] start · limit=${LIMIT} concurrency=${CONCURRENCY}`);
 
   const candidates = await loadOrBuildPool();

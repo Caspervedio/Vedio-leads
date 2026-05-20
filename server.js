@@ -1129,6 +1129,7 @@ function loadDiscoveryState() {
 // startup, falls back to env-var defaults if missing. Keeps the SDR in
 // control of the knobs without redeploying.
 const DISCOVERY_CONFIG_DEFAULTS = {
+  enabled: true,           // master switch — UI toggle flips this; worker exits early when false
   minEmployees: 3,         // tier-1 gate (confirmed headcount)
   icpMinAds: 3,            // min Meta-ads to qualify as ICP
   icpMinEmployees: 5,      // min employees (when known) for ICP
@@ -1165,6 +1166,7 @@ app.put("/api/discovery/config", authMiddleware, (req, res) => {
     };
     const updated = {
       ...current,
+      ...(body.enabled !== undefined && { enabled: !!body.enabled }),
       ...(body.minEmployees !== undefined && { minEmployees: clamp(body.minEmployees, 0, 1000, current.minEmployees) }),
       ...(body.icpMinAds !== undefined && { icpMinAds: clamp(body.icpMinAds, 0, 100, current.icpMinAds) }),
       ...(body.icpMinEmployees !== undefined && { icpMinEmployees: clamp(body.icpMinEmployees, 0, 1000, current.icpMinEmployees) }),

@@ -1006,14 +1006,14 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
        brand explore. -->
   <div id="meta-scraper-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:1300px;margin:0 auto;padding:28px 24px">
-      <!-- Header (no buttons — the agent is autonomous) -->
-      <div style="margin-bottom:18px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light)">🤖 AI Agent · META Scraper</div>
-          <span style="font-size:9.5px;font-weight:800;letter-spacing:0.8px;padding:3px 9px;border-radius:6px;background:linear-gradient(135deg,#7c3aed,#a78bfa);color:#fff;text-transform:uppercase">● Always On</span>
+      <!-- Header with top-right Agent toggle -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · META Scraper</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">META Scraper Agent</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:720px">Agenten kører <strong style="color:#fff">automatisk to gange dagligt</strong> (06:00 + 12:00 CET) og scanner Meta Ad Library for danske virksomheder med aktive annoncer. Nye fund lander automatisk på Dashboard og i Autodialer-køen når de opfylder ICP-reglerne. Juster agentens parametre nedenfor — ændringer træder i kraft ved næste kørsel.</p>
         </div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">META Scraper Agent</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:720px">Agenten kører <strong style="color:#fff">automatisk to gange dagligt</strong> (06:00 + 12:00 CET) og scanner Meta Ad Library for danske virksomheder med aktive annoncer. Nye fund lander automatisk på Dashboard og i Autodialer-køen når de opfylder ICP-reglerne. Juster agentens parametre nedenfor — ændringer træder i kraft ved næste kørsel.</p>
+        <div id="ms-agent-toggle"></div>
       </div>
 
       <!-- Agent status banner -->
@@ -1039,13 +1039,13 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <!-- MAPS SCRAPER PAGE (OpenStreetMap) -->
   <div id="google-maps-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:900px;margin:0 auto;padding:28px 24px">
-      <div style="margin-bottom:20px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light)">🤖 AI Agent · Maps Scraper</div>
-          <span style="font-size:9.5px;font-weight:800;letter-spacing:0.8px;padding:3px 9px;border-radius:6px;background:rgba(52,211,153,0.15);color:#6ee7b7;border:1px solid rgba(52,211,153,0.3);text-transform:uppercase">FREE · OSM</span>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Maps Scraper</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Maps Scraper Agent</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der finder danske virksomheder per kategori og by via <strong style="color:#fff">OpenStreetMap</strong> (gratis, ingen API-cost), krydsmatcher dem mod CVR (Datafordeler) for berigelse, og leverer ICP-klare leads direkte til din Autodialer-kø.</p>
         </div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Maps Scraper Agent</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agent der finder danske virksomheder per kategori og by via <strong style="color:#fff">OpenStreetMap</strong> (gratis, ingen API-cost), krydsmatcher dem mod CVR (Datafordeler) for berigelse, og leverer ICP-klare leads direkte til din Autodialer-kø.</p>
+        <div id="gm-agent-toggle"></div>
       </div>
       <div id="gm-config-card" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
       <div id="gm-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
@@ -1056,10 +1056,13 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <!-- TECH STACK SCANNER PAGE -->
   <div id="tech-stack-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:900px;margin:0 auto;padding:28px 24px">
-      <div style="margin-bottom:20px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Tech Stack Scanner</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Scanner</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:720px">Agenten finder <strong style="color:#fff">nye leads</strong> ved at gennemgå CVR-puljen, gætte hver virksomheds hjemmeside ud fra navn + brand, probe domænerne, og matche mod tech-signaturer som Shopify, HubSpot, Klaviyo m.fl. Resultater pushes til Dashboard som ny Tech Stack-kilde.</p>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:20px;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Tech Stack Scanner</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Tech Stack Scanner</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:720px">Agenten finder <strong style="color:#fff">nye leads</strong> ved at gennemgå CVR-puljen, gætte hver virksomheds hjemmeside ud fra navn + brand, probe domænerne, og matche mod tech-signaturer som Shopify, HubSpot, Klaviyo m.fl. Resultater pushes til Dashboard som ny Tech Stack-kilde.</p>
+        </div>
+        <div id="ts-agent-toggle"></div>
       </div>
       <div id="ts-form" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 22px;margin-bottom:14px"></div>
       <div id="ts-results"></div>
@@ -1098,14 +1101,14 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <!-- LOOK-ALIKE AGENT PAGE -->
   <div id="lookalike-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
-      <!-- Header -->
-      <div style="margin-bottom:18px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light)">🤖 AI Agent · Look-alike Finder</div>
-          <span style="font-size:9.5px;font-weight:800;letter-spacing:0.8px;padding:3px 9px;border-radius:6px;background:linear-gradient(135deg,#7c3aed,#a78bfa);color:#fff;text-transform:uppercase">● Always On</span>
+      <!-- Header with top-right Agent toggle -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🤖 AI Agent · Look-alike Finder</div>
+          <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Look-alike Finder</h2>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agenten lærer fra dine eksisterende leads og finder lignende danske virksomheder i kandidatpuljen — branche, region, størrelse og ads-mønster matches mod hver kandidat. Tilføj 5–10 kvalitetsleads som seed for skarpest output.</p>
         </div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Look-alike Finder</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Agenten lærer fra dine eksisterende leads og finder lignende danske virksomheder i kandidatpuljen — branche, region, størrelse og ads-mønster matches mod hver kandidat. Tilføj 5–10 kvalitetsleads som seed for skarpest output.</p>
+        <div id="la-agent-toggle"></div>
       </div>
 
       <!-- Two-column hero: Seed (left) + Profile (right) -->
@@ -2878,6 +2881,28 @@ async function manualDiscoveryRun(){
   }
 }
 
+// Shared "Agent ON/OFF" toggle widget used by all four AI Agent pages.
+// Lives in the top-right of each agent's header so the SDR has a
+// consistent place to flip auto-run + see live status.
+//   id          unique input id (gm-auto, ts-auto, ms-auto, la-auto)
+//   on          boolean — current toggle state
+//   onChange    JS expression fired when the user flips the switch
+//   statusText  inline HTML status line shown next to the switch
+//                (e.g. "Auto-kørsel aktiv · sidst kørt 5m siden · 12 leads")
+function agentToggleHtml({ id, on, onChange, statusText }) {
+  return `<div style="display:flex;align-items:center;gap:12px;background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:8px 14px;flex-shrink:0;max-width:380px">
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;flex-shrink:0">
+      <span style="position:relative;width:42px;height:24px;flex-shrink:0">
+        <input type="checkbox" id="${e(id)}" ${on?'checked':''} onchange="${onChange}" style="opacity:0;width:0;height:0;position:absolute">
+        <span style="position:absolute;inset:0;background:${on?'linear-gradient(135deg,#7c3aed,#a78bfa)':'rgba(255,255,255,0.15)'};border-radius:12px;transition:background 0.18s"></span>
+        <span style="position:absolute;width:18px;height:18px;left:${on?'21px':'3px'};top:3px;background:#fff;border-radius:50%;transition:left 0.18s;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>
+      </span>
+      <span style="font-size:13px;font-weight:800;color:${on?'#fff':'var(--w55)'};white-space:nowrap">Agent ${on?'ON':'OFF'}</span>
+    </label>
+    ${statusText?`<div style="font-size:11px;color:var(--w55);line-height:1.4;border-left:1px solid var(--w08);padding-left:12px">${statusText}</div>`:''}
+  </div>`;
+}
+
 function humanAgo(iso){
   const diff=Date.now()-new Date(iso).getTime();
   if(diff<60000)return 'lige nu';
@@ -2892,14 +2917,63 @@ function humanAgo(iso){
 // /api/discovery/lookalikes endpoint. Frames it as an AI agent the SDR
 // feeds with quality seeds — agent works in the background between runs.
 
-const _laCache={rows:[],profile:null,seedSize:0,lastRunAt:null};
+const _laCache={rows:[],profile:null,seedSize:0,lastRunAt:null,auto:true};
+
+// Look-alike toggle — ON means the recommender re-runs on every page-load
+// against the latest CVR pool + seed leads. OFF means the SDR keeps the
+// last cached results until they flip it back ON or trigger a manual refresh.
+// Persisted in localStorage so it survives reloads.
+const LA_STORAGE_KEY = 'vedio.lookalike.config';
+function laLoadFromStorage(){
+  try{
+    const raw = localStorage.getItem(LA_STORAGE_KEY);
+    if(!raw) return;
+    const d = JSON.parse(raw);
+    _laCache.auto = d.auto !== false; // default ON
+    if(d.breadth) _laCache.breadth = d.breadth;
+  }catch{}
+}
+function laSaveToStorage(){
+  try{
+    localStorage.setItem(LA_STORAGE_KEY, JSON.stringify({ auto: _laCache.auto, breadth: _laCache.breadth }));
+  }catch{}
+}
+function laToggleAuto(){
+  _laCache.auto = !_laCache.auto;
+  laSaveToStorage();
+  renderLookalikeAgentToggle();
+  if(_laCache.auto){
+    showToast('Agent aktiveret — opdaterer matches…');
+    loadLookalikeData().then(renderLookalikeUI);
+  } else {
+    showToast('Agent pauseret — viser sidste cachede resultater');
+  }
+}
+function renderLookalikeAgentToggle(){
+  const el = document.getElementById('la-agent-toggle');
+  if(!el) return;
+  const on = _laCache.auto !== false;
+  const statusText = on
+    ? (_laCache.lastRunAt
+      ? `Live recommender · sidst kørt <strong style="color:#fff">${humanAgo(_laCache.lastRunAt)}</strong> · <strong style="color:#fff">${_laCache.rows.length}</strong> matches`
+      : 'Live recommender · scorer ved første page-load')
+    : 'Pauseret · viser cachede resultater';
+  el.innerHTML = agentToggleHtml({ id:'la-auto', on, onChange:'laToggleAuto()', statusText });
+}
 
 async function renderLookalikePage(){
+  laLoadFromStorage();
+  renderLookalikeAgentToggle();
   const seedCard=document.getElementById('la-seed-card');
   const profileCard=document.getElementById('la-profile-card');
   const controls=document.getElementById('la-controls');
   const resultsWrap=document.getElementById('la-results');
   if(!seedCard||!resultsWrap)return;
+  // Agent OFF → show cached state without hitting the backend
+  if(_laCache.auto===false && _laCache.lastRunAt){
+    renderLookalikeUI();
+    return;
+  }
   const skel = `<div style="display:flex;align-items:center;gap:10px;color:var(--w55);font-size:12.5px;padding:8px 0">
     <span class="search-spinner" style="width:14px;height:14px"></span>
     <span>Agent henter…</span>
@@ -2910,6 +2984,7 @@ async function renderLookalikePage(){
   resultsWrap.innerHTML='';
   await loadLookalikeData();
   renderLookalikeUI();
+  renderLookalikeAgentToggle(); // refresh status text with the new lastRunAt
 }
 
 // Match-breadth: 'strict' returns only the top-scored matches, 'broad' loosens
@@ -3532,30 +3607,28 @@ function renderTechStackPage(){
       </div>
     </div>
 
-    <!-- Auto-toggle + manual nudge -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--w04)">
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none">
-          <span style="position:relative;width:42px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="ts-auto" ${_tsState.auto?'checked':''} onchange="tsToggleAuto()" style="opacity:0;width:0;height:0;position:absolute">
-            <span style="position:absolute;inset:0;background:${_tsState.auto?'linear-gradient(135deg,#7c3aed,#a78bfa)':'rgba(255,255,255,0.15)'};border-radius:12px;transition:background 0.18s"></span>
-            <span style="position:absolute;width:18px;height:18px;left:${_tsState.auto?'21px':'3px'};top:3px;background:#fff;border-radius:50%;transition:left 0.18s;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>
-          </span>
-          <span style="font-size:13px;font-weight:800;color:${_tsState.auto?'#fff':'var(--w55)'}">Agent ${_tsState.auto?'ON':'OFF'}</span>
-        </label>
-        <div id="ts-status" style="font-size:11.5px;color:var(--w55);line-height:1.5">
-          ${_tsState.auto
-            ? (_tsState.lastRun
-              ? `Auto-kørsel aktiv · sidst kørt <strong style="color:#fff">${humanAgo(_tsState.lastRun)}</strong> · <strong style="color:#fff">${_tsState.lastResultCount||0}</strong> matches`
-              : `Auto-kørsel aktiv · venter på første kørsel`)
-            : (_tsState.lastRun
-              ? `Manuel mode · sidst kørt ${humanAgo(_tsState.lastRun)} · ${_tsState.lastResultCount||0} matches`
-              : `Manuel mode · vælg mission + brancher, og slå <strong style="color:var(--w80)">Agent ON</strong>`)}
-        </div>
+    <!-- Manual nudge (Agent ON/OFF toggle lives in the page header top-right) -->
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--w04)">
+      <div id="ts-status" style="font-size:11.5px;color:var(--w55);line-height:1.5">
+        ${_tsState.lastRun
+          ? `Sidst kørt <strong style="color:#fff">${humanAgo(_tsState.lastRun)}</strong> · <strong style="color:#fff">${_tsState.lastResultCount||0}</strong> matches`
+          : `Vælg mission + brancher, og slå <strong style="color:var(--w80)">Agent ON</strong> i toppen — eller klik <strong style="color:var(--w80)">↻ Kør nu</strong> for at teste`}
       </div>
       <button class="btn btn-sm" id="ts-scan-btn" style="padding:8px 16px;font-size:12px" onclick="tsRunAgent()" title="Kør agent én gang nu med ovenstående mission">↻ Kør nu</button>
     </div>
   `;
+  // Mount the Agent ON/OFF toggle in the page header
+  const toggleEl = document.getElementById('ts-agent-toggle');
+  if(toggleEl){
+    const statusText = _tsState.auto
+      ? (_tsState.lastRun
+        ? `Auto-kørsel aktiv · sidst kørt <strong style="color:#fff">${humanAgo(_tsState.lastRun)}</strong> · <strong style="color:#fff">${_tsState.lastResultCount||0}</strong> matches`
+        : `Auto-kørsel aktiv · venter på første kørsel`)
+      : (_tsState.lastRun
+        ? `Manuel · sidst kørt ${humanAgo(_tsState.lastRun)}`
+        : `Slå ON for auto-kørsel`);
+    toggleEl.innerHTML = agentToggleHtml({ id:'ts-auto', on:_tsState.auto, onChange:'tsToggleAuto()', statusText });
+  }
   // Re-render past results if we have them
   if(_tsState.results.length){
     renderTechStackResults(_tsState.results);
@@ -3780,6 +3853,7 @@ async function renderMetaScraperPage() {
     _msCache.topRows = topR.rows || [];
     _msCache.config = cfgR;
     _msCache.lastFetched = Date.now();
+    renderMsAgentToggle();
     renderMsStatus();
     renderMsStats();
     renderMsSettings();
@@ -3847,6 +3921,44 @@ async function msSaveSettings() {
     setTimeout(()=>{ if(statusEl){statusEl.style.color='var(--w35)';statusEl.textContent='';} }, 4000);
   } catch (ex) {
     if (statusEl) { statusEl.style.color='#fca5a5'; statusEl.textContent = 'Fejl: '+ex.message; }
+  }
+}
+
+function renderMsAgentToggle() {
+  const el = document.getElementById('ms-agent-toggle');
+  if (!el) return;
+  // enabled defaults to true if config hasn't been fetched yet — this matches
+  // the backend's DISCOVERY_CONFIG_DEFAULTS so the initial render is correct.
+  const enabled = _msCache.config ? _msCache.config.enabled !== false : true;
+  const s = _msCache.summary;
+  const ago = s?.lastRunCompletedAt ? humanAgo(s.lastRunCompletedAt) : 'aldrig';
+  const statusText = enabled
+    ? `Auto-kørsel · 06:00 + 12:00 CET · sidst kørt <strong style="color:#fff">${ago}</strong>`
+    : `Pausen aktiv · næste kørsel skippes`;
+  el.innerHTML = agentToggleHtml({ id:'ms-auto', on:enabled, onChange:'msToggleAgent()', statusText });
+}
+
+async function msToggleAgent() {
+  const current = _msCache.config?.enabled !== false;
+  const next = !current;
+  // Optimistic UI — flip immediately, roll back if the PUT fails.
+  if (_msCache.config) _msCache.config.enabled = next;
+  renderMsAgentToggle();
+  try {
+    const r = await fetch('/api/discovery/config', { method:'PUT', headers:{...ah(),'Content-Type':'application/json'}, body: JSON.stringify({ enabled: next }) });
+    const d = await r.json();
+    if (!r.ok) {
+      if (_msCache.config) _msCache.config.enabled = current; // roll back
+      renderMsAgentToggle();
+      showToast('Kunne ikke gemme: '+(d.error||'ukendt fejl'));
+      return;
+    }
+    _msCache.config = d.config;
+    showToast(next ? 'Agent aktiveret — næste kørsel kører som planlagt' : 'Agent pauseret — næste planlagte kørsel skippes');
+  } catch (ex) {
+    if (_msCache.config) _msCache.config.enabled = current;
+    renderMsAgentToggle();
+    showToast('Fejl: '+ex.message);
   }
 }
 
@@ -4166,30 +4278,28 @@ function renderGoogleMapsForm(){
       </div>
     `}
 
-    <!-- Auto-toggle + manual nudge -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--w04)">
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none">
-          <span style="position:relative;width:42px;height:24px;flex-shrink:0">
-            <input type="checkbox" id="gm-auto" ${_gmState.auto?'checked':''} onchange="gmToggleAuto()" style="opacity:0;width:0;height:0;position:absolute">
-            <span style="position:absolute;inset:0;background:${_gmState.auto?'linear-gradient(135deg,#7c3aed,#a78bfa)':'rgba(255,255,255,0.15)'};border-radius:12px;transition:background 0.18s"></span>
-            <span style="position:absolute;width:18px;height:18px;left:${_gmState.auto?'21px':'3px'};top:3px;background:#fff;border-radius:50%;transition:left 0.18s;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>
-          </span>
-          <span style="font-size:13px;font-weight:800;color:${_gmState.auto?'#fff':'var(--w55)'}">Agent ${_gmState.auto?'ON':'OFF'}</span>
-        </label>
-        <div id="gm-status" style="font-size:11.5px;color:var(--w55);line-height:1.5">
-          ${_gmState.auto
-            ? (_gmState.lastRun
-              ? `Auto-kørsel aktiv · sidst kørt <strong style="color:#fff">${humanAgo(_gmState.lastRun)}</strong> · <strong style="color:#fff">${_gmState.lastResultCount||0}</strong> leads`
-              : `Auto-kørsel aktiv · venter på første kørsel`)
-            : (_gmState.lastRun
-              ? `Manuel mode · sidst kørt ${humanAgo(_gmState.lastRun)} · ${_gmState.lastResultCount||0} leads`
-              : `Manuel mode · vælg mission + by, og slå <strong style="color:var(--w80)">Agent ON</strong>`)}
-        </div>
+    <!-- Manual nudge (the Agent ON/OFF toggle lives in the page header top-right) -->
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--w04)">
+      <div id="gm-status" style="font-size:11.5px;color:var(--w55);line-height:1.5">
+        ${_gmState.lastRun
+          ? `Sidst kørt <strong style="color:#fff">${humanAgo(_gmState.lastRun)}</strong> · <strong style="color:#fff">${_gmState.lastResultCount||0}</strong> leads`
+          : `Vælg mission + by, og slå <strong style="color:var(--w80)">Agent ON</strong> i toppen — eller klik <strong style="color:var(--w80)">↻ Kør nu</strong> for at teste`}
       </div>
       <button class="btn btn-sm" id="gm-search-btn" style="padding:8px 16px;font-size:12px" onclick="gmRunAgent()" title="Kør agent én gang nu med ovenstående mission">↻ Kør nu</button>
     </div>
   `;
+  // Mount the Agent ON/OFF toggle in the page header
+  const toggleEl = document.getElementById('gm-agent-toggle');
+  if(toggleEl){
+    const statusText = _gmState.auto
+      ? (_gmState.lastRun
+        ? `Auto-kørsel aktiv · sidst kørt <strong style="color:#fff">${humanAgo(_gmState.lastRun)}</strong> · <strong style="color:#fff">${_gmState.lastResultCount||0}</strong> leads`
+        : `Auto-kørsel aktiv · venter på første kørsel`)
+      : (_gmState.lastRun
+        ? `Manuel · sidst kørt ${humanAgo(_gmState.lastRun)}`
+        : `Slå ON for auto-kørsel`);
+    toggleEl.innerHTML = agentToggleHtml({ id:'gm-auto', on:_gmState.auto, onChange:'gmToggleAuto()', statusText });
+  }
   if(_gmState.mode==='agent')updateGmMatrixPreview();
   // Re-render past results
   if(_gmCache.results&&_gmCache.results.length){
