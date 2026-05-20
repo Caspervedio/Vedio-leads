@@ -3720,79 +3720,175 @@ app.post("/api/scrape/tech-stack", authMiddleware, async (req, res) => {
   }
 });
 
-// ─── GOOGLE MAPS SCRAPER (skeleton) ──────────────────────────────────────
-// Requires a Google Places API key in env GOOGLE_PLACES_KEY (provisioned
-// from Secret Manager). Until that's wired the endpoint returns a 503
-// with status payload so the frontend can show a "not configured" hint.
+// ─── MAPS SCRAPER (OpenStreetMap Overpass) ──────────────────────────────
+// OSM Overpass is a free, no-API-key alternative to Google Places. DK
+// coverage is solid — Danish businesses are tagged with shop=*, amenity=*,
+// office=*, craft=* etc. Each match includes name, address (street +
+// housenumber + postcode), contact:phone/website if the OSM contributor
+// added them. We cross-match to CVR via Datafordeler the same way the
+// Google Places path did, so downstream consumers don't care which
+// backend produced the results.
 //
-// When live: Places Text Search → for each result, look up CVR via the
-// existing Datafordeler search helper by name+city. Results land in the
-// response with cvr filled when matched.
+// Why OSM over Google Places:
+// - Free, no rate-limit billing surprises (fair-use ~1GB/month is plenty)
+// - No API key to provision in Secret Manager
+// - Open data — no ToS gotchas about caching results
+// - DK community has tagged most physical-location businesses already
+//
+// Tradeoffs we accept:
+// - Coverage is lower than Google for online-only businesses without
+//   physical addresses (digital agencies, consultancies). The Tech Stack
+//   Scanner + META Scraper better serve that segment anyway.
+// - Slower per-request (1–5s typical) — but a single query returns
+//   hundreds of POIs vs Google's 20/page → fewer requests overall.
+
+const OSM_OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+
+// Category id → OSM tag pairs. Each category may map to multiple tags
+// (e.g. "frisør" covers both shop=hairdresser and shop=beauty).
+const OSM_CATEGORY_TAGS = {
+  restaurant: [["amenity","restaurant"],["amenity","fast_food"]],
+  cafe:       [["amenity","cafe"]],
+  frisor:     [["shop","hairdresser"],["shop","beauty"]],
+  advokat:    [["office","lawyer"]],
+  revisor:    [["office","accountant"]],
+  "tandlæge": [["amenity","dentist"],["healthcare","dentist"]],
+  fysio:      [["healthcare","physiotherapist"]],
+  butik:      [["shop","clothes"],["shop","shoes"],["shop","jewelry"],["shop","mall"],["shop","department_store"],["shop","gift"]],
+  auto:       [["shop","car_repair"],["shop","car"]],
+  tomrer:     [["craft","carpenter"]],
+  el:         [["craft","electrician"]],
+  vvs:        [["craft","plumber"]],
+};
+
+function buildOsmQuery({ category, city, q, limit = 100 }) {
+  // Area clause: Danish municipalities show up in OSM under three naming
+  // patterns depending on grammar — "Aarhus", "Aarhus Kommune", and
+  // "Københavns Kommune" (genitive). Union all three so any city name
+  // works. Fallback to all-of-Denmark when no city is given.
+  const safeCity = String(city || "").replace(/["\\]/g, "");
+  const areaClause = safeCity
+    ? `(area["name"="${safeCity}"];area["name"="${safeCity} Kommune"];area["name"="${safeCity}s Kommune"];)->.a;`
+    : `area["ISO3166-1"="DK"][admin_level=2]->.a;`;
+  // Build inner element queries from category tags. Always query both
+  // node + way (POIs come in both representations).
+  const parts = [];
+  const tagsForCat = OSM_CATEGORY_TAGS[category] || [];
+  for (const [k, v] of tagsForCat) {
+    parts.push(`node["${k}"="${v}"](area.a);`);
+    parts.push(`way["${k}"="${v}"](area.a);`);
+  }
+  // Free-text query — search by business name (case-insensitive regex)
+  // restricted to elements that look like businesses (anything with a
+  // shop, amenity, office, healthcare, or craft tag).
+  if (q && !tagsForCat.length) {
+    const safeQ = String(q).replace(/["\\]/g, "");
+    for (const t of ["shop","amenity","office","healthcare","craft"]) {
+      parts.push(`node["name"~"${safeQ}",i]["${t}"](area.a);`);
+      parts.push(`way["name"~"${safeQ}",i]["${t}"](area.a);`);
+    }
+  }
+  if (parts.length === 0) return null;
+  // out body center N — N caps the result count per element type. We
+  // multiply by 2 since we ask for both nodes and ways.
+  return `[out:json][timeout:30];${areaClause}(${parts.join("")});out body center ${limit * 2};`;
+}
+
+function parseOsmElement(el) {
+  const tags = el.tags || {};
+  if (!tags.name) return null;
+  const street = tags["addr:street"] || "";
+  const housenumber = tags["addr:housenumber"] || "";
+  const postcode = tags["addr:postcode"] || "";
+  const cityName = tags["addr:city"] || "";
+  const address = [
+    [street, housenumber].filter(Boolean).join(" "),
+    [postcode, cityName].filter(Boolean).join(" "),
+  ].filter(Boolean).join(", ");
+  // Pull category back out of the tags so the UI can label it.
+  let categoryLabel = "";
+  for (const k of ["amenity","shop","office","craft","healthcare"]) {
+    if (tags[k]) { categoryLabel = `${k}=${tags[k]}`; break; }
+  }
+  return {
+    name: tags.name,
+    address: address || cityName || "",
+    city: cityName,
+    phone: tags["contact:phone"] || tags["phone"] || "",
+    website: tags["contact:website"] || tags["website"] || "",
+    email: tags["contact:email"] || tags["email"] || "",
+    placeId: `osm_${el.type}_${el.id}`,
+    osmCategory: categoryLabel,
+  };
+}
+
 app.get("/api/scrape/google-maps/status", authMiddleware, (req, res) => {
-  res.json({ configured: !!process.env.GOOGLE_PLACES_KEY });
+  // OSM is free + key-less so we report configured=true unconditionally.
+  // Surfacing the backend name lets the UI show "Powered by OSM" in the
+  // status card instead of the legacy "not configured" warning.
+  res.json({ configured: true, backend: "openstreetmap" });
 });
 
 app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
-  if (!process.env.GOOGLE_PLACES_KEY) {
-    return res.status(503).json({
-      error: "Google Places API ikke konfigureret. Tilføj GOOGLE_PLACES_KEY via Secret Manager (google-places-key).",
-      configured: false,
-    });
-  }
   try {
     const q = String(req.body?.q || "").trim();
     const city = String(req.body?.city || "").trim();
-    const limit = Math.max(10, Math.min(100, parseInt(req.body?.limit || 40, 10)));
-    if (!q) return res.status(400).json({ error: "Indtast en søgeterm" });
+    const category = String(req.body?.category || "").trim();
+    const limit = Math.max(10, Math.min(200, parseInt(req.body?.limit || 50, 10)));
+    if (!q && !category) return res.status(400).json({ error: "Indtast en søgeterm eller vælg en kategori" });
 
-    // Places Text Search (the v1 endpoint). Country restriction via
-    // 'region=dk' biases (but doesn't strictly limit) to Denmark; city
-    // term in the query is the more reliable filter.
-    const query = city ? `${q} ${city} Denmark` : `${q} Denmark`;
-    const placesResults = [];
-    let pageToken = null;
-    while (placesResults.length < limit) {
-      const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-      url.searchParams.set("query", query);
-      url.searchParams.set("key", process.env.GOOGLE_PLACES_KEY);
-      url.searchParams.set("region", "dk");
-      if (pageToken) url.searchParams.set("pagetoken", pageToken);
-      const r = await fetch(url.toString());
-      const d = await r.json();
-      if (d.status && d.status !== "OK" && d.status !== "ZERO_RESULTS") {
-        return res.status(502).json({ error: `Places API: ${d.status} ${d.error_message || ""}` });
-      }
-      for (const p of (d.results || [])) {
-        if (placesResults.length >= limit) break;
-        placesResults.push({ name: p.name, address: p.formatted_address, placeId: p.place_id });
-      }
-      if (!d.next_page_token || placesResults.length >= limit) break;
-      pageToken = d.next_page_token;
-      // Google requires a short delay before next_page_token is usable.
-      await new Promise(r => setTimeout(r, 2000));
+    const query = buildOsmQuery({ category, city, q, limit });
+    if (!query) return res.status(400).json({ error: "Ukendt kategori — vælg en preset eller indtast søgeterm" });
+
+    // Overpass requires Accept: application/json (otherwise returns
+    // 406 Not Acceptable with an HTML error page), plus a User-Agent for
+    // fair-use accounting. Query goes in a `data` form field.
+    const r = await fetch(OSM_OVERPASS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+        "User-Agent": "VedioLeads/1.0 (lead generation; contact: noreply@vedio.dk)",
+      },
+      body: "data=" + encodeURIComponent(query),
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      return res.status(502).json({ error: `OSM Overpass: ${r.status} ${text.slice(0, 200)}` });
+    }
+    const data = await r.json();
+    const elements = data.elements || [];
+    // Parse → deduplicate by name+city (same business often appears as
+    // both a node and a way) → cap.
+    const seen = new Set();
+    const parsed = [];
+    for (const el of elements) {
+      const p = parseOsmElement(el);
+      if (!p) continue;
+      const key = `${p.name.toLowerCase()}|${(p.city || "").toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      parsed.push(p);
+      if (parsed.length >= limit) break;
     }
 
-    // CVR cross-match — opportunistically search Datafordeler by name.
-    // We re-use the same searchDatafordeler helper that /api/search calls.
-    // Failures are non-fatal: unmatched rows still come back, just without
-    // a CVR. We tighten the match: name has to roughly equal the Places
-    // name (after lowercasing + stripping legal-form suffixes).
+    // CVR cross-match — same approach as the previous Google path.
     const stripSuffix = s => String(s||"").toLowerCase().replace(/\s+(aps|a\/s|i\/s|p\/s|k\/s|ivs|holding)\b.*$/i,"").trim();
     const out = [];
-    for (const r of placesResults) {
+    for (const p of parsed) {
       let cvr = null;
       try {
         const filters = { _from: 0, _size: 5 };
-        if (city) filters.city = city;
-        const matches = await searchDatafordeler(r.name, filters);
+        if (city || p.city) filters.city = city || p.city;
+        const matches = await searchDatafordeler(p.name, filters);
         const rows = (matches && (matches.companies || matches.results || matches.rows)) || [];
-        const target = stripSuffix(r.name);
+        const target = stripSuffix(p.name);
         const hit = rows.find(c => stripSuffix(c.name) === target);
         if (hit && hit.cvr) cvr = hit.cvr;
       } catch { /* keep cvr=null */ }
-      out.push({ name: r.name, address: r.address, placeId: r.placeId, cvr });
+      out.push({ ...p, cvr });
     }
-    res.json({ results: out });
+    res.json({ results: out, backend: "openstreetmap", scanned: elements.length });
   } catch (e) {
     console.error("[scrape/google-maps]", e.message);
     res.status(500).json({ error: e.message });

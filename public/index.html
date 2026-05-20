@@ -3941,25 +3941,18 @@ async function renderGoogleMapsPage(){
 
 function renderGoogleMapsConfigCard(){
   const wrap=document.getElementById('gm-config-card');if(!wrap)return;
-  if(_gmCache.configured){
-    wrap.innerHTML=`<div style="display:flex;align-items:center;gap:12px">
-      <span style="font-size:18px">✓</span>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:800;color:#fff">Google Places API klar</div>
-        <div style="font-size:11.5px;color:var(--w55);margin-top:1px">Søgninger forbruger Places-kreditter. Hold dig under 100 resultater pr. søgning for at undgå overforbrug.</div>
-      </div>
-    </div>`;
-  } else {
-    wrap.innerHTML=`<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.30);border-radius:12px;padding:14px 18px">
-      <div style="display:flex;align-items:flex-start;gap:12px">
-        <span style="font-size:20px">⚙</span>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:800;color:#fdba74">Google Places API ikke konfigureret endnu</div>
-          <div style="font-size:11.5px;color:var(--w55);margin-top:4px;line-height:1.5">For at aktivere Google Maps-scraping skal en Places API-nøgle tilføjes i GCP Secret Manager (secret: <code style="background:var(--w04);padding:1px 5px;border-radius:4px">google-places-key</code>). Indtil det er gjort, viser knappen "Søg" en stub.</div>
-        </div>
-      </div>
-    </div>`;
-  }
+  // We're on OSM Overpass now — free, no API key, always "configured".
+  // The card explains where the data comes from so the SDR knows the
+  // tradeoffs (great for physical-location businesses, lighter for
+  // online-only ones).
+  wrap.innerHTML=`<div style="display:flex;align-items:center;gap:12px">
+    <span style="font-size:18px">🗺️</span>
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:800;color:#fff">Powered by OpenStreetMap</div>
+      <div style="font-size:11.5px;color:var(--w55);margin-top:1px;line-height:1.5">Gratis, åbne kortdata. Bedst til fysisk-lokale virksomheder med butik/kontor — restauranter, frisører, advokater, butikker m.fl. Ingen API-cost, ingen rate-limits.</div>
+    </div>
+    <span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;background:rgba(52,211,153,0.15);color:#6ee7b7;border:1px solid rgba(52,211,153,0.3);letter-spacing:0.3px">FREE</span>
+  </div>`;
 }
 
 // ─ Maps Scraper Agent ────────────────────────────────────────────────────
@@ -4102,7 +4095,8 @@ async function gmRunAgent(){
     for(const catId of _gmState.categories){
       const cat=GM_CATEGORIES.find(c=>c.id===catId);
       if(!cat)continue;
-      for(const city of cities)missions.push({q:cat.q,city,catLabel:cat.label});
+      // Pass category id (OSM uses it to pick the right tag pairs server-side).
+      for(const city of cities)missions.push({category:catId,q:cat.q,city,catLabel:cat.label});
     }
   }
   if(missions.length===0)return;
@@ -4124,9 +4118,11 @@ async function gmRunAgent(){
       done++;
       statusEl.innerHTML=`<span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Agent søger <strong style="color:#fff">${e(m.catLabel||m.q)}</strong> i <strong style="color:#fff">${e(m.city||'Danmark')}</strong> — ${done}/${missions.length}…`;
       try{
-        const r=await fetch('/api/scrape/google-maps',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({q:m.q,city:m.city,limit:40})});
+        const body={q:m.q,city:m.city,limit:50};
+        if(m.category)body.category=m.category;
+        const r=await fetch('/api/scrape/google-maps',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify(body)});
         const d=await r.json();
-        if(r.status===503&&!firstStatus){firstStatus=503;out.innerHTML=`<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.30);color:#fdba74;border-radius:14px;padding:16px;font-size:13px">⚙ ${e(d.error||'Google Places API ikke konfigureret endnu')}</div>`;break;}
+        if(!r.ok&&!firstStatus){firstStatus=r.status;out.innerHTML=`<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.25);color:#fca5a5;border-radius:14px;padding:16px;font-size:13px">Fejl: ${e(d.error||'kunne ikke søge')}</div>`;break;}
         if(!r.ok)continue;
         for(const row of(d.results||[])){
           const key=row.cvr||((row.name||'').toLowerCase()+'|'+(m.city||''));
