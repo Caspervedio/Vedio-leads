@@ -1514,7 +1514,47 @@ app.post("/api/leads", authMiddleware, (req, res) => {
 // (state.json) into the caller's leads list. Used by the ICP-klar review
 // queue on Dashboard. Carries source attribution + adds to a specified
 // list (default ungrouped). Skips CVRs already in the user's leads.
-app.post("/api/leads/promote", authMiddleware, (req, res) => {
+// Fire-and-forget async Apollo enrichment for a set of CVRs. Safe to
+// call without awaiting — failures are logged + the lead just stays
+// with whatever data Datafordeler+pool already provided. Used by both
+// the promote endpoint and the autodialer-maintain cron.
+//
+// Concurrency 5 so 30 leads finish in ~6s without slamming Apollo's
+// rate limit. Skips CVRs already enriched in the last 30 days.
+async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
+  if (!isApolloConfigured()) return;
+  const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const queue = [...cvrs];
+  async function worker() {
+    while (queue.length) {
+      const cvr = queue.shift();
+      try {
+        const ud = loadUserData(userId);
+        const lead = (ud.leads || []).find((l) => l.cvr === cvr);
+        if (!lead) continue;
+        // Skip if recently enriched
+        if (lead.apollo_enriched_at && (now - new Date(lead.apollo_enriched_at).getTime()) < FRESH_MS) continue;
+        const contacts = await enrichWithApollo({ name: lead.name, domain: lead.web || lead.website });
+        // Re-load (state could have shifted between worker iterations)
+        const ud2 = loadUserData(userId);
+        const lead2 = (ud2.leads || []).find((l) => l.cvr === cvr);
+        if (!lead2) continue;
+        lead2.contacts = contacts;
+        lead2.apollo_enriched_at = new Date().toISOString();
+        // Inherit Apollo's first phone if we don't have a switchboard phone yet
+        const primaryPhone = (contacts.find((c) => c.phone) || {}).phone;
+        if (primaryPhone && !lead2.phone) lead2.phone = primaryPhone;
+        saveUserData(userId, ud2);
+      } catch (e) {
+        console.warn("[apollo/promote-enrich]", cvr, e.message);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: 5 }, worker));
+}
+
+app.post("/api/leads/promote", authMiddleware, async (req, res) => {
   const cvrs = Array.isArray(req.body?.cvrs) ? req.body.cvrs.filter(Boolean) : [];
   if (cvrs.length === 0) return res.status(400).json({ error: "cvrs[] mangler" });
   if (cvrs.length > 500) return res.status(413).json({ error: "Max 500 leads pr. promote-batch" });
@@ -1526,14 +1566,14 @@ app.post("/api/leads/promote", authMiddleware, (req, res) => {
   let promoted = 0;
   let skippedDup = 0;
   let skippedNotInPool = 0;
+  const newCvrs = [];
   for (const cvr of cvrs) {
     if (existing.has(cvr)) { skippedDup++; continue; }
     const c = pool[cvr];
     if (!c) { skippedNotInPool++; continue; }
-    // Inherit pre-enriched contacts from the cron-built pool cache so the
-    // lead lands in user.leads already call-ready (no per-row "Berig med
-    // Kaspr" click needed if the cron has touched it).
-    const primaryPhone = c.phone || (Array.isArray(c.contacts) ? (c.contacts.find(x => x.phone) || {}).phone : null) || "";
+    // Datafordeler switchboard (from the discovery scrape) takes precedence;
+    // Apollo contacts (filled by post-promote enrichment) layer on top.
+    const primaryPhone = c.phone || "";
     d.leads.push({
       name: c.name,
       cvr: c.cvr,
@@ -1544,23 +1584,128 @@ app.post("/api/leads/promote", authMiddleware, (req, res) => {
       emp: c.employees,
       web: c.website || c.web || "",
       phone: primaryPhone,
-      // Source preserved — Discovery pool entries default to meta-scraper.
       source: c.source || "meta-scraper",
       icpFit: c.icpFit || false,
       adsMatched: c.ads?.matched || 0,
-      // Kaspr enrichment carried over from the pool (if the cron has
-      // already touched this CVR)
-      contacts: Array.isArray(c.contacts) ? c.contacts : undefined,
-      kaspr_enriched_at: c.kaspr_enriched_at || undefined,
+      // Apollo enrichment will be filled in async by enrichUserLeadsViaApolloAsync
+      // below. Lead lands in user.leads immediately so the SDR sees it; contacts
+      // populate within seconds.
+      apollo_enrichment_pending: isApolloConfigured(),
       listId,
       addedAt: now,
       promotedFromReviewQueue: true,
     });
     existing.add(cvr);
     promoted++;
+    newCvrs.push(cvr);
   }
   saveUserData(req.userId, d);
-  res.json({ ok: true, promoted, skippedDup, skippedNotInPool });
+  // Fire Apollo enrichment async — response returns immediately. SDR sees
+  // leads in queue right away; contacts populate as enrichment completes
+  // (polled by the frontend or visible on next page-load).
+  if (newCvrs.length > 0 && isApolloConfigured()) {
+    enrichUserLeadsViaApolloAsync(req.userId, newCvrs).catch((e) =>
+      console.warn("[promote-enrich] batch failed:", e.message)
+    );
+  }
+  res.json({
+    ok: true,
+    promoted,
+    skippedDup,
+    skippedNotInPool,
+    enrichmentQueued: newCvrs.length,
+    apolloConfigured: isApolloConfigured(),
+  });
+});
+
+// Autodialer auto-maintain — keeps the SDR's active queue at the target
+// size. Daily 08:00 CET cron promotes top-N ICP-klar leads from the
+// Review Queue, then fires Apollo enrichment for each.
+//
+// "Actionable" = not called today, not archived, callback_at not in the
+// future. We exclude leads with future callbacks because they'll come
+// back on schedule.
+app.post("/api/cron/autodialer-maintain", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  const targetSize = Math.max(5, Math.min(200, Number(req.query.target) || 30));
+  const stats = { usersProcessed: 0, totalPromoted: 0, totalEnrichmentQueued: 0 };
+
+  // Walk all user data files
+  const usersDir = path.join(DATA_DIR, "users");
+  if (!fs.existsSync(usersDir)) {
+    return res.json({ ok: true, stats, note: "no users dir" });
+  }
+  const pool = loadDiscoveryState().companies || {};
+  const now = Date.now();
+
+  for (const f of fs.readdirSync(usersDir)) {
+    if (!f.endsWith(".json")) continue;
+    const userId = f.replace(/\.json$/, "");
+    try {
+      const ud = loadUserData(userId);
+      const leads = ud.leads || [];
+      // Count "actionable" leads — what the cockpit considers callable today
+      const actionable = leads.filter((l) => {
+        if (l.lastAction === "not-relevant") return false; // archived
+        if (l.callback_at && new Date(l.callback_at).getTime() > now) return false; // scheduled later
+        // Called today?
+        if (l.lastCallAt && (now - new Date(l.lastCallAt).getTime()) < 24*60*60*1000) return false;
+        return true;
+      });
+      const shortfall = targetSize - actionable.length;
+      if (shortfall <= 0) continue;
+
+      // Pull top-N from Review Queue (ICP-klar, not yet in user.leads)
+      const claimed = new Set(leads.map((l) => l.cvr));
+      const candidates = Object.values(pool)
+        .filter((c) => c?.icpFit && c.cvr && !claimed.has(c.cvr))
+        .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
+        .sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0))
+        .slice(0, shortfall);
+
+      // Promote them inline (mirrors /api/leads/promote logic)
+      const nowIso = new Date().toISOString();
+      const newCvrs = [];
+      for (const c of candidates) {
+        ud.leads.push({
+          name: c.name,
+          cvr: c.cvr,
+          ic: c.industry,
+          ind: c.industryName,
+          city: c.city,
+          zip: c.zip,
+          emp: c.employees,
+          web: c.website || c.web || "",
+          phone: c.phone || "",
+          source: c.source || "meta-scraper",
+          icpFit: c.icpFit || false,
+          adsMatched: c.ads?.matched || 0,
+          apollo_enrichment_pending: isApolloConfigured(),
+          listId: "ungrouped",
+          addedAt: nowIso,
+          promotedFromReviewQueue: true,
+          promotedByCron: true,
+        });
+        newCvrs.push(c.cvr);
+      }
+      saveUserData(userId, ud);
+      stats.totalPromoted += newCvrs.length;
+      // Fire Apollo enrichment for the batch
+      if (newCvrs.length > 0 && isApolloConfigured()) {
+        enrichUserLeadsViaApolloAsync(userId, newCvrs).catch((e) =>
+          console.warn("[autodialer-maintain]", userId, e.message)
+        );
+        stats.totalEnrichmentQueued += newCvrs.length;
+      }
+      stats.usersProcessed++;
+      console.log("[autodialer-maintain] user", userId, "promoted", newCvrs.length, "to reach target", targetSize);
+    } catch (e) {
+      console.warn("[autodialer-maintain]", userId, e.message);
+    }
+  }
+  res.json({ ok: true, stats });
 });
 
 // GET /api/discovery/review-queue — ICP-klar leads from state.json that
