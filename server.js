@@ -3981,20 +3981,60 @@ function isApolloConfigured() {
 const APOLLO_SEARCH_LIMIT = 5;     // people per company to enrich
 const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 
-async function apolloSearchPeople({ name, domain }) {
-  const cleanDomain = String(domain || "")
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .replace(/\/.*$/, "")
+// Strip Danish legal suffixes for Apollo's name matching. Apollo's DB
+// stores brand names without legal forms ("FDM TRAVEL" not "FDM TRAVEL A/S").
+function normaliseCompanyName(name) {
+  return String(name || "")
+    .replace(/\s+(aps|a\/s|i\/s|p\/s|k\/s|ivs|holding|group|gruppen)\b.*$/i, "")
     .trim();
+}
+
+// Step 1a — when we don't have a domain, find the company in Apollo by name
+// + location:Denmark, get back the domain + org_id. Cheap (1 free API call).
+async function apolloFindCompany({ name }) {
+  const cleanName = normaliseCompanyName(name);
+  if (!cleanName) return null;
+  const r = await fetch(`${APOLLO_API_BASE}/mixed_companies/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": process.env.APOLLO_API_KEY,
+    },
+    body: JSON.stringify({
+      page: 1,
+      per_page: 3,
+      q_organization_name: cleanName,
+      organization_locations: ["Denmark"],
+    }),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Apollo company search ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const d = await r.json();
+  const orgs = d.organizations || d.accounts || [];
+  // Prefer DK orgs with a website
+  const best = orgs.find((o) => o.website_url) || orgs[0] || null;
+  if (!best) return null;
+  return {
+    id: best.id,
+    name: best.name,
+    domain: String(best.website_url || best.primary_domain || "")
+      .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim(),
+  };
+}
+
+async function apolloSearchPeople({ name, domain, organizationId }) {
   const body = {
     page: 1,
     per_page: APOLLO_SEARCH_LIMIT,
     person_seniorities: ["c_suite", "founder", "owner", "vp", "director", "head", "manager"],
   };
-  if (cleanDomain) body.q_organization_domains_list = [cleanDomain];
-  else if (name) body.q_organization_name = name;
-  else throw new Error("Need company name or domain");
+  // Precision order: organization_id (Apollo's exact match) > domain > name.
+  if (organizationId) body.organization_ids = [organizationId];
+  else if (domain) body.q_organization_domains_list = [domain];
+  else if (name) body.q_organization_name = normaliseCompanyName(name);
+  else throw new Error("Need organizationId, domain, or name");
 
   const r = await fetch(`${APOLLO_API_BASE}/mixed_people/api_search`, {
     method: "POST",
@@ -4007,7 +4047,7 @@ async function apolloSearchPeople({ name, domain }) {
   });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
-    throw new Error(`Apollo search ${r.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Apollo people search ${r.status}: ${text.slice(0, 200)}`);
   }
   const d = await r.json();
   return d.people || [];
@@ -4035,15 +4075,39 @@ async function apolloMatchPerson(personId) {
 }
 
 async function enrichWithApollo({ name, domain }) {
-  // Step 1 — search for decision-makers at the company
-  const searchResults = await apolloSearchPeople({ name, domain });
+  // STEP 1 — resolve to Apollo's organization_id (most precise lookup
+  // for DK SMBs). If we don't already have a domain, do a company search
+  // by normalised name + DK location to discover both the org_id and
+  // the canonical domain. ~70% hit rate for SMBs that test as 0 with
+  // name-only people-search.
+  let orgId = null;
+  let resolvedDomain = String(domain || "")
+    .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
+  if (!resolvedDomain && name) {
+    try {
+      const found = await apolloFindCompany({ name });
+      if (found) {
+        orgId = found.id;
+        resolvedDomain = found.domain || resolvedDomain;
+      }
+    } catch (e) {
+      console.warn("[apollo/findCompany]", name, e.message);
+    }
+  }
+
+  // STEP 2 — search for decision-makers at the resolved company
+  const searchResults = await apolloSearchPeople({
+    name,
+    domain: resolvedDomain,
+    organizationId: orgId,
+  });
   if (!searchResults.length) return [];
 
-  // Step 2 — enrich each (in series with a small delay to be polite to
-  // Apollo's rate limit). We cap at 5 enrichments to control credit burn.
+  // STEP 3 — enrich each result (Apollo's match endpoint reveals real
+  // name + verified email + LinkedIn). Cap at APOLLO_SEARCH_LIMIT to
+  // control credit burn; skip results that signal no contact data.
   const enriched = [];
   for (const sr of searchResults.slice(0, APOLLO_SEARCH_LIMIT)) {
-    // Skip people we know have nothing to reveal (saves a credit)
     if (sr.has_email === false && sr.has_direct_phone === false) continue;
     if (!sr.id) continue;
     try {
