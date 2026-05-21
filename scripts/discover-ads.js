@@ -288,11 +288,16 @@ async function enrichBatch(ids) {
   const idList = ids.map((id) => `"${id}"`).join(",");
   const w = `CVREnhedsId: { in: [${idList}] }`;
   const sz = ids.length;
-  const [rN, rV, rB, rA] = await Promise.all([
+  // 5th query added: CVR_Telefonnummer pulls registered switchboard
+  // phones for free. ~70% of active DK companies have one. Gives us a
+  // way to actually CALL these leads without paying for enrichment —
+  // SDR dials switchboard + asks for decision-maker by title.
+  const [rN, rV, rB, rA, rT] = await Promise.all([
     dfGqlFetch(`{ CVR_Navn(first: ${sz * 6}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
     dfGqlFetch(`{ CVR_Virksomhed(first: ${sz}, where: { id: { in: [${idList}] } }) { edges { node { id CVRNummer status virksomhedStartdato } } } }`),
     dfGqlFetch(`{ CVR_Beskaeftigelse(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId antal intervalFra intervalTil } } } }`),
     dfGqlFetch(`{ CVR_Adressering(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId CVRAdresse_postdistrikt CVRAdresse_postnummer } } } }`),
+    dfGqlFetch(`{ CVR_Telefonnummer(first: ${sz * 3}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
   ]);
   // Names: keep all in insertion order so we can take the latest below
   const namesByEid = {};
@@ -315,6 +320,13 @@ async function enrichBatch(ids) {
   for (const e of rA?.CVR_Adressering?.edges || []) {
     addrByEid[e.node.CVREnhedsId] = e.node;
   }
+  // Companies can have multiple registered phones (main, fax, etc).
+  // Keep the latest non-empty one — fax numbers are rare nowadays.
+  const phoneByEid = {};
+  for (const e of rT?.CVR_Telefonnummer?.edges || []) {
+    const v = String(e.node.vaerdi || "").trim();
+    if (v) phoneByEid[e.node.CVREnhedsId] = v;
+  }
   return ids.map((eid) => {
     const names = namesByEid[eid] || [];
     const empNode = empByEid[eid];
@@ -330,6 +342,7 @@ async function enrichBatch(ids) {
       hasEmpData,       // distinguishes "confirmed 0" from "unknown"
       city: addrByEid[eid]?.CVRAdresse_postdistrikt || "",
       zip: addrByEid[eid]?.CVRAdresse_postnummer || "",
+      phone: phoneByEid[eid] || "",   // registered switchboard from CVR (free)
     };
   });
 }
@@ -528,6 +541,7 @@ async function main() {
             employees: c.employees,
             city: c.city,
             zip: c.zip,
+            phone: c.phone || previously?.phone || "",
             status: c.status,
             founded: c.founded,
             ads: {
