@@ -443,7 +443,12 @@ async function main() {
   console.log(`[discover] start · limit=${LIMIT} concurrency=${CONCURRENCY}`);
 
   const candidates = await loadOrBuildPool();
-  const prev = loadJson(STATE_FILE, { companies: {} }).companies || {};
+  const prevState = loadJson(STATE_FILE, { companies: {} });
+  const prev = prevState.companies || {};
+  // Rolling-window hitrate history — last N runs. Used to detect when
+  // the META scraper's signal density drops below a useful threshold so
+  // we know when to broaden tier-1 industry coverage. Keep last 100.
+  const prevRuns = Array.isArray(prevState.runs) ? prevState.runs.slice(-99) : [];
   // BECK-bug fix: Datafordeler's CVR_Beskaeftigelse returns transient
   // nulls (the same company can come back with employees=12 one day and
   // employees=null the next). When pool.json was built we got null for
@@ -593,15 +598,38 @@ async function main() {
   await Promise.all(contexts.map((_, idx) => worker(idx)));
   await browser.close().catch(() => {});
 
-  // Final write
+  // Final write — append this run to the rolling hitrate history.
+  const thisRun = {
+    startedAt: new Date(startTime).toISOString(),
+    completedAt: new Date().toISOString(),
+    scrapedThisRun: work.length,
+    ok,
+    fail,
+    withAds,
+    // Hitrate = withAds / ok (companies with running ads / successful scrapes).
+    // Tracks whether the discovery pool still has useful signal density;
+    // if it drops below ~2% for 24h we should broaden tier-1 industries.
+    hitratePct: ok > 0 ? Math.round((withAds / ok) * 10000) / 100 : 0,
+    tier1Scanned: work.filter((c) => c.hasEmpData).length,
+    flips: flips.length,
+  };
+  const runs = [...prevRuns, thisRun];
+  // Compute rolling hitrate over last 10 runs for log visibility.
+  const window = runs.slice(-10);
+  const winOk = window.reduce((s, r) => s + (r.ok || 0), 0);
+  const winAds = window.reduce((s, r) => s + (r.withAds || 0), 0);
+  const winHitrate = winOk > 0 ? Math.round((winAds / winOk) * 10000) / 100 : 0;
   saveJson(STATE_FILE, {
-    lastRunStartedAt: new Date(startTime).toISOString(),
-    lastRunCompletedAt: new Date().toISOString(),
+    lastRunStartedAt: thisRun.startedAt,
+    lastRunCompletedAt: thisRun.completedAt,
     candidatePoolSize: candidates.length,
     scrapedThisRun: work.length,
     ok,
     fail,
     withAds,
+    hitratePct: thisRun.hitratePct,
+    rollingHitrate10: winHitrate,
+    runs,
     companies: next,
   });
   saveJson(META_ADS_FILE, metaAdsCache);
@@ -609,8 +637,16 @@ async function main() {
 
   const minutes = ((Date.now() - startTime) / 60000).toFixed(1);
   console.log(
-    `[discover] done in ${minutes} min · ok=${ok} fail=${fail} ads=${withAds} flips=${flips.length}`,
+    `[discover] done in ${minutes} min · ok=${ok} fail=${fail} ads=${withAds} flips=${flips.length} · hitrate=${thisRun.hitratePct}% (10-run rolling: ${winHitrate}%)`,
   );
+  // Warn if rolling hitrate looks low — manual broadening signal for now.
+  // (Auto-broadening lives in a future build once we have data at the
+  // new hourly cadence.)
+  if (window.length >= 5 && winHitrate < 2.0) {
+    console.log(
+      `[discover] ⚠ rolling hitrate ${winHitrate}% below 2.0% threshold over last ${window.length} runs — consider broadening tier-1 industries`,
+    );
+  }
 }
 
 main()

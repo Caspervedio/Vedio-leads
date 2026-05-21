@@ -1505,8 +1505,18 @@ app.post("/api/leads", authMiddleware, (req, res) => {
     listId: listId || "ungrouped",
     source: source || company.source || "manual",
     addedAt: new Date().toISOString(),
+    // Apollo enrichment fires below — flag so the UI shows a spinner
+    // until contacts/socials/talking points populate.
+    apollo_enrichment_pending: isApolloConfigured(),
   });
   saveUserData(req.userId, d);
+  // Fire Apollo enrichment async — same flow as /promote so any lead
+  // landing in user.leads gets the same treatment.
+  if (isApolloConfigured()) {
+    enrichUserLeadsViaApolloAsync(req.userId, [company.cvr]).catch((e) =>
+      console.warn("[manual-add enrich] failed:", company.cvr, e.message)
+    );
+  }
   res.json({ ok: true });
 });
 
@@ -1818,10 +1828,15 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
             listId,
             addedAt: now,
             source: row.source || "csv",
+            apollo_enrichment_pending: isApolloConfigured(),
           });
           existing.add(company.cvr);
           stats.imported++;
           stats.matched++;
+          // Track matched CVRs to fire Apollo enrichment in a single batch
+          // at the end (post-worker, post-save) for efficiency.
+          if (!stats._matchedCvrs) stats._matchedCvrs = [];
+          stats._matchedCvrs.push(company.cvr);
         } else {
           // Unmatched — still keep the row so the SDR can act on it (Kaspr lookup
           // by name etc.). Generate a synthetic key so we don't collide with real CVRs.
@@ -1853,6 +1868,18 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
   await Promise.all(workers);
 
   saveUserData(req.userId, d);
+  // Fire Apollo enrichment for all matched CSV rows in one batch. The
+  // enricher's internal concurrency=5 means a 500-row import enriches
+  // in ~100 batches × ~1s each. Fire-and-forget; SDR sees enrichment
+  // populate as they work the list.
+  const cvrsToEnrich = stats._matchedCvrs || [];
+  delete stats._matchedCvrs;
+  if (cvrsToEnrich.length > 0 && isApolloConfigured()) {
+    enrichUserLeadsViaApolloAsync(req.userId, cvrsToEnrich).catch((e) =>
+      console.warn("[csv-import enrich] batch failed:", e.message)
+    );
+    stats.enrichmentQueued = cvrsToEnrich.length;
+  }
   // Trim details to avoid blowing up the response
   stats.details = stats.details.slice(0, 20);
   res.json(stats);
@@ -1899,11 +1926,18 @@ app.post("/api/pipeline-push", authMiddleware, (req, res) => {
   if (!cvr || !aeStage) return res.status(400).json({ error: "cvr og aeStage er påkrævet" });
   const users = loadUsers();
   const aeUsers = users.filter(u => u.role === "AE");
+  const enrichTargets = []; // [{userId, cvr}] for batched enrichment after
   aeUsers.forEach(aeUser => {
     const d = loadUserData(aeUser.id);
     // Add lead to AE's leads list if not already there
     if (company && !d.leads.find(l => l.cvr === cvr)) {
-      d.leads.push({ ...company, addedAt: new Date().toISOString(), listId: "ungrouped" });
+      d.leads.push({
+        ...company,
+        addedAt: new Date().toISOString(),
+        listId: "ungrouped",
+        apollo_enrichment_pending: isApolloConfigured(),
+      });
+      enrichTargets.push(aeUser.id);
     }
     // Set AE pipeline stage
     ensurePipelines(d);
@@ -1912,6 +1946,15 @@ app.post("/api/pipeline-push", authMiddleware, (req, res) => {
     d.pipeline[cvr] = aeStage;
     saveUserData(aeUser.id, d);
   });
+  // Fire Apollo enrichment for each AE that got a fresh lead. Per-user
+  // because enrichUserLeadsViaApolloAsync writes into the user's data file.
+  if (isApolloConfigured() && enrichTargets.length > 0) {
+    for (const uid of enrichTargets) {
+      enrichUserLeadsViaApolloAsync(uid, [cvr]).catch((e) =>
+        console.warn("[pipeline-push enrich]", uid, cvr, e.message)
+      );
+    }
+  }
   res.json({ ok: true, pushedTo: aeUsers.map(u => u.name) });
 });
 
@@ -3268,16 +3311,33 @@ app.post('/api/discovery/results/:id/feedback', authMiddleware, (req, res) => {
   result.feedback_reason = req.body.reason || null;
   result.feedback_at = new Date().toISOString();
   // Auto-add to leads on approval
+  let approvedCvr = null;
   if (req.body.feedback === 'approved' && result.company_data) {
     if (!d.leads.find(l => l.cvr === result.cvr_number)) {
       // Ensure "AI-discovered leads" list exists
       if (!d.lists.find(l => l.name === 'AI-discovered leads')) {
         d.lists.push({ id: 'ai_discovered', name: 'AI-discovered leads' });
       }
-      d.leads.push({ ...result.company_data, cvr: result.cvr_number, name: result.company_name, listId: 'ai_discovered', addedAt: new Date().toISOString() });
+      d.leads.push({
+        ...result.company_data,
+        cvr: result.cvr_number,
+        name: result.company_name,
+        listId: 'ai_discovered',
+        addedAt: new Date().toISOString(),
+        apollo_enrichment_pending: isApolloConfigured(),
+      });
+      approvedCvr = result.cvr_number;
     }
   }
   saveUserData(req.userId, d);
+  // Fire Apollo enrichment for the freshly-approved lead so the SDR
+  // sees decision-makers, talking points and direct dials when they
+  // open it.
+  if (approvedCvr && isApolloConfigured()) {
+    enrichUserLeadsViaApolloAsync(req.userId, [approvedCvr]).catch((e) =>
+      console.warn("[ai-discovered enrich]", approvedCvr, e.message)
+    );
+  }
   // Auto-trigger feedback analysis every 10th feedback
   const totalFeedback = d.discovery_results.filter(r => r.feedback).length;
   if (totalFeedback > 0 && totalFeedback % 10 === 0) {

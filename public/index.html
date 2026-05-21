@@ -2881,6 +2881,15 @@ function renderDiscoveryResults(){
   </div>`;
 }
 
+// Build a deep link into Meta Ads Library for a company name. Uses the
+// same query shape as the META scraper (scripts/discover-ads.js) so SDR
+// sees the exact ads our scrape would consider. country=DK locks us to
+// DK activity only.
+function metaAdsLibUrl(name){
+  const q = encodeURIComponent((name||'').trim());
+  return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${q}&search_type=keyword_unordered`;
+}
+
 // Source badge — small chip showing which AI Agent surfaced this lead.
 // Legacy entries (no `source` field) come from the daily META scrape, so
 // they implicitly map to META Scraper.
@@ -4962,9 +4971,20 @@ function renderAutodialerPage(){
           const rowAction = showArchive
             ? `onclick="event.stopPropagation()"` // archive rows shouldn't jump into cockpit
             : `onclick="adJumpToLead(${i})"`;
+          // Compact social/ads icons — small, inline next to the company name.
+          // FB icon links to the Apollo-discovered Facebook page if we have one.
+          // Ads chip shows count + deep-links to Meta Ads Library so SDR can
+          // peek at current creative before the call. Both stop event propagation
+          // so clicking the icons doesn't jump the row into the cockpit.
+          const fbUrl = l.apollo_company?.facebookUrl || '';
+          const adsCount = l.adsMatched || 0;
+          const socialIcons = [
+            fbUrl ? `<a href="${e(fbUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook-side" style="font-size:13px;text-decoration:none;color:#60a5fa;margin-left:6px;opacity:0.85" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">📘</a>` : '',
+            adsCount > 0 ? `<a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
+          ].join('');
           return `<tr ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
-            <td style="padding:10px 14px">${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span></td>
+            <td style="padding:10px 14px">${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${socialIcons}</td>
             <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
@@ -5268,9 +5288,13 @@ function renderCockpitDetail(c){
         </div>
         ${aco.technologyNames?.length?`<div style="margin-top:6px"><span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-right:6px">Tech stack</span>${aco.technologyNames.slice(0,8).map(t=>`<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:rgba(124,58,237,0.15);color:#c4b5fd;font-size:10.5px;font-weight:700;margin:2px 4px 2px 0">${e(t)}</span>`).join('')}</div>`:''}
         ${aco.keywords?.length?`<div style="margin-top:6px;font-size:10.5px;color:var(--w55)">${aco.keywords.slice(0,6).map(k=>e(k)).join(' · ')}</div>`:''}
-        <div style="display:flex;gap:10px;margin-top:10px;font-size:11px">
+        <div style="display:flex;gap:10px;margin-top:10px;font-size:11px;flex-wrap:wrap;align-items:center">
           ${aco.websiteUrl?`<a href="${e(aco.websiteUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🌐 Website ↗</a>`:''}
           ${aco.linkedinUrl?`<a href="${e(aco.linkedinUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a>`:''}
+          ${aco.facebookUrl?`<a href="${e(aco.facebookUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">📘 Facebook ↗</a>`:''}
+          <!-- Meta Ads Library — always shown so SDR can verify current ad activity even if our scrape didn't see any. Pre-filled with the company name. -->
+          <a href="${metaAdsLibUrl(c.name||aco.name)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="Tjek hvilke ads de kører lige nu">🎯 Meta Ads Library ↗</a>
+          ${(c.adsMatched||0)>0?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.15);color:#fb923c;font-size:10.5px;font-weight:800;border:1px solid rgba(251,146,60,0.3)" title="META scrape fandt ${c.adsMatched} aktive ads ved seneste run">🔥 ${c.adsMatched} aktive ads</span>`:''}
         </div>
       </div>`:''}
 
