@@ -322,6 +322,45 @@ tr.chk td{background:var(--bluebg)}
 .modal input::placeholder{color:var(--gray2)}
 .modal-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:14px}
 
+/* ─── EMBEDDED SOFTPHONE (CloudTalk Phone iframe) ──────────────────────
+   Fixed bottom-right dock + collapsed pill. Sits above all SPA content
+   but below the login overlay. */
+#softphone-dock{
+  position:fixed;bottom:18px;right:18px;width:380px;height:600px;z-index:900;
+  background:#14111f;border:1px solid rgba(124,58,237,0.35);border-radius:14px;
+  box-shadow:0 24px 64px rgba(0,0,0,0.55),0 0 32px rgba(124,58,237,0.18);
+  overflow:hidden;display:flex;flex-direction:column;
+  animation:softphoneFadeIn 0.22s cubic-bezier(0.22,1,0.36,1)
+}
+@keyframes softphoneFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+#softphone-header{
+  display:flex;align-items:center;gap:6px;padding:9px 10px 9px 12px;
+  background:linear-gradient(180deg,rgba(124,58,237,0.22),rgba(124,58,237,0.08));
+  border-bottom:1px solid rgba(124,58,237,0.25);
+  user-select:none
+}
+#softphone-status-dot{
+  width:8px;height:8px;border-radius:50%;background:#6b7280;
+  box-shadow:0 0 0 2px rgba(107,114,128,0.18);transition:background 0.2s,box-shadow 0.2s
+}
+#softphone-status-dot.ready{background:#34d399;box-shadow:0 0 0 2px rgba(52,211,153,0.22)}
+#softphone-status-dot.calling{background:#fb923c;box-shadow:0 0 0 2px rgba(251,146,60,0.22);animation:pulse-dot 1.2s ease-in-out infinite}
+#softphone-iframe{flex:1;width:100%;border:0;background:#1a1626;display:block}
+#softphone-pill{
+  position:fixed;bottom:18px;right:18px;z-index:900;
+  display:flex;align-items:center;gap:8px;padding:10px 16px;
+  background:linear-gradient(135deg,#7c3aed,#a78bfa);
+  border:0;border-radius:24px;color:#fff;cursor:pointer;
+  font-family:'Outfit',sans-serif;
+  box-shadow:0 12px 32px rgba(124,58,237,0.45),0 0 0 1px rgba(255,255,255,0.06) inset;
+  transition:transform 0.12s,box-shadow 0.12s
+}
+#softphone-pill:hover{transform:translateY(-1px);box-shadow:0 16px 36px rgba(124,58,237,0.55)}
+#softphone-pill.calling{animation:pulse-dot 1.2s ease-in-out infinite}
+@media (max-width:1280px){
+  #softphone-dock{width:340px;height:560px;bottom:14px;right:14px}
+}
+
 /* LOGIN OVERLAY */
 /* LOGIN — Vedio 3.0 brand */
 .login-overlay{position:fixed;inset:0;background:#0d0a14;z-index:1000;display:flex;align-items:center;justify-content:center;font-family:'Outfit',sans-serif;overflow:hidden}
@@ -733,6 +772,37 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 </div>
 
 <div class="app" id="app" style="display:none">
+
+<!-- ─── EMBEDDED SOFTPHONE (CloudTalk Phone web app) ─────────────────────
+  Persistent across all SPA navigation so call sessions survive the
+  Autodialer ↔ Cockpit ↔ Dashboard switching. Iframe never unmounts.
+  CloudTalk's phone.cloudtalk.io explicitly allows third-party embed
+  (no X-Frame-Options, no frame-ancestors CSP).
+  Two states: docked (bottom-right floating panel 380x620) or collapsed
+  (just a phone-icon tab on the right edge). State persists in
+  localStorage so SDR's preference survives reloads. -->
+<div id="softphone-dock" style="display:none">
+  <!-- Header strip — drag handle + collapse button + status dot -->
+  <div id="softphone-header">
+    <div style="display:flex;align-items:center;gap:8px;flex:1">
+      <span id="softphone-status-dot" title="Softphone status"></span>
+      <span style="font-size:12px;font-weight:700;color:#fff;letter-spacing:0.3px">📞 Softphone</span>
+      <span id="softphone-substatus" style="font-size:10px;color:rgba(255,255,255,0.55);font-weight:500"></span>
+    </div>
+    <button id="softphone-reload" onclick="softphoneReload()" title="Genindlæs softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">↻</button>
+    <button id="softphone-collapse" onclick="softphoneToggle()" title="Skjul softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 8px;font-size:16px;line-height:1;font-weight:700">−</button>
+  </div>
+  <iframe id="softphone-iframe"
+          src="about:blank"
+          allow="microphone; camera; autoplay; clipboard-read; clipboard-write"
+          referrerpolicy="strict-origin"
+          title="CloudTalk Phone"></iframe>
+</div>
+<!-- Collapsed pill — shown when dock is hidden. Click to re-expand. -->
+<button id="softphone-pill" onclick="softphoneToggle()" title="Åbn softphone" style="display:none">
+  <span style="font-size:16px">📞</span>
+  <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px">Softphone</span>
+</button>
 
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sb">
@@ -1432,6 +1502,96 @@ function showApp(){
   }
   if(isServerMode)fetchOwners();
   setTimeout(()=>{const t=document.getElementById('ai-toggle');if(t)t.checked=aiEnabled;if(aiEnabled&&aView==='leads')fetchEnrichStatus();if(aiEnabled){const gear=document.getElementById('icp-gear');if(gear)gear.style.display='';}},200);
+  // Boot the embedded softphone — first reveal lazily loads the iframe
+  // so the page-load cost is paid only after login.
+  softphoneInit();
+}
+
+// ─── Embedded softphone (CloudTalk Phone iframe) ──────────────────────
+// Single global instance, persistent across SPA navigation. The iframe
+// is lazily src'd on first reveal so first paint isn't blocked by
+// CloudTalk's bundle. Collapse state persists in localStorage. When a
+// call is fired via /api/cloudtalk/call we auto-expand and flash the
+// dot so the SDR knows where to look.
+const SOFTPHONE_URL = 'https://phone.cloudtalk.io/';
+function softphoneInit(){
+  const dock=document.getElementById('softphone-dock');
+  const pill=document.getElementById('softphone-pill');
+  const iframe=document.getElementById('softphone-iframe');
+  if(!dock||!pill||!iframe)return;
+  // Lazy-load: only set src once when the dock or pill first becomes visible.
+  if(iframe.src==='about:blank' || !iframe.src.startsWith('https://phone.cloudtalk.io')){
+    iframe.src = SOFTPHONE_URL;
+    softphoneSetStatus('loading','indlæser…');
+    iframe.addEventListener('load', ()=>{
+      // Iframe loaded. We can't read inside (cross-origin) so we can't
+      // know if the SDR is signed in — show neutral "klar" until a call
+      // fires, at which point we flip to 'calling'.
+      softphoneSetStatus('ready','klar');
+    }, {once:true});
+  }
+  // Restore last collapse state (default: docked open after login).
+  const collapsed = localStorage.getItem('softphone_collapsed')==='1';
+  if(collapsed){ dock.style.display='none'; pill.style.display='flex'; }
+  else { dock.style.display='flex'; pill.style.display='none'; }
+}
+function softphoneToggle(){
+  const dock=document.getElementById('softphone-dock');
+  const pill=document.getElementById('softphone-pill');
+  if(!dock||!pill)return;
+  const isOpen = dock.style.display !== 'none';
+  if(isOpen){
+    dock.style.display='none';
+    pill.style.display='flex';
+    localStorage.setItem('softphone_collapsed','1');
+  } else {
+    dock.style.display='flex';
+    pill.style.display='none';
+    localStorage.setItem('softphone_collapsed','0');
+    // First open may need to lazy-load the iframe.
+    softphoneInit();
+  }
+}
+function softphoneReload(){
+  const iframe=document.getElementById('softphone-iframe');
+  if(!iframe)return;
+  softphoneSetStatus('loading','genindlæser…');
+  // Re-set src to force a clean reload of the CloudTalk Phone session.
+  iframe.src = SOFTPHONE_URL + '?_t=' + Date.now();
+}
+function softphoneSetStatus(kind, label){
+  const dot=document.getElementById('softphone-status-dot');
+  const sub=document.getElementById('softphone-substatus');
+  const pill=document.getElementById('softphone-pill');
+  if(!dot)return;
+  dot.classList.remove('ready','calling');
+  if(pill)pill.classList.remove('calling');
+  if(kind==='ready')dot.classList.add('ready');
+  else if(kind==='calling'){
+    dot.classList.add('calling');
+    if(pill)pill.classList.add('calling');
+  }
+  if(sub)sub.textContent = label || '';
+}
+// Called from the click-to-call flow to (a) auto-expand the dock so
+// the SDR can interact with the ringing softphone, (b) flip the status
+// dot to "calling" so it's visually obvious where the call is happening.
+function softphoneOnCallStart(name){
+  const dock=document.getElementById('softphone-dock');
+  const pill=document.getElementById('softphone-pill');
+  if(dock && dock.style.display==='none'){
+    // Auto-expand the dock when a call fires — but only if the iframe
+    // is actually loaded. If still loading, leave the pill visible so
+    // the pulse is the visible signal.
+    dock.style.display='flex';
+    if(pill)pill.style.display='none';
+    localStorage.setItem('softphone_collapsed','0');
+  }
+  softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
+  // Reset to "ready" after a generous window (CloudTalk doesn't emit
+  // events to us cross-origin; this is a UI hint, not the truth).
+  clearTimeout(window._softphoneStatusTimer);
+  window._softphoneStatusTimer = setTimeout(()=>softphoneSetStatus('ready','klar'), 60000);
 }
 async function fetchOwners(){
   try{
@@ -1496,6 +1656,14 @@ async function logout(){
   leadNotes={};leadTags={};leadFollowup={};
   leadContacts={};
   leads=[];lists=[{id:'all',name:'Alle leads'}];
+  // Tear down the embedded softphone — drops the CloudTalk session
+  // so the next SDR who logs in starts clean.
+  const dock=document.getElementById('softphone-dock');
+  const pill=document.getElementById('softphone-pill');
+  const iframe=document.getElementById('softphone-iframe');
+  if(dock)dock.style.display='none';
+  if(pill)pill.style.display='none';
+  if(iframe)iframe.src='about:blank';
   showLogin();
 }
 
@@ -5247,9 +5415,12 @@ async function cockpitStartDialer(){
   // (e.g. DK number / agent_id pending).
   const phone = c.phone || c.ph || (c.contacts && c.contacts.find(x=>x.phone)?.phone) || '';
   if(!phone){
-    showToast('Ingen telefonnummer på leadet — berig først med Kaspr');
+    showToast('Ingen telefonnummer på leadet — berig først med Apollo');
     return;
   }
+  // Pop the embedded softphone if hidden + flip status dot to "calling"
+  // so the SDR sees where the conversation will land.
+  softphoneOnCallStart(c.name);
   try{
     const r = await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr:c.cvr, phone})});
     const d = await r.json();
@@ -5544,6 +5715,7 @@ async function cockpitManualCallConfirm(){
   const phone=document.getElementById('mc-phone')?.value.trim()||'';
   if(!phone){showToast('Indtast nummer');return;}
   document.getElementById('mc-modal')?.remove();
+  softphoneOnCallStart(phone);
   try{
     const r=await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone})});
     const d=await r.json();
