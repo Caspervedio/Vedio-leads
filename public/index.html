@@ -1105,7 +1105,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         </div>
         <button class="btn btn-primary btn-sm" id="ad-start-btn" style="padding:12px 22px;font-size:13.5px;flex-shrink:0;background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none" onclick="openCockpit()">▶ Start opkald</button>
       </div>
-      <div id="ad-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px"></div>
+      <div id="ad-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px"></div>
+      <!-- Activity breakdown table — today / week / all-time -->
+      <div id="ad-activity" style="margin-bottom:18px"></div>
       <div id="ad-lists"></div>
       <div id="ad-queue"></div>
     </div>
@@ -2380,15 +2382,21 @@ function renderReviewQueue(){
   // Default: all selected when first opening
   if(sel.size===0)for(const r of rows)sel.add(r.cvr);
   const preview=rows.slice(0,8);
+  // Enrichment coverage — how many of these leads are already call-ready
+  // thanks to the Kaspr cron? Surfacing this so the SDR knows "I can
+  // promote and start dialing without per-row enrichment work".
+  const enrichedCount = rows.filter(r => Array.isArray(r.contacts) && r.contacts.length > 0).length;
+  const enrichedPct = rows.length>0 ? Math.round((enrichedCount/rows.length)*100) : 0;
   el.innerHTML=`
     <div style="background:linear-gradient(135deg,rgba(52,211,153,0.08),rgba(52,211,153,0.02));border:1px solid rgba(52,211,153,0.25);border-radius:14px;padding:16px 18px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
         <div style="flex:1;min-width:240px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
             <span style="font-size:10px;font-weight:800;color:#34d399;letter-spacing:1.2px;text-transform:uppercase">📌 ICP-klar review queue</span>
             <span style="font-size:11px;color:var(--w55);padding:2px 8px;border-radius:8px;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);font-weight:700">${rows.length}</span>
+            ${enrichedCount>0?`<span style="font-size:10.5px;color:#c4b5fd;padding:2px 8px;border-radius:8px;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.28);font-weight:700" title="Kaspr-berigede leads — kontakt-info klar i din Autodialer">🔍 ${enrichedCount} (${enrichedPct}%) call-ready</span>`:''}
           </div>
-          <div style="font-size:12px;color:var(--w80);line-height:1.5;max-width:680px">Agenterne har fundet <strong style="color:#fff">${rows.length}</strong> ICP-kvalificerede leads der ikke er i din Autodialer-kø endnu. Godkend dem her — så sendes de samlet til køen (og auto-pushes til CloudTalk + Twenty når Phase C/D er aktive).</div>
+          <div style="font-size:12px;color:var(--w80);line-height:1.5;max-width:680px">Agenterne har fundet <strong style="color:#fff">${rows.length}</strong> ICP-kvalificerede leads der ikke er i din Autodialer-kø endnu. Godkend dem her — så sendes de samlet til køen.${enrichedCount>0?` <strong style="color:#c4b5fd">${enrichedCount}</strong> har allerede Kaspr-kontakter klar.`:''}</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn btn-sm" onclick="rqSelectNone()" style="padding:7px 13px">Fravælg alle</button>
@@ -4600,25 +4608,79 @@ function renderAutodialerPage(){
   } else if(_adState.sort==='name'){
     filtered.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
   }
-  const calledToday=leads.filter(l=>l.lastCallAt&&(Date.now()-new Date(l.lastCallAt).getTime())<24*60*60*1000).length;
-  const dispositioned=leads.filter(l=>l.lastAction).length;
-  const lastCall=leads.reduce((m,l)=>{
-    if(!l.lastCallAt)return m;
-    const t=new Date(l.lastCallAt).getTime();
-    return (m&&m>t)?m:t;
-  },0);
-  const lastCallText=lastCall?humanAgo(new Date(lastCall).toISOString()):'—';
+  // ─── Session stats — bucketed by time window ─────────────────────────
+  // Today = last 24h. Week = last 7 days. AllTime = lifetime since lead added.
+  const now=Date.now();
+  const DAY_MS = 24*60*60*1000;
+  const WEEK_MS = 7*DAY_MS;
+  const inWindow = (iso,ms)=>iso && (now - new Date(iso).getTime()) < ms;
+
+  const sessionCounts = (windowMs)=>{
+    const c = { dialed:0, interested:0, no_answer:0, not_relevant:0, sms:0, twentyPushed:0 };
+    for(const l of leads){
+      // "Dialed" = has a lastCallAt within the window
+      if(windowMs===Infinity ? !!l.lastCallAt : inWindow(l.lastCallAt, windowMs)) c.dialed++;
+      // Dispositions — use lastDispositionAt as the timestamp
+      const dispTime = l.lastDispositionAt || l.lastCallAt;
+      const inDisp = windowMs===Infinity ? !!l.lastAction : inWindow(dispTime, windowMs);
+      if(inDisp){
+        if(l.lastAction==='interested') c.interested++;
+        else if(l.lastAction==='no-answer') c.no_answer++;
+        else if(l.lastAction==='not-relevant') c.not_relevant++;
+        else if(l.lastAction==='sms') c.sms++;
+      }
+      // SMS sent within window (separate from disposition since SMS can fire mid-call too)
+      if(l.last_sms_at && (windowMs===Infinity ? true : inWindow(l.last_sms_at, windowMs))) {
+        // Only count if not already counted via disposition
+        if(l.lastAction!=='sms') c.sms++;
+      }
+      // Twenty pushes
+      if(l.twenty_pushed_at && (windowMs===Infinity ? true : inWindow(l.twenty_pushed_at, windowMs))) c.twentyPushed++;
+    }
+    return c;
+  };
+  const dayStats = sessionCounts(DAY_MS);
+  const weekStats = sessionCounts(WEEK_MS);
+  const allStats = sessionCounts(Infinity);
+
+  // Conversion = interested / dialed (today)
+  const convPct = dayStats.dialed>0 ? Math.round((dayStats.interested/dayStats.dialed)*100) : 0;
+
+  // Next scheduled callback (earliest future callback_at)
+  const upcomingCallbacks = leads
+    .filter(l=>l.callback_at && new Date(l.callback_at).getTime() > now)
+    .map(l=>new Date(l.callback_at).getTime())
+    .sort((a,b)=>a-b);
+  const nextCbMs = upcomingCallbacks[0] || null;
+  const callbackText = nextCbMs ? (()=>{
+    const diffMin = Math.round((nextCbMs - now)/60000);
+    if(diffMin < 60) return `om ${diffMin} min`;
+    if(diffMin < 1440) return `om ${Math.round(diffMin/60)} t`;
+    return `om ${Math.round(diffMin/1440)} dage`;
+  })() : '—';
+
   const tile=(label,value,sub,accent)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
     <div style="font-size:22px;font-weight:900;color:${accent||'#fff'};letter-spacing:-0.5px">${value}</div>
     ${sub?`<div style="font-size:11px;color:var(--w55);margin-top:2px">${sub}</div>`:''}
   </div>`;
+  // Color the conversion tile by performance: ≥30% green, 10-30% amber, <10% red.
+  const convColor = convPct>=30?'#6ee7b7' : convPct>=10?'#fdba74' : convPct>0?'#fca5a5' : 'var(--w55)';
   statsEl.innerHTML=[
-    tile('Klar i kø',filtered.length.toLocaleString('da-DK'),aList==='all'?'alle leads':`liste: ${lists.find(l=>l.id===aList)?.name||aList}`, 'var(--purple-light)'),
-    tile('Total leads',leads.length.toLocaleString('da-DK'),'i Vedio Leads'),
-    tile('Ringet i dag',calledToday.toLocaleString('da-DK'),dispositioned?`${dispositioned} dispositioneret i alt`:''),
-    tile('Sidst ringet',lastCallText,''),
+    tile('Klar i kø', filtered.length.toLocaleString('da-DK'),
+      aList==='all'?'alle leads':`liste: ${lists.find(l=>l.id===aList)?.name||aList}`, 'var(--purple-light)'),
+    tile('Ringet i dag', dayStats.dialed.toLocaleString('da-DK'),
+      weekStats.dialed>0?`${weekStats.dialed} denne uge`:''),
+    tile('Interesseret i dag', dayStats.interested.toLocaleString('da-DK'),
+      dayStats.interested>0?`${weekStats.interested} denne uge`:'klik 1 i cockpit', '#6ee7b7'),
+    tile('Konvertering i dag', convPct>0?`${convPct}%`:'—',
+      dayStats.dialed>0?`${dayStats.interested} af ${dayStats.dialed} dialed`:'', convColor),
+    tile('Næste callback', callbackText,
+      upcomingCallbacks.length>1?`${upcomingCallbacks.length} planlagt`:''),
   ].join('');
+
+  // Activity breakdown table — secondary stats panel below the tile row
+  renderAdActivityTable(dayStats, weekStats, allStats);
 
   // List selector — chips for each user-defined list + "Alle leads".
   // Re-uses the same list state (`aList`) the cockpit reads from, so
@@ -4734,6 +4796,55 @@ function renderAutodialerPage(){
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
+
+// Activity breakdown — secondary stats panel showing today vs week vs
+// all-time across the five disposition types + dialed total. Helps the
+// SDR see "am I improving" trends without needing a separate analytics
+// tool. Pure client-side computation from the leads array.
+function renderAdActivityTable(today, week, all){
+  const el = document.getElementById('ad-activity');
+  if(!el) return;
+  // Skip rendering if there's literally no activity yet (clean empty state).
+  if(all.dialed===0 && all.interested===0 && all.sms===0){
+    el.innerHTML = '';
+    return;
+  }
+  const rows = [
+    { lbl:'📞 Ringet',         t:today.dialed,        w:week.dialed,        a:all.dialed,        color:'#fff' },
+    { lbl:'✓ Interesseret',    t:today.interested,    w:week.interested,    a:all.interested,    color:'#6ee7b7' },
+    { lbl:'💬 SMS sendt',       t:today.sms,           w:week.sms,           a:all.sms,           color:'#a78bfa' },
+    { lbl:'✕ Ingen svar',      t:today.no_answer,     w:week.no_answer,     a:all.no_answer,     color:'#60a5fa' },
+    { lbl:'– Ikke relevant',   t:today.not_relevant,  w:week.not_relevant,  a:all.not_relevant,  color:'var(--w55)' },
+    { lbl:'🎯 Pushet til Twenty', t:today.twentyPushed, w:week.twentyPushed, a:all.twentyPushed, color:'#60a5fa' },
+  ];
+  // Compute conversion rates for the value-add column. Interested / Dialed.
+  const conv = (i,d)=>d>0 ? `${Math.round(i/d*100)}%` : '—';
+  el.innerHTML = `
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;overflow:hidden">
+      <div style="padding:11px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35)">Aktivitet</div>
+        <div style="font-size:11px;color:var(--w55)">Konvertering · I dag: <strong style="color:${today.dialed>0?'#fff':'var(--w35)'}">${conv(today.interested, today.dialed)}</strong> · Uge: <strong style="color:${week.dialed>0?'#fff':'var(--w35)'}">${conv(week.interested, week.dialed)}</strong> · All-time: <strong style="color:${all.dialed>0?'#fff':'var(--w35)'}">${conv(all.interested, all.dialed)}</strong></div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:9px 16px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08);background:var(--w04)"></th>
+            <th style="text-align:right;padding:9px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08);background:var(--w04);width:80px">I dag</th>
+            <th style="text-align:right;padding:9px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08);background:var(--w04);width:80px">Denne uge</th>
+            <th style="text-align:right;padding:9px 14px;font-size:10px;font-weight:800;letter-spacing:0.8px;color:var(--w35);text-transform:uppercase;border-bottom:1px solid var(--w08);background:var(--w04);width:90px">All-time</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>`<tr style="border-bottom:1px solid var(--w04)">
+            <td style="padding:9px 16px;font-size:12px;color:${r.color};font-weight:600">${r.lbl}</td>
+            <td style="padding:9px 14px;font-size:12.5px;font-weight:700;color:${r.t>0?r.color:'var(--w35)'};text-align:right;font-variant-numeric:tabular-nums">${r.t.toLocaleString('da-DK')}</td>
+            <td style="padding:9px 14px;font-size:12.5px;font-weight:600;color:${r.w>0?'var(--w80)':'var(--w35)'};text-align:right;font-variant-numeric:tabular-nums">${r.w.toLocaleString('da-DK')}</td>
+            <td style="padding:9px 14px;font-size:12.5px;font-weight:600;color:${r.a>0?'var(--w55)':'var(--w35)'};text-align:right;font-variant-numeric:tabular-nums">${r.a.toLocaleString('da-DK')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
 
 // Restore an archived lead back into the active queue. Clears lastAction
 // (which is what flagged it as archived) but keeps the lead row intact

@@ -1530,6 +1530,10 @@ app.post("/api/leads/promote", authMiddleware, (req, res) => {
     if (existing.has(cvr)) { skippedDup++; continue; }
     const c = pool[cvr];
     if (!c) { skippedNotInPool++; continue; }
+    // Inherit pre-enriched contacts from the cron-built pool cache so the
+    // lead lands in user.leads already call-ready (no per-row "Berig med
+    // Kaspr" click needed if the cron has touched it).
+    const primaryPhone = c.phone || (Array.isArray(c.contacts) ? (c.contacts.find(x => x.phone) || {}).phone : null) || "";
     d.leads.push({
       name: c.name,
       cvr: c.cvr,
@@ -1539,11 +1543,15 @@ app.post("/api/leads/promote", authMiddleware, (req, res) => {
       zip: c.zip,
       emp: c.employees,
       web: c.website || c.web || "",
-      phone: c.phone || "",
+      phone: primaryPhone,
       // Source preserved — Discovery pool entries default to meta-scraper.
       source: c.source || "meta-scraper",
       icpFit: c.icpFit || false,
       adsMatched: c.ads?.matched || 0,
+      // Kaspr enrichment carried over from the pool (if the cron has
+      // already touched this CVR)
+      contacts: Array.isArray(c.contacts) ? c.contacts : undefined,
+      kaspr_enriched_at: c.kaspr_enriched_at || undefined,
       listId,
       addedAt: now,
       promotedFromReviewQueue: true,
@@ -3944,6 +3952,45 @@ app.get("/api/kaspr/status", authMiddleware, (req, res) => {
   res.json({ configured: isKasprConfigured() });
 });
 
+// Shared Kaspr enrichment helper — used by both the per-lead endpoint
+// (user-triggered) and the cron endpoint (auto-enrichment). Takes a
+// company shape and returns the parsed contacts[]. Throws on hard error,
+// returns [] for empty match.
+async function enrichWithKaspr({ name, domain, website, country = "DK" }) {
+  const cleanDomain = (domain || website || "")
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/.*$/, "")
+    .trim();
+  const payload = {
+    country,
+    ...(cleanDomain ? { domain: cleanDomain } : {}),
+    ...(name ? { company_name: name } : {}),
+    limit: 10,
+  };
+  const r = await fetch(`${KASPR_API_BASE}/contacts/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": process.env.KASPR_API_KEY,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Kaspr ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const d = await r.json();
+  const rawContacts = d.contacts || d.data || d.results || [];
+  return rawContacts.slice(0, 10).map((c) => ({
+    name: c.full_name || `${c.first_name || ""} ${c.last_name || ""}`.trim() || "—",
+    title: c.job_title || c.title || "",
+    phone: c.direct_phone || c.mobile_phone || c.phone || c.work_phone || "",
+    email: c.work_email || c.email || "",
+    linkedin: c.linkedin_url || c.linkedin || "",
+  })).filter((c) => c.name !== "—");
+}
+
 app.post("/api/kaspr/enrich/:cvr", authMiddleware, async (req, res) => {
   if (!isKasprConfigured()) {
     return res.status(503).json({ error: "Kaspr ikke konfigureret — tilføj KASPR_API_KEY i Secret Manager", configured: false });
@@ -3952,56 +3999,119 @@ app.post("/api/kaspr/enrich/:cvr", authMiddleware, async (req, res) => {
   const ud = loadUserData(req.userId);
   const lead = ud.leads.find((l) => l.cvr === cvr);
   if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
-  // Idempotent: skip re-enrichment within 30 days unless ?force=1
+  // Cache check 1: user-level cache on the lead itself (30-day freshness)
   const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
   const fresh = lead.kaspr_enriched_at && (Date.now() - new Date(lead.kaspr_enriched_at).getTime()) < FRESH_MS;
   if (fresh && !req.query.force) {
-    return res.json({ ok: true, cached: true, contacts: lead.contacts || [] });
+    return res.json({ ok: true, cached: "user", contacts: lead.contacts || [] });
   }
-  try {
-    // Kaspr accepts domain, LinkedIn URL, or name. We prioritise domain
-    // (highest match-rate) then fall back to name.
-    const payload = {
-      country: "DK",
-      ...(lead.web || lead.website ? { domain: String(lead.web || lead.website).replace(/^https?:\/\/|^www\./g, "").replace(/\/.*$/, "") } : {}),
-      ...(lead.name ? { company_name: lead.name } : {}),
-      limit: 10,
-    };
-    const r = await fetch(`${KASPR_API_BASE}/contacts/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": process.env.KASPR_API_KEY,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) {
-      const text = await r.text().catch(() => "");
-      return res.status(502).json({ error: `Kaspr: ${r.status} ${text.slice(0, 200)}` });
-    }
-    const d = await r.json();
-    // Best-effort mapping — Kaspr's response wraps contacts in different
-    // keys depending on plan/endpoint. We try `contacts`, `data`, `results`.
-    const rawContacts = d.contacts || d.data || d.results || [];
-    const contacts = rawContacts.slice(0, 10).map((c) => ({
-      name: c.full_name || `${c.first_name || ""} ${c.last_name || ""}`.trim() || "—",
-      title: c.job_title || c.title || "",
-      phone: c.direct_phone || c.mobile_phone || c.phone || c.work_phone || "",
-      email: c.work_email || c.email || "",
-      linkedin: c.linkedin_url || c.linkedin || "",
-    })).filter((c) => c.name !== "—");
-    lead.contacts = contacts;
-    lead.kaspr_enriched_at = new Date().toISOString();
-    // If we got a phone, copy the first one onto lead.phone so the dialer
-    // can use it without the SDR drilling into the contacts panel.
-    const primaryPhone = contacts.find((c) => c.phone)?.phone;
+  // Cache check 2: pool-level cache on state.json (populated by the cron).
+  // If the cron has already enriched this CVR, copy the cached contacts
+  // onto the user's lead — no Kaspr API call needed.
+  const pool = loadDiscoveryState().companies || {};
+  const poolEntry = pool[cvr];
+  if (poolEntry && poolEntry.kaspr_enriched_at && (Date.now() - new Date(poolEntry.kaspr_enriched_at).getTime()) < FRESH_MS && !req.query.force) {
+    lead.contacts = poolEntry.contacts || [];
+    lead.kaspr_enriched_at = poolEntry.kaspr_enriched_at;
+    const primaryPhone = (lead.contacts.find((c) => c.phone) || {}).phone;
     if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
     saveUserData(req.userId, ud);
+    return res.json({ ok: true, cached: "pool", contacts: lead.contacts });
+  }
+  // Cache miss → real Kaspr API call.
+  try {
+    const contacts = await enrichWithKaspr({
+      name: lead.name,
+      domain: lead.web || lead.website,
+    });
+    lead.contacts = contacts;
+    lead.kaspr_enriched_at = new Date().toISOString();
+    const primaryPhone = (contacts.find((c) => c.phone) || {}).phone;
+    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    saveUserData(req.userId, ud);
+    // Also write-through to state.json's pool entry so other users
+    // benefit + the cron doesn't re-enrich this CVR.
+    if (poolEntry) {
+      poolEntry.contacts = contacts;
+      poolEntry.kaspr_enriched_at = lead.kaspr_enriched_at;
+      try {
+        const state = loadDiscoveryState();
+        state.companies[cvr] = poolEntry;
+        fs.writeFileSync(DISCOVERY_STATE_FILE, JSON.stringify(state, null, 2));
+      } catch (e) { console.warn("[kaspr] state.json write-through failed:", e.message); }
+    }
     res.json({ ok: true, cached: false, contacts });
   } catch (e) {
     console.error("[kaspr/enrich]", e.message);
-    res.status(500).json({ error: e.message });
+    res.status(502).json({ error: e.message });
   }
+});
+
+// ─── Kaspr auto-enrichment cron ─────────────────────────────────────────
+// Called by Cloud Scheduler (or any external scheduler) every 30 min.
+// Walks state.json for ICP-klar companies that don't have contacts yet,
+// enriches up to LIMIT per run, saves into the pool. SDR's Review Queue
+// then shows leads with contacts already attached.
+//
+// Auth: X-Cron-Secret header must match env CRON_SECRET. Set up via:
+//   gcloud secrets versions access latest --secret=CRON_SECRET
+// Cloud Scheduler job:
+//   gcloud scheduler jobs create http kaspr-enrich \
+//     --schedule="*/30 * * * *" --time-zone="Europe/Copenhagen" \
+//     --uri="https://leads-723660132735.europe-west1.run.app/api/cron/kaspr-enrich" \
+//     --http-method=POST \
+//     --headers="X-Cron-Secret=<the-secret>"
+app.post("/api/cron/kaspr-enrich", async (req, res) => {
+  // Auth — shared-secret pattern, no user session needed.
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isKasprConfigured()) {
+    return res.status(503).json({ error: "Kaspr not configured" });
+  }
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+  const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const state = loadDiscoveryState();
+  state.companies = state.companies || {};
+  // Pick the ICP-klar companies that aren't enriched yet (or are stale).
+  // Sort by ad-count desc so high-signal leads get enriched first.
+  const candidates = Object.values(state.companies)
+    .filter((c) => c?.icpFit)
+    .filter((c) => !c.kaspr_enriched_at || (now - new Date(c.kaspr_enriched_at).getTime()) > FRESH_MS)
+    .sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0))
+    .slice(0, limit);
+
+  const stats = { considered: candidates.length, enriched: 0, withContacts: 0, errors: 0 };
+  // 1 req/s rate limit — Kaspr's docs recommend ≤2 RPS; we stay below.
+  for (const c of candidates) {
+    try {
+      const contacts = await enrichWithKaspr({
+        name: c.name,
+        domain: c.website || c.web,
+      });
+      c.contacts = contacts;
+      c.kaspr_enriched_at = new Date().toISOString();
+      stats.enriched++;
+      if (contacts.length > 0) stats.withContacts++;
+      await new Promise((r) => setTimeout(r, 1000));
+    } catch (e) {
+      console.warn("[kaspr-cron]", c.cvr, e.message);
+      stats.errors++;
+      // Mark with the timestamp so we don't keep retrying broken CVRs
+      // on every cron tick. Empty contacts is a valid cache state.
+      c.kaspr_enriched_at = new Date().toISOString();
+      c.contacts = [];
+    }
+  }
+  // Persist the updated state.json
+  try {
+    fs.writeFileSync(DISCOVERY_STATE_FILE, JSON.stringify(state, null, 2));
+  } catch (e) {
+    return res.status(500).json({ error: "state.json write failed: " + e.message, stats });
+  }
+  console.log("[kaspr-cron] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
 });
 
 // ─── CLOUDTALK (Phase C) ────────────────────────────────────────────────

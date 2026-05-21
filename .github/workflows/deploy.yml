@@ -52,7 +52,7 @@ jobs:
             --subnet=leads-egress \
             --vpc-egress=all-traffic \
             --set-env-vars "DATA_DIR=/data,NODE_ENV=production,CVR_PROVIDER=datafordeler" \
-            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,DATAFORDELER_KEY=datafordeler-key:latest,KASPR_API_KEY=kaspr-api-key:latest,CLOUDTALK_API_KEY_ID=cloudtalk-api-key-id:latest,CLOUDTALK_API_KEY_SECRET=cloudtalk-api-key-secret:latest"
+            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,DATAFORDELER_KEY=datafordeler-key:latest,KASPR_API_KEY=kaspr-api-key:latest,CLOUDTALK_API_KEY_ID=cloudtalk-api-key-id:latest,CLOUDTALK_API_KEY_SECRET=cloudtalk-api-key-secret:latest,CRON_SECRET=CRON_SECRET:latest"
 
       - name: Show service URL
         run: gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)'
