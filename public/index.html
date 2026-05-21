@@ -2818,7 +2818,7 @@ function discPage(dir){
 
 // Open a Kaspr-focused info card for a Discovery row. Pulls the company from
 // the cached _discCache (in-memory result set), shows: company facts, Meta
-// ads pill, and a Kontakter (Kaspr) section that's the *primary* enrichment
+// ads pill, and a Ring til switchboard — bed om section that's the *primary* enrichment
 // surface. Phase B fills it with real Kaspr data; until then the section
 // renders a 'Hent kontakter via Kaspr' CTA with the Phase B status.
 function openDiscoveryDetail(cvr){
@@ -2871,7 +2871,7 @@ function openDiscoveryDetail(cvr){
       <div style="margin-top:10px">${adsBlock}</div>
     </div>
     <div style="padding:22px 28px">
-      <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Kontakter (Kaspr)</div>
+      <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Ring til switchboard — bed om</div>
       ${contactsSection}
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         ${inLeads?'<span style="font-size:12px;color:var(--green);font-weight:700;padding:10px 14px">✓ Allerede i dine leads</span>':`<button class="btn btn-primary btn-sm" style="padding:9px 18px;font-size:12.5px" onclick="discAddLead('${c.cvr}');document.getElementById('disc-detail-modal').remove();">📞 Til kø</button>`}
@@ -5033,7 +5033,7 @@ function renderCockpitDetail(c){
               </div>
             </div>
           </div>
-          <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin:14px 0 6px">Kontakter (Kaspr)</div>
+          <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin:14px 0 6px">Ring til switchboard — bed om</div>
           ${(contactName||contactTitle)?`<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--w04);border:1px solid var(--w08);border-radius:11px">
             <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px">${(contactName||'?')[0].toUpperCase()}</div>
             <div>
@@ -5111,8 +5111,16 @@ if(!_cockpit.requireDisposition) _cockpit.requireDisposition = false;
 function cockpitCallStatusText(c){
   if(!c) return 'Ingen aktivt lead.';
   if(_cockpit.dialerState==='paused') return '⏸ Pause — klik Start Dialer for at fortsætte.';
-  if(_cockpit.dialerState==='idle')   return 'Klik <strong style="color:var(--w80)">▶ Start Dialer</strong> for at begynde at ringe igennem køen.';
-  if(_cockpit.dialerState==='dialing') return `📞 Ringer til <strong style="color:#fff">${e(c.name)}</strong> — vælg disposition når kaldet slutter.`;
+  if(_cockpit.dialerState==='idle')   return 'Klik <strong style="color:var(--w80)">▶ Start Dialer</strong> for at ringe.';
+  if(_cockpit.dialerState==='dialing'){
+    // When we have an Apollo decision-maker, prompt SDR with who to ask for.
+    // This is the cold-call playbook: dial switchboard, ask for named person.
+    const topContact = (c.contacts && c.contacts[0]) ? c.contacts[0] : null;
+    if(topContact && topContact.name && c.ph) {
+      return `📞 Ringer <strong style="color:#fff">${e(c.name)}</strong> — bed om <strong style="color:#c4b5fd">${e(topContact.name)}</strong>${topContact.title?` (${e(topContact.title)})`:''}`;
+    }
+    return `📞 Ringer til <strong style="color:#fff">${e(c.name)}</strong>`;
+  }
   if(_cockpit.dialerState==='pending') return '⚠ Kald afsluttet — <strong style="color:#fdba74">vælg disposition</strong> før du går videre.';
   return '';
 }
