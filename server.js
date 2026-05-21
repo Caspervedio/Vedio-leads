@@ -3963,7 +3963,25 @@ function isApolloConfigured() {
   return k.length > 10 && !/^PLACEHOLDER/i.test(k);
 }
 
-async function enrichWithApollo({ name, domain }) {
+// Apollo enrichment is a TWO-STEP chain:
+//
+//   1. api_search → returns obfuscated identities (first name + title +
+//      Apollo person id) + has_email / has_direct_phone flags. Free.
+//   2. /people/match with the id + reveal_personal_emails:true → returns
+//      real name, work email (verified), title, LinkedIn URL. Synchronous.
+//      Phone reveal requires reveal_phone_number:true + a webhook_url —
+//      Apollo posts the phone back async. That's a separate feature we
+//      can add later; for now emails + LinkedIn cover most outbound flows.
+//
+// Credit usage: api_search is free for matched query rows; /match charges
+// 1 credit per call (email reveal). Phone reveal would charge ~5 credits
+// + require the webhook. With Basic plan's 500 credits/month that's ~500
+// enrichments — enough for our 30/day target.
+
+const APOLLO_SEARCH_LIMIT = 5;     // people per company to enrich
+const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
+
+async function apolloSearchPeople({ name, domain }) {
   const cleanDomain = String(domain || "")
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
@@ -3971,15 +3989,14 @@ async function enrichWithApollo({ name, domain }) {
     .trim();
   const body = {
     page: 1,
-    per_page: 10,
-    person_titles: APOLLO_TARGET_TITLES,
+    per_page: APOLLO_SEARCH_LIMIT,
+    person_seniorities: ["c_suite", "founder", "owner", "vp", "director", "head", "manager"],
   };
-  // Prefer domain when we have it (higher match rate); fall back to name.
-  if (cleanDomain) body.q_organization_domains = cleanDomain;
+  if (cleanDomain) body.q_organization_domains_list = [cleanDomain];
   else if (name) body.q_organization_name = name;
   else throw new Error("Need company name or domain");
 
-  const r = await fetch(`${APOLLO_API_BASE}/mixed_people/search`, {
+  const r = await fetch(`${APOLLO_API_BASE}/mixed_people/api_search`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -3990,23 +4007,63 @@ async function enrichWithApollo({ name, domain }) {
   });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
-    throw new Error(`Apollo ${r.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Apollo search ${r.status}: ${text.slice(0, 200)}`);
   }
   const d = await r.json();
-  const people = d.people || d.contacts || [];
-  // Apollo's response: people[] with first_name, last_name, name, title,
-  // phone_numbers[{sanitized_number, raw_number}], email, linkedin_url,
-  // organization{phone}.
-  return people.slice(0, 10).map((p) => {
-    const phoneObj = (p.phone_numbers && p.phone_numbers[0]) || {};
-    return {
-      name: p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
-      title: p.title || "",
-      phone: phoneObj.sanitized_number || phoneObj.raw_number || p.organization?.phone || "",
-      email: p.email || "",
-      linkedin: p.linkedin_url || "",
-    };
-  }).filter((c) => c.name !== "—");
+  return d.people || [];
+}
+
+async function apolloMatchPerson(personId) {
+  const r = await fetch(`${APOLLO_API_BASE}/people/match`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": process.env.APOLLO_API_KEY,
+    },
+    body: JSON.stringify({
+      id: personId,
+      reveal_personal_emails: true,
+      // reveal_phone_number requires webhook_url — skipped for now
+    }),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Apollo match ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const d = await r.json();
+  return d.person || null;
+}
+
+async function enrichWithApollo({ name, domain }) {
+  // Step 1 — search for decision-makers at the company
+  const searchResults = await apolloSearchPeople({ name, domain });
+  if (!searchResults.length) return [];
+
+  // Step 2 — enrich each (in series with a small delay to be polite to
+  // Apollo's rate limit). We cap at 5 enrichments to control credit burn.
+  const enriched = [];
+  for (const sr of searchResults.slice(0, APOLLO_SEARCH_LIMIT)) {
+    // Skip people we know have nothing to reveal (saves a credit)
+    if (sr.has_email === false && sr.has_direct_phone === false) continue;
+    if (!sr.id) continue;
+    try {
+      const p = await apolloMatchPerson(sr.id);
+      if (!p) continue;
+      const phoneObj = (p.phone_numbers && p.phone_numbers[0]) || {};
+      enriched.push({
+        name: p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
+        title: p.title || sr.title || "",
+        phone: phoneObj.sanitized_number || phoneObj.raw_number || "",
+        email: p.email || (p.personal_emails && p.personal_emails[0]) || "",
+        emailStatus: p.email_status || "",
+        linkedin: p.linkedin_url || "",
+      });
+      await new Promise((r) => setTimeout(r, APOLLO_MATCH_DELAY_MS));
+    } catch (e) {
+      console.warn("[apollo/match]", sr.id, e.message);
+    }
+  }
+  return enriched.filter((c) => c.name !== "—" && (c.email || c.phone || c.linkedin));
 }
 
 app.get("/api/apollo/status", authMiddleware, (req, res) => {
