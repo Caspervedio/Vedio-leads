@@ -1535,16 +1535,19 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         if (!lead) continue;
         // Skip if recently enriched
         if (lead.apollo_enriched_at && (now - new Date(lead.apollo_enriched_at).getTime()) < FRESH_MS) continue;
-        const contacts = await enrichWithApollo({ name: lead.name, domain: lead.web || lead.website });
+        const { contacts, company } = await enrichWithApollo({ name: lead.name, domain: lead.web || lead.website });
         // Re-load (state could have shifted between worker iterations)
         const ud2 = loadUserData(userId);
         const lead2 = (ud2.leads || []).find((l) => l.cvr === cvr);
         if (!lead2) continue;
         lead2.contacts = contacts;
+        lead2.apollo_company = company || null;
         lead2.apollo_enriched_at = new Date().toISOString();
-        // Inherit Apollo's first phone if we don't have a switchboard phone yet
-        const primaryPhone = (contacts.find((c) => c.phone) || {}).phone;
-        if (primaryPhone && !lead2.phone) lead2.phone = primaryPhone;
+        lead2.apollo_enrichment_pending = false;
+        // Phone priority: Apollo direct dial > Datafordeler switchboard > Apollo org switchboard
+        const directDial = (contacts.find((c) => c.phone) || {}).phone;
+        if (directDial && !lead2.phone) lead2.phone = directDial;
+        else if (company?.phone && !lead2.phone) lead2.phone = company.phone;
         saveUserData(userId, ud2);
       } catch (e) {
         console.warn("[apollo/promote-enrich]", cvr, e.message);
@@ -4225,12 +4228,85 @@ async function apolloMatchPerson(personId) {
   return d.person || null;
 }
 
+// Map Apollo's people/match response → our normalised contact shape.
+// Captures all the high-signal fields Apollo returns for free (same
+// 1 credit/match call) so the SDR sees richer context per decision-maker.
+function mapApolloPersonToContact(p, fallbackTitle) {
+  if (!p) return null;
+  const phoneObj = (p.phone_numbers && p.phone_numbers[0]) || {};
+  // Employment history → keep just title + company name + dates for brevity.
+  const employmentHistory = (p.employment_history || []).slice(0, 5).map((e) => ({
+    title: e.title || "",
+    org: e.organization_name || "",
+    start: e.start_date || "",
+    end: e.end_date || "",
+    current: !!e.current,
+  }));
+  return {
+    name: p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
+    title: p.title || fallbackTitle || "",
+    phone: phoneObj.sanitized_number || phoneObj.raw_number || "",
+    email: p.email || (p.personal_emails && p.personal_emails[0]) || "",
+    emailStatus: p.email_status || "",
+    emailCatchall: !!p.email_domain_catchall,
+    personalEmails: p.personal_emails || [],
+    linkedin: p.linkedin_url || "",
+    // High-signal extras (no extra credit cost):
+    seniority: p.seniority || "",
+    departments: p.departments || [],
+    headline: p.headline || "",
+    photoUrl: p.photo_url || "",
+    timeZone: p.time_zone || "",
+    location: p.formatted_address || p.city || p.state || p.country || "",
+    employmentHistory,
+    apolloPersonId: p.id || null,
+  };
+}
+
+// Map Apollo's organization object → our companyMeta shape. Apollo gives
+// us 59 org fields; we keep the ones useful for cold-call context and
+// ICP qualification. Costs zero extra credits — it rides along with
+// every people/match response.
+function mapApolloOrganization(org) {
+  if (!org || typeof org !== "object") return null;
+  return {
+    apolloId: org.id || null,
+    name: org.name || "",
+    domain: org.primary_domain || (org.website_url || "").replace(/^https?:\/\/|^www\./g, "").replace(/\/.*$/, ""),
+    websiteUrl: org.website_url || "",
+    phone: org.sanitized_phone || org.phone || "",
+    annualRevenue: org.annual_revenue || null,
+    annualRevenuePrinted: org.annual_revenue_printed || "",
+    estimatedEmployees: org.estimated_num_employees || null,
+    foundedYear: org.founded_year || null,
+    industry: org.industry || "",
+    secondaryIndustries: org.secondary_industries || [],
+    keywords: (org.keywords || []).slice(0, 12),
+    shortDescription: org.short_description || "",
+    growth6Mo: org.organization_headcount_six_month_growth || null,
+    growth12Mo: org.organization_headcount_twelve_month_growth || null,
+    growth24Mo: org.organization_headcount_twenty_four_month_growth || null,
+    technologyNames: (org.technology_names || []).slice(0, 20),
+    latestFundingDate: org.latest_funding_round_date || null,
+    latestFundingStage: org.latest_funding_stage || "",
+    totalFundingPrinted: org.total_funding_printed || "",
+    publiclyTradedExchange: org.publicly_traded_exchange || "",
+    publiclyTradedSymbol: org.publicly_traded_symbol || "",
+    logoUrl: org.logo_url || "",
+    linkedinUrl: org.linkedin_url || "",
+    twitterUrl: org.twitter_url || "",
+    facebookUrl: org.facebook_url || "",
+    alexaRanking: org.alexa_ranking || null,
+    numSuborganizations: org.num_suborganizations || 0,
+    rawAddress: org.raw_address || "",
+    city: org.city || "",
+    country: org.country || "",
+  };
+}
+
 async function enrichWithApollo({ name, domain }) {
-  // STEP 1 — resolve to Apollo's organization_id (most precise lookup
-  // for DK SMBs). If we don't already have a domain, do a company search
-  // by normalised name + DK location to discover both the org_id and
-  // the canonical domain. ~70% hit rate for SMBs that test as 0 with
-  // name-only people-search.
+  // STEP 1 — resolve to Apollo's organization_id. ~70% hit rate boost
+  // for DK SMBs vs name-only people search.
   let orgId = null;
   let resolvedDomain = String(domain || "")
     .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
@@ -4246,39 +4322,38 @@ async function enrichWithApollo({ name, domain }) {
     }
   }
 
-  // STEP 2 — search for decision-makers at the resolved company
+  // STEP 2 — search decision-makers at the resolved company
   const searchResults = await apolloSearchPeople({
     name,
     domain: resolvedDomain,
     organizationId: orgId,
   });
-  if (!searchResults.length) return [];
+  if (!searchResults.length) return { contacts: [], company: null };
 
-  // STEP 3 — enrich each result (Apollo's match endpoint reveals real
-  // name + verified email + LinkedIn). Cap at APOLLO_SEARCH_LIMIT to
-  // control credit burn; skip results that signal no contact data.
-  const enriched = [];
+  // STEP 3 — enrich each (1 credit per match). Side benefit: each
+  // /match response includes the FULL organization object — we capture
+  // that for free on the first successful match.
+  const contacts = [];
+  let company = null;
   for (const sr of searchResults.slice(0, APOLLO_SEARCH_LIMIT)) {
     if (sr.has_email === false && sr.has_direct_phone === false) continue;
     if (!sr.id) continue;
     try {
       const p = await apolloMatchPerson(sr.id);
       if (!p) continue;
-      const phoneObj = (p.phone_numbers && p.phone_numbers[0]) || {};
-      enriched.push({
-        name: p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
-        title: p.title || sr.title || "",
-        phone: phoneObj.sanitized_number || phoneObj.raw_number || "",
-        email: p.email || (p.personal_emails && p.personal_emails[0]) || "",
-        emailStatus: p.email_status || "",
-        linkedin: p.linkedin_url || "",
-      });
+      const contact = mapApolloPersonToContact(p, sr.title);
+      if (contact && contact.name !== "—") contacts.push(contact);
+      // Capture organization data from the first match that has it
+      if (!company && p.organization) {
+        company = mapApolloOrganization(p.organization);
+      }
       await new Promise((r) => setTimeout(r, APOLLO_MATCH_DELAY_MS));
     } catch (e) {
       console.warn("[apollo/match]", sr.id, e.message);
     }
   }
-  return enriched.filter((c) => c.name !== "—" && (c.email || c.phone || c.linkedin));
+  const filteredContacts = contacts.filter((c) => c.email || c.phone || c.linkedin);
+  return { contacts: filteredContacts, company };
 }
 
 app.get("/api/apollo/status", authMiddleware, (req, res) => {
@@ -4304,25 +4379,30 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
   const poolEntry = pool[cvr];
   if (poolEntry?.apollo_enriched_at && (Date.now() - new Date(poolEntry.apollo_enriched_at).getTime()) < FRESH_MS && !req.query.force) {
     lead.contacts = poolEntry.contacts || [];
+    lead.apollo_company = poolEntry.apollo_company || null;
     lead.apollo_enriched_at = poolEntry.apollo_enriched_at;
-    const primaryPhone = (lead.contacts.find((c) => c.phone) || {}).phone;
-    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    const directDial = (lead.contacts.find((c) => c.phone) || {}).phone;
+    if (directDial && !lead.phone) lead.phone = directDial;
+    else if (lead.apollo_company?.phone && !lead.phone) lead.phone = lead.apollo_company.phone;
     saveUserData(req.userId, ud);
-    return res.json({ ok: true, cached: "pool", contacts: lead.contacts });
+    return res.json({ ok: true, cached: "pool", contacts: lead.contacts, company: lead.apollo_company });
   }
   try {
-    const contacts = await enrichWithApollo({
+    const { contacts, company } = await enrichWithApollo({
       name: lead.name,
       domain: lead.web || lead.website,
     });
     lead.contacts = contacts;
+    lead.apollo_company = company || null;
     lead.apollo_enriched_at = new Date().toISOString();
-    const primaryPhone = (contacts.find((c) => c.phone) || {}).phone;
-    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    const directDial = (contacts.find((c) => c.phone) || {}).phone;
+    if (directDial && !lead.phone) lead.phone = directDial;
+    else if (company?.phone && !lead.phone) lead.phone = company.phone;
     saveUserData(req.userId, ud);
     // Write-through to state.json so the pool cache benefits
     if (poolEntry) {
       poolEntry.contacts = contacts;
+      poolEntry.apollo_company = company || null;
       poolEntry.apollo_enriched_at = lead.apollo_enriched_at;
       try {
         const state = loadDiscoveryState();
@@ -4330,7 +4410,7 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
         fs.writeFileSync(DISCOVERY_STATE_FILE, JSON.stringify(state, null, 2));
       } catch (e) { console.warn("[apollo] state.json write-through failed:", e.message); }
     }
-    res.json({ ok: true, cached: false, contacts });
+    res.json({ ok: true, cached: false, contacts, company });
   } catch (e) {
     console.error("[apollo/enrich]", e.message);
     res.status(502).json({ error: e.message });
@@ -4362,11 +4442,12 @@ app.post("/api/cron/apollo-enrich", async (req, res) => {
   const stats = { considered: candidates.length, enriched: 0, withContacts: 0, errors: 0 };
   for (const c of candidates) {
     try {
-      const contacts = await enrichWithApollo({
+      const { contacts, company } = await enrichWithApollo({
         name: c.name,
         domain: c.website || c.web,
       });
       c.contacts = contacts;
+      c.apollo_company = company || null;
       c.apollo_enriched_at = new Date().toISOString();
       stats.enriched++;
       if (contacts.length > 0) stats.withContacts++;
