@@ -1544,10 +1544,18 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         lead2.apollo_company = company || null;
         lead2.apollo_enriched_at = new Date().toISOString();
         lead2.apollo_enrichment_pending = false;
-        // Phone priority: Apollo direct dial > Datafordeler switchboard > Apollo org switchboard
+        // Phone priority: Apollo direct dial > Datafordeler switchboard >
+        // Apollo org switchboard. lead.phone may already have a switchboard
+        // from the discovery scrape (Datafordeler); we only overwrite if
+        // a person's direct dial is available.
         const directDial = (contacts.find((c) => c.phone) || {}).phone;
-        if (directDial && !lead2.phone) lead2.phone = directDial;
-        else if (company?.phone && !lead2.phone) lead2.phone = company.phone;
+        if (directDial) lead2.phone = directDial;
+        else if (!lead2.phone && company?.phone) lead2.phone = company.phone;
+        // Flag leads with no phone so the Autodialer can exclude them from
+        // the active call queue (they stay accessible in a "Mangler nummer"
+        // view for manual research). Phone webhook (build #3) will populate
+        // these via Apollo's async reveal.
+        lead2.phone_missing = !lead2.phone;
         saveUserData(userId, ud2);
       } catch (e) {
         console.warn("[apollo/promote-enrich]", cvr, e.message);
@@ -4385,8 +4393,9 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.apollo_company = poolEntry.apollo_company || null;
     lead.apollo_enriched_at = poolEntry.apollo_enriched_at;
     const directDial = (lead.contacts.find((c) => c.phone) || {}).phone;
-    if (directDial && !lead.phone) lead.phone = directDial;
-    else if (lead.apollo_company?.phone && !lead.phone) lead.phone = lead.apollo_company.phone;
+    if (directDial) lead.phone = directDial;
+    else if (!lead.phone && lead.apollo_company?.phone) lead.phone = lead.apollo_company.phone;
+    lead.phone_missing = !lead.phone;
     saveUserData(req.userId, ud);
     return res.json({ ok: true, cached: "pool", contacts: lead.contacts, company: lead.apollo_company });
   }
@@ -4399,8 +4408,9 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.apollo_company = company || null;
     lead.apollo_enriched_at = new Date().toISOString();
     const directDial = (contacts.find((c) => c.phone) || {}).phone;
-    if (directDial && !lead.phone) lead.phone = directDial;
-    else if (company?.phone && !lead.phone) lead.phone = company.phone;
+    if (directDial) lead.phone = directDial;
+    else if (!lead.phone && company?.phone) lead.phone = company.phone;
+    lead.phone_missing = !lead.phone;
     saveUserData(req.userId, ud);
     // Write-through to state.json so the pool cache benefits
     if (poolEntry) {

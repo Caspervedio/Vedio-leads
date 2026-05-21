@@ -4577,12 +4577,22 @@ function renderAutodialerPage(){
   // leads (lastAction === 'not-relevant'). Otherwise EXCLUDE them from
   // the active queue so the dialer doesn't re-call leads we've already
   // dismissed.
+  // Phone-missing mode: when sourceFilter==='phone_missing', show ONLY
+  // leads flagged phone_missing=true (Apollo+Datafordeler both returned
+  // nothing) so the SDR can research them manually. Otherwise EXCLUDE
+  // them from the active queue so we never dial blanks.
   const showArchive = _adState.sourceFilter==='archived';
+  const showPhoneMissing = _adState.sourceFilter==='phone_missing';
   if(showArchive){
     filtered=filtered.filter(l=>l.lastAction==='not-relevant');
+  } else if(showPhoneMissing){
+    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true);
   } else {
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant');
-    // Apply source filter (other than archived)
+    // Exclude phone-less leads from active queue — they live behind the
+    // "⚠ Mangler nummer" chip until somebody finds a number.
+    filtered=filtered.filter(l=>l.phone_missing!==true);
+    // Apply source filter (other than archived / phone_missing)
     if(_adState.sourceFilter&&_adState.sourceFilter!=='all'){
       filtered=filtered.filter(l=>(l.source||'manual')===_adState.sourceFilter);
     }
@@ -4691,11 +4701,12 @@ function renderAutodialerPage(){
     listChip('all','Alle leads',leads.length,aList==='all'||!aList),
     ...userLists.map(l=>listChip(l.id,l.name,leads.filter(x=>x.listId===l.id).length,aList===l.id)),
   ].join(' ');
-  // Source counts for the filter chips. Counts EXCLUDE archived leads
-  // (those live in the dedicated "Arkiveret" chip).
+  // Source counts for the filter chips. Counts EXCLUDE archived AND
+  // phone_missing leads (those live in the dedicated chips at the end).
   const srcCounts={};
   const archivedCount=leads.filter(l=>l.lastAction==='not-relevant').length;
-  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant');
+  const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true).length;
+  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true);
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
     ['all','Alle',activeLeads.length],
@@ -4705,6 +4716,10 @@ function renderAutodialerPage(){
     ['tech-stack','Tech',srcCounts['tech-stack']||0],
     ['csv','CSV',srcCounts['csv']||0],
     ['manual','Manuel',srcCounts['manual']||0],
+    // "Mangler nummer" — leads where Apollo + Datafordeler both came up
+    // dry. SDR opens this view to research a phone manually, then the
+    // lead returns to the active queue once a number is added.
+    ['phone_missing','⚠ Mangler nummer',phoneMissingCount],
     // Archive lives at the end as a separate concept — clicking it
     // swaps the queue to "only arkiverede leads" for review/restore.
     ['archived','✕ Arkiveret',archivedCount],
@@ -4884,10 +4899,12 @@ function openCockpit(){
   // right now. They re-appear once callback_at <= now. Also exclude
   // archived leads (lastAction='not-relevant') — they're visible in the
   // dedicated "✕ Arkiveret" filter on the Autodialer page but should
-  // never re-enter the dialer rotation.
+  // never re-enter the dialer rotation. Same for phone_missing leads —
+  // they live in "⚠ Mangler nummer" until someone gives them a number.
   const now=Date.now();
   base=base.filter(l=>{
     if(l.lastAction==='not-relevant') return false;
+    if(l.phone_missing===true) return false;
     if(!l.callback_at) return true;
     return new Date(l.callback_at).getTime() <= now;
   });
