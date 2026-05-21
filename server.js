@@ -3981,11 +3981,17 @@ function isApolloConfigured() {
 const APOLLO_SEARCH_LIMIT = 5;     // people per company to enrich
 const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 
-// Strip Danish legal suffixes for Apollo's name matching. Apollo's DB
-// stores brand names without legal forms ("FDM TRAVEL" not "FDM TRAVEL A/S").
+// Strip Danish legal suffixes + simple-strip Danish characters for
+// Apollo's name matching. Apollo stores names without legal forms
+// ("FDM TRAVEL" not "FDM TRAVEL A/S") and its search is ASCII-leaning:
+// "Søstrene Grene" → 0, "Sostrene Grene" → ✓ (ø→o, not the formal ø→oe).
+// Live-tested against multiple DK brands.
 function normaliseCompanyName(name) {
   return String(name || "")
     .replace(/\s+(aps|a\/s|i\/s|p\/s|k\/s|ivs|holding|group|gruppen)\b.*$/i, "")
+    .replace(/[æÆ]/g, "a")
+    .replace(/[øØ]/g, "o")
+    .replace(/[åÅ]/g, "a")
     .trim();
 }
 
