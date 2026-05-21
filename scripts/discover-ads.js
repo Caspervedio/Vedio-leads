@@ -223,12 +223,30 @@ function buildAdsUrl(name) {
 
 function classifyAdsPage(text, companyName) {
   if (!text) return { verdict: null, reason: "no body text" };
+  // ── Bot-challenge sentinels — Meta serves these when we're rate-limited.
+  //    If ANY of these appear, treat as inconclusive (verdict=null) so we
+  //    don't overwrite a previously-good record with a false-negative.
+  //    Bug history: an earlier version would pass the "ad library" gate on
+  //    Meta's challenge pages (because the challenge text often includes
+  //    "Ad Library") and then return verdict=false because no "sponsored"
+  //    markers were found. That wiped 57 ICP-klar records overnight at
+  //    hourly cadence. NEVER again.
+  if (/please verify|prove you are human|checkpoint|robot|captcha|unusual activity|bekræft at du er menneske|verificer|sikkerhedstjek/i.test(text)) {
+    return { verdict: null, reason: "bot challenge detected" };
+  }
+  // Page too short to be a real ad library result. Meta's challenge pages
+  // are typically <1500 chars; a real "no ads" page is >3000 chars (with
+  // header chrome, search controls, etc).
+  if (text.length < 1500) {
+    return { verdict: null, reason: `page too short (${text.length} chars)` };
+  }
   if (!/annoncebibliotek/i.test(text) && !/ad library/i.test(text)) {
     return { verdict: null, reason: "ads library chrome missing (bot challenge?)" };
   }
-  if (/ingen annoncer matcher/i.test(text) || /no ads match/i.test(text)) {
-    return { verdict: false, matched: 0, total: 0, advertisers: [] };
-  }
+  // Explicit "no ads match" — the ONLY way we'll commit a definitive false.
+  // Without this exact text, we can't prove they have no ads — they might,
+  // and the page just didn't load properly. Treat as inconclusive.
+  const explicitNoAds = /ingen annoncer matcher/i.test(text) || /no ads match/i.test(text);
   const parts = text.split(/sponsoreret|\bsponsored\b/i);
   const advertisers = [];
   for (let i = 0; i < parts.length - 1; i++) {
@@ -236,7 +254,13 @@ function classifyAdsPage(text, companyName) {
     if (lines.length) advertisers.push(lines[lines.length - 1]);
   }
   const total = advertisers.length;
-  if (total === 0) return { verdict: false, matched: 0, total: 0, advertisers: [] };
+  if (total === 0) {
+    // No "sponsored" markers found. Only call this definitively-false if
+    // we ALSO saw the explicit "no ads match" string — otherwise it could
+    // be a load failure or partial render.
+    if (explicitNoAds) return { verdict: false, matched: 0, total: 0, advertisers: [] };
+    return { verdict: null, reason: "no sponsored markers, no explicit empty-state" };
+  }
   const matched = advertisers.filter((a) => advertiserMatchesCompany(a, companyName)).length;
   return matched > 0
     ? { verdict: true, matched, total, advertisers }
