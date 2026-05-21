@@ -1635,17 +1635,20 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
   const targetSize = Math.max(5, Math.min(200, Number(req.query.target) || 30));
   const stats = { usersProcessed: 0, totalPromoted: 0, totalEnrichmentQueued: 0 };
 
-  // Walk all user data files
-  const usersDir = path.join(DATA_DIR, "users");
-  if (!fs.existsSync(usersDir)) {
-    return res.json({ ok: true, stats, note: "no users dir" });
+  // User data is stored as DATA_DIR/data_<userId>.json (not in a subdir).
+  // Walk DATA_DIR and pick out the data_<id>.json files.
+  if (!fs.existsSync(DATA_DIR)) {
+    return res.json({ ok: true, stats, note: "no DATA_DIR" });
   }
   const pool = loadDiscoveryState().companies || {};
   const now = Date.now();
 
-  for (const f of fs.readdirSync(usersDir)) {
-    if (!f.endsWith(".json")) continue;
-    const userId = f.replace(/\.json$/, "");
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (!f.startsWith("data_") || !f.endsWith(".json")) continue;
+    // Skip system files like data.json, data_admin.json (admin is just legacy)
+    if (f === "data.json") continue;
+    const userId = f.slice("data_".length, -".json".length);
+    if (!userId) continue;
     try {
       const ud = loadUserData(userId);
       const leads = ud.leads || [];
@@ -4785,21 +4788,19 @@ app.post("/api/cloudtalk/webhook", express.json({ type: "*/*" }), (req, res) => 
     // the disposition/duration.
     const callId = evt.call_id || evt.id;
     if (callId) {
-      // Scan all users' leads for the matching call (cheap with current scale)
-      const fs = require("fs");
-      const path = require("path");
-      const usersDir = path.join(DATA_DIR, "users");
-      if (fs.existsSync(usersDir)) {
-        for (const f of fs.readdirSync(usersDir)) {
-          if (!f.endsWith(".json")) continue;
+      // Scan all users' leads for the matching call (cheap with current scale).
+      // User files are DATA_DIR/data_<id>.json — same pattern as loadUserData.
+      if (fs.existsSync(DATA_DIR)) {
+        for (const f of fs.readdirSync(DATA_DIR)) {
+          if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
           try {
-            const userData = JSON.parse(fs.readFileSync(path.join(usersDir, f), "utf8"));
+            const userData = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
             const lead = (userData.leads || []).find((l) => String(l.lastCloudTalkCallId) === String(callId));
             if (lead) {
               lead.lastCallEndedAt = new Date().toISOString();
               lead.lastCallDuration = evt.talking_time_seconds || evt.duration || null;
               lead.lastCallRecordingUrl = evt.recording_url || null;
-              fs.writeFileSync(path.join(usersDir, f), JSON.stringify(userData, null, 2));
+              fs.writeFileSync(path.join(DATA_DIR, f), JSON.stringify(userData, null, 2));
               break;
             }
           } catch { /* skip malformed user files */ }
