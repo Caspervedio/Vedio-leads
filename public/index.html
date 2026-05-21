@@ -2837,8 +2837,8 @@ function openDiscoveryDetail(cvr){
     : `<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:18px;text-align:center">
         <div style="font-size:24px;margin-bottom:6px">🔍</div>
         <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px">Ingen kontakter endnu</div>
-        <div style="font-size:11.5px;color:var(--w55);max-width:340px;margin:0 auto 10px">Kaspr-API integrationen ankommer i Phase B. Indtil da kan du finde kontakter via LinkedIn (Kaspr Chrome-udvidelsen aktiveres på firmasiden).</div>
-        <a href="${'https://www.linkedin.com/search/results/companies/?keywords='+encodeURIComponent(c.brandName||c.name||'')}" target="_blank" rel="noopener" style="display:inline-block;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;text-decoration:none">Åbn LinkedIn (Kaspr extension)</a>
+        <div style="font-size:11.5px;color:var(--w55);max-width:340px;margin:0 auto 10px">Klik for at finde beslutningstagere via Kaspr — phone, email + LinkedIn.</div>
+        <button onclick="enrichLeadWithKaspr('${e(c.cvr)}','disc')" style="display:inline-block;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Kaspr</button>
       </div>`;
   const inLeads=leads.some(l=>l.cvr===c.cvr);
   const bg=document.createElement('div');
@@ -4931,7 +4931,7 @@ function renderCockpitDetail(c){
             </div>
             <div style="flex:1"></div>
             ${c.ph?`<a href="tel:${c.ph}" style="color:var(--purple-light);font-size:13px;font-weight:600;text-decoration:none">${fp(c.ph)}</a>`:''}
-          </div>`:`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">Ingen kontakter endnu — Kaspr-integration ankommer i Phase B.<br><a href="${'https://www.linkedin.com/search/results/companies/?keywords='+encodeURIComponent(c.brandName||c.name||'')}" target="_blank" rel="noopener" style="color:var(--purple-light);font-weight:700;text-decoration:none;margin-top:6px;display:inline-block">Åbn LinkedIn (Kaspr Chrome-extension) →</a></div>`}
+          </div>`:`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">Ingen kontakter endnu.<br><button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Kaspr</button></div>`}
         </div>
       </div>
 
@@ -5026,22 +5026,40 @@ function cockpitUpdateToolbarButtons(){
   }
 }
 
-function cockpitStartDialer(){
+async function cockpitStartDialer(){
   const c = cockpitCurrent();
   if(!c){showToast('Køen er tom — tilføj leads først');return;}
-  // If we're in 'pending' and disposition isn't set yet, can't advance.
   if(_cockpit.dialerState==='pending' && !c.lastAction){
     showToast('Vælg en disposition før du fortsætter');
     return;
   }
-  // Resuming from paused → just unfreeze + re-enter dialing on current lead.
-  // From idle → start dialing the current lead.
   _cockpit.dialerState = 'dialing';
-  // When CloudTalk integration lands, this is where the API call goes.
-  // For now: SDR calls via the tel: link in the call-status banner.
-  showToast(`📞 Ringer til ${c.name} — klik dispositions-knap når kaldet slutter`);
   cockpitUpdateToolbarButtons();
   renderCockpit();
+  // Trigger the real CloudTalk call if configured. Falls back gracefully
+  // to a tel: link on the SDR's device when CloudTalk isn't ready yet
+  // (e.g. DK number / agent_id pending).
+  const phone = c.phone || c.ph || (c.contacts && c.contacts.find(x=>x.phone)?.phone) || '';
+  if(!phone){
+    showToast('Ingen telefonnummer på leadet — berig først med Kaspr');
+    return;
+  }
+  try{
+    const r = await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr:c.cvr, phone})});
+    const d = await r.json();
+    if(r.ok){
+      showToast(`📞 CloudTalk ringer ${c.name}…`);
+    } else if(r.status===503){
+      // Fallback — CloudTalk not ready. Use device's native tel: link.
+      window.location.href='tel:'+phone;
+      showToast(`📞 Ringer via enheden (${d.error||'CloudTalk klargøres'})`);
+    } else {
+      showToast('CloudTalk fejl: '+(d.error||'kunne ikke ringe'));
+    }
+  }catch(ex){
+    window.location.href='tel:'+phone;
+    showToast('Fallback: ringer fra enheden ('+ex.message+')');
+  }
 }
 
 function cockpitPauseDialer(){
@@ -5113,6 +5131,36 @@ function cockpitAdvanceAfterDisposition(){
     showToast('✓ Færdig med køen');
     cockpitUpdateToolbarButtons();
   }
+}
+
+// Kaspr enrichment — POST /api/kaspr/enrich/:cvr returns up to 10 contacts
+// with phone/email/LinkedIn. Idempotent on the server (30-day freshness
+// window). After success, refreshes whichever view spawned the call so
+// the new contacts render immediately.
+async function enrichLeadWithKaspr(cvr, context){
+  if(!cvr){showToast('Mangler CVR');return;}
+  showToast('🔍 Kaspr søger kontakter…');
+  try{
+    const r=await fetch(`/api/kaspr/enrich/${cvr}`,{method:'POST',headers:ah()});
+    const d=await r.json();
+    if(r.status===503){
+      showToast('Kaspr ikke konfigureret endnu — venter på API-nøgle');
+      return;
+    }
+    if(!r.ok){showToast('Kaspr fejl: '+(d.error||'ukendt'));return;}
+    const n=(d.contacts||[]).length;
+    showToast(n>0?`✓ ${n} kontakter fundet${d.cached?' (cached)':''}`:'Ingen kontakter fundet — prøv en anden virksomhed');
+    // Also patch the in-memory lead so the UI updates without a reload.
+    const lead = leads.find(l=>l.cvr===cvr);
+    if(lead){lead.contacts=d.contacts||[];lead.kaspr_enriched_at=new Date().toISOString();}
+    // Re-render the spawning view.
+    if(context==='disc'){
+      document.getElementById('disc-detail-modal')?.remove();
+      openDiscoveryDetail(cvr);
+    } else if(context==='cockpit'){
+      renderCockpit();
+    }
+  }catch(ex){showToast('Fejl: '+ex.message);}
 }
 
 // Manual Twenty push — replaces the previous auto-push on Interesseret.
@@ -5237,16 +5285,33 @@ async function cockpitSendSmsConfirm(cvr){
   const text=document.getElementById('sms-text')?.value.trim()||'';
   if(!phone){showToast('Indtast nummer');return;}
   if(!text){showToast('Skriv en besked');return;}
-  // CloudTalk SMS not wired yet — use the device's native sms: link as
-  // stopgap so the SDR can send from their phone. When Phase C lands,
-  // swap this for a POST /api/cloudtalk/sms call.
-  const url=`sms:${phone}${navigator.userAgent.match(/iPhone|iPad|iPod|Mac/)?'&':'?'}body=${encodeURIComponent(text)}`;
-  window.location.href=url;
-  if(cvr){
-    try{await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({last_sms_at:new Date().toISOString()})});}catch{}
+  // Try CloudTalk first. Falls back to device's native sms: link if
+  // CloudTalk isn't configured/ready.
+  try{
+    const r=await fetch('/api/cloudtalk/sms',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr, phone, message:text})});
+    const d=await r.json();
+    if(r.ok){
+      document.getElementById('sms-modal')?.remove();
+      showToast('✓ SMS sendt via CloudTalk');
+      return;
+    }
+    if(r.status===503){
+      // Fallback to device SMS
+      const url=`sms:${phone}${navigator.userAgent.match(/iPhone|iPad|iPod|Mac/)?'&':'?'}body=${encodeURIComponent(text)}`;
+      window.location.href=url;
+      if(cvr){try{await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({last_sms_at:new Date().toISOString()})});}catch{}}
+      document.getElementById('sms-modal')?.remove();
+      showToast('SMS åbnet på enheden — CloudTalk SMS aktiveres når DK-nummer ankommer');
+      return;
+    }
+    showToast('SMS fejlede: '+(d.error||'ukendt'));
+  }catch(ex){
+    // Network error → fallback
+    const url=`sms:${phone}${navigator.userAgent.match(/iPhone|iPad|iPod|Mac/)?'&':'?'}body=${encodeURIComponent(text)}`;
+    window.location.href=url;
+    document.getElementById('sms-modal')?.remove();
+    showToast('Fallback til enheds-SMS ('+ex.message+')');
   }
-  document.getElementById('sms-modal')?.remove();
-  showToast('SMS åbnet — send fra din enhed (CloudTalk SMS-API ankommer i Phase C)');
 }
 
 // ─── Manual call/SMS — toolbar buttons ──────────────────────────────────
@@ -5266,11 +5331,24 @@ function cockpitOpenManualCall(){
   document.body.appendChild(bg);
   setTimeout(()=>document.getElementById('mc-phone')?.focus(),50);
 }
-function cockpitManualCallConfirm(){
+async function cockpitManualCallConfirm(){
   const phone=document.getElementById('mc-phone')?.value.trim()||'';
   if(!phone){showToast('Indtast nummer');return;}
   document.getElementById('mc-modal')?.remove();
-  window.location.href='tel:'+phone;
+  try{
+    const r=await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone})});
+    const d=await r.json();
+    if(r.ok){showToast('📞 CloudTalk ringer '+phone);return;}
+    if(r.status===503){
+      window.location.href='tel:'+phone;
+      showToast('Ringer via enheden — CloudTalk klargøres');
+      return;
+    }
+    showToast('Fejl: '+(d.error||'ukendt'));
+  }catch(ex){
+    window.location.href='tel:'+phone;
+    showToast('Fallback: ringer fra enheden');
+  }
 }
 function cockpitOpenManualSms(){
   cockpitOpenSmsModal({ phone:'', name:'', cvr:'' });

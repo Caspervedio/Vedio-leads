@@ -3925,6 +3925,248 @@ app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
   }
 });
 
+// ─── KASPR ENRICHMENT (Phase B) ─────────────────────────────────────────
+// Turns CVR+company-name into decision-maker contacts (phone + email +
+// LinkedIn). Without this, ~70% of META-discovered leads have no phone
+// and can't be dialed — Kaspr is the "make a lead callable" layer.
+//
+// Required env: KASPR_API_KEY (mounted from Secret Manager: kaspr-api-key)
+//
+// Endpoint shape note: Kaspr's API has evolved over time. The integration
+// below targets their v2 People/Company search endpoints. If the response
+// shape differs from what we map below, only the parsing block in
+// /api/kaspr/enrich/:cvr needs to change.
+
+const KASPR_API_BASE = "https://api.kaspr.io/api/v2";
+function isKasprConfigured() { return !!process.env.KASPR_API_KEY; }
+
+app.get("/api/kaspr/status", authMiddleware, (req, res) => {
+  res.json({ configured: isKasprConfigured() });
+});
+
+app.post("/api/kaspr/enrich/:cvr", authMiddleware, async (req, res) => {
+  if (!isKasprConfigured()) {
+    return res.status(503).json({ error: "Kaspr ikke konfigureret — tilføj KASPR_API_KEY i Secret Manager", configured: false });
+  }
+  const cvr = req.params.cvr;
+  const ud = loadUserData(req.userId);
+  const lead = ud.leads.find((l) => l.cvr === cvr);
+  if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+  // Idempotent: skip re-enrichment within 30 days unless ?force=1
+  const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
+  const fresh = lead.kaspr_enriched_at && (Date.now() - new Date(lead.kaspr_enriched_at).getTime()) < FRESH_MS;
+  if (fresh && !req.query.force) {
+    return res.json({ ok: true, cached: true, contacts: lead.contacts || [] });
+  }
+  try {
+    // Kaspr accepts domain, LinkedIn URL, or name. We prioritise domain
+    // (highest match-rate) then fall back to name.
+    const payload = {
+      country: "DK",
+      ...(lead.web || lead.website ? { domain: String(lead.web || lead.website).replace(/^https?:\/\/|^www\./g, "").replace(/\/.*$/, "") } : {}),
+      ...(lead.name ? { company_name: lead.name } : {}),
+      limit: 10,
+    };
+    const r = await fetch(`${KASPR_API_BASE}/contacts/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": process.env.KASPR_API_KEY,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      return res.status(502).json({ error: `Kaspr: ${r.status} ${text.slice(0, 200)}` });
+    }
+    const d = await r.json();
+    // Best-effort mapping — Kaspr's response wraps contacts in different
+    // keys depending on plan/endpoint. We try `contacts`, `data`, `results`.
+    const rawContacts = d.contacts || d.data || d.results || [];
+    const contacts = rawContacts.slice(0, 10).map((c) => ({
+      name: c.full_name || `${c.first_name || ""} ${c.last_name || ""}`.trim() || "—",
+      title: c.job_title || c.title || "",
+      phone: c.direct_phone || c.mobile_phone || c.phone || c.work_phone || "",
+      email: c.work_email || c.email || "",
+      linkedin: c.linkedin_url || c.linkedin || "",
+    })).filter((c) => c.name !== "—");
+    lead.contacts = contacts;
+    lead.kaspr_enriched_at = new Date().toISOString();
+    // If we got a phone, copy the first one onto lead.phone so the dialer
+    // can use it without the SDR drilling into the contacts panel.
+    const primaryPhone = contacts.find((c) => c.phone)?.phone;
+    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    saveUserData(req.userId, ud);
+    res.json({ ok: true, cached: false, contacts });
+  } catch (e) {
+    console.error("[kaspr/enrich]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── CLOUDTALK (Phase C) ────────────────────────────────────────────────
+// Outbound call + SMS via CloudTalk's REST API. Auth is HTTP Basic with
+// API_KEY_ID:API_KEY_SECRET. The agent's CloudTalk app receives the call
+// when /calls/create.json fires — SDR talks → CloudTalk fires the
+// /webhook with call_ended event → we record the call on the lead.
+//
+// Required env (from Secret Manager):
+//   CLOUDTALK_API_KEY_ID        — secret: cloudtalk-api-key-id
+//   CLOUDTALK_API_KEY_SECRET    — secret: cloudtalk-api-key-secret
+//   CLOUDTALK_AGENT_ID          — set after SDR is onboarded in CloudTalk
+//                                 (their dashboard → Agents → ID column)
+//   CLOUDTALK_WEBHOOK_TOKEN     — optional shared secret for webhook auth
+
+const CLOUDTALK_API_BASE = "https://my.cloudtalk.io/api";
+function isCloudTalkConfigured() {
+  return !!(process.env.CLOUDTALK_API_KEY_ID && process.env.CLOUDTALK_API_KEY_SECRET);
+}
+function isCloudTalkReady() {
+  return isCloudTalkConfigured() && !!process.env.CLOUDTALK_AGENT_ID;
+}
+function cloudTalkAuthHeader() {
+  const creds = `${process.env.CLOUDTALK_API_KEY_ID}:${process.env.CLOUDTALK_API_KEY_SECRET}`;
+  return "Basic " + Buffer.from(creds).toString("base64");
+}
+
+app.get("/api/cloudtalk/status", authMiddleware, (req, res) => {
+  res.json({
+    configured: isCloudTalkConfigured(),
+    ready: isCloudTalkReady(),
+    needsAgentId: isCloudTalkConfigured() && !process.env.CLOUDTALK_AGENT_ID,
+  });
+});
+
+app.post("/api/cloudtalk/call", authMiddleware, async (req, res) => {
+  if (!isCloudTalkReady()) {
+    // 503 with a clear message so the frontend can fall back to tel: link.
+    return res.status(503).json({
+      error: isCloudTalkConfigured()
+        ? "CloudTalk mangler CLOUDTALK_AGENT_ID — venter på DK-nummer + agent-onboarding"
+        : "CloudTalk ikke konfigureret",
+      configured: isCloudTalkConfigured(),
+      ready: false,
+    });
+  }
+  const { cvr, phone } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "phone mangler" });
+  try {
+    const r = await fetch(`${CLOUDTALK_API_BASE}/calls/create.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": cloudTalkAuthHeader(),
+      },
+      body: JSON.stringify({
+        agent_id: Number(process.env.CLOUDTALK_AGENT_ID),
+        callee_number: String(phone).replace(/\s+/g, ""),
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      return res.status(502).json({ error: `CloudTalk: ${r.status} ${JSON.stringify(d).slice(0, 200)}` });
+    }
+    // Persist call init on the lead so the webhook can match call_ended.
+    if (cvr) {
+      const ud = loadUserData(req.userId);
+      const lead = (ud.leads || []).find((l) => l.cvr === cvr);
+      if (lead) {
+        lead.lastCallAt = new Date().toISOString();
+        lead.lastCloudTalkCallId = d.call_id || d.data?.call_id || d.id || null;
+        saveUserData(req.userId, ud);
+      }
+    }
+    res.json({ ok: true, callId: d.call_id || d.data?.call_id || d.id || null });
+  } catch (e) {
+    console.error("[cloudtalk/call]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/cloudtalk/sms", authMiddleware, async (req, res) => {
+  if (!isCloudTalkConfigured()) {
+    return res.status(503).json({ error: "CloudTalk ikke konfigureret", configured: false });
+  }
+  const { cvr, phone, message } = req.body || {};
+  if (!phone || !message) return res.status(400).json({ error: "phone + message kræves" });
+  try {
+    const r = await fetch(`${CLOUDTALK_API_BASE}/sms/send.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": cloudTalkAuthHeader(),
+      },
+      body: JSON.stringify({
+        agent_id: process.env.CLOUDTALK_AGENT_ID ? Number(process.env.CLOUDTALK_AGENT_ID) : undefined,
+        to_number: String(phone).replace(/\s+/g, ""),
+        text: String(message).slice(0, 480), // CloudTalk SMS cap
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      return res.status(502).json({ error: `CloudTalk SMS: ${r.status} ${JSON.stringify(d).slice(0, 200)}` });
+    }
+    if (cvr) {
+      const ud = loadUserData(req.userId);
+      const lead = (ud.leads || []).find((l) => l.cvr === cvr);
+      if (lead) {
+        lead.last_sms_at = new Date().toISOString();
+        saveUserData(req.userId, ud);
+      }
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[cloudtalk/sms]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// CloudTalk webhook receiver — configure this URL in CloudTalk dashboard:
+//   Settings → Webhooks → "Call ended" event →
+//   https://leads-723660132735.europe-west1.run.app/api/cloudtalk/webhook
+// Optional auth via shared secret in CLOUDTALK_WEBHOOK_TOKEN.
+app.post("/api/cloudtalk/webhook", express.json({ type: "*/*" }), (req, res) => {
+  // Webhook signature verification (CloudTalk includes a token or HMAC
+  // header — confirm exact mechanism in their docs, then validate here).
+  const expectedToken = process.env.CLOUDTALK_WEBHOOK_TOKEN;
+  if (expectedToken && req.headers["x-cloudtalk-token"] !== expectedToken) {
+    return res.status(401).json({ error: "Invalid webhook token" });
+  }
+  try {
+    const evt = req.body || {};
+    console.log("[cloudtalk-webhook]", evt.event || "unknown", "call_id=", evt.call_id || evt.id || "?");
+    // Match the event back to a lead by CloudTalk call_id and persist
+    // the disposition/duration.
+    const callId = evt.call_id || evt.id;
+    if (callId) {
+      // Scan all users' leads for the matching call (cheap with current scale)
+      const fs = require("fs");
+      const path = require("path");
+      const usersDir = path.join(DATA_DIR, "users");
+      if (fs.existsSync(usersDir)) {
+        for (const f of fs.readdirSync(usersDir)) {
+          if (!f.endsWith(".json")) continue;
+          try {
+            const userData = JSON.parse(fs.readFileSync(path.join(usersDir, f), "utf8"));
+            const lead = (userData.leads || []).find((l) => String(l.lastCloudTalkCallId) === String(callId));
+            if (lead) {
+              lead.lastCallEndedAt = new Date().toISOString();
+              lead.lastCallDuration = evt.talking_time_seconds || evt.duration || null;
+              lead.lastCallRecordingUrl = evt.recording_url || null;
+              fs.writeFileSync(path.join(usersDir, f), JSON.stringify(userData, null, 2));
+              break;
+            }
+          } catch { /* skip malformed user files */ }
+        }
+      }
+    }
+    res.json({ received: true });
+  } catch (e) {
+    console.error("[cloudtalk-webhook]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── TWENTY CRM PUSH (Phase D stub) ─────────────────────────────────────
 // When the cockpit dispositions a lead as "Interesseret", we want an
 // Opportunity created in Twenty CRM automatically. Until TWENTY_API_TOKEN
