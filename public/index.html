@@ -2396,7 +2396,7 @@ function renderReviewQueue(){
             <span style="font-size:11px;color:var(--w55);padding:2px 8px;border-radius:8px;background:rgba(52,211,153,0.12);border:1px solid rgba(52,211,153,0.25);font-weight:700">${rows.length}</span>
             ${enrichedCount>0?`<span style="font-size:10.5px;color:#c4b5fd;padding:2px 8px;border-radius:8px;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.28);font-weight:700" title="Kaspr-berigede leads — kontakt-info klar i din Autodialer">🔍 ${enrichedCount} (${enrichedPct}%) call-ready</span>`:''}
           </div>
-          <div style="font-size:12px;color:var(--w80);line-height:1.5;max-width:680px">Agenterne har fundet <strong style="color:#fff">${rows.length}</strong> ICP-kvalificerede leads der ikke er i din Autodialer-kø endnu. Godkend dem her — så sendes de samlet til køen.${enrichedCount>0?` <strong style="color:#c4b5fd">${enrichedCount}</strong> har allerede Kaspr-kontakter klar.`:''}</div>
+          <div style="font-size:12px;color:var(--w80);line-height:1.5;max-width:680px">Agenterne har fundet <strong style="color:#fff">${rows.length}</strong> ICP-kvalificerede leads der ikke er i din Autodialer-kø endnu. Godkend dem her — så sendes de samlet til køen.${enrichedCount>0?` <strong style="color:#c4b5fd">${enrichedCount}</strong> har allerede beslutningstager-kontakter klar.`:''}</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn btn-sm" onclick="rqSelectNone()" style="padding:7px 13px">Fravælg alle</button>
@@ -2845,8 +2845,8 @@ function openDiscoveryDetail(cvr){
     : `<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:18px;text-align:center">
         <div style="font-size:24px;margin-bottom:6px">🔍</div>
         <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:4px">Ingen kontakter endnu</div>
-        <div style="font-size:11.5px;color:var(--w55);max-width:340px;margin:0 auto 10px">Klik for at finde beslutningstagere via Kaspr — phone, email + LinkedIn.</div>
-        <button onclick="enrichLeadWithKaspr('${e(c.cvr)}','disc')" style="display:inline-block;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Kaspr</button>
+        <div style="font-size:11.5px;color:var(--w55);max-width:340px;margin:0 auto 10px">Klik for at finde beslutningstagere via Apollo — phone, email + LinkedIn.</div>
+        <button onclick="enrichLeadWithKaspr('${e(c.cvr)}','disc')" style="display:inline-block;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Apollo</button>
       </div>`;
   const inLeads=leads.some(l=>l.cvr===c.cvr);
   const bg=document.createElement('div');
@@ -5042,7 +5042,7 @@ function renderCockpitDetail(c){
             </div>
             <div style="flex:1"></div>
             ${c.ph?`<a href="tel:${c.ph}" style="color:var(--purple-light);font-size:13px;font-weight:600;text-decoration:none">${fp(c.ph)}</a>`:''}
-          </div>`:`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">Ingen kontakter endnu.<br><button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Kaspr</button></div>`}
+          </div>`:`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">Ingen kontakter endnu.<br><button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Apollo</button></div>`}
         </div>
       </div>
 
@@ -5244,27 +5244,30 @@ function cockpitAdvanceAfterDisposition(){
   }
 }
 
-// Kaspr enrichment — POST /api/kaspr/enrich/:cvr returns up to 10 contacts
-// with phone/email/LinkedIn. Idempotent on the server (30-day freshness
-// window). After success, refreshes whichever view spawned the call so
-// the new contacts render immediately.
+// Apollo.io enrichment — POST /api/apollo/enrich/:cvr returns up to 10
+// decision-maker contacts (phone, email, title, LinkedIn) by querying
+// Apollo's mixed_people/search with the company domain or name.
+// Idempotent on server (30-day freshness window). Refreshes the spawning
+// view so contacts render immediately.
+//
+// Kept the function name "enrichLeadWithKaspr" for backwards compat with
+// existing button onclick handlers — under the hood it now calls Apollo.
 async function enrichLeadWithKaspr(cvr, context){
   if(!cvr){showToast('Mangler CVR');return;}
-  showToast('🔍 Kaspr søger kontakter…');
+  showToast('🔍 Apollo søger beslutningstagere…');
   try{
-    const r=await fetch(`/api/kaspr/enrich/${cvr}`,{method:'POST',headers:ah()});
+    const r=await fetch(`/api/apollo/enrich/${cvr}`,{method:'POST',headers:ah()});
     const d=await r.json();
     if(r.status===503){
-      showToast('Kaspr ikke konfigureret endnu — venter på API-nøgle');
+      showToast('Apollo ikke konfigureret endnu — venter på API-nøgle i Secret Manager');
       return;
     }
-    if(!r.ok){showToast('Kaspr fejl: '+(d.error||'ukendt'));return;}
+    if(!r.ok){showToast('Apollo fejl: '+(d.error||'ukendt'));return;}
     const n=(d.contacts||[]).length;
-    showToast(n>0?`✓ ${n} kontakter fundet${d.cached?' (cached)':''}`:'Ingen kontakter fundet — prøv en anden virksomhed');
-    // Also patch the in-memory lead so the UI updates without a reload.
+    showToast(n>0?`✓ ${n} beslutningstagere fundet${d.cached?` (${d.cached} cache)`:''}`:'Ingen kontakter fundet — Apollo har ikke data for denne virksomhed');
+    // Patch the in-memory lead so UI re-renders with the new contacts.
     const lead = leads.find(l=>l.cvr===cvr);
-    if(lead){lead.contacts=d.contacts||[];lead.kaspr_enriched_at=new Date().toISOString();}
-    // Re-render the spawning view.
+    if(lead){lead.contacts=d.contacts||[];lead.apollo_enriched_at=new Date().toISOString();}
     if(context==='disc'){
       document.getElementById('disc-detail-modal')?.remove();
       openDiscoveryDetail(cvr);

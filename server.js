@@ -3933,6 +3933,189 @@ app.post("/api/scrape/google-maps", authMiddleware, async (req, res) => {
   }
 });
 
+// ─── APOLLO.IO B2B ENRICHMENT (Phase B replacement) ─────────────────────
+// Apollo replaces the Kaspr integration after Kaspr's API turned out to
+// be per-LinkedIn-slug instead of per-company. Apollo's mixed_people
+// search takes a company domain or name and returns a list of people
+// with phone + email + title + LinkedIn URL — exactly the shape we need
+// for autonomous enrichment.
+//
+// Required env: APOLLO_API_KEY (mounted from Secret Manager: apollo-api-key)
+//
+// API docs: https://api.apollo.io/v1/
+// Key endpoint: POST /v1/mixed_people/search
+
+const APOLLO_API_BASE = "https://api.apollo.io/v1";
+
+// Decision-maker titles we care about for cold outbound. Apollo lets us
+// filter people-search by title so we don't waste credits revealing
+// every employee at a 50-person company.
+const APOLLO_TARGET_TITLES = [
+  "CEO", "Founder", "Owner", "Co-Founder", "Managing Director",
+  "Director", "Head of", "VP", "Vice President",
+  "Marketing", "Sales", "CMO", "CRO", "COO",
+];
+
+function isApolloConfigured() {
+  const k = process.env.APOLLO_API_KEY || "";
+  // Reject empty + the deploy-time placeholder. Real Apollo keys are
+  // 40+ char alphanumeric.
+  return k.length > 10 && !/^PLACEHOLDER/i.test(k);
+}
+
+async function enrichWithApollo({ name, domain }) {
+  const cleanDomain = String(domain || "")
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/.*$/, "")
+    .trim();
+  const body = {
+    page: 1,
+    per_page: 10,
+    person_titles: APOLLO_TARGET_TITLES,
+  };
+  // Prefer domain when we have it (higher match rate); fall back to name.
+  if (cleanDomain) body.q_organization_domains = cleanDomain;
+  else if (name) body.q_organization_name = name;
+  else throw new Error("Need company name or domain");
+
+  const r = await fetch(`${APOLLO_API_BASE}/mixed_people/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      "X-Api-Key": process.env.APOLLO_API_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Apollo ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const d = await r.json();
+  const people = d.people || d.contacts || [];
+  // Apollo's response: people[] with first_name, last_name, name, title,
+  // phone_numbers[{sanitized_number, raw_number}], email, linkedin_url,
+  // organization{phone}.
+  return people.slice(0, 10).map((p) => {
+    const phoneObj = (p.phone_numbers && p.phone_numbers[0]) || {};
+    return {
+      name: p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
+      title: p.title || "",
+      phone: phoneObj.sanitized_number || phoneObj.raw_number || p.organization?.phone || "",
+      email: p.email || "",
+      linkedin: p.linkedin_url || "",
+    };
+  }).filter((c) => c.name !== "—");
+}
+
+app.get("/api/apollo/status", authMiddleware, (req, res) => {
+  res.json({ configured: isApolloConfigured(), provider: "apollo.io" });
+});
+
+app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Apollo ikke konfigureret — tilføj APOLLO_API_KEY i Secret Manager", configured: false });
+  }
+  const cvr = req.params.cvr;
+  const ud = loadUserData(req.userId);
+  const lead = ud.leads.find((l) => l.cvr === cvr);
+  if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+
+  const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
+  const fresh = lead.apollo_enriched_at && (Date.now() - new Date(lead.apollo_enriched_at).getTime()) < FRESH_MS;
+  if (fresh && !req.query.force) {
+    return res.json({ ok: true, cached: "user", contacts: lead.contacts || [] });
+  }
+  // Pool-level cache (cron writes here too)
+  const pool = loadDiscoveryState().companies || {};
+  const poolEntry = pool[cvr];
+  if (poolEntry?.apollo_enriched_at && (Date.now() - new Date(poolEntry.apollo_enriched_at).getTime()) < FRESH_MS && !req.query.force) {
+    lead.contacts = poolEntry.contacts || [];
+    lead.apollo_enriched_at = poolEntry.apollo_enriched_at;
+    const primaryPhone = (lead.contacts.find((c) => c.phone) || {}).phone;
+    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    saveUserData(req.userId, ud);
+    return res.json({ ok: true, cached: "pool", contacts: lead.contacts });
+  }
+  try {
+    const contacts = await enrichWithApollo({
+      name: lead.name,
+      domain: lead.web || lead.website,
+    });
+    lead.contacts = contacts;
+    lead.apollo_enriched_at = new Date().toISOString();
+    const primaryPhone = (contacts.find((c) => c.phone) || {}).phone;
+    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    saveUserData(req.userId, ud);
+    // Write-through to state.json so the pool cache benefits
+    if (poolEntry) {
+      poolEntry.contacts = contacts;
+      poolEntry.apollo_enriched_at = lead.apollo_enriched_at;
+      try {
+        const state = loadDiscoveryState();
+        state.companies[cvr] = poolEntry;
+        fs.writeFileSync(DISCOVERY_STATE_FILE, JSON.stringify(state, null, 2));
+      } catch (e) { console.warn("[apollo] state.json write-through failed:", e.message); }
+    }
+    res.json({ ok: true, cached: false, contacts });
+  } catch (e) {
+    console.error("[apollo/enrich]", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Apollo auto-enrichment cron — same pattern as the Kaspr attempt, but
+// with the right API shape. Called by Cloud Scheduler at /api/cron/apollo-enrich.
+// Walks ICP-klar pool entries without recent enrichment, batches them
+// at 1 req/s to respect Apollo's rate limits.
+app.post("/api/cron/apollo-enrich", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Apollo not configured" });
+  }
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+  const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const state = loadDiscoveryState();
+  state.companies = state.companies || {};
+  const candidates = Object.values(state.companies)
+    .filter((c) => c?.icpFit)
+    .filter((c) => !c.apollo_enriched_at || (now - new Date(c.apollo_enriched_at).getTime()) > FRESH_MS)
+    .sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0))
+    .slice(0, limit);
+
+  const stats = { considered: candidates.length, enriched: 0, withContacts: 0, errors: 0 };
+  for (const c of candidates) {
+    try {
+      const contacts = await enrichWithApollo({
+        name: c.name,
+        domain: c.website || c.web,
+      });
+      c.contacts = contacts;
+      c.apollo_enriched_at = new Date().toISOString();
+      stats.enriched++;
+      if (contacts.length > 0) stats.withContacts++;
+      await new Promise((r) => setTimeout(r, 1000));
+    } catch (e) {
+      console.warn("[apollo-cron]", c.cvr, e.message);
+      stats.errors++;
+      // Cache the failure so we don't keep retrying broken CVRs every tick
+      c.apollo_enriched_at = new Date().toISOString();
+      c.contacts = [];
+    }
+  }
+  try {
+    fs.writeFileSync(DISCOVERY_STATE_FILE, JSON.stringify(state, null, 2));
+  } catch (e) {
+    return res.status(500).json({ error: "state.json write failed: " + e.message, stats });
+  }
+  console.log("[apollo-cron] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
 // ─── KASPR ENRICHMENT (Phase B) ─────────────────────────────────────────
 // Turns CVR+company-name into decision-maker contacts (phone + email +
 // LinkedIn). Without this, ~70% of META-discovered leads have no phone
