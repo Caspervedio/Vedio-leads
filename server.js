@@ -1756,10 +1756,114 @@ app.get("/api/discovery/review-queue", authMiddleware, (req, res) => {
   res.json({ total: rows.length, rows: rows.slice(0, limit) });
 });
 
+// ─── CSV column auto-parser ──────────────────────────────────────────
+// Map arbitrary CSV headers to our internal schema. Supports Danish AND
+// English headers. Each rule is { matchers: regex[], canonical: string }.
+// First-match wins per canonical key (so "company" beats "name" if both
+// appear, in declared order).
+//
+// Why both header heuristics + content patterns:
+//   1. Header match handles 90% of cases — most CSVs have descriptive names
+//   2. Content patterns rescue unlabeled columns or generic headers like
+//      "Column1", "field_2", etc. (CVR=8 digits, phone=+45..., URL, email)
+//
+// The auto-mapper is run BEFORE the existing import loop so the rest of
+// the code just sees normalized {name, cvr, website, phone, email, ...}.
+const CSV_HEADER_RULES = [
+  { canonical: "name",     matchers: [/^(name|company( ?name)?|account ?name|virksomhed(?:snavn)?|firma(?:navn)?|brand|kunde)$/i] },
+  { canonical: "cvr",      matchers: [/^(cvr(?:[-_ ]?n(?:umme)?r)?|cvrnr|organi[sz]ation ?number|vat ?(?:nr|number|id)?|cvrtal)$/i] },
+  { canonical: "phone",    matchers: [/^(phone|tel(?:efon)?|mobile|mobil|switchboard|nummer|telephone|tlf)$/i] },
+  { canonical: "email",    matchers: [/^(e[-_ ]?mail|mail|kontakt[-_ ]?email)$/i] },
+  { canonical: "website",  matchers: [/^(website|url|domain|dom[aæ]ne|web(?:site|adresse)?|site|hjemmeside|homepage)$/i] },
+  { canonical: "industry", matchers: [/^(industry|branche|sector|sektor|category|kategori)$/i] },
+  { canonical: "city",     matchers: [/^(city|by|town|sted)$/i] },
+  { canonical: "country",  matchers: [/^(country|land)$/i] },
+  { canonical: "source",   matchers: [/^(source|kilde|origin|channel)$/i] },
+];
+function detectCanonicalFromHeader(header) {
+  const h = String(header || "").trim().toLowerCase();
+  if (!h) return null;
+  for (const rule of CSV_HEADER_RULES) {
+    if (rule.matchers.some((re) => re.test(h))) return rule.canonical;
+  }
+  return null;
+}
+// Content-pattern fallback — given a sample of column values, guess what
+// it is. Higher specificity wins (CVR=8 digits is more specific than
+// "looks numeric"). Returns the canonical key or null.
+function detectCanonicalFromContent(sampleValues) {
+  const sample = (sampleValues || []).filter((v) => v != null && String(v).trim() !== "").slice(0, 20);
+  if (sample.length === 0) return null;
+  const looksLike = (re) => sample.filter((v) => re.test(String(v).trim())).length / sample.length;
+  // CVR — 8 digits, Danish company numbers
+  if (looksLike(/^\d{8}$/) >= 0.7) return "cvr";
+  // Email — has @
+  if (looksLike(/^[^\s@]+@[^\s@]+\.[^\s@]+$/) >= 0.7) return "email";
+  // Phone — Danish formats: +45 12 34 56 78, 12345678, 0045 ..., (+45) ...
+  if (looksLike(/^[+()0-9\s\-]{7,18}$/) >= 0.7) return "phone";
+  // URL — http(s):// or starts with www. or contains a dot-tld
+  if (looksLike(/^(https?:\/\/|www\.)/i) >= 0.5 || looksLike(/\.[a-z]{2,6}(\/|$)/i) >= 0.7) return "website";
+  return null;
+}
+// Normalize a single raw CSV row using header → canonical mapping.
+// Returns { name, cvr, phone, email, website, industry, city, country, source }.
+function normalizeCsvRow(rawRow, headerMap) {
+  const out = {};
+  for (const [origHeader, canonical] of Object.entries(headerMap)) {
+    if (!canonical) continue;
+    const v = rawRow[origHeader];
+    if (v == null || String(v).trim() === "") continue;
+    // For multi-source headers (e.g. two "phone"-like columns), prefer the
+    // first non-empty value (header rules are declared in priority order).
+    if (out[canonical]) continue;
+    out[canonical] = String(v).trim();
+  }
+  // Normalize CVR to digits-only
+  if (out.cvr) out.cvr = out.cvr.replace(/\D/g, "");
+  // Normalize phone — strip spaces, keep + and digits
+  if (out.phone) out.phone = out.phone.replace(/[^\d+]/g, "");
+  // Normalize website — add https:// if missing scheme but starts with www. or contains a dot
+  if (out.website && !/^https?:\/\//i.test(out.website)) {
+    if (/^www\./i.test(out.website) || /\.[a-z]{2,6}(\/|$)/i.test(out.website)) {
+      out.website = "https://" + out.website.replace(/^\/+/, "");
+    }
+  }
+  return out;
+}
+// Build the header→canonical map for a batch of rows. Combines header
+// keyword detection + content sampling.
+function buildHeaderMap(rows) {
+  if (!rows || rows.length === 0) return {};
+  const headers = Object.keys(rows[0] || {});
+  const map = {};
+  const used = new Set();
+  // Pass 1 — header keyword match
+  for (const h of headers) {
+    const can = detectCanonicalFromHeader(h);
+    if (can && !used.has(can)) {
+      map[h] = can;
+      used.add(can);
+    }
+  }
+  // Pass 2 — content sampling for remaining unmapped headers
+  for (const h of headers) {
+    if (map[h]) continue;
+    const sample = rows.slice(0, 30).map((r) => r[h]);
+    const can = detectCanonicalFromContent(sample);
+    if (can && !used.has(can)) {
+      map[h] = can;
+      used.add(can);
+    }
+  }
+  return map;
+}
+
 // POST /api/leads/import — bulk-import a CSV-derived list of companies.
 //
-// Body: { rows: [{ name, cvr?, website?, phone?, email?, source? }, ...], listId? }
-// Per row:
+// Body: { rows: [{ raw CSV row }, ...], listId? }
+// Rows can have ANY column names — the auto-parser maps them to internal
+// schema using header heuristics (Danish + English) and content patterns
+// (CVR=8 digits, phone=+45..., URL, email). Per matched row:
 //   - If `cvr` is present (8 digits) → fetch enrichment from Datafordeler
 //   - Else try exact-name match in Datafordeler. If found → enrich. If not
 //     → still create the lead with whatever fields the CSV gave us, flagged
@@ -1768,15 +1872,33 @@ app.get("/api/discovery/review-queue", authMiddleware, (req, res) => {
 // Source defaults to "csv". Source preserved on the lead so we know which
 // channel surfaced it (sales-navigator / apollo / partner-list / etc).
 app.post("/api/leads/import", authMiddleware, async (req, res) => {
-  const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
-  if (!rows || rows.length === 0) return res.status(400).json({ error: "rows[] mangler" });
-  if (rows.length > 5000) return res.status(413).json({ error: "Max 5000 rækker pr. import" });
+  const rawRows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+  if (!rawRows || rawRows.length === 0) return res.status(400).json({ error: "rows[] mangler" });
+  if (rawRows.length > 5000) return res.status(413).json({ error: "Max 5000 rækker pr. import" });
+  // Auto-parse: detect which column is name/cvr/phone/email/website even
+  // when headers vary across sources (HubSpot, Apollo, LinkedIn export,
+  // Salesforce, manual spreadsheets in Danish or English). The mapper
+  // returns a {originalHeader: canonicalKey} map. Rows are normalized
+  // before the existing import loop runs.
+  const headerMap = buildHeaderMap(rawRows);
+  const rows = rawRows.map((r) => {
+    const normalized = normalizeCsvRow(r, headerMap);
+    // Carry original row so unmapped fields (e.g. notes, custom tags)
+    // remain available for debug output.
+    return { ...normalized, _raw: r };
+  });
   const listId = req.body.listId || "ungrouped";
   const d = loadUserData(req.userId);
   const existing = new Set(d.leads.map((l) => l.cvr));
   const now = new Date().toISOString();
 
-  const stats = { imported: 0, alreadyExists: 0, matched: 0, unmatched: 0, errors: 0, details: [] };
+  const stats = {
+    imported: 0, alreadyExists: 0, matched: 0, unmatched: 0, errors: 0, details: [],
+    // Report the detected header map so the UI can show "We mapped these
+    // columns: name→Company Name, cvr→CVR Number, …" — gives confidence
+    // and surfaces mapping mistakes early.
+    detectedHeaders: headerMap,
+  };
 
   // Cap concurrent Datafordeler lookups so we don't hammer the API for big imports.
   const CONC = 4;
@@ -1786,8 +1908,10 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
       const row = queue.shift();
       if (!row) break;
       try {
-        const name = String(row.name || row.company || row["Company Name"] || row["Account Name"] || "").trim();
-        const cvrRaw = String(row.cvr || row.CVR || "").replace(/\D/g, "");
+        // After normalization, `row` carries canonical keys directly.
+        // Fall back to the raw row for any field the mapper missed.
+        const name = String(row.name || row._raw?.name || row._raw?.company || row._raw?.["Company Name"] || row._raw?.["Account Name"] || "").trim();
+        const cvrRaw = String(row.cvr || row._raw?.cvr || row._raw?.CVR || "").replace(/\D/g, "");
         if (!name && !cvrRaw) { stats.errors++; stats.details.push({ row, reason: "no name or CVR" }); continue; }
 
         let company = null;

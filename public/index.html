@@ -1039,7 +1039,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div style="font-size:11px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Tilføj kunde</div>
         <div style="display:flex;gap:8px">
           <input class="fi" id="cust-cvr-input" placeholder="Indtast CVR-nummer (8 cifre)" style="flex:1;font-size:13px;border:1.5px solid var(--p1);background:var(--p7);border-radius:8px;padding:10px 14px" onkeydown="if(event.key==='Enter')addCustomerFromInput()">
-          <button class="btn btn-primary btn-sm" onclick="addCustomerFromInput()" style="padding:10px 20px;font-size:13px">📞 Til kø</button>
+          <button class="btn btn-primary btn-sm" onclick="addCustomerFromInput()" style="padding:10px 20px;font-size:13px" title="Registrer som eksisterende kunde — IKKE samme som lead-kø (den fyldes automatisk)">+ Tilføj kunde</button>
         </div>
         <div id="cust-add-msg" style="font-size:11px;margin-top:6px;min-height:16px"></div>
       </div>
@@ -2890,6 +2890,40 @@ function metaAdsLibUrl(name){
   return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${q}&search_type=keyword_unordered`;
 }
 
+// Auto-flow status chip — replaces the old "📞 Til kø" buttons across
+// Discovery, Look-alike, Maps, Tech Stack and the detail modal. Leads
+// flow into the SDR's queue AUTOMATICALLY via the autodialer-maintain
+// cron (target=100, hourly). The chip just communicates current state:
+//   - "✓ I kø"          → cvr already in user.leads
+//   - "⏳ Beriges"       → cvr in user.leads but apollo_enrichment_pending
+//   - "📌 ICP-klar"      → in discovery pool, ICP rules pass, queued for auto-flow
+//   - "✕ Ikke ICP"       → in discovery pool but ICP rules fail
+//   - "— Ny"             → not yet evaluated (no ads.verdict run yet)
+// Caller passes `c` (the row data) and optionally `compact:true` for
+// inline row contexts where space is tight.
+function autoFlowChip(c, opts){
+  const compact = opts && opts.compact;
+  const myLead = (leads || []).find(l => l.cvr === c.cvr);
+  const sty = (bg, fg, br) => `display:inline-flex;align-items:center;gap:4px;padding:${compact?'2px 8px':'4px 10px'};border-radius:${compact?'9px':'10px'};background:${bg};color:${fg};border:1px solid ${br};font-size:${compact?'10.5px':'11px'};font-weight:800;letter-spacing:0.2px;white-space:nowrap`;
+  if(myLead){
+    if(myLead.apollo_enrichment_pending===true){
+      return `<span title="Apollo beriger dette lead lige nu — det dukker op i køen om få sekunder" style="${sty('rgba(167,139,250,0.15)','#a78bfa','rgba(167,139,250,0.32)')}">⏳ Beriges</span>`;
+    }
+    if(myLead.phone_missing===true){
+      return `<span title="Apollo og Datafordeler fandt intet nummer — under ⚠ Mangler nummer på Autodialer" style="${sty('rgba(252,165,165,0.15)','#fca5a5','rgba(252,165,165,0.32)')}">⚠ Intet nummer</span>`;
+    }
+    return `<span title="I din ringe-kø" style="${sty('rgba(52,211,153,0.15)','#34d399','rgba(52,211,153,0.32)')}">✓ I kø</span>`;
+  }
+  if(c.icpFit){
+    return `<span title="ICP-klar — auto-promoteres til din kø af cron (hver time, target=100)" style="${sty('rgba(124,58,237,0.15)','#c4b5fd','rgba(124,58,237,0.32)')}">📌 ICP-klar</span>`;
+  }
+  // Has been evaluated by META scraper but didn't pass ICP
+  if(c.ads && c.ads.checkedAt){
+    return `<span title="Opfylder ikke ICP-reglerne (kører ikke nok ads, eller for få ansatte)" style="${sty('var(--w04)','var(--w55)','var(--w08)')}">✕ Ikke ICP</span>`;
+  }
+  return `<span title="Endnu ikke evalueret af META-scrape" style="${sty('var(--w04)','var(--w35)','var(--w08)')}">— Ny</span>`;
+}
+
 // Source badge — small chip showing which AI Agent surfaced this lead.
 // Legacy entries (no `source` field) come from the daily META scrape, so
 // they implicitly map to META Scraper.
@@ -2932,7 +2966,7 @@ function renderDiscoveryRow(c){
     <td style="padding:12px 14px;font-size:12px;color:var(--w80);text-align:right">${c.employees||'—'}</td>
     <td style="padding:12px 14px;text-align:right">${verdictPill}</td>
     <td style="padding:12px 14px;text-align:right" onclick="event.stopPropagation()">
-      ${inLeads?'<span style="font-size:11px;color:var(--green);font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">📞 Til kø</button>`}
+      ${autoFlowChip(c, {compact:true})}
     </td>
   </tr>`;
 }
@@ -2978,7 +3012,7 @@ function renderLookalikeRow(c){
     <td style="padding:11px 14px">${scoreCell}</td>
     <td style="padding:11px 14px;text-align:right" onclick="event.stopPropagation()">${verdictPill}</td>
     <td style="padding:11px 14px;text-align:right" onclick="event.stopPropagation()">
-      ${inLeads?'<span style="font-size:11px;color:#6ee7b7;font-weight:700">✓ I leads</span>':`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="discAddLead('${c.cvr}')">📞 Til kø</button>`}
+      ${autoFlowChip(c, {compact:true})}
     </td>
   </tr>`;
 }
@@ -3051,7 +3085,7 @@ function openDiscoveryDetail(cvr){
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Ring til switchboard — bed om</div>
       ${contactsSection}
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
-        ${inLeads?'<span style="font-size:12px;color:var(--green);font-weight:700;padding:10px 14px">✓ Allerede i dine leads</span>':`<button class="btn btn-primary btn-sm" style="padding:9px 18px;font-size:12.5px" onclick="discAddLead('${c.cvr}');document.getElementById('disc-detail-modal').remove();">📞 Til kø</button>`}
+        <div style="padding:10px 14px">${autoFlowChip(c)}</div>
         <button class="btn btn-sm" style="padding:9px 16px" onclick="document.getElementById('disc-detail-modal').remove()">Luk</button>
       </div>
     </div>
@@ -4002,7 +4036,7 @@ function renderTechStackResults(matches){
             const inQ = inLeads.has(r.cvr);
             const action = inQ
               ? '<span style="font-size:11px;color:#6ee7b7;font-weight:700">✓ I leads</span>'
-              : `<button class="btn btn-primary btn-sm" onclick="tsAddOne('${e(r.cvr)}')" style="padding:5px 12px;font-size:11px">📞 Til kø</button>`;
+              : autoFlowChip(r, {compact:true});
             return `<tr style="border-bottom:1px solid var(--w04);${r.icpFit?'background:rgba(52,211,153,0.03)':''}">
               <td style="padding:11px 14px">${r.icpFit?'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399;margin-right:6px;vertical-align:middle" title="ICP-klar"></span>':''}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(r.name||'—')}</span>${r.brandName&&r.brandName.toLowerCase()!==(r.name||'').toLowerCase()?`<div style="font-size:10.5px;color:var(--w35);margin-top:1px">Brand: ${e(r.brandName)}</div>`:''}</td>
               <td style="padding:11px 14px"><div style="font-size:11.5px;color:var(--w80)">${e(r.city||'—')}</div><div style="font-family:monospace;font-size:10px;color:var(--w35);margin-top:1px">${r.cvr}</div></td>
@@ -4689,7 +4723,7 @@ function renderGoogleMapsResults(){
             <td style="padding:11px 14px;font-size:12.5px;color:#fff;font-weight:700">${e(r.name||'—')}</td>
             <td style="padding:11px 14px;font-size:11.5px;color:var(--w55)">${e(r.address||'—')}</td>
             <td style="padding:11px 14px;font-family:monospace;font-size:11px;color:${r.cvr?'var(--purple-light)':'var(--w35)'}">${r.cvr||'<span style=\"color:var(--w35)\">— ingen match</span>'}</td>
-            <td style="padding:11px 14px;text-align:right">${r.cvr?`<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px" onclick="gmAddOne(${i})">📞 Til kø</button>`:'<span style="font-size:11px;color:var(--w35)">—</span>'}</td>
+            <td style="padding:11px 14px;text-align:right">${r.cvr?autoFlowChip(r, {compact:true}):'<span style="font-size:11px;color:var(--w35)">—</span>'}</td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -4750,26 +4784,32 @@ function renderAutodialerPage(){
   // Stats — queue size for the currently-selected list, total leads,
   // last-called timestamp (best-effort: latest lastCallAt on any lead).
   let filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
-  // Archive mode: when sourceFilter==='archived', show ONLY arkiverede
-  // leads (lastAction === 'not-relevant'). Otherwise EXCLUDE them from
-  // the active queue so the dialer doesn't re-call leads we've already
-  // dismissed.
-  // Phone-missing mode: when sourceFilter==='phone_missing', show ONLY
-  // leads flagged phone_missing=true (Apollo+Datafordeler both returned
-  // nothing) so the SDR can research them manually. Otherwise EXCLUDE
-  // them from the active queue so we never dial blanks.
+  // ─── Queue gates ────────────────────────────────────────────────────
+  // The active call queue requires THREE conditions to be true for a
+  // lead to appear:
+  //   1. lastAction !== 'not-relevant'  (not archived)
+  //   2. phone_missing !== true         (Apollo+Datafordeler found a number)
+  //   3. apollo_enrichment_pending !== true  (decision-makers populated)
+  // Each failing condition routes the lead to its own chip-bucket so the
+  // SDR can review what's not-yet-ready — but the active queue stays
+  // clean of leads with incomplete information.
   const showArchive = _adState.sourceFilter==='archived';
   const showPhoneMissing = _adState.sourceFilter==='phone_missing';
+  const showEnriching = _adState.sourceFilter==='enriching';
+  const isEnriching = (l) => l.apollo_enrichment_pending===true;
   if(showArchive){
     filtered=filtered.filter(l=>l.lastAction==='not-relevant');
   } else if(showPhoneMissing){
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true);
+  } else if(showEnriching){
+    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && isEnriching(l));
   } else {
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant');
-    // Exclude phone-less leads from active queue — they live behind the
-    // "⚠ Mangler nummer" chip until somebody finds a number.
+    // Hide leads still being enriched — they appear in "⏳ Beriges nu".
+    filtered=filtered.filter(l=>!isEnriching(l));
+    // Hide leads with no phone — they appear in "⚠ Mangler nummer".
     filtered=filtered.filter(l=>l.phone_missing!==true);
-    // Apply source filter (other than archived / phone_missing)
+    // Apply source filter (other than the special filter modes above)
     if(_adState.sourceFilter&&_adState.sourceFilter!=='all'){
       filtered=filtered.filter(l=>(l.source||'manual')===_adState.sourceFilter);
     }
@@ -4878,12 +4918,14 @@ function renderAutodialerPage(){
     listChip('all','Alle leads',leads.length,aList==='all'||!aList),
     ...userLists.map(l=>listChip(l.id,l.name,leads.filter(x=>x.listId===l.id).length,aList===l.id)),
   ].join(' ');
-  // Source counts for the filter chips. Counts EXCLUDE archived AND
-  // phone_missing leads (those live in the dedicated chips at the end).
+  // Source counts for the filter chips. Counts EXCLUDE archived,
+  // phone_missing AND currently-enriching leads (those live in dedicated
+  // chips at the end of the chip row).
   const srcCounts={};
   const archivedCount=leads.filter(l=>l.lastAction==='not-relevant').length;
   const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true).length;
-  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true);
+  const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true).length;
+  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true);
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
     ['all','Alle',activeLeads.length],
@@ -4893,6 +4935,9 @@ function renderAutodialerPage(){
     ['tech-stack','Tech',srcCounts['tech-stack']||0],
     ['csv','CSV',srcCounts['csv']||0],
     ['manual','Manuel',srcCounts['manual']||0],
+    // "Beriges nu" — Apollo is mid-flight on these. Lead appears in
+    // active queue once apollo_enrichment_pending flips false.
+    ['enriching','⏳ Beriges nu',enrichingCount],
     // "Mangler nummer" — leads where Apollo + Datafordeler both came up
     // dry. SDR opens this view to research a phone manually, then the
     // lead returns to the active queue once a number is added.
@@ -5084,15 +5129,17 @@ function openCockpit(){
   // Build queue from the leads currently visible in the user's selected list.
   let base=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
   // Hide leads scheduled for a future callback — they're not actionable
-  // right now. They re-appear once callback_at <= now. Also exclude
-  // archived leads (lastAction='not-relevant') — they're visible in the
-  // dedicated "✕ Arkiveret" filter on the Autodialer page but should
-  // never re-enter the dialer rotation. Same for phone_missing leads —
-  // they live in "⚠ Mangler nummer" until someone gives them a number.
+  // right now. They re-appear once callback_at <= now. Also exclude:
+  //   - archived leads (lastAction='not-relevant') — live in ✕ Arkiveret
+  //   - phone_missing leads — live in ⚠ Mangler nummer
+  //   - currently-enriching leads — live in ⏳ Beriges nu
+  // So the cockpit's call rotation only ever sees leads that are
+  // fully enriched, have a phone, and aren't archived.
   const now=Date.now();
   base=base.filter(l=>{
     if(l.lastAction==='not-relevant') return false;
     if(l.phone_missing===true) return false;
+    if(l.apollo_enrichment_pending===true) return false;
     if(!l.callback_at) return true;
     return new Date(l.callback_at).getTime() <= now;
   });
@@ -5660,21 +5707,76 @@ function humanFutureTime(iso){
   return `i morgen kl. ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 
-// ─── SMS composer ───────────────────────────────────────────────────────
+// ─── SMS composer + templates ──────────────────────────────────────────
+// Five default templates SDR can drop into the composer. Variables get
+// substituted client-side from the lead + currentUser before send:
+//   {{name}}        → lead's company name
+//   {{contact}}     → top Apollo decision-maker name if available, else "der"
+//   {{my_name}}     → logged-in SDR's first name
+//   {{my_company}}  → "Vedio" (hardcoded for now; configurable later)
+const SMS_TEMPLATES = [
+  {
+    id: 'no_answer',
+    label: '📵 Ingen svar — prøvet at ringe',
+    body: `Hej {{contact}}, det er {{my_name}} fra {{my_company}}. Jeg prøvede lige at ringe — vender du tilbage når du har 5 min? Tak!`,
+  },
+  {
+    id: 'callback_confirm',
+    label: '📅 Bekræft callback-aftale',
+    body: `Hej {{contact}}, det er {{my_name}} fra {{my_company}}. Tak for snakken — bekræfter aftalen vi lavede. Hører fra dig snart!`,
+  },
+  {
+    id: 'follow_up',
+    label: '↩ Follow-up efter snak',
+    body: `Hej {{contact}}, det er {{my_name}} igen fra {{my_company}}. Som lovet sender jeg lige en venlig påmindelse. Sig til hvis du vil tage en kort snak om {{name}}.`,
+  },
+  {
+    id: 'meeting_confirm',
+    label: '✓ Bekræft møde',
+    body: `Hej {{contact}}, det er {{my_name}} fra {{my_company}}. Bekræfter vores møde — glæder mig! Skriv hvis noget skal flyttes.`,
+  },
+  {
+    id: 'intro_warm',
+    label: '👋 Intro efter kort kald',
+    body: `Hej {{contact}}, tak for de få minutter lige før. Det er {{my_name}} fra {{my_company}} — som lovet sender jeg en mail med mere info. God dag!`,
+  },
+];
+// Substitute {{var}} tokens against a lead + currentUser. Unknown tokens
+// are left in place so the SDR sees them and can fill manually.
+function smsRenderTemplate(body, lead){
+  const topContact = (lead && Array.isArray(lead.contacts) && lead.contacts[0]) || null;
+  const firstName = (currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '');
+  const map = {
+    'name':       lead?.name || 'jer',
+    'contact':    (topContact && topContact.name && topContact.name.split(/\s+/)[0]) || 'der',
+    'my_name':    firstName || 'Vedio',
+    'my_company': 'Vedio',
+  };
+  return String(body || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (full, key) => map[key] !== undefined ? map[key] : full);
+}
+
 function cockpitOpenSmsForLead(c){
-  cockpitOpenSmsModal({ phone: c.ph||'', name: c.name||'', cvr: c.cvr||'' });
+  cockpitOpenSmsModal({ phone: c.ph||c.phone||'', name: c.name||'', cvr: c.cvr||'', lead: c });
 }
 
 function cockpitOpenSmsModal(prefill){
   const bg=document.createElement('div');
   bg.className='modal-bg'; bg.id='sms-modal';
-  bg.innerHTML=`<div class="modal" style="width:440px;padding:22px 26px">
+  // Store the lead on the modal so template inserts can re-render with
+  // variable substitution at click time.
+  const lead = prefill.lead || null;
+  bg.innerHTML=`<div class="modal" style="width:480px;padding:22px 26px">
     <h3 style="margin:0 0 4px;font-size:16px;color:#fff">Send SMS</h3>
     <p style="font-size:12px;color:var(--w55);margin:0 0 14px">${prefill.name?`Til <strong style="color:#fff">${e(prefill.name)}</strong>`:'Indtast modtagernummer og besked'}</p>
     <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Telefonnummer</div>
     <input id="sms-phone" type="tel" value="${e(prefill.phone||'')}" placeholder="+45 …" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;margin-bottom:12px">
-    <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Besked</div>
-    <textarea id="sms-text" rows="4" placeholder="Hej, jeg prøvede at ringe…" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;resize:vertical;margin-bottom:14px"></textarea>
+    <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Skabeloner</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+      ${SMS_TEMPLATES.map(t=>`<button onclick="smsInsertTemplate('${t.id}')" title="Indsæt: ${e(t.body)}" style="padding:5px 10px;background:rgba(124,58,237,0.10);border:1px solid rgba(124,58,237,0.25);color:#c4b5fd;border-radius:8px;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;cursor:pointer;transition:background 0.12s" onmouseover="this.style.background='rgba(124,58,237,0.20)'" onmouseout="this.style.background='rgba(124,58,237,0.10)'">${e(t.label)}</button>`).join('')}
+    </div>
+    <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Besked <span style="color:var(--w55);font-weight:500;text-transform:none;letter-spacing:0;margin-left:6px">— variabler {{name}}, {{contact}}, {{my_name}} substitueres ved indsættelse</span></div>
+    <textarea id="sms-text" rows="5" placeholder="Skriv eller indsæt en skabelon…" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;resize:vertical;margin-bottom:8px"></textarea>
+    <div style="font-size:10.5px;color:var(--w35);margin-bottom:14px"><span id="sms-charcount">0</span> / 480 tegn · CloudTalk loft</div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('sms-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer">Annullér</button>
       <button onclick="cockpitSendSmsConfirm('${e(prefill.cvr||'')}')" style="background:#7c3aed;border:none;border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">💬 Send</button>
@@ -5682,6 +5784,32 @@ function cockpitOpenSmsModal(prefill){
   </div>`;
   bg.onclick=(ev)=>{if(ev.target===bg)bg.remove();};
   document.body.appendChild(bg);
+  // Stash the lead context on the modal node so smsInsertTemplate can
+  // find it for variable substitution.
+  bg._smsLead = lead;
+  // Wire up live char count
+  const ta = document.getElementById('sms-text');
+  const cc = document.getElementById('sms-charcount');
+  if(ta && cc){
+    const updateCount = () => { cc.textContent = ta.value.length; cc.style.color = ta.value.length > 480 ? '#fca5a5' : 'var(--w35)'; };
+    ta.addEventListener('input', updateCount);
+    updateCount();
+  }
+}
+
+// Insert a template body into the SMS textarea, substituting variables
+// against the lead currently tracked on the modal.
+function smsInsertTemplate(templateId){
+  const tpl = SMS_TEMPLATES.find(t => t.id === templateId);
+  if(!tpl) return;
+  const modal = document.getElementById('sms-modal');
+  const lead = modal ? modal._smsLead : null;
+  const rendered = smsRenderTemplate(tpl.body, lead);
+  const ta = document.getElementById('sms-text');
+  if(!ta) return;
+  ta.value = rendered;
+  ta.focus();
+  ta.dispatchEvent(new Event('input'));
 }
 
 async function cockpitSendSmsConfirm(cvr){
@@ -6424,9 +6552,9 @@ function showDp(c){
       <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px">
         ${inL?`
           <button class="btn btn-sm" style="width:100%;justify-content:center;gap:6px" onclick="openEditLead('${c.cvr}')">Rediger oplysninger</button>
-          <button class="btn" style="width:100%;justify-content:center;color:var(--green);border-color:rgba(22,163,74,.3)" disabled>✓ Allerede i leads</button>
+          <div style="text-align:center">${autoFlowChip(c)}</div>
           <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" onclick="remL('${c.cvr}')">Fjern fra leads</button>`
-          :`<button class="btn btn-primary" style="width:100%;justify-content:center" onclick="showListPicker(['${c.cvr}'])">📞 Til kø</button>`}
+          :`<div style="text-align:center;padding:8px">${autoFlowChip(c)}<div style="font-size:10.5px;color:var(--w35);margin-top:6px">Leads flyder automatisk fra Discovery til din kø — cron sørger for 100 leads til hver tid</div></div>`}
       </div>
       <div class="dp-section" style="margin-top:14px">Meta-ads</div>
       <div id="meta-ads-wrap-${c.cvr}">${renderMetaAdsSection(c)}</div>
