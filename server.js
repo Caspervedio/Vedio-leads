@@ -1690,6 +1690,15 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
   const targetSize = Math.max(5, Math.min(200, Number(req.query.target) || 30));
   const stats = { usersProcessed: 0, totalPromoted: 0, totalEnrichmentQueued: 0 };
 
+  // Active callers — ONLY these user IDs receive auto-promoted leads.
+  // Currently just Nicolas (u1). Victor (u2) and Admin are excluded from
+  // the call rotation so leads aren't duplicated across SDRs (every lead
+  // belongs to exactly one caller). To add an SDR, append their id here
+  // (or set AUTODIALER_USER_IDS="u1,u2" in the env to override without a
+  // code change).
+  const ACTIVE_CALLER_IDS = (process.env.AUTODIALER_USER_IDS || "u1")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+
   // User data is stored as DATA_DIR/data_<userId>.json (not in a subdir).
   // Walk DATA_DIR and pick out the data_<id>.json files.
   if (!fs.existsSync(DATA_DIR)) {
@@ -1704,6 +1713,8 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
     if (f === "data.json") continue;
     const userId = f.slice("data_".length, -".json".length);
     if (!userId) continue;
+    // Only auto-promote to active callers (currently just Nicolas / u1).
+    if (!ACTIVE_CALLER_IDS.includes(userId)) continue;
     try {
       const ud = loadUserData(userId);
       const leads = ud.leads || [];
