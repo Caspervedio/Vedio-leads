@@ -507,16 +507,49 @@ async function main() {
   const metaAdsCache = loadJson(META_ADS_FILE, {});
   const flips = [];
 
-  const browser = await chromium.launch({
+  // Residential-proxy support. Meta serves empty ad-library results to
+  // datacenter IPs (incl. all of GCP), so a residential/mobile proxy is
+  // required to see real ads. Configured via env (mounted from Secret
+  // Manager). When unset, runs direct (datacenter IP) — useful locally.
+  //   PROXY_SERVER    e.g. "http://gate.smartproxy.com:7000"
+  //   PROXY_USERNAME  proxy account user (often encodes country/session)
+  //   PROXY_PASSWORD  proxy account password
+  const PROXY_SERVER = process.env.PROXY_SERVER || "";
+  const PROXY_USERNAME = process.env.PROXY_USERNAME || "";
+  const PROXY_PASSWORD = process.env.PROXY_PASSWORD || "";
+  const launchOpts = {
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  });
+  };
+  if (PROXY_SERVER) {
+    launchOpts.proxy = {
+      server: PROXY_SERVER,
+      ...(PROXY_USERNAME ? { username: PROXY_USERNAME, password: PROXY_PASSWORD } : {}),
+    };
+    console.log(`[discover] routing through residential proxy: ${PROXY_SERVER}`);
+  } else {
+    console.log("[discover] NO proxy configured — running on datacenter IP (Meta will likely serve empty results)");
+  }
+  const browser = await chromium.launch(launchOpts);
   const contexts = await Promise.all(
     Array.from({ length: CONCURRENCY }, () =>
       browser.newContext({
         userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         locale: "da-DK",
         viewport: { width: 1280, height: 800 },
+      }),
+    ),
+  );
+  // Bandwidth optimization — block heavy assets we never read (we only
+  // parse document.body.innerText). Cuts page weight ~80%, which keeps
+  // residential-proxy bandwidth costs low. Keep stylesheets + scripts +
+  // xhr/fetch so the ad results still render and load.
+  await Promise.all(
+    contexts.map((ctx) =>
+      ctx.route("**/*", (route) => {
+        const t = route.request().resourceType();
+        if (t === "image" || t === "media" || t === "font") return route.abort();
+        return route.continue();
       }),
     ),
   );
