@@ -14,6 +14,16 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 app.use(cors());
 app.use(express.json());
+// Never cache the SPA shell (index.html) — it's a single-page app, so a
+// stale shell means the browser runs old in-memory JS after a deploy.
+// no-store guarantees a normal refresh always pulls the latest build.
+// (Hashed/static assets below can still be cached by the browser.)
+app.use((req, res, next) => {
+  if (req.path === "/" || req.path.endsWith(".html")) {
+    res.set("Cache-Control", "no-store, must-revalidate");
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, "public")));
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
