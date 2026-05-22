@@ -5192,7 +5192,19 @@ app.post("/api/cloudtalk/sms", authMiddleware, async (req, res) => {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
-      return res.status(502).json({ error: `CloudTalk SMS: ${r.status} ${JSON.stringify(d).slice(0, 200)}` });
+      // CloudTalk SMS is a paid add-on and only works on SMS-capable
+      // numbers (limited country support; DK outbound often isn't
+      // included). Every payload shape returns a generic "Bad Request"
+      // when SMS isn't provisioned. Return 503 (not 502) so the client
+      // falls back to the device's native SMS composer instead of
+      // surfacing a confusing raw error.
+      const reason = JSON.stringify(d).slice(0, 200);
+      console.warn("[cloudtalk/sms] rejected:", r.status, reason);
+      return res.status(503).json({
+        error: "CloudTalk SMS er ikke aktiveret på kontoen (kræver SMS-tillæg + SMS-kapabelt nummer). Falder tilbage til enhedens SMS.",
+        configured: false,
+        cloudtalk: reason,
+      });
     }
     if (cvr) {
       const ud = loadUserData(req.userId);

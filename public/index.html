@@ -5997,7 +5997,7 @@ async function cockpitSendSmsConfirm(cvr){
       window.location.href=url;
       if(cvr){try{await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({last_sms_at:new Date().toISOString()})});}catch{}}
       document.getElementById('sms-modal')?.remove();
-      showToast('SMS åbnet på enheden — CloudTalk SMS aktiveres når DK-nummer ankommer');
+      showToast('SMS åbnet på din enhed — CloudTalk SMS kræver SMS-tillæg på kontoen');
       return;
     }
     showToast('SMS fejlede: '+(d.error||'ukendt'));
