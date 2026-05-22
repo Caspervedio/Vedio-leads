@@ -1511,6 +1511,9 @@ function showApp(){
   // Boot the embedded softphone — first reveal lazily loads the iframe
   // so the page-load cost is paid only after login.
   softphoneInit();
+  // Start polling for inbound/outbound calls so the company screen-pops
+  // automatically (even with the softphone dock closed).
+  startCallPolling();
 }
 
 // ─── Embedded softphone (CloudTalk Phone iframe) ──────────────────────
@@ -1591,6 +1594,76 @@ function softphoneOpenWindow(){
       showToast('Popup blokeret — tillad popups for dette site og prøv igen');
     }
   }catch(e){ showToast('Kunne ikke åbne vindue: '+e.message); }
+}
+
+// ─── Inbound/outbound screen-pop ────────────────────────────────────────
+// Polls the backend for the live CloudTalk call and pops the matching
+// company on screen — works even when the softphone dock is closed. The
+// backend (CloudTalk webhook) sets the active call; here we surface it.
+let _callPollTimer=null, _lastPoppedCall='';
+function startCallPolling(){
+  if(_callPollTimer) return;
+  _callPollTimer=setInterval(pollActiveCall, 3000);
+  pollActiveCall();
+}
+function stopCallPolling(){
+  if(_callPollTimer){ clearInterval(_callPollTimer); _callPollTimer=null; }
+  _lastPoppedCall=''; hideCallPop();
+}
+async function pollActiveCall(){
+  try{
+    const r=await fetch('/api/cloudtalk/active-call',{headers:ah()});
+    if(!r.ok) return;
+    const d=await r.json();
+    if(!d.active){ _lastPoppedCall=''; hideCallPop(); return; }
+    const key=(d.call.callId||'')+'|'+(d.call.startedAt||'');
+    if(key===_lastPoppedCall) return;   // already showing this call
+    _lastPoppedCall=key;
+    showCallPop(d);
+  }catch(e){ /* network blip — try again next tick */ }
+}
+function hideCallPop(){ const el=document.getElementById('call-pop'); if(el)el.remove(); }
+function showCallPop(d){
+  hideCallPop();
+  const inbound=(d.call.direction||'')!=='outbound';
+  const company=d.lead ? d.lead.name : (d.call.contactName || 'Ukendt nummer');
+  const num=d.call.number||'';
+  // History hint — if we've called this lead before, show last disposition.
+  const hist = d.lead && d.lead.lastAction
+    ? `<span style="color:var(--w55)">Sidste: ${e(lastActionLabel(d.lead.lastAction))}${d.lead.lastCallAt?` · ${new Date(d.lead.lastCallAt).toLocaleDateString('da-DK')}`:''}</span>`
+    : (d.lead ? '<span style="color:var(--w35)">Ikke ringet før</span>' : '<span style="color:#fdba74">Nummer ikke i listen</span>');
+  const el=document.createElement('div');
+  el.id='call-pop';
+  el.style.cssText='position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:1100;background:#14111f;border:1px solid rgba(124,58,237,0.5);border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,0.6),0 0 36px rgba(124,58,237,0.3);padding:16px 22px;min-width:440px;max-width:90vw;animation:softphoneFadeIn 0.2s';
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;gap:14px">
+      <div style="font-size:30px">${inbound?'📲':'📞'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:${inbound?'#34d399':'#c4b5fd'}">${inbound?'Indgående opkald':'Udgående opkald'}${d.lead&&d.lead.meta_advertiser?' · 🎯 Annoncør':''}</div>
+        <div style="font-size:17px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e(company)}</div>
+        <div style="font-size:12px;color:var(--w55);font-family:monospace">${e(num)}${d.lead&&d.lead.city?` · ${e(d.lead.city)}`:''}</div>
+        <div style="font-size:11px;margin-top:2px">${hist}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+        ${d.lead?`<button onclick="callPopOpenLead('${e(d.lead.cvr)}')" style="background:#7c3aed;border:0;color:#fff;border-radius:9px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Åbn lead ↗</button>`:''}
+        <button onclick="hideCallPop()" style="background:var(--w04);border:1px solid var(--w08);color:var(--w80);border-radius:9px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+}
+function callPopOpenLead(cvr){
+  hideCallPop();
+  const lead=(leads||[]).find(l=>l.cvr===cvr);
+  if(!lead){ showToast('Lead ikke i din liste'); return; }
+  // Switch to Autodialer + open the cockpit at this lead so the SDR has
+  // history, notes and disposition ready for the callback.
+  if(typeof sv==='function') sv('autodialer');
+  setTimeout(()=>{
+    if(typeof openCockpit==='function'){
+      openCockpit();
+      setTimeout(()=>{ const qi=(_cockpit.queue||[]).findIndex(l=>l.cvr===cvr); if(qi>=0)cockpitJump(qi); }, 120);
+    }
+  }, 60);
 }
 function softphoneSetStatus(kind, label){
   const dot=document.getElementById('softphone-status-dot');
@@ -1697,6 +1770,7 @@ async function logout(){
   if(dock)dock.style.display='none';
   if(pill)pill.style.display='none';
   if(iframe)iframe.src='about:blank';
+  stopCallPolling();
   showLogin();
 }
 
@@ -5099,6 +5173,18 @@ function renderAutodialerPage(){
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
 
+// Minimize / expand the cockpit switchboard (decision-makers) card.
+// State persists in localStorage so the SDR's preference sticks.
+if(typeof window._cockpitSwitchboardMin==='undefined') window._cockpitSwitchboardMin = localStorage.getItem('cockpit_switchboard_min')==='1';
+function toggleSwitchboard(){
+  window._cockpitSwitchboardMin = !window._cockpitSwitchboardMin;
+  localStorage.setItem('cockpit_switchboard_min', window._cockpitSwitchboardMin?'1':'0');
+  const body=document.getElementById('cockpit-switchboard-body');
+  if(body) body.style.display = window._cockpitSwitchboardMin?'none':'';
+  // Flip the caret in the header without a full re-render.
+  if(typeof renderCockpit==='function' && _cockpit && _cockpit.open) renderCockpit();
+}
+
 // Edit the phone number the autodialer/cockpit will call for a lead.
 // Lets the SDR correct a wrong number (e.g. an Apollo foreign-HQ number)
 // without leaving the queue. Persists via PATCH /api/leads/:cvr.
@@ -5421,9 +5507,13 @@ function renderCockpitDetail(c){
       <!-- Switchboard + decision-makers card -->
       <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px">
-          <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase">Ring til switchboard — bed om</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button onclick="toggleSwitchboard()" title="Minimér / vis switchboard" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;line-height:1;padding:0">${window._cockpitSwitchboardMin?'▸':'▾'}</button>
+            <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase">Ring til switchboard — bed om</div>
+          </div>
           ${c.ph?`<a href="tel:${c.ph}" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:6px 11px;font-size:12px;font-weight:700;text-decoration:none;font-family:monospace">📞 ${fp(c.ph)}</a>`:''}
         </div>
+        <div id="cockpit-switchboard-body" style="${window._cockpitSwitchboardMin?'display:none':''}">
         ${pending?`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)"><span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Apollo beriger — kontakter klar om få sekunder…</div>`:contacts.length?contacts.map((p,i)=>`
           <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--w04);border:1px solid var(--w08);border-radius:11px;${i>0?'margin-top:8px':''}">
             ${p.photoUrl?`<img src="${e(p.photoUrl)}" alt="" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.outerHTML='<div style=&quot;width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px;flex-shrink:0&quot;>${(p.name||'?')[0].toUpperCase()}</div>'">`:`<div style="width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px;flex-shrink:0">${(p.name||'?')[0].toUpperCase()}</div>`}
@@ -5443,6 +5533,7 @@ function renderCockpitDetail(c){
             </div>
           </div>
         `).join(''):`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">Ingen kontakter fundet endnu.<br><button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Apollo</button></div>`}
+        </div>
       </div>
 
       <!-- Call status — driven by Start Dialer state machine -->
@@ -5457,7 +5548,7 @@ function renderCockpitDetail(c){
            in slot 2 with the same icon-card style as the other actions. -->
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Efter kald — vælg disposition</div>
       <div id="cockpit-disposition-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
-        ${action('✓','Interesseret','1','cockpitDisposition(\'interested\')')}
+        ${action('✓','Interesseret — Push til Twenty','1','cockpitDisposition(\'interested\')')}
         ${action('💬','Send SMS','2','cockpitDisposition(\'sms\')')}
         ${action('✕','Ingen svar → planlæg callback','3','cockpitDisposition(\'no-answer\')')}
         ${action('–','Ikke relevant → arkivér','4','cockpitDisposition(\'not-relevant\')')}

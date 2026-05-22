@@ -5213,6 +5213,57 @@ app.post("/api/cloudtalk/sms", authMiddleware, async (req, res) => {
 //   Settings → Webhooks → "Call ended" event →
 //   https://leads-723660132735.europe-west1.run.app/api/cloudtalk/webhook
 // Optional auth via shared secret in CLOUDTALK_WEBHOOK_TOKEN.
+// ─── Active-call state (drives the inbound/outbound screen-pop) ──────────
+// CloudTalk posts a webhook on call start (inbound ring / outbound dial)
+// and call end. We persist the "currently active call" so the SDR's
+// browser — which polls /api/cloudtalk/active-call — can pop the matching
+// lead on screen automatically, even when the softphone dock is closed.
+const ACTIVE_CALL_FILE = path.join(DATA_DIR, "active_call.json");
+function setActiveCall(obj) { try { fs.writeFileSync(ACTIVE_CALL_FILE, JSON.stringify(obj || null)); } catch {} }
+function getActiveCall() { try { return JSON.parse(fs.readFileSync(ACTIVE_CALL_FILE, "utf8")); } catch { return null; } }
+// Normalize a phone number to its last 8 digits (DK national number) for
+// matching — strips +45 / 0045 / spaces / dashes.
+function phoneKey(p) {
+  return String(p || "").replace(/\D/g, "").replace(/^45/, "").slice(-8);
+}
+// Find a lead across all users matching a phone number. Returns {lead, owner}.
+function findLeadByPhone(number) {
+  const target = phoneKey(number);
+  if (!target || target.length < 6) return null;
+  if (!fs.existsSync(DATA_DIR)) return null;
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+    try {
+      const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+      const lead = (ud.leads || []).find((l) => phoneKey(l.phone || l.ph) === target);
+      if (lead) return { lead, owner: f.slice("data_".length, -".json".length) };
+    } catch {}
+  }
+  return null;
+}
+
+// GET /api/cloudtalk/active-call — the SDR's browser polls this. Returns
+// the live call (if any) + the matched company so the UI can screen-pop.
+app.get("/api/cloudtalk/active-call", authMiddleware, (req, res) => {
+  const call = getActiveCall();
+  if (!call || !call.startedAt) return res.json({ active: false });
+  // Stale guard — a call older than 3 min with no end event is treated as
+  // finished (protects against a missed "call ended" webhook).
+  if (Date.now() - new Date(call.startedAt).getTime() > 3 * 60 * 1000) {
+    return res.json({ active: false });
+  }
+  const match = findLeadByPhone(call.number);
+  res.json({
+    active: true,
+    call,
+    lead: match ? {
+      name: match.lead.name, cvr: match.lead.cvr, phone: match.lead.phone || match.lead.ph,
+      city: match.lead.city, lastAction: match.lead.lastAction, lastCallAt: match.lead.lastCallAt,
+      meta_advertiser: !!match.lead.meta_advertiser,
+    } : null,
+  });
+});
+
 app.post("/api/cloudtalk/webhook", express.json({ type: "*/*" }), (req, res) => {
   // Webhook signature verification (CloudTalk includes a token or HMAC
   // header — confirm exact mechanism in their docs, then validate here).
@@ -5222,7 +5273,29 @@ app.post("/api/cloudtalk/webhook", express.json({ type: "*/*" }), (req, res) => 
   }
   try {
     const evt = req.body || {};
-    console.log("[cloudtalk-webhook]", evt.event || "unknown", "call_id=", evt.call_id || evt.id || "?");
+    const evtName = String(evt.event || evt.type || evt.event_type || "").toLowerCase();
+    console.log("[cloudtalk-webhook]", evtName || "unknown", "call_id=", evt.call_id || evt.id || "?");
+
+    // ── Classify event → maintain active-call state for the screen-pop ──
+    const isEnd = /end|hangup|finish|complete|terminat/.test(evtName) ||
+      evt.talking_time_seconds != null || evt.duration != null;
+    const isStart = !isEnd && /start|ring|incoming|outgoing|new|initiat|answer|dial/.test(evtName);
+    const extNumber = evt.external_number || evt.public_external_number || evt.contact_phone ||
+      evt.caller_id || evt.from_number || evt.to_number || evt.external_phone || evt.number || "";
+    const direction = String(evt.direction || evt.call_direction ||
+      (/incoming|inbound/.test(evtName) ? "inbound" : /outgoing|outbound|dial/.test(evtName) ? "outbound" : "")).toLowerCase();
+    if (isStart && extNumber) {
+      setActiveCall({
+        callId: evt.call_id || evt.id || null,
+        number: extNumber,
+        direction: direction || "inbound",
+        contactName: evt.contact_name || evt.contact || "",
+        startedAt: new Date().toISOString(),
+      });
+    } else if (isEnd) {
+      setActiveCall(null);
+    }
+
     // Match the event back to a lead by CloudTalk call_id and persist
     // the disposition/duration.
     const callId = evt.call_id || evt.id;
