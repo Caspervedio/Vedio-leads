@@ -101,6 +101,17 @@ function businessDomainFromEmail(email) {
   return d;
 }
 
+// Active callers — only these user IDs are in the call rotation (default
+// Nicolas/u1). Imports/manual-adds by a non-caller (e.g. admin) route to
+// the first active caller so uploaded leads land in the dialing queue.
+function getActiveCallerIds() {
+  return (process.env.AUTODIALER_USER_IDS || "u1").split(",").map((s) => s.trim()).filter(Boolean);
+}
+function routeToCallerId(reqUserId) {
+  const callers = getActiveCallerIds();
+  return callers.includes(reqUserId) ? reqUserId : (callers[0] || reqUserId);
+}
+
 // ── User auth ─────────────────────────────────────────────────────────────────
 const sessions = new Map(); // token -> userId
 
@@ -2103,12 +2114,16 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
     return { ...normalized, _raw: r };
   });
   const listId = req.body.listId || "ungrouped";
-  const d = loadUserData(req.userId);
+  // Route imports to the active caller (Nicolas/u1) so uploaded leads land
+  // in the dialing queue even when uploaded as admin (Option A).
+  const targetUserId = routeToCallerId(req.userId);
+  const d = loadUserData(targetUserId);
   const existing = new Set(d.leads.map((l) => l.cvr));
   const now = new Date().toISOString();
 
   const stats = {
     imported: 0, alreadyExists: 0, matched: 0, unmatched: 0, errors: 0, details: [],
+    routedTo: targetUserId,
     // Report the detected header map so the UI can show "We mapped these
     // columns: name→Company Name, cvr→CVR Number, …" — gives confidence
     // and surfaces mapping mistakes early.
@@ -2194,7 +2209,11 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
           // enrich it + flag Meta advertisers. Personal emails are skipped.
           const bizDomain = businessDomainFromEmail(row.email);
           const web = row.website || row.URL || row.domain || bizDomain || "";
-          const willEnrich = isApolloConfigured() && !!bizDomain;
+          // CHEAP ICP check: business-email rows get flagged for the
+          // org-only advertiser check (no contact reveal → no credits).
+          // We already have name+phone from the CSV, so we do NOT run the
+          // full (credit-costing) people enrichment on these.
+          const wantAdsCheck = isApolloConfigured() && !!bizDomain;
           d.leads.push({
             cvr: syntheticCvr,
             name,
@@ -2206,7 +2225,7 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
             ind: row.industry || "",
             unmatched: true,
             phone_missing: !csvPhone,
-            apollo_enrichment_pending: willEnrich,
+            ads_check_pending: wantAdsCheck,
             listId,
             addedAt: now,
             source: row.source || "csv",
@@ -2214,13 +2233,7 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
           existing.add(syntheticCvr);
           stats.imported++;
           stats.unmatched++;
-          // Queue business-email rows for Apollo enrichment (domain → company
-          // → Meta-advertiser signal).
-          if (willEnrich) {
-            if (!stats._matchedCvrs) stats._matchedCvrs = [];
-            stats._matchedCvrs.push(syntheticCvr);
-            stats.bizEmailEnrich = (stats.bizEmailEnrich || 0) + 1;
-          }
+          if (wantAdsCheck) stats.adsCheckQueued = (stats.adsCheckQueued || 0) + 1;
         }
       } catch (e) {
         stats.errors++;
@@ -2230,22 +2243,21 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
   });
   await Promise.all(workers);
 
-  saveUserData(req.userId, d);
-  // Fire Apollo enrichment for all matched CSV rows in one batch. The
-  // enricher's internal concurrency=5 means a 500-row import enriches
-  // in ~100 batches × ~1s each. Fire-and-forget; SDR sees enrichment
-  // populate as they work the list.
+  saveUserData(targetUserId, d);
+  // Full Apollo enrichment (contacts + phone, costs ~1 credit each) ONLY
+  // for CVR-matched companies — they have no contact yet. CSV people-rows
+  // get the cheap org-only ads check instead (see ads_check_pending).
   const cvrsToEnrich = stats._matchedCvrs || [];
   delete stats._matchedCvrs;
   if (cvrsToEnrich.length > 0 && isApolloConfigured()) {
-    enrichUserLeadsViaApolloAsync(req.userId, cvrsToEnrich).catch((e) =>
+    enrichUserLeadsViaApolloAsync(targetUserId, cvrsToEnrich).catch((e) =>
       console.warn("[csv-import enrich] batch failed:", e.message)
     );
     stats.enrichmentQueued = cvrsToEnrich.length;
   }
   // Trim details to avoid blowing up the response
   stats.details = stats.details.slice(0, 20);
-  logActivity("csv-import", `CSV-import: ${stats.imported} leads (${stats.matched} CVR-match, ${stats.unmatched} uden) · ${cvrsToEnrich.length} sendt til Apollo-berigning`, { userId: req.userId });
+  logActivity("csv-import", `CSV-import → ${targetUserId}: ${stats.imported} leads (${stats.matched} CVR-match, ${stats.unmatched} uden) · ${stats.adsCheckQueued || 0} til gratis ads-tjek`, { userId: targetUserId });
   res.json(stats);
 });
 
@@ -4763,6 +4775,23 @@ function mapApolloOrganization(org) {
   };
 }
 
+// LIGHTWEIGHT advertiser check — Apollo organization enrichment by domain.
+// Returns ONLY company/tech data (incl. Meta-advertiser signal). Does NOT
+// reveal any contact emails/phones, so it consumes no contact credits.
+// Used for CSV people-leads where we already have the contact and only
+// need the ICP/ads signal.
+async function apolloOrgEnrich(domain) {
+  const d = String(domain || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
+  if (!d) return null;
+  const r = await fetch(`https://api.apollo.io/v1/organizations/enrich?domain=${encodeURIComponent(d)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Api-Key": process.env.APOLLO_API_KEY },
+  });
+  if (!r.ok) return null;
+  const j = await r.json().catch(() => ({}));
+  return j.organization ? mapApolloOrganization(j.organization) : null;
+}
+
 async function enrichWithApollo({ name, domain }) {
   // STEP 1 — resolve to Apollo's organization_id. ~70% hit rate boost
   // for DK SMBs vs name-only people search.
@@ -4981,6 +5010,68 @@ app.post("/api/cron/drain-enrichment", async (req, res) => {
     }
   }
   console.log("[drain-enrichment] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
+// POST /api/cron/check-advertisers — CHEAP ICP/ads check for leads flagged
+// ads_check_pending (CSV people-leads with a business email domain). Uses
+// Apollo organization-enrich (company/tech data only — NO contact reveal,
+// so NO credits spent) to detect the Meta-advertiser signal. The leads are
+// already callable (name+phone from the CSV); this just adds the 🎯 badge.
+// Awaited within the request so Cloud Run keeps CPU allocated.
+app.post("/api/cron/check-advertisers", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 40));
+  const stats = { checked: 0, advertisers: 0, found: 0, perUser: {} };
+  if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats, note: "no DATA_DIR" });
+  let budget = limit;
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (budget <= 0) break;
+    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+    const userId = f.slice("data_".length, -".json".length);
+    if (!userId) continue;
+    let changed = false;
+    try {
+      const ud = loadUserData(userId);
+      for (const lead of ud.leads || []) {
+        if (budget <= 0) break;
+        if (lead.ads_check_pending !== true) continue;
+        budget--;
+        const domain = lead.web || businessDomainFromEmail(lead.em);
+        try {
+          const org = domain ? await apolloOrgEnrich(domain) : null;
+          lead.ads_check_pending = false;
+          lead.ads_checked_at = new Date().toISOString();
+          if (org) {
+            stats.found++;
+            if (!lead.apollo_company) lead.apollo_company = org; // light company data, no contacts
+            lead.meta_advertiser = !!org.metaAdvertiser;
+            lead.ad_signals = org.metaAdSignals || [];
+            if (org.metaAdvertiser) {
+              stats.advertisers++;
+              logActivity("advertiser", `🎯 Annoncør: ${lead.name} (${(org.metaAdSignals || []).join(", ")})`, { cvr: lead.cvr, userId });
+            }
+          }
+          stats.checked++;
+          stats.perUser[userId] = (stats.perUser[userId] || 0) + 1;
+          changed = true;
+          await new Promise((r) => setTimeout(r, 250)); // gentle on Apollo
+        } catch (e) {
+          lead.ads_check_pending = false;
+          lead.ads_checked_at = new Date().toISOString();
+          changed = true;
+        }
+      }
+      if (changed) saveUserData(userId, ud);
+    } catch (e) {
+      console.warn("[check-advertisers]", userId, e.message);
+    }
+  }
+  logActivity("ads-check", `ICP/ads-tjek: ${stats.checked} tjekket · ${stats.advertisers} annoncører fundet (gratis — ingen Apollo-credits)`, null);
+  console.log("[check-advertisers] done:", JSON.stringify(stats));
   res.json({ ok: true, stats });
 });
 
