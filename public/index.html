@@ -3719,21 +3719,91 @@ async function handleCsvFile(file){
 }
 
 function showCsvPreview(filename,headers,rows){
+  window._csvRows=rows; window._csvFilename=filename;
+  // Count how many rows have a business email (worth scanning for ads).
+  const FREE=['gmail.com','googlemail.com','hotmail.com','hotmail.dk','outlook.com','outlook.dk','live.com','live.dk','yahoo.com','yahoo.dk','icloud.com','me.com','msn.com','aol.com','mail.dk','privat.dk'];
+  const bizCount=rows.filter(r=>{const em=(r.email||'').toLowerCase();if(!em.includes('@'))return false;const d=em.split('@')[1];return d&&!FREE.includes(d);}).length;
   const bg=document.createElement('div');bg.className='modal-bg';bg.id='csv-preview-modal';
-  bg.innerHTML=`<div class="modal" style="width:560px;max-height:80vh;display:flex;flex-direction:column">
-    <h3 style="margin:0 0 4px">Importer CSV: ${e(filename)}</h3>
-    <p style="font-size:11.5px;color:var(--w55);margin:0 0 12px">Fundet <strong style="color:#fff">${rows.length}</strong> rækker · genkendte kolonner: ${headers.map(h=>e(h)).join(', ').slice(0,200)}</p>
-    <div style="font-size:11px;color:var(--w55);margin-bottom:8px">Forhåndsvisning (5 første):</div>
-    <div style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:var(--w80);max-height:240px;overflow:auto;margin-bottom:14px">
-      ${rows.slice(0,5).map(r=>`<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--w04)"><strong style="color:#fff">${e(r.name||'(intet navn)')}</strong>${r.phone?` · 📞 <span style="color:#c4b5fd">${e(r.phone)}</span>`:' · <span style="color:#fca5a5">ingen tlf</span>'}${r.email?` · ${e(r.email)}`:''}${r.cvr?` · CVR ${e(r.cvr)}`:''}${r.website?` · ${e(r.website)}`:''}${r.city?` · ${e(r.city)}`:''}</div>`).join('')}
+  bg.innerHTML=`<div class="modal" style="width:580px;max-height:84vh;display:flex;flex-direction:column">
+    <h3 style="margin:0 0 4px">📥 Importer CSV: ${e(filename)}</h3>
+    <p style="font-size:11.5px;color:var(--w55);margin:0 0 12px">Fundet <strong style="color:#fff">${rows.length}</strong> leads · ${bizCount} med firma-email (kan tjekkes for Meta-annoncer gratis)</p>
+    <div style="font-size:11px;color:var(--w55);margin-bottom:8px">Forhåndsvisning:</div>
+    <div style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:var(--w80);max-height:200px;overflow:auto;margin-bottom:14px">
+      ${rows.slice(0,6).map(r=>`<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--w04)"><strong style="color:#fff">${e(r.name||'(intet navn)')}</strong>${r.phone?` · 📞 <span style="color:#c4b5fd">${e(r.phone)}</span>`:' · <span style="color:#fca5a5">ingen tlf</span>'}${r.email?` · ${e(r.email)}`:''}</div>`).join('')}
     </div>
-    <div style="font-size:11px;color:var(--w35);margin-bottom:14px">Rækker uden CVR-match til Datafordeler bliver stadig importeret — med flag, så du kan rette dem manuelt senere.</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
+    <div id="csv-scan-zone"></div>
+    <div id="csv-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
       <button class="btn btn-sm" onclick="document.getElementById('csv-preview-modal').remove();document.getElementById('csv-import-input').value='';">Annullér</button>
-      <button class="btn btn-primary btn-sm" id="csv-import-confirm" onclick='runCsvImport(${JSON.stringify(rows).replace(/'/g,"&#39;")})'>Importér ${rows.length} leads</button>
+      ${bizCount>0?`<button class="btn btn-sm" id="csv-scan-btn" onclick="csvScanAdvertisers()" style="border-color:rgba(251,146,60,0.4);color:#fb923c">🎯 Analysér for Meta-annoncer (gratis)</button>`:''}
+      <button class="btn btn-primary btn-sm" onclick="runCsvImport(window._csvRows)">Importér alle ${rows.length}</button>
     </div>
   </div>`;
   document.body.appendChild(bg);
+}
+
+// Scan the list for Meta advertisers (free org-check), batch by batch with
+// live progress, then show the add/discard decision.
+async function csvScanAdvertisers(){
+  const rows=window._csvRows||[];
+  const FREE=['gmail.com','googlemail.com','hotmail.com','hotmail.dk','outlook.com','outlook.dk','live.com','live.dk','yahoo.com','yahoo.dk','icloud.com','me.com','msn.com','aol.com','mail.dk','privat.dk'];
+  const isBiz=r=>{const em=(r.email||'').toLowerCase();if(!em.includes('@'))return false;const d=em.split('@')[1];return d&&!FREE.includes(d);};
+  const bizRows=rows.filter(isBiz);
+  const zone=document.getElementById('csv-scan-zone');
+  const scanBtn=document.getElementById('csv-scan-btn'); if(scanBtn){scanBtn.disabled=true;scanBtn.textContent='Analyserer…';}
+  const scanByKey=new Map();
+  let done=0, advertisers=0;
+  const render=(phase)=>{
+    const pct=bizRows.length?Math.round(done/bizRows.length*100):100;
+    zone.innerHTML=`<div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span class="search-spinner" style="width:14px;height:14px;${phase==='done'?'display:none':''}"></span><span style="font-size:12.5px;color:#fff;font-weight:700">${phase==='done'?'✓ Analyse færdig':'🔍 Scanner Meta Ad-signal via Apollo (firma-tech) …'}</span></div>
+      <div style="height:7px;background:var(--w08);border-radius:4px;overflow:hidden;margin-bottom:6px"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#fb923c,#fbbf24);transition:width 0.3s"></div></div>
+      <div style="font-size:11px;color:var(--w55)">${done} / ${bizRows.length} firma-emails tjekket · <strong style="color:#fb923c">🎯 ${advertisers} annoncører fundet</strong> · 0 credits brugt</div>
+    </div>`;
+  };
+  render('scanning');
+  const BATCH=25;
+  for(let i=0;i<bizRows.length;i+=BATCH){
+    const batch=bizRows.slice(i,i+BATCH);
+    try{
+      const r=await fetch('/api/leads/scan-advertisers',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({rows:batch})});
+      const d=await r.json();
+      (d.results||[]).forEach(res=>{ scanByKey.set(res.key,res); if(res.isAdvertiser)advertisers++; });
+    }catch(ex){}
+    done+=batch.length; render('scanning');
+  }
+  render('done');
+  // Attach scan results back onto the rows
+  rows.forEach(r=>{
+    const key=r.email||r.name||'';
+    const s=scanByKey.get(key);
+    r._scanned=true;
+    r._advertiser=!!(s&&s.isAdvertiser);
+    r._adSignals=(s&&s.adSignals)||[];
+    r._companyName=(s&&s.companyName)||'';
+  });
+  csvShowDecision(rows, advertisers);
+}
+
+function csvShowDecision(rows, advertisers){
+  const adsRows=rows.filter(r=>r._advertiser);
+  const actions=document.getElementById('csv-actions'); if(!actions)return;
+  actions.innerHTML=`
+    <button class="btn btn-sm" onclick="document.getElementById('csv-preview-modal').remove();document.getElementById('csv-import-input').value='';">Annullér</button>
+    ${advertisers>0?`<button class="btn btn-sm" onclick='runCsvImport(window._csvRows.filter(r=>r._advertiser))' style="border-color:rgba(251,146,60,0.5);color:#fb923c;font-weight:700">🎯 Tilføj kun annoncører (${advertisers})</button>`:''}
+    <button class="btn btn-primary btn-sm" onclick="runCsvImport(window._csvRows)">Tilføj alle ${rows.length}</button>`;
+  // Show advertiser sample under the progress bar
+  const zone=document.getElementById('csv-scan-zone');
+  if(zone && advertisers>0){
+    zone.innerHTML+=`<div style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-size:11.5px;color:#fb923c;font-weight:700;margin-bottom:8px">🎯 ${advertisers} kører Meta-annoncer (ICP):</div>
+      <div style="font-size:11px;color:var(--w80);max-height:120px;overflow:auto;line-height:1.7">
+        ${adsRows.slice(0,15).map(r=>`${e(r._companyName||r.name)} <span style="color:var(--w35)">· ${e((r._adSignals||[]).join(', '))}</span>`).join('<br>')}
+        ${adsRows.length>15?`<br><span style="color:var(--w35)">… +${adsRows.length-15} mere</span>`:''}
+      </div>
+    </div>`;
+  } else if(zone){
+    zone.innerHTML+=`<div style="font-size:11.5px;color:var(--w55);margin-bottom:14px">Ingen bekræftede Meta-annoncører i firma-emailerne (Apollo har tynd data på små DK-firmaer). Du kan stadig tilføje alle som ring-leads.</div>`;
+  }
 }
 
 async function runCsvImport(rows){
@@ -3747,7 +3817,8 @@ async function runCsvImport(rows){
     if(!r.ok){showToast('Fejl: '+(d.error||'kunne ikke importere'));if(btn){btn.disabled=false;btn.textContent='Prøv igen';}return;}
     document.getElementById('csv-preview-modal')?.remove();
     document.getElementById('csv-import-input').value='';
-    showToast(`✓ ${d.imported} importeret · ${d.matched} med CVR · ${d.unmatched} uden · ${d.alreadyExists} duplikater`);
+    const advTxt=d.advertisers?` · 🎯 ${d.advertisers} annoncører`:'';
+    showToast(`✓ ${d.imported} leads → ${d.routedTo||'kø'}${advTxt} · ${d.alreadyExists} duplikater`);
     // Refresh leads view
     const leadsR=await fetch('/api/leads',{headers:ah()});
     const ld=await leadsR.json();

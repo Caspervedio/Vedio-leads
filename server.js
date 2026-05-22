@@ -2097,6 +2097,34 @@ function buildHeaderMap(rows) {
 //
 // Source defaults to "csv". Source preserved on the lead so we know which
 // channel surfaced it (sales-navigator / apollo / partner-list / etc).
+// POST /api/leads/scan-advertisers — pre-import advertiser scan. Takes a
+// BATCH of parsed rows, derives the company from each business email, and
+// runs the FREE Apollo org-check (no contact reveal → no credits) to flag
+// Meta advertisers. Stateless: the frontend calls this repeatedly for
+// batches so it can show live progress, then decides what to import.
+app.post("/api/leads/scan-advertisers", authMiddleware, async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 40) : [];
+  const apollo = isApolloConfigured();
+  const out = [];
+  for (const row of rows) {
+    const email = row.email || row.em || "";
+    const domain = (row.website || businessDomainFromEmail(email) || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    let isAdvertiser = false, adSignals = [], companyName = "";
+    if (apollo && domain) {
+      try {
+        const org = await apolloOrgEnrich(domain);
+        if (org) { companyName = org.name || ""; isAdvertiser = !!org.metaAdvertiser; adSignals = org.metaAdSignals || []; }
+      } catch {}
+      await new Promise((r) => setTimeout(r, 180)); // gentle on Apollo
+    }
+    out.push({
+      key: email || row.name || "", name: row.name || "", email, phone: row.phone || "",
+      domain, companyName, isAdvertiser, adSignals, hasCompany: !!domain,
+    });
+  }
+  res.json({ results: out });
+});
+
 app.post("/api/leads/import", authMiddleware, async (req, res) => {
   const rawRows = Array.isArray(req.body?.rows) ? req.body.rows : null;
   if (!rawRows || rawRows.length === 0) return res.status(400).json({ error: "rows[] mangler" });
@@ -2109,9 +2137,9 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
   const headerMap = buildHeaderMap(rawRows);
   const rows = rawRows.map((r) => {
     const normalized = normalizeCsvRow(r, headerMap);
-    // Carry original row so unmapped fields (e.g. notes, custom tags)
-    // remain available for debug output.
-    return { ...normalized, _raw: r };
+    // Carry original row + any pre-import advertiser-scan results so the
+    // loop can honor them (set meta_advertiser without re-checking).
+    return { ...normalized, _raw: r, _scanned: r._scanned === true, _advertiser: r._advertiser === true, _adSignals: Array.isArray(r._adSignals) ? r._adSignals : [] };
   });
   const listId = req.body.listId || "ungrouped";
   // Route imports to the active caller (Nicolas/u1) so uploaded leads land
@@ -2209,12 +2237,12 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
           // enrich it + flag Meta advertisers. Personal emails are skipped.
           const bizDomain = businessDomainFromEmail(row.email);
           const web = row.website || row.URL || row.domain || bizDomain || "";
-          // CHEAP ICP check: business-email rows get flagged for the
-          // org-only advertiser check (no contact reveal → no credits).
-          // We already have name+phone from the CSV, so we do NOT run the
-          // full (credit-costing) people enrichment on these.
-          const wantAdsCheck = isApolloConfigured() && !!bizDomain;
-          d.leads.push({
+          // If the row was already scanned for ads pre-import (the new
+          // upload flow), honor that result — no re-check. Otherwise flag
+          // business-email rows for the free background ads-check.
+          const preScanned = row._scanned === true;
+          const wantAdsCheck = !preScanned && isApolloConfigured() && !!bizDomain;
+          const lead = {
             cvr: syntheticCvr,
             name,
             web,
@@ -2229,11 +2257,18 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
             listId,
             addedAt: now,
             source: row.source || "csv",
-          });
+          };
+          if (preScanned) {
+            lead.meta_advertiser = row._advertiser === true;
+            lead.ad_signals = Array.isArray(row._adSignals) ? row._adSignals : [];
+            lead.ads_checked_at = now;
+          }
+          d.leads.push(lead);
           existing.add(syntheticCvr);
           stats.imported++;
           stats.unmatched++;
           if (wantAdsCheck) stats.adsCheckQueued = (stats.adsCheckQueued || 0) + 1;
+          if (preScanned && lead.meta_advertiser) stats.advertisers = (stats.advertisers || 0) + 1;
         }
       } catch (e) {
         stats.errors++;
