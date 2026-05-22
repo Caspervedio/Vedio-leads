@@ -1520,6 +1520,31 @@ app.post("/api/leads", authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Broadened-ICP queue qualification ───────────────────────────────
+// Decides whether a discovery-pool company is eligible for auto-promotion
+// into an SDR's queue. The pool is already pre-filtered to target DB07
+// industries, so industry is implicit. We require:
+//   - active CVR (status 'aktiv', or unknown which we allow)
+//   - not confirmed-tiny: employees >= 3, or unknown size (lean e-commerce
+//     often reports 0/null but still advertises + buys video)
+function queueQualifies(c) {
+  if (!c || !c.cvr) return false;
+  if (c.status && c.status !== "aktiv") return false;
+  const emp = c.employees;
+  if (typeof emp === "number" && emp > 0 && emp < 3) return false;
+  return true;
+}
+// Ranking score — confirmed ad-runners float to the top so the ads signal
+// still dominates when it's available; broadened leads backfill below.
+function queueScore(c) {
+  let s = 0;
+  if (c.icpFit) s += 100000;                       // confirmed ad-runner
+  s += Math.min(c.ads?.matched || 0, 100) * 100;   // more ads = stronger
+  if (c.phone) s += 500;                           // has a switchboard already
+  if (typeof c.employees === "number") s += Math.min(c.employees, 300);
+  return s;
+}
+
 // POST /api/leads/promote — bulk-promote CVRs from the Discovery pool
 // (state.json) into the caller's leads list. Used by the ICP-klar review
 // queue on Dashboard. Carries source attribution + adds to a specified
@@ -1561,6 +1586,18 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         const directDial = (contacts.find((c) => c.phone) || {}).phone;
         if (directDial) lead2.phone = directDial;
         else if (!lead2.phone && company?.phone) lead2.phone = company.phone;
+        // Datafordeler switchboard fallback — broadened-ICP leads come from
+        // the pool with no phone, and Apollo whiffs on ~half of DK SMBs.
+        // The CVR registry has a free switchboard number for ~70% of active
+        // companies, so try it before giving up. Keeps phone coverage high
+        // without spending Apollo phone-reveal credits.
+        if (!lead2.phone && /^\d{8}$/.test(String(cvr))) {
+          try {
+            const df = await lookupDatafordeler(String(cvr));
+            const dfPhone = df?.ph || df?.phone || "";
+            if (dfPhone) lead2.phone = dfPhone;
+          } catch (_) { /* registry miss — lead lands in Mangler nummer */ }
+        }
         // Flag leads with no phone so the Autodialer can exclude them from
         // the active call queue (they stay accessible in a "Mangler nummer"
         // view for manual research). Phone webhook (build #3) will populate
@@ -1681,12 +1718,22 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       const shortfall = targetSize - actionable.length;
       if (shortfall <= 0) continue;
 
-      // Pull top-N from Review Queue (ICP-klar, not yet in user.leads)
+      // Candidate selection — BROADENED ICP.
+      // Meta serves empty ad-library results to our datacenter IP, so the
+      // ads-runner signal (icpFit) is currently unreliable. Until we route
+      // the scraper through a residential proxy, we broaden the gate to:
+      //   - active CVR (status === 'aktiv' or unknown)
+      //   - employees >= 3 (or unknown size — could be lean e-commerce)
+      //   - in a target industry (the discovery pool is already pre-filtered
+      //     to target DB07 codes, so every pool entry qualifies on industry)
+      // Confirmed ad-runners (icpFit=true) still rank FIRST via queueScore,
+      // so when the ads signal IS available it wins — broadened leads only
+      // backfill the remaining slots.
       const claimed = new Set(leads.map((l) => l.cvr));
       const candidates = Object.values(pool)
-        .filter((c) => c?.icpFit && c.cvr && !claimed.has(c.cvr))
+        .filter((c) => queueQualifies(c) && !claimed.has(c.cvr))
         .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
-        .sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0))
+        .sort((a, b) => queueScore(b) - queueScore(a))
         .slice(0, shortfall);
 
       // Promote them inline (mirrors /api/leads/promote logic)
