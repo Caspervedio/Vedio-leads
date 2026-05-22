@@ -1718,16 +1718,27 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
     try {
       const ud = loadUserData(userId);
       const leads = ud.leads || [];
-      // Count "actionable" leads — what the cockpit considers callable today
+      // Count "actionable" leads — must match what the cockpit/queue treats
+      // as DIALABLE so the target reflects real callable volume, not total
+      // queue size. A lead with no phone or still enriching is NOT callable,
+      // so it doesn't count toward the target (it lives in its own bucket).
       const actionable = leads.filter((l) => {
-        if (l.lastAction === "not-relevant") return false; // archived
+        if (l.lastAction === "not-relevant") return false;        // archived
+        if (l.phone_missing === true) return false;               // no number → Mangler nummer
+        if (l.apollo_enrichment_pending === true) return false;   // still enriching
         if (l.callback_at && new Date(l.callback_at).getTime() > now) return false; // scheduled later
-        // Called today?
-        if (l.lastCallAt && (now - new Date(l.lastCallAt).getTime()) < 24*60*60*1000) return false;
+        if (l.lastCallAt && (now - new Date(l.lastCallAt).getTime()) < 24*60*60*1000) return false; // called today
         return true;
       });
-      const shortfall = targetSize - actionable.length;
-      if (shortfall <= 0) continue;
+      const dialableShortfall = targetSize - actionable.length;
+      if (dialableShortfall <= 0) continue;
+      // Phone hit-rate is ~⅓ (broadened ICP reaches small companies), so to
+      // net N dialable leads we promote ~3N. But cap per run so we don't
+      // overwhelm the enrichment drainer (30/run every 5 min) or burn a huge
+      // Apollo batch at once — the queue converges to target over a few
+      // hourly ticks instead.
+      const PER_RUN_CAP = 50;
+      const shortfall = Math.min(dialableShortfall * 3, PER_RUN_CAP);
 
       // Candidate selection — BROADENED ICP.
       // Meta serves empty ad-library results to our datacenter IP, so the
