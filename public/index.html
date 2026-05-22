@@ -1254,7 +1254,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div style="display:flex;align-items:center;gap:6px;margin-left:18px;padding-left:18px;border-left:1px solid var(--w08)">
       <button id="cockpit-start-btn" onclick="cockpitStartDialer()" style="background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none;border-radius:9px;padding:9px 18px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(124,58,237,0.25)">▶ Start Dialer</button>
       <button id="cockpit-pause-btn" onclick="cockpitPauseDialer()" style="display:none;background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏸ Pause</button>
-      <div id="cockpit-dialer-state" style="font-size:11px;color:var(--w55);margin-left:4px"></div>
+      <button id="cockpit-skip-btn" onclick="cockpitSkip()" title="Spring dette lead over og gå til næste (uden disposition)" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 14px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏭ Skip</button>
+      <div id="cockpit-dialer-state" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--w55);margin-left:4px;font-weight:700"></div>
     </div>
     <div style="flex:1"></div>
     <!-- Manual call / SMS -->
@@ -4942,7 +4943,14 @@ function renderAutodialerPage(){
     p += Math.min(l.adsMatched||0, 100);
     return p;
   };
-  if(_adState.sort==='priority'){
+  // Load saved manual order (drag-and-drop) lazily, per user.
+  if(_adState.manualOrder===undefined){
+    try{ _adState.manualOrder = JSON.parse(localStorage.getItem(lsKey('ad_manual_order'))||'null'); }catch(e){ _adState.manualOrder=null; }
+  }
+  if(_adState.sort==='manual' && Array.isArray(_adState.manualOrder)){
+    const ord=_adState.manualOrder; const ix=c=>{const k=ord.indexOf(c);return k<0?100000:k;};
+    filtered.sort((a,b)=>ix(a.cvr)-ix(b.cvr));
+  } else if(_adState.sort==='priority'){
     filtered.sort((a,b)=>priority(b)-priority(a));
   } else if(_adState.sort==='ads'){
     filtered.sort((a,b)=>(b.adsMatched||0)-(a.adsMatched||0));
@@ -5091,6 +5099,7 @@ function renderAutodialerPage(){
         <option value="ads" ${_adState.sort==='ads'?'selected':''}>Flest ads</option>
         <option value="added" ${_adState.sort==='added'?'selected':''}>Senest tilføjet</option>
         <option value="name" ${_adState.sort==='name'?'selected':''}>Navn (A-Å)</option>
+        <option value="manual" ${_adState.sort==='manual'?'selected':''}>Manuel (træk)</option>
       </select>
     </div>`;
 
@@ -5136,15 +5145,23 @@ function renderAutodialerPage(){
           // Shown explicitly + editable (✎) so the SDR can correct a wrong
           // number (Apollo sometimes returns a foreign HQ number for a DK
           // company). In archive mode, show a "Genopret" button instead.
+          // Phone — loud and clear: this is the number that gets dialed.
           const phoneDisplay = l.phone
-            ? `<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:12px;color:var(--purple-light);text-decoration:none">${e(l.phone)}</a>`
-            : `<span style="font-size:10.5px;color:#fca5a5">ingen tlf</span>`;
+            ? `<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd;text-decoration:none;letter-spacing:0.3px">${e(l.phone)}</a>`
+            : `<span style="font-size:11px;color:#fca5a5">ingen tlf</span>`;
           const lastCell = showArchive
             ? `<button onclick="event.stopPropagation();adRestoreLead('${e(l.cvr)}')" style="background:rgba(52,211,153,0.15);border:1px solid rgba(52,211,153,0.3);color:#6ee7b7;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;padding:5px 11px;border-radius:7px;cursor:pointer">↻ Genopret</button>`
             : `<div style="display:inline-flex;align-items:center;gap:7px;justify-content:flex-end">${phoneDisplay}<button onclick="event.stopPropagation();adEditPhone('${e(l.cvr)}')" title="Ret nummeret autodialeren ringer til" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button></div>`;
+          // "▶ Start opkald" — opens the cockpit at THIS lead and starts the
+          // dialer from here. Green to match the calling action.
+          const startCell = showArchive ? '' :
+            `<button onclick="event.stopPropagation();adOpenLead('${e(l.cvr)}',true)" title="Start opkald fra dette lead" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:6px 12px;color:#fff;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:800;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(34,197,94,0.3)">▶ Start opkald</button>`;
           const rowAction = showArchive
             ? `onclick="event.stopPropagation()"` // archive rows shouldn't jump into cockpit
-            : `onclick="adJumpToLead(${i})"`;
+            : `onclick="adOpenLead('${e(l.cvr)}')"`;
+          // Drag-to-reorder (only in the active queue, not archive).
+          const dragAttrs = showArchive ? '' :
+            `draggable="true" ondragstart="adDragStart(event,'${e(l.cvr)}')" ondragover="adDragOver(event)" ondrop="adDrop(event,'${e(l.cvr)}')" ondragend="adDragEnd(event)"`;
           // Compact social/ads icons — small, inline next to the company name.
           // FB icon links to the Apollo-discovered Facebook page if we have one.
           // Ads chip shows count + deep-links to Meta Ads Library so SDR can
@@ -5156,12 +5173,13 @@ function renderAutodialerPage(){
             fbUrl ? `<a href="${e(fbUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook-side" style="font-size:13px;text-decoration:none;color:#60a5fa;margin-left:6px;opacity:0.85" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">📘</a>` : '',
             adsCount > 0 ? `<a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
           ].join('');
-          return `<tr ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
-            <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:28px">${i+1}</td>
+          return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
+            <td style="padding:10px 8px 10px 16px;font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${showArchive?'':'<span style="color:var(--w35);cursor:grab;margin-right:4px" title="Træk for at omarrangere">⠿</span>'}${i+1}</td>
             <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${adBadge?' '+adBadge:''}${socialIcons}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
             <td style="padding:10px 14px;text-align:right">${lastCell}</td>
+            <td style="padding:10px 16px 10px 6px;text-align:right">${startCell}</td>
           </tr>`;
         }).join('')}
       </tbody>
@@ -5172,6 +5190,29 @@ function renderAutodialerPage(){
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
+
+// ─── Drag-and-drop reorder of the autodialer queue ──────────────────────
+// Reordering sets sort='manual' and persists the cvr order in localStorage.
+// Both the preview list AND the cockpit call order honor manualOrder.
+let _adDragCvr=null;
+function adDragStart(ev,cvr){ _adDragCvr=cvr; try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',cvr);}catch(e){} const tr=ev.target.closest&&ev.target.closest('tr'); if(tr)tr.style.opacity='0.4'; }
+function adDragOver(ev){ ev.preventDefault(); try{ev.dataTransfer.dropEffect='move';}catch(e){} }
+function adDragEnd(ev){ _adDragCvr=null; const tr=ev.target.closest&&ev.target.closest('tr'); if(tr)tr.style.opacity=''; }
+function adDrop(ev,targetCvr){
+  ev.preventDefault();
+  const src=_adDragCvr||((ev.dataTransfer&&ev.dataTransfer.getData('text/plain'))||'');
+  _adDragCvr=null;
+  if(!src||src===targetCvr) return;
+  // Current visible order from the DOM (reflects active sort/filter).
+  const order=[...document.querySelectorAll('#ad-queue tr[data-cvr]')].map(r=>r.getAttribute('data-cvr'));
+  const from=order.indexOf(src), to=order.indexOf(targetCvr);
+  if(from<0||to<0) return;
+  order.splice(to,0,order.splice(from,1)[0]);
+  _adState.manualOrder=order;
+  _adState.sort='manual';
+  try{ localStorage.setItem(lsKey('ad_manual_order'), JSON.stringify(order)); }catch(e){}
+  renderAutodialerPage();
+}
 
 // Minimize / expand the cockpit switchboard (decision-makers) card.
 // State persists in localStorage so the SDR's preference sticks.
@@ -5266,14 +5307,20 @@ async function adRestoreLead(cvr){
     renderAutodialerPage();
   }catch(ex){showToast('Fejl: '+ex.message);}
 }
-function adJumpToLead(idx){
-  // Open cockpit at a specific position. Since openCockpit() rebuilds the
-  // queue from the current filtered list, we just set the resume marker
-  // to the lead at idx so it lands there.
-  const filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads;
-  const target=filtered[idx];
-  if(target)_cockpit.history.push(target.cvr);
+// Open the cockpit and jump to a specific lead by CVR. Optionally start
+// the dialer immediately (the row's "▶ Start opkald" button).
+function adOpenLead(cvr, autostart){
   openCockpit();
+  if(!_cockpit.open) return;            // queue was empty
+  const qi=(_cockpit.queue||[]).findIndex(l=>l.cvr===cvr);
+  if(qi>=0){ _cockpit.idx=qi; renderCockpit(); cockpitUpdateToolbarButtons(); }
+  if(autostart && typeof cockpitStartDialer==='function') cockpitStartDialer();
+}
+// Back-compat shim (older callers passed an index).
+function adJumpToLead(idx){
+  const preview=document.querySelectorAll('#ad-queue tr[data-cvr]');
+  const cvr=preview[idx]?.getAttribute('data-cvr');
+  if(cvr) adOpenLead(cvr); else openCockpit();
 }
 
 // ─── COCKPIT ──────────────────────────────────────────────────────────────
@@ -5312,7 +5359,13 @@ function openCockpit(){
     p += Math.min(l.adsMatched||0, 100);
     return p;
   };
-  base.sort((a,b)=>priority(b)-priority(a));
+  // Honor manual drag order if the SDR set one; else priority sort.
+  if(_adState && _adState.sort==='manual' && Array.isArray(_adState.manualOrder)){
+    const ord=_adState.manualOrder; const ix=c=>{const k=ord.indexOf(c);return k<0?100000:k;};
+    base.sort((a,b)=>ix(a.cvr)-ix(b.cvr));
+  } else {
+    base.sort((a,b)=>priority(b)-priority(a));
+  }
   if(base.length===0){showToast('Ingen leads klar — tilføj eller vent på callbacks');return;}
   _cockpit.queue=base;
   // Resume at last viewed lead if we have history; else start at 0.
@@ -5374,6 +5427,22 @@ function cockpitNext(){
 }
 function cockpitPrev(){
   if(_cockpit.idx>0){_cockpit.idx--;renderCockpit();}
+}
+// Skip — abandon the current lead's call without a disposition and move on.
+// Resets the dialer to idle so the next lead starts clean. Does NOT mark
+// any disposition (the lead stays in the queue for a later attempt).
+function cockpitSkip(){
+  _cockpit.dialerState='idle';
+  if(_cockpit.idx<_cockpit.queue.length-1){
+    _cockpit.idx++;
+    renderCockpit();
+    cockpitUpdateToolbarButtons();
+    showToast('⏭ Sprunget over — næste lead');
+  }else{
+    renderCockpit();
+    cockpitUpdateToolbarButtons();
+    showToast('Sidste lead i køen');
+  }
 }
 function cockpitJump(idx){_cockpit.idx=Math.max(0,Math.min(_cockpit.queue.length-1,idx));renderCockpit();}
 
@@ -5536,12 +5605,18 @@ function renderCockpitDetail(c){
         </div>
       </div>
 
-      <!-- Call status — driven by Start Dialer state machine -->
-      <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px;color:var(--w55);font-size:12.5px">
-        <span style="font-size:18px">📞</span>
-        <span style="flex:1" id="cockpit-call-status-text">${cockpitCallStatusText(c)}</span>
-        ${c.ph?`<a href="tel:${c.ph}" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;text-decoration:none;font-family:monospace">${fp(c.ph)}</a>`:''}
-      </div>
+      <!-- Call status + LOUD phone number — this is the number being dialed -->
+      ${(()=>{ const cph=c.phone||c.ph||''; return `
+      <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:16px">
+        <span style="font-size:20px">📞</span>
+        <div style="flex:1;min-width:0">
+          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)}</div>
+          ${cph
+            ? `<a href="tel:${e(cph)}" style="font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;text-decoration:none;line-height:1.1">${fp(cph)}</a>`
+            : `<div style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer — ret det på lead-rækken</div>`}
+        </div>
+        ${cph?`<a href="tel:${e(cph)}" title="Ring" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;text-decoration:none;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</a>`:''}
+      </div>`; })()}
 
       <!-- Post-call disposition. Required before next call — guarded by
            _cockpit.requireDisposition. Voicemail removed; SMS lives here
@@ -5630,8 +5705,17 @@ function cockpitUpdateToolbarButtons(){
     startBtn.textContent = (s==='paused') ? '▶ Fortsæt' : '▶ Start Dialer';
   }
   if(stateEl){
-    const map = { idle:'Klar', dialing:'Ringer…', pending:'Venter disposition', paused:'Pause' };
-    stateEl.textContent = map[s]||'';
+    // Status with a colored live dot. "Klar" is green + gently pulsing so
+    // it feels alive and ready.
+    const cfg = {
+      idle:    { lbl:'Klar',              col:'#34d399', pulse:true },
+      dialing: { lbl:'Ringer…',           col:'#fb923c', pulse:true },
+      pending: { lbl:'Venter disposition',col:'#fdba74', pulse:false },
+      paused:  { lbl:'Pause',             col:'var(--w55)', pulse:false },
+    }[s] || { lbl:'', col:'var(--w55)', pulse:false };
+    stateEl.innerHTML = cfg.lbl
+      ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${cfg.col};${cfg.pulse?'animation:pulse-dot 1.2s ease-in-out infinite;':''}box-shadow:0 0 0 3px ${cfg.col}22"></span><span style="color:${cfg.col}">${cfg.lbl}</span>`
+      : '';
   }
 }
 
