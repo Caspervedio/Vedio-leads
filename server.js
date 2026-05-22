@@ -4713,6 +4713,58 @@ app.post("/api/cron/apollo-enrich", async (req, res) => {
   res.json({ ok: true, stats });
 });
 
+// POST /api/cron/drain-enrichment — drains apollo_enrichment_pending leads
+// in EVERY user's queue, AWAITED within the request.
+//
+// Why this exists: autodialer-maintain fires enrichUserLeadsViaApolloAsync
+// as fire-and-forget. On Cloud Run with min-instances=0, CPU is throttled
+// to ~zero once the HTTP response returns, so a large fire-and-forget batch
+// (e.g. 61 leads) freezes mid-flight — leads stay pending forever. This
+// cron does the enrichment INSIDE the request lifecycle, so CPU stays
+// allocated and the work actually completes. Capped per run to stay under
+// the Cloud Run request timeout; schedule it every few minutes to drain
+// the backlog steadily.
+app.post("/api/cron/drain-enrichment", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Apollo not configured" });
+  }
+  // Cap total leads processed this run. Each lead ≈ Apollo (1-2s) +
+  // Datafordeler phone fallback (~2s); at concurrency 5, 30 leads ≈ 25-35s,
+  // comfortably under the 300s request timeout.
+  const limit = Math.max(1, Math.min(60, Number(req.query.limit) || 30));
+  const stats = { usersProcessed: 0, enriched: 0, perUser: {} };
+  if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats, note: "no DATA_DIR" });
+
+  let budget = limit;
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (budget <= 0) break;
+    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+    const userId = f.slice("data_".length, -".json".length);
+    if (!userId) continue;
+    try {
+      const ud = loadUserData(userId);
+      const pendingCvrs = (ud.leads || [])
+        .filter((l) => l.apollo_enrichment_pending === true && l.cvr)
+        .slice(0, budget)
+        .map((l) => l.cvr);
+      if (pendingCvrs.length === 0) continue;
+      // AWAITED — runs within the request so Cloud Run keeps CPU on.
+      await enrichUserLeadsViaApolloAsync(userId, pendingCvrs);
+      stats.enriched += pendingCvrs.length;
+      stats.perUser[userId] = pendingCvrs.length;
+      stats.usersProcessed++;
+      budget -= pendingCvrs.length;
+    } catch (e) {
+      console.warn("[drain-enrichment]", userId, e.message);
+    }
+  }
+  console.log("[drain-enrichment] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
 // ─── KASPR ENRICHMENT (Phase B) ─────────────────────────────────────────
 // Turns CVR+company-name into decision-maker contacts (phone + email +
 // LinkedIn). Without this, ~70% of META-discovered leads have no phone
