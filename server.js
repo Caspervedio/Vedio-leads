@@ -1939,8 +1939,8 @@ app.get("/api/discovery/review-queue", authMiddleware, (req, res) => {
 const CSV_HEADER_RULES = [
   { canonical: "name",     matchers: [/^(name|company( ?name)?|account ?name|virksomhed(?:snavn)?|firma(?:navn)?|brand|kunde)$/i] },
   { canonical: "cvr",      matchers: [/^(cvr(?:[-_ ]?n(?:umme)?r)?|cvrnr|organi[sz]ation ?number|vat ?(?:nr|number|id)?|cvrtal)$/i] },
-  { canonical: "phone",    matchers: [/^(phone|tel(?:efon)?|mobile|mobil|switchboard|nummer|telephone|tlf)$/i] },
-  { canonical: "email",    matchers: [/^(e[-_ ]?mail|mail|kontakt[-_ ]?email)$/i] },
+  { canonical: "phone",    matchers: [/^(phone( ?number)?|tel(?:efon)?|mobile|mobil(?:nummer)?|switchboard|nummer|telephone|tlf(?:[-_ ]?nr)?)$/i] },
+  { canonical: "email",    matchers: [/^(e[-_ ]?mail( ?address)?|mail( ?address)?|kontakt[-_ ]?email|e[-_ ]?mailadresse)$/i] },
   { canonical: "website",  matchers: [/^(website|url|domain|dom[aæ]ne|web(?:site|adresse)?|site|hjemmeside|homepage)$/i] },
   { canonical: "industry", matchers: [/^(industry|branche|sector|sektor|category|kategori)$/i] },
   { canonical: "city",     matchers: [/^(city|by|town|sted)$/i] },
@@ -2110,15 +2110,20 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
 
         if (company) {
           if (existing.has(company.cvr)) { stats.alreadyExists++; continue; }
+          // Phone: CSV value wins, else Datafordeler. Store as `phone`
+          // (what the autodialer/cockpit read) AND `ph` (legacy detail view).
+          const csvPhone = (row.phone || company.phone || company.ph || "").replace(/[^\d+]/g, "");
           d.leads.push({
             ...company,
             // CSV-provided fields override Datafordeler ones (the user knows their leads).
             web: row.website || row.URL || row.domain || company.web,
-            ph: row.phone || company.ph,
+            phone: csvPhone,
+            ph: csvPhone,
             em: row.email || company.em,
             listId,
             addedAt: now,
             source: row.source || "csv",
+            phone_missing: !csvPhone,
             apollo_enrichment_pending: isApolloConfigured(),
           });
           existing.add(company.cvr);
@@ -2133,15 +2138,21 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
           // by name etc.). Generate a synthetic key so we don't collide with real CVRs.
           const syntheticCvr = "csv-" + (cvrRaw || name.replace(/\s+/g, "-")).slice(0, 40);
           if (existing.has(syntheticCvr)) { stats.alreadyExists++; continue; }
+          // People/lead lists (name + phone, no CVR) land here. Store the
+          // phone as `phone` so the autodialer can dial it immediately —
+          // these are often the BEST leads (inbound form submissions).
+          const csvPhone = (row.phone || "").replace(/[^\d+]/g, "");
           d.leads.push({
             cvr: syntheticCvr,
             name,
             web: row.website || row.URL || row.domain || "",
-            ph: row.phone || "",
+            phone: csvPhone,
+            ph: csvPhone,
             em: row.email || "",
             city: row.city || "",
             ind: row.industry || "",
             unmatched: true,
+            phone_missing: !csvPhone,
             listId,
             addedAt: now,
             source: row.source || "csv",
