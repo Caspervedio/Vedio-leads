@@ -1611,6 +1611,10 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         lead2.apollo_company = company || null;
         lead2.apollo_enriched_at = new Date().toISOString();
         lead2.apollo_enrichment_pending = false;
+        // Meta-advertiser signal (our ICP) — pulled free from Apollo's tech
+        // stack. meta_advertiser=true means they run Meta ad campaigns.
+        lead2.meta_advertiser = !!(company && company.metaAdvertiser);
+        lead2.ad_signals = (company && company.metaAdSignals) || [];
         // Phone priority: Apollo direct dial > Datafordeler switchboard >
         // Apollo org switchboard. lead.phone may already have a switchboard
         // from the discovery scrape (Datafordeler); we only overwrite if
@@ -4563,8 +4567,28 @@ function mapApolloPersonToContact(p, fallbackTitle) {
 // us 59 org fields; we keep the ones useful for cold-call context and
 // ICP qualification. Costs zero extra credits — it rides along with
 // every people/match response.
+// Meta-advertiser detection from Apollo's technology stack. Distinguishes
+// ACTIVE advertising tech (Pixel, Ads Manager, Custom Audiences — these
+// mean they run/track ad campaigns) from mere social presence (a plain
+// Facebook page or Login button, which any company might have). Only the
+// "active" markers count toward metaAdvertiser — that's the real signal
+// that this company spends on Meta ads (our ICP).
+const META_AD_ACTIVE_RE = /meta ads|facebook pixel|facebook custom audiences|facebook conversion|facebook advertis|facebook ads|meta pixel|facebook business/i;
+const META_AD_SOCIAL_RE = /^(facebook|facebook login|facebook widget|facebook connect|instagram)$/i;
+function detectMetaAdvertiser(technologyNamesFull) {
+  const all = Array.isArray(technologyNamesFull) ? technologyNamesFull.map(String) : [];
+  const active = all.filter((t) => META_AD_ACTIVE_RE.test(t));
+  const social = all.filter((t) => META_AD_SOCIAL_RE.test(t.trim()));
+  return {
+    metaAdvertiser: active.length > 0,        // true = spends on Meta ads (ICP)
+    metaAdSignals: active,                     // e.g. ["Meta Ads Manager","Facebook Pixel"]
+    metaSocialOnly: active.length === 0 && social.length > 0, // has FB page but no ad tech
+  };
+}
+
 function mapApolloOrganization(org) {
   if (!org || typeof org !== "object") return null;
+  const adDetect = detectMetaAdvertiser(org.technology_names || []);
   return {
     apolloId: org.id || null,
     name: org.name || "",
@@ -4583,6 +4607,10 @@ function mapApolloOrganization(org) {
     growth12Mo: org.organization_headcount_twelve_month_growth || null,
     growth24Mo: org.organization_headcount_twenty_four_month_growth || null,
     technologyNames: (org.technology_names || []).slice(0, 20),
+    // Meta-advertiser signal (our ICP) — derived from the FULL tech list.
+    metaAdvertiser: adDetect.metaAdvertiser,
+    metaAdSignals: adDetect.metaAdSignals,
+    metaSocialOnly: adDetect.metaSocialOnly,
     latestFundingDate: org.latest_funding_round_date || null,
     latestFundingStage: org.latest_funding_stage || "",
     totalFundingPrinted: org.total_funding_printed || "",
@@ -4692,6 +4720,8 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.contacts = contacts;
     lead.apollo_company = company || null;
     lead.apollo_enriched_at = new Date().toISOString();
+    lead.meta_advertiser = !!(company && company.metaAdvertiser);
+    lead.ad_signals = (company && company.metaAdSignals) || [];
     const directDial = (contacts.find((c) => c.phone) || {}).phone;
     if (directDial) lead.phone = directDial;
     else if (!lead.phone && company?.phone) lead.phone = company.phone;

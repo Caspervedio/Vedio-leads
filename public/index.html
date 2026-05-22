@@ -4799,6 +4799,7 @@ function renderAutodialerPage(){
   const showArchive = _adState.sourceFilter==='archived';
   const showPhoneMissing = _adState.sourceFilter==='phone_missing';
   const showEnriching = _adState.sourceFilter==='enriching';
+  const showAdvertiser = _adState.sourceFilter==='advertiser';
   const isEnriching = (l) => l.apollo_enrichment_pending===true;
   if(showArchive){
     filtered=filtered.filter(l=>l.lastAction==='not-relevant');
@@ -4812,8 +4813,11 @@ function renderAutodialerPage(){
     filtered=filtered.filter(l=>!isEnriching(l));
     // Hide leads with no phone — they appear in "⚠ Mangler nummer".
     filtered=filtered.filter(l=>l.phone_missing!==true);
-    // Apply source filter (other than the special filter modes above)
-    if(_adState.sourceFilter&&_adState.sourceFilter!=='all'){
+    // "🎯 Annoncør" view — only Apollo-confirmed Meta advertisers.
+    if(showAdvertiser){
+      filtered=filtered.filter(l=>l.meta_advertiser===true);
+    } else if(_adState.sourceFilter&&_adState.sourceFilter!=='all'){
+      // Apply source filter (other than the special filter modes above)
       filtered=filtered.filter(l=>(l.source||'manual')===_adState.sourceFilter);
     }
   }
@@ -4825,6 +4829,7 @@ function renderAutodialerPage(){
   // the default smart sort. Manual sorts: source, ads, added, name.
   const priority = (l) => {
     let p = 0;
+    if(l.meta_advertiser) p += 5000;  // Apollo-confirmed Meta advertiser — top ICP signal
     if(l.icpFit) p += 1000;
     p += Math.min(l.adsMatched||0, 100);
     return p;
@@ -4929,9 +4934,13 @@ function renderAutodialerPage(){
   const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true).length;
   const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true).length;
   const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true);
+  const advertiserCount=activeLeads.filter(l=>l.meta_advertiser===true).length;
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
     ['all','Alle',activeLeads.length],
+    // Confirmed Meta advertisers (Apollo tech-stack signal) — the strongest
+    // ICP. Sits first so the SDR can one-click to "only real advertisers".
+    ['advertiser','🎯 Annoncører',advertiserCount],
     ['meta-scraper','META',srcCounts['meta-scraper']||0],
     ['lookalike','Look-alike',srcCounts['lookalike']||0],
     ['google-maps','Maps',srcCounts['google-maps']||0],
@@ -5011,6 +5020,10 @@ function renderAutodialerPage(){
       <tbody>
         ${preview.map((l,i)=>{
           const icpDot = l.icpFit ? `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399;margin-right:6px;vertical-align:middle" title="ICP-klar"></span>` : '';
+          // Meta-advertiser badge — Apollo-confirmed they run Meta ad campaigns.
+          const adBadge = l.meta_advertiser
+            ? `<span title="Annoncerer på Meta — ${e((l.ad_signals||[]).join(', ')||'Apollo-bekræftet')}" style="display:inline-block;font-size:9px;font-weight:800;letter-spacing:0.3px;padding:2px 6px;border-radius:5px;background:rgba(251,146,60,0.18);color:#fb923c;border:1px solid rgba(251,146,60,0.35);margin-right:6px">🎯 ANNONCØR</span>`
+            : '';
           // Action cell — in archive mode, show a "Genopret" button instead
           // of the phone link, so SDR can pull a lead back into active rotation.
           const lastCell = showArchive
@@ -5036,7 +5049,7 @@ function renderAutodialerPage(){
             : '';
           return `<tr ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
-            <td style="padding:10px 14px">${ownerBadge}${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${socialIcons}</td>
+            <td style="padding:10px 14px">${ownerBadge}${adBadge}${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${socialIcons}</td>
             <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
