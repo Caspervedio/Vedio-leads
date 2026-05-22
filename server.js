@@ -1120,9 +1120,32 @@ app.post("/api/check-ads-batch", authMiddleware, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const DISCOVERY_STATE_FILE = path.join(DATA_DIR, "discovery", "state.json");
 const DISCOVERY_CONFIG_FILE = path.join(DATA_DIR, "discovery", "config.json");
+const DISCOVERY_POOL_FILE = path.join(DATA_DIR, "discovery", "pool.json");
 
 function loadDiscoveryState() {
   return loadJsonFile(DISCOVERY_STATE_FILE, { companies: {} });
+}
+
+// Deep reserve — the full Datafordeler candidate pool (~100k companies in
+// target industries). state.json only holds companies the Meta scraper has
+// processed; with the scraper IP-blocked it no longer grows, so the
+// autodialer pulls from pool.json directly to keep daily volume flowing.
+// Cached in memory (file is ~25MB, rebuilt ~weekly) and reloaded on mtime
+// change so a fresh Datafordeler walk is picked up without a redeploy.
+let _poolCandCache = null;
+let _poolCandMtime = 0;
+function loadDiscoveryPoolCandidates() {
+  try {
+    const st = fs.statSync(DISCOVERY_POOL_FILE);
+    if (!_poolCandCache || st.mtimeMs !== _poolCandMtime) {
+      const j = JSON.parse(fs.readFileSync(DISCOVERY_POOL_FILE, "utf8"));
+      _poolCandCache = Array.isArray(j.candidates) ? j.candidates : [];
+      _poolCandMtime = st.mtimeMs;
+    }
+    return _poolCandCache;
+  } catch {
+    return [];
+  }
 }
 
 // Agent runtime config — the discover-ads.js Cloud Run Job reads this on
@@ -1793,6 +1816,36 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
         .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
         .sort((a, b) => queueScore(b) - queueScore(a))
         .slice(0, shortfall);
+
+      // DEEP RESERVE — if state.json doesn't have enough unclaimed
+      // qualifiers (it no longer grows while the scraper is IP-blocked),
+      // backfill from the full ~100k Datafordeler candidate pool so daily
+      // volume never runs dry. Every pool entry is already industry-filtered
+      // (target DB07 codes) and active. Two-tier for quality:
+      //   tier 1 — known employees >= 3 (best Apollo/phone yield)
+      //   tier 2 — unknown size (Datafordeler reports null headcount for
+      //            most SMBs; still industry-qualified, Apollo reveals size)
+      // Confirmed-tiny (1-2 employees) are always excluded.
+      if (candidates.length < shortfall) {
+        const seen = new Set([...claimed, ...candidates.map((c) => c.cvr)]);
+        const reserve = loadDiscoveryPoolCandidates();
+        const eligible = (c) => c && c.cvr && !seen.has(c.cvr) &&
+          (!c.status || c.status === "aktiv") &&
+          !(typeof c.employees === "number" && c.employees > 0 && c.employees < 3);
+        const tier1 = (c) => typeof c.employees === "number" && c.employees >= 3;
+        // Pass 1: known-size first
+        for (const c of reserve) {
+          if (candidates.length >= shortfall) break;
+          if (!eligible(c) || !tier1(c)) continue;
+          seen.add(c.cvr); candidates.push(c);
+        }
+        // Pass 2: unknown-size fallback for raw volume
+        for (const c of reserve) {
+          if (candidates.length >= shortfall) break;
+          if (!eligible(c) || tier1(c)) continue;
+          seen.add(c.cvr); candidates.push(c);
+        }
+      }
 
       // Promote them inline (mirrors /api/leads/promote logic)
       const nowIso = new Date().toISOString();
