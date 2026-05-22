@@ -80,6 +80,9 @@ const POST_LOAD_WAIT_MS = 4000;
 // scrape itself is the cheaper way to find out if they advertise).
 // Companies with a *confirmed* employee count below this drop out.
 const MIN_EMPLOYEES = AGENT_CFG.minEmployees ?? 3;
+// Optional upper bound on employees (0 = no cap). Filters large groups so
+// the pool focuses on SMBs. Only applies when employee count is *known*.
+const MAX_EMPLOYEES = AGENT_CFG.maxEmployees ?? 0;
 
 // Curated DB07 codes — industries where active Meta-ads is a strong B2B
 // signal. Skipped on purpose: holding companies (642010), shell-co
@@ -401,7 +404,12 @@ async function buildCandidatePool() {
   // or no employee data at all (rather than confirmed 0).
   const filtered = enriched.filter((c) => {
     if (c.status !== "aktiv" || !c.cvr) return false;
-    if (c.hasEmpData) return (c.employees || 0) >= MIN_EMPLOYEES;
+    if (c.hasEmpData) {
+      const e = c.employees || 0;
+      if (e < MIN_EMPLOYEES) return false;
+      if (MAX_EMPLOYEES > 0 && e > MAX_EMPLOYEES) return false; // too big
+      return true;
+    }
     return true; // unknown — keep, the scrape will tell us
   });
   // Stable order — sort by CVR so runs are reproducible.

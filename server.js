@@ -1191,6 +1191,9 @@ app.put("/api/discovery/config", authMiddleware, (req, res) => {
       ...current,
       ...(body.enabled !== undefined && { enabled: !!body.enabled }),
       ...(body.minEmployees !== undefined && { minEmployees: clamp(body.minEmployees, 0, 1000, current.minEmployees) }),
+      // maxEmployees: 0 = no upper bound. Filters out large groups so the
+      // pool focuses on SMBs.
+      ...(body.maxEmployees !== undefined && { maxEmployees: clamp(body.maxEmployees, 0, 100000, current.maxEmployees || 0) }),
       ...(body.icpMinAds !== undefined && { icpMinAds: clamp(body.icpMinAds, 0, 100, current.icpMinAds) }),
       ...(body.icpMinEmployees !== undefined && { icpMinEmployees: clamp(body.icpMinEmployees, 0, 1000, current.icpMinEmployees) }),
       ...(body.scrapeLimit !== undefined && { scrapeLimit: clamp(body.scrapeLimit, 10, 5000, current.scrapeLimit) }),
@@ -1765,6 +1768,11 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
   }
   const pool = loadDiscoveryState().companies || {};
   const now = Date.now();
+  // Max-employees cap from the Meta-scrape config (0 = no cap). Applied to
+  // auto-promotion too so the setting actually limits incoming lead size
+  // (the scraper that normally enforces it is IP-blocked).
+  const maxEmp = Number(loadDiscoveryConfig().maxEmployees) || 0;
+  const underMaxEmp = (c) => !(maxEmp > 0 && typeof c.employees === "number" && c.employees > maxEmp);
 
   for (const f of fs.readdirSync(DATA_DIR)) {
     if (!f.startsWith("data_") || !f.endsWith(".json")) continue;
@@ -1812,7 +1820,7 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       // backfill the remaining slots.
       const claimed = new Set(leads.map((l) => l.cvr));
       const candidates = Object.values(pool)
-        .filter((c) => queueQualifies(c) && !claimed.has(c.cvr))
+        .filter((c) => queueQualifies(c) && underMaxEmp(c) && !claimed.has(c.cvr))
         .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
         .sort((a, b) => queueScore(b) - queueScore(a))
         .slice(0, shortfall);
@@ -1831,7 +1839,8 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
         const reserve = loadDiscoveryPoolCandidates();
         const eligible = (c) => c && c.cvr && !seen.has(c.cvr) &&
           (!c.status || c.status === "aktiv") &&
-          !(typeof c.employees === "number" && c.employees > 0 && c.employees < 3);
+          !(typeof c.employees === "number" && c.employees > 0 && c.employees < 3) &&
+          underMaxEmp(c);
         const tier1 = (c) => typeof c.employees === "number" && c.employees >= 3;
         // Pass 1: known-size first
         for (const c of reserve) {

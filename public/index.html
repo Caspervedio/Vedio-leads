@@ -4174,6 +4174,7 @@ function renderMsSettings() {
     </div>
     <div>
       ${row('minEmployees',   'Min ansatte',         'Minimum ansatte for at indgå i kandidat-puljen (lavere = bredere, men flere lifestyle-virksomheder).',                   c.minEmployees, 'ansatte', 0, 1000)}
+      ${row('maxEmployees',   'Max ansatte',         'Maksimum ansatte for at indgå i kandidat-puljen. 0 = ingen øvre grænse. Brug til at sortere store koncerner fra og fokusere på mindre virksomheder.', c.maxEmployees||0, 'ansatte', 0, 100000)}
       ${row('icpMinAds',      'Min ads for ICP',     'Antal aktive Meta-ads en lead skal have for at blive ICP-flagget (auto-push til Autodialer når Phase C er aktiv).',     c.icpMinAds, 'ads', 0, 100)}
       ${row('icpMinEmployees','Min ansatte for ICP', 'Når ansatte er <em>kendt</em> i Datafordeler, kræves mindst dette antal for ICP. (Ukendt antal → ICP-test består stadig.)', c.icpMinEmployees, 'ansatte', 0, 1000)}
       ${row('scrapeLimit',    'Scrape pr. kørsel',   'Maksimum virksomheder agenten tjekker pr. agent-kørsel. Holder timeout under 2t.',                                       c.scrapeLimit, 'virksomheder', 10, 5000)}
@@ -5024,11 +5025,16 @@ function renderAutodialerPage(){
           const adBadge = l.meta_advertiser
             ? `<span title="Annoncerer på Meta — ${e((l.ad_signals||[]).join(', ')||'Apollo-bekræftet')}" style="display:inline-block;font-size:9px;font-weight:800;letter-spacing:0.3px;padding:2px 6px;border-radius:5px;background:rgba(251,146,60,0.18);color:#fb923c;border:1px solid rgba(251,146,60,0.35);margin-right:6px">🎯 ANNONCØR</span>`
             : '';
-          // Action cell — in archive mode, show a "Genopret" button instead
-          // of the phone link, so SDR can pull a lead back into active rotation.
+          // Phone cell — this is the number the autodialer/cockpit will call.
+          // Shown explicitly + editable (✎) so the SDR can correct a wrong
+          // number (Apollo sometimes returns a foreign HQ number for a DK
+          // company). In archive mode, show a "Genopret" button instead.
+          const phoneDisplay = l.phone
+            ? `<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:12px;color:var(--purple-light);text-decoration:none">${e(l.phone)}</a>`
+            : `<span style="font-size:10.5px;color:#fca5a5">ingen tlf</span>`;
           const lastCell = showArchive
             ? `<button onclick="event.stopPropagation();adRestoreLead('${e(l.cvr)}')" style="background:rgba(52,211,153,0.15);border:1px solid rgba(52,211,153,0.3);color:#6ee7b7;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;padding:5px 11px;border-radius:7px;cursor:pointer">↻ Genopret</button>`
-            : (l.phone?`<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:11px;color:var(--purple-light);text-decoration:none">${e(l.phone)}</a>`:'<span style="font-size:10.5px;color:var(--w35)">ingen tlf</span>');
+            : `<div style="display:inline-flex;align-items:center;gap:7px;justify-content:flex-end">${phoneDisplay}<button onclick="event.stopPropagation();adEditPhone('${e(l.cvr)}')" title="Ret nummeret autodialeren ringer til" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button></div>`;
           const rowAction = showArchive
             ? `onclick="event.stopPropagation()"` // archive rows shouldn't jump into cockpit
             : `onclick="adJumpToLead(${i})"`;
@@ -5043,14 +5049,9 @@ function renderAutodialerPage(){
             fbUrl ? `<a href="${e(fbUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook-side" style="font-size:13px;text-decoration:none;color:#60a5fa;margin-left:6px;opacity:0.85" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">📘</a>` : '',
             adsCount > 0 ? `<a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
           ].join('');
-          // Admin oversight: show which SDR owns each lead.
-          const ownerBadge = (window._adminView && l._ownerName)
-            ? `<span title="Tilhører ${e(l._ownerName)}" style="display:inline-block;font-size:9px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);margin-right:6px;text-transform:uppercase">${e(l._ownerName)}</span>`
-            : '';
           return `<tr ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
-            <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
-            <td style="padding:10px 14px">${ownerBadge}${adBadge}${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${socialIcons}</td>
-            <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
+            <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:28px">${i+1}</td>
+            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${adBadge?' '+adBadge:''}${socialIcons}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
             <td style="padding:10px 14px;text-align:right">${lastCell}</td>
@@ -5064,6 +5065,25 @@ function renderAutodialerPage(){
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
+
+// Edit the phone number the autodialer/cockpit will call for a lead.
+// Lets the SDR correct a wrong number (e.g. an Apollo foreign-HQ number)
+// without leaving the queue. Persists via PATCH /api/leads/:cvr.
+async function adEditPhone(cvr){
+  const lead=(leads||[]).find(l=>l.cvr===cvr);
+  const current=lead?(lead.phone||''):'';
+  const v=prompt('Nummer autodialeren ringer til (med +45 landekode):', current);
+  if(v===null) return;             // cancelled
+  const phone=v.trim();
+  try{
+    const r=await fetch('/api/leads/'+encodeURIComponent(cvr),{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone, phone_missing: !phone})});
+    if(r.ok){
+      if(lead){ lead.phone=phone; lead.phone_missing=!phone; }
+      showToast(phone?('✓ Nummer opdateret'):'Nummer fjernet — flyttet til Mangler nummer');
+      renderAutodialerPage();
+    } else { showToast('Kunne ikke opdatere nummer'); }
+  }catch(e){ showToast('Fejl: '+e.message); }
+}
 
 // Activity breakdown — secondary stats panel showing today vs week vs
 // all-time across the five disposition types + dialed total. Helps the
