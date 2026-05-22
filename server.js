@@ -1490,7 +1490,39 @@ app.get("/api/leads/owners", authMiddleware, (req, res) => {
   res.json(owners);
 });
 
-app.get("/api/leads", authMiddleware, (req, res) => res.json(loadUserData(req.userId)));
+app.get("/api/leads", authMiddleware, (req, res) => {
+  // Admin oversight view — admin sees EVERY SDR's leads, each tagged with
+  // its owner (_owner / _ownerName) so the list/autodialer can show whose
+  // lead is whose. SDRs only ever see their own. Admin's view is read-
+  // oriented: dispositions admin makes write to admin's own file (it does
+  // not mutate the SDR's queue), so the SDRs' working queues stay intact.
+  if (req.userId === "admin") {
+    const own = loadUserData("admin");
+    const users = loadUsers();
+    const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const merged = [];
+    if (fs.existsSync(DATA_DIR)) {
+      for (const f of fs.readdirSync(DATA_DIR)) {
+        if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+        const uid = f.slice("data_".length, -".json".length);
+        if (uid === "admin") continue; // admin's own junk excluded from the aggregate
+        try {
+          const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+          for (const l of ud.leads || []) {
+            merged.push({ ...l, _owner: uid, _ownerName: nameById[uid] || uid });
+          }
+        } catch { /* skip malformed user file */ }
+      }
+    }
+    return res.json({
+      ...own,
+      leads: merged,
+      lists: own.lists && own.lists.length ? own.lists : [{ id: "all", name: "Alle leads" }],
+      _adminView: true,
+    });
+  }
+  res.json(loadUserData(req.userId));
+});
 
 app.post("/api/leads", authMiddleware, (req, res) => {
   const d = loadUserData(req.userId);

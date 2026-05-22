@@ -1672,6 +1672,9 @@ async function loadUserState(){
     const d=await fetch('/api/leads',{headers:ah()}).then(r=>r.json());
     leads=d.leads||[];
     lists=[{id:'all',name:'Alle leads'},...(d.lists||[]).filter(l=>l.id!=='all')];
+    // Admin oversight view — leads carry _owner/_ownerName so the UI can
+    // show whose lead is whose. SDRs never see this flag.
+    window._adminView = d._adminView === true;
   }catch(e){}
   // Per-user localStorage meta
   try{
@@ -5027,9 +5030,13 @@ function renderAutodialerPage(){
             fbUrl ? `<a href="${e(fbUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook-side" style="font-size:13px;text-decoration:none;color:#60a5fa;margin-left:6px;opacity:0.85" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">📘</a>` : '',
             adsCount > 0 ? `<a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
           ].join('');
+          // Admin oversight: show which SDR owns each lead.
+          const ownerBadge = (window._adminView && l._ownerName)
+            ? `<span title="Tilhører ${e(l._ownerName)}" style="display:inline-block;font-size:9px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);margin-right:6px;text-transform:uppercase">${e(l._ownerName)}</span>`
+            : '';
           return `<tr ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             <td style="padding:10px 16px;font-size:12px;color:var(--w35);width:30px">${i+1}</td>
-            <td style="padding:10px 14px">${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${socialIcons}</td>
+            <td style="padding:10px 14px">${ownerBadge}${sourceBadge(l)}${icpDot}<span style="font-size:12.5px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${socialIcons}</td>
             <td style="padding:10px 14px;font-family:monospace;font-size:11px;color:var(--w55)">${l.cvr||'—'}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
