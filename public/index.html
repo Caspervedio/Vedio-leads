@@ -1261,6 +1261,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <!-- Manual call / SMS -->
     <button class="btn btn-sm" onclick="cockpitOpenManualCall()" title="Indtast et nummer og ring manuelt" style="padding:8px 12px">📞 Manuelt opkald</button>
     <button class="btn btn-sm" onclick="cockpitOpenManualSms()" title="Indtast et nummer og send SMS manuelt" style="padding:8px 12px">💬 Manuel SMS</button>
+    <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog">📋 Aktivitet</button>
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
     <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
   </div>
@@ -5085,6 +5086,7 @@ function renderAutodialerPage(){
       <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Liste</span>
       ${chips}
       <span style="flex:1"></span>
+      <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, annoncører, agent-kørsler" style="padding:6px 12px">📋 Aktivitet</button>
       <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:6px 12px">⬇ Eksportér</button>
     </div>
     <!-- Filter + sort row -->
@@ -5190,6 +5192,47 @@ function renderAutodialerPage(){
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
+
+// ─── Activity log viewer ────────────────────────────────────────────────
+// Shows what the machine is doing: CSV imports, queue refills, Apollo
+// enrichment, advertisers found, META scraper runs, calls.
+async function openActivityLog(){
+  const bg=document.createElement('div'); bg.className='modal-bg'; bg.id='activity-modal';
+  bg.innerHTML=`<div class="modal" style="width:620px;max-height:82vh;display:flex;flex-direction:column;padding:22px 24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <h3 style="margin:0;font-size:16px;color:#fff">📋 Aktivitetslog</h3>
+      <div style="display:flex;gap:8px">
+        <button onclick="openActivityLog._reload&&openActivityLog._reload()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:6px 12px;color:var(--w80);font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">↻ Opdatér</button>
+        <button onclick="document.getElementById('activity-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:6px 12px;color:var(--w80);font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
+      </div>
+    </div>
+    <div id="activity-feed" style="overflow:auto;flex:1;font-size:12.5px;color:var(--w80)">Henter…</div>
+  </div>`;
+  bg.onclick=(ev)=>{if(ev.target===bg)bg.remove();};
+  document.body.appendChild(bg);
+  const load=async()=>{
+    const feed=document.getElementById('activity-feed'); if(!feed)return;
+    try{
+      const r=await fetch('/api/activity?limit=150',{headers:ah()});
+      const d=await r.json();
+      if(!d.events||!d.events.length){ feed.innerHTML='<div style="color:var(--w55);padding:24px;text-align:center">Ingen aktivitet endnu. Importér en CSV eller vent på næste agent-kørsel.</div>'; return; }
+      const icon={ 'csv-import':'📥','promote':'▶','advertiser':'🎯','scraper':'🔍','call':'📞','enrich':'✨' };
+      feed.innerHTML=d.events.map(ev=>{
+        const t=new Date(ev.at);
+        const when=isNaN(t.getTime())?'':t.toLocaleString('da-DK',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+        return `<div style="display:flex;gap:10px;padding:10px 4px;border-bottom:1px solid var(--w04)">
+          <span style="font-size:15px;flex-shrink:0;width:20px;text-align:center">${icon[ev.type]||'•'}</span>
+          <div style="flex:1;min-width:0">
+            <div style="color:#fff;line-height:1.4">${e(ev.message||'')}</div>
+            <div style="font-size:10.5px;color:var(--w35);margin-top:1px">${when}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }catch(ex){ feed.innerHTML='<div style="color:#fca5a5;padding:20px">Kunne ikke hente aktivitet: '+e(ex.message)+'</div>'; }
+  };
+  openActivityLog._reload=load;
+  load();
+}
 
 // ─── Drag-and-drop reorder of the autodialer queue ──────────────────────
 // Reordering sets sort='manual' and persists the cvr order in localStorage.

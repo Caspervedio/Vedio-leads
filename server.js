@@ -69,6 +69,38 @@ function ensurePipelines(d) {
   if (!d.pipelines.ae)  d.pipelines.ae  = {};
 }
 
+// ── Activity log ────────────────────────────────────────────────────────
+// Append-only feed of system events (imports, promotions, enrichment,
+// calls, scraper runs) so the user can see what the machine is doing.
+// Ring buffer: keeps the last 400 events in activity.json.
+const ACTIVITY_FILE = path.join(DATA_DIR, "activity.json");
+function logActivity(type, message, meta) {
+  try {
+    let log = [];
+    try { log = JSON.parse(fs.readFileSync(ACTIVITY_FILE, "utf8")); } catch {}
+    if (!Array.isArray(log)) log = [];
+    log.push({ at: new Date().toISOString(), type, message, meta: meta || null });
+    if (log.length > 400) log = log.slice(-400);
+    fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(log));
+  } catch (e) { console.warn("[activity]", e.message); }
+}
+
+// Free/personal email providers — we can't derive a company from these,
+// so CSV people-rows with these domains skip Apollo enrichment.
+const FREE_EMAIL_DOMAINS = new Set([
+  "gmail.com","googlemail.com","hotmail.com","hotmail.dk","hotmail.co.uk","outlook.com","outlook.dk",
+  "live.com","live.dk","yahoo.com","yahoo.dk","yahoo.co.uk","icloud.com","me.com","mac.com","msn.com",
+  "aol.com","protonmail.com","proton.me","gmx.com","gmx.de","mail.com","mail.dk","webspeed.dk","stofanet.dk",
+  "post.tele.dk","privat.dk","email.dk","yahoo.de","mailbox.org","fastmail.com",
+]);
+function businessDomainFromEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e.includes("@")) return "";
+  const d = e.split("@")[1].trim();
+  if (!d || FREE_EMAIL_DOMAINS.has(d)) return "";
+  return d;
+}
+
 // ── User auth ─────────────────────────────────────────────────────────────────
 const sessions = new Map(); // token -> userId
 
@@ -1651,6 +1683,9 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         // stack. meta_advertiser=true means they run Meta ad campaigns.
         lead2.meta_advertiser = !!(company && company.metaAdvertiser);
         lead2.ad_signals = (company && company.metaAdSignals) || [];
+        if (lead2.meta_advertiser) {
+          logActivity("advertiser", `🎯 Annoncør fundet: ${lead2.name} (${(lead2.ad_signals || []).join(", ")})`, { cvr, userId });
+        }
         // Phone priority: Apollo direct dial > Datafordeler switchboard >
         // Apollo org switchboard. lead.phone may already have a switchboard
         // from the discovery scrape (Datafordeler); we only overwrite if
@@ -1901,6 +1936,7 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
         stats.totalEnrichmentQueued += newCvrs.length;
       }
       stats.usersProcessed++;
+      if (newCvrs.length > 0) logActivity("promote", `Autodialer påfyldt: ${newCvrs.length} nye leads til ${userId} (mål ${targetSize} ringeklare)`, { userId });
       console.log("[autodialer-maintain] user", userId, "promoted", newCvrs.length, "to reach target", targetSize);
     } catch (e) {
       console.warn("[autodialer-maintain]", userId, e.message);
@@ -2152,10 +2188,15 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
           // phone as `phone` so the autodialer can dial it immediately —
           // these are often the BEST leads (inbound form submissions).
           const csvPhone = (row.phone || "").replace(/[^\d+]/g, "");
+          // Derive the company from a BUSINESS email domain so Apollo can
+          // enrich it + flag Meta advertisers. Personal emails are skipped.
+          const bizDomain = businessDomainFromEmail(row.email);
+          const web = row.website || row.URL || row.domain || bizDomain || "";
+          const willEnrich = isApolloConfigured() && !!bizDomain;
           d.leads.push({
             cvr: syntheticCvr,
             name,
-            web: row.website || row.URL || row.domain || "",
+            web,
             phone: csvPhone,
             ph: csvPhone,
             em: row.email || "",
@@ -2163,6 +2204,7 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
             ind: row.industry || "",
             unmatched: true,
             phone_missing: !csvPhone,
+            apollo_enrichment_pending: willEnrich,
             listId,
             addedAt: now,
             source: row.source || "csv",
@@ -2170,6 +2212,13 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
           existing.add(syntheticCvr);
           stats.imported++;
           stats.unmatched++;
+          // Queue business-email rows for Apollo enrichment (domain → company
+          // → Meta-advertiser signal).
+          if (willEnrich) {
+            if (!stats._matchedCvrs) stats._matchedCvrs = [];
+            stats._matchedCvrs.push(syntheticCvr);
+            stats.bizEmailEnrich = (stats.bizEmailEnrich || 0) + 1;
+          }
         }
       } catch (e) {
         stats.errors++;
@@ -2194,6 +2243,7 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
   }
   // Trim details to avoid blowing up the response
   stats.details = stats.details.slice(0, 20);
+  logActivity("csv-import", `CSV-import: ${stats.imported} leads (${stats.matched} CVR-match, ${stats.unmatched} uden) · ${cvrsToEnrich.length} sendt til Apollo-berigning`, { userId: req.userId });
   res.json(stats);
 });
 
@@ -5297,6 +5347,28 @@ async function fetchLatestCloudTalkCall() {
     return null;
   }
 }
+
+// GET /api/activity — recent system activity feed. Merges the logged
+// events (imports, promotions, enrichment, calls) with the META scraper's
+// run history from state.json, newest first.
+app.get("/api/activity", authMiddleware, (req, res) => {
+  let events = [];
+  try { events = JSON.parse(fs.readFileSync(ACTIVITY_FILE, "utf8")) || []; } catch {}
+  // Fold in scraper runs
+  try {
+    const runs = (loadDiscoveryState().runs || []).slice(-30);
+    for (const r of runs) {
+      events.push({
+        at: r.completedAt || r.startedAt,
+        type: "scraper",
+        message: `META-scrape: ${r.scrapedThisRun || 0} tjekket · ${r.withAds || 0} med ads (hitrate ${r.hitratePct ?? 0}%)`,
+        meta: { ok: r.ok, fail: r.fail },
+      });
+    }
+  } catch {}
+  events.sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+  res.json({ events: events.slice(0, Number(req.query.limit) || 150) });
+});
 
 // GET /api/cloudtalk/active-call — the SDR's browser polls this. Returns
 // the live/just-started call (if any) + the matched company so the UI can
