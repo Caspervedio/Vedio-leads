@@ -5254,20 +5254,59 @@ function findLeadByPhone(number) {
   return null;
 }
 
-// GET /api/cloudtalk/active-call — the SDR's browser polls this. Returns
-// the live call (if any) + the matched company so the UI can screen-pop.
-app.get("/api/cloudtalk/active-call", authMiddleware, (req, res) => {
-  const call = getActiveCall();
-  if (!call || !call.startedAt) return res.json({ active: false });
-  // Stale guard — a call older than 3 min with no end event is treated as
-  // finished (protects against a missed "call ended" webhook).
-  if (Date.now() - new Date(call.startedAt).getTime() > 3 * 60 * 1000) {
-    return res.json({ active: false });
+// Poll CloudTalk's calls API for the most recent call. This is how we
+// drive the screen-pop WITHOUT requiring a CloudTalk webhook to be
+// configured in their dashboard. CloudTalk creates the CDR at call start,
+// so a call that just rang/dialed shows up here within a few seconds.
+// Cached ~2s so the browser polling every 3s doesn't hammer CloudTalk.
+let _ctCallCache = { at: 0, data: null };
+async function fetchLatestCloudTalkCall() {
+  if (Date.now() - _ctCallCache.at < 2000) return _ctCallCache.data;
+  try {
+    const r = await fetch(`${CLOUDTALK_API_BASE}/calls/index.json?limit=1`, {
+      headers: { "Authorization": cloudTalkAuthHeader() },
+    });
+    if (!r.ok) { _ctCallCache = { at: Date.now(), data: null }; return null; }
+    const j = await r.json();
+    const cdr = j?.responseData?.data?.[0]?.Cdr || null;
+    _ctCallCache = { at: Date.now(), data: cdr };
+    return cdr;
+  } catch {
+    _ctCallCache = { at: Date.now(), data: null };
+    return null;
   }
-  const match = findLeadByPhone(call.number);
+}
+
+// GET /api/cloudtalk/active-call — the SDR's browser polls this. Returns
+// the live/just-started call (if any) + the matched company so the UI can
+// screen-pop. Primary source is CloudTalk's calls API (no webhook needed);
+// the webhook-set file is used as a faster signal when available.
+app.get("/api/cloudtalk/active-call", authMiddleware, async (req, res) => {
+  let number = "", direction = "", callId = "", startedAt = "";
+  // 1) Webhook file (fastest, if configured + fresh < 2 min)
+  const wh = getActiveCall();
+  if (wh && wh.startedAt && Date.now() - new Date(wh.startedAt).getTime() < 2 * 60 * 1000) {
+    number = wh.number; direction = wh.direction; callId = wh.callId || ""; startedAt = wh.startedAt;
+  } else {
+    // 2) Poll CloudTalk's calls API — CDR is created at call start.
+    const cdr = await fetchLatestCloudTalkCall();
+    if (cdr && cdr.started_at) {
+      const startMs = new Date(cdr.started_at).getTime();
+      // "Fresh" = started within the last 90s → treat as the active /
+      // just-happened call worth popping. Dedup on the client by call id.
+      if (Date.now() - startMs < 90 * 1000) {
+        number = cdr.public_external || "";
+        direction = /incom/i.test(cdr.type || "") ? "inbound" : "outbound";
+        callId = cdr.id || "";
+        startedAt = cdr.started_at;
+      }
+    }
+  }
+  if (!number) return res.json({ active: false });
+  const match = findLeadByPhone(number);
   res.json({
     active: true,
-    call,
+    call: { callId, number, direction, startedAt },
     lead: match ? {
       name: match.lead.name, cvr: match.lead.cvr, phone: match.lead.phone || match.lead.ph,
       city: match.lead.city, lastAction: match.lead.lastAction, lastCallAt: match.lead.lastCallAt,
