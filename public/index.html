@@ -789,12 +789,18 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <span style="font-size:12px;font-weight:700;color:#fff;letter-spacing:0.3px">📞 Softphone</span>
       <span id="softphone-substatus" style="font-size:10px;color:rgba(255,255,255,0.55);font-weight:500"></span>
     </div>
+    <button id="softphone-popout" onclick="softphoneOpenWindow()" title="Åbn softphone i eget vindue (anbefalet — fuld mikrofon/højttaler-adgang)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:13px;line-height:1">⧉</button>
     <button id="softphone-reload" onclick="softphoneReload()" title="Genindlæs softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">↻</button>
     <button id="softphone-collapse" onclick="softphoneToggle()" title="Skjul softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 8px;font-size:16px;line-height:1;font-weight:700">−</button>
   </div>
+  <!-- Mic-permission helper banner — shown if calls can't fire from the
+       embedded iframe (Chrome restricts mic for cross-origin iframes). -->
+  <div id="softphone-mic-hint" style="padding:8px 12px;background:rgba(251,146,60,0.12);border-bottom:1px solid rgba(251,146,60,0.3);font-size:11px;color:#fdba74;line-height:1.4">
+    ⚠ Starter opkald ikke? Klik <strong>⧉ Åbn i eget vindue</strong> ovenfor — der får softphonen fuld mikrofon-adgang. Opkald fra Autodialer rammer stadig den samme softphone.
+  </div>
   <iframe id="softphone-iframe"
           src="about:blank"
-          allow="microphone; camera; autoplay; clipboard-read; clipboard-write"
+          allow="microphone *; camera *; autoplay; speaker-selection *; clipboard-read; clipboard-write"
           referrerpolicy="strict-origin"
           title="CloudTalk Phone"></iframe>
 </div>
@@ -1558,6 +1564,33 @@ function softphoneReload(){
   softphoneSetStatus('loading','genindlæser…');
   // Re-set src to force a clean reload of the CloudTalk Phone session.
   iframe.src = SOFTPHONE_URL + '?_t=' + Date.now();
+}
+// Open CloudTalk Phone in its OWN browser window. A first-class window
+// gets normal microphone/speaker permissions (no cross-origin iframe
+// restriction), so this is the reliable path when calls won't fire from
+// the embedded dock. Click-to-call from the Autodialer still rings this
+// session because CloudTalk routes the call to the agent's logged-in
+// device — iframe or window, whichever is active. We reuse a named
+// window so repeated clicks focus the existing one instead of stacking.
+let _softphoneWin = null;
+function softphoneOpenWindow(){
+  const feats = 'width=400,height=680,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
+  try{
+    if(_softphoneWin && !_softphoneWin.closed){ _softphoneWin.focus(); return; }
+    _softphoneWin = window.open(SOFTPHONE_URL, 'vedio_softphone', feats);
+    if(_softphoneWin){
+      _softphoneWin.focus();
+      showToast('📞 Softphone åbnet i eget vindue — log ind + tillad mikrofon der');
+      // Collapse the dock since the window is now the active phone.
+      const dock=document.getElementById('softphone-dock');
+      const pill=document.getElementById('softphone-pill');
+      if(dock)dock.style.display='none';
+      if(pill){pill.style.display='flex';}
+      localStorage.setItem('softphone_collapsed','1');
+    } else {
+      showToast('Popup blokeret — tillad popups for dette site og prøv igen');
+    }
+  }catch(e){ showToast('Kunne ikke åbne vindue: '+e.message); }
 }
 function softphoneSetStatus(kind, label){
   const dot=document.getElementById('softphone-status-dot');
