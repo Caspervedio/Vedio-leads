@@ -1573,11 +1573,13 @@ app.get("/api/leads", authMiddleware, (req, res) => {
       for (const f of fs.readdirSync(DATA_DIR)) {
         if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
         const uid = f.slice("data_".length, -".json".length);
-        if (uid === "admin") continue; // admin's own junk excluded from the aggregate
+        // Include EVERY SDR's leads — including admin's own (e.g. CSV
+        // imports uploaded while logged in as admin). They were previously
+        // excluded, which made admin's own imports invisible.
         try {
           const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
           for (const l of ud.leads || []) {
-            merged.push({ ...l, _owner: uid, _ownerName: nameById[uid] || uid });
+            merged.push({ ...l, _owner: uid, _ownerName: nameById[uid] || (uid === "admin" ? "Admin" : uid) });
           }
         } catch { /* skip malformed user file */ }
       }
