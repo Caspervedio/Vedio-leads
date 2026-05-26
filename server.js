@@ -1855,33 +1855,38 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
         if (l.lastCallAt && (now - new Date(l.lastCallAt).getTime()) < 24*60*60*1000) return false; // called today
         return true;
       });
-      const dialableShortfall = targetSize - actionable.length;
-      if (dialableShortfall <= 0) continue;
-      // Phone hit-rate is ~⅓ (broadened ICP reaches small companies), so to
-      // net N dialable leads we promote ~3N. But cap per run so we don't
-      // overwhelm the enrichment drainer (30/run every 5 min) or burn a huge
-      // Apollo batch at once — the queue converges to target over a few
-      // hourly ticks instead.
-      const PER_RUN_CAP = 50;
-      const shortfall = Math.min(dialableShortfall * 3, PER_RUN_CAP);
-
-      // Candidate selection — BROADENED ICP.
-      // Meta serves empty ad-library results to our datacenter IP, so the
-      // ads-runner signal (icpFit) is currently unreliable. Until we route
-      // the scraper through a residential proxy, we broaden the gate to:
-      //   - active CVR (status === 'aktiv' or unknown)
-      //   - employees >= 3 (or unknown size — could be lean e-commerce)
-      //   - in a target industry (the discovery pool is already pre-filtered
-      //     to target DB07 codes, so every pool entry qualifies on industry)
-      // Confirmed ad-runners (icpFit=true) still rank FIRST via queueScore,
-      // so when the ads signal IS available it wins — broadened leads only
-      // backfill the remaining slots.
       const claimed = new Set(leads.map((l) => l.cvr));
-      const candidates = Object.values(pool)
-        .filter((c) => queueQualifies(c) && underMaxEmp(c) && !claimed.has(c.cvr))
+      const candidates = [];
+
+      // TIER 1 — ALWAYS push unclaimed ICP-klar (confirmed Meta advertisers
+      // from the scraper) regardless of queue size. These are the highest-
+      // value leads we generate and must never sit unclaimed. Capped per
+      // run so a sudden scraper hot streak doesn't flood the queue.
+      const ICP_PUSH_CAP = 50;
+      const icpKlar = Object.values(pool)
+        .filter((c) => c?.icpFit && c.cvr && !claimed.has(c.cvr))
         .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
-        .sort((a, b) => queueScore(b) - queueScore(a))
-        .slice(0, shortfall);
+        .filter((c) => underMaxEmp(c))
+        .sort((a, b) => (b.ads?.matched || 0) - (a.ads?.matched || 0))
+        .slice(0, ICP_PUSH_CAP);
+      for (const c of icpKlar) { candidates.push(c); claimed.add(c.cvr); }
+      const icpPushed = icpKlar.length;
+
+      // TIER 2 — broadened backfill: only if the visible queue is below
+      // the target. Phone hit-rate ~⅓, so we gross up 3× the shortfall,
+      // capped per run to keep enrichment manageable.
+      const dialableShortfall = Math.max(0, targetSize - actionable.length - icpPushed);
+      const PER_RUN_CAP = 50;
+      const broadenedNeed = Math.min(dialableShortfall * 3, PER_RUN_CAP);
+      if (broadenedNeed > 0) {
+        const broadened = Object.values(pool)
+          .filter((c) => queueQualifies(c) && underMaxEmp(c) && !claimed.has(c.cvr))
+          .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
+          .sort((a, b) => queueScore(b) - queueScore(a))
+          .slice(0, broadenedNeed);
+        for (const c of broadened) { candidates.push(c); claimed.add(c.cvr); }
+      }
+      const shortfall = candidates.length; // for downstream slicing/logs
 
       // DEEP RESERVE — if state.json doesn't have enough unclaimed
       // qualifiers (it no longer grows while the scraper is IP-blocked),
@@ -1892,23 +1897,24 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       //   tier 2 — unknown size (Datafordeler reports null headcount for
       //            most SMBs; still industry-qualified, Apollo reveals size)
       // Confirmed-tiny (1-2 employees) are always excluded.
-      if (candidates.length < shortfall) {
-        const seen = new Set([...claimed, ...candidates.map((c) => c.cvr)]);
+      // Total cap = ICP-klar tier + broadened need. If state.json broadened
+      // ran short, pool.json reserve fills up to this cap.
+      const totalCap = icpPushed + broadenedNeed;
+      if (broadenedNeed > 0 && candidates.length < totalCap) {
+        const seen = new Set([...claimed]);
         const reserve = loadDiscoveryPoolCandidates();
         const eligible = (c) => c && c.cvr && !seen.has(c.cvr) &&
           (!c.status || c.status === "aktiv") &&
           !(typeof c.employees === "number" && c.employees > 0 && c.employees < 3) &&
           underMaxEmp(c);
         const tier1 = (c) => typeof c.employees === "number" && c.employees >= 3;
-        // Pass 1: known-size first
         for (const c of reserve) {
-          if (candidates.length >= shortfall) break;
+          if (candidates.length >= totalCap) break;
           if (!eligible(c) || !tier1(c)) continue;
           seen.add(c.cvr); candidates.push(c);
         }
-        // Pass 2: unknown-size fallback for raw volume
         for (const c of reserve) {
-          if (candidates.length >= shortfall) break;
+          if (candidates.length >= totalCap) break;
           if (!eligible(c) || tier1(c)) continue;
           seen.add(c.cvr); candidates.push(c);
         }
@@ -1949,8 +1955,11 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
         stats.totalEnrichmentQueued += newCvrs.length;
       }
       stats.usersProcessed++;
-      if (newCvrs.length > 0) logActivity("promote", `Autodialer påfyldt: ${newCvrs.length} nye leads til ${userId} (mål ${targetSize} ringeklare)`, { userId });
-      console.log("[autodialer-maintain] user", userId, "promoted", newCvrs.length, "to reach target", targetSize);
+      if (newCvrs.length > 0) {
+        const icpNote = icpPushed > 0 ? ` (🎯 ${icpPushed} bekræftede annoncører fra Meta-scrape)` : "";
+        logActivity("promote", `Autodialer påfyldt: ${newCvrs.length} nye leads til ${userId}${icpNote}`, { userId, icpKlar: icpPushed });
+      }
+      console.log("[autodialer-maintain] user", userId, "promoted", newCvrs.length, "(icp-klar:", icpPushed, ") target", targetSize);
     } catch (e) {
       console.warn("[autodialer-maintain]", userId, e.message);
     }
