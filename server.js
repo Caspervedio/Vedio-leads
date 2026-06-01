@@ -5284,6 +5284,16 @@ function appendApolloLeadToUser(userId, org, orgEnrich) {
   // Dedupe — skip if we already have this org under either id form
   if (ud.leads.some((l) => l.cvr === syntheticCvr)) return false;
   if (org.domain && ud.leads.some((l) => (l.web || "").toLowerCase() === org.domain.toLowerCase())) return false;
+  // Phone gate decision:
+  //   * has phone → IMMEDIATELY dialable. apollo_enrichment_pending=false so
+  //     the autodialer pre-flight gate doesn't filter it out. Decision-maker
+  //     contacts (people/match, 1 credit each) can be filled later by the
+  //     manual /api/apollo/enrich/:cvr endpoint — not blocking the dial.
+  //   * no phone → mark apollo_enrichment_pending=true AND phone_missing=true.
+  //     drain-enrichment will try people/match to find a direct phone; if
+  //     that fails too, phone_missing stays true and the lead lives in the
+  //     "Mangler nummer" bucket (not the dialable queue).
+  const hasPhone = !!(org.phone || "").toString().trim();
   ud.leads.push({
     cvr: syntheticCvr,
     name: org.name,
@@ -5309,8 +5319,9 @@ function appendApolloLeadToUser(userId, org, orgEnrich) {
     meta_advertiser: !!(orgEnrich && orgEnrich.metaAdvertiser),
     ad_signals: orgEnrich?.metaAdSignals || [],
     apollo_company: orgEnrich || null,
-    apollo_enrichment_pending: isApolloConfigured(),
+    apollo_enrichment_pending: !hasPhone && isApolloConfigured(),
     apollo_enriched_at: null,
+    phone_missing: !hasPhone,
     discovered_at: new Date().toISOString(),
     // Pipeline state
     pushed_to_cloudtalk_at: null,
