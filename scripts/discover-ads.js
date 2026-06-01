@@ -74,7 +74,13 @@ const AGENT_CFG = loadAgentConfig();
 const POOL_TTL_MS = (AGENT_CFG.poolTtlDays || 30) * 24 * 60 * 60 * 1000;
 // LIMIT is now a hard per-run cost cap. 200 candidates × $0.0058 onlyTotal ≈
 // $1.16 baseline + a small tail on verified positives. Stay under $2/run.
-const LIMIT = AGENT_CFG.scrapeLimit || Number(process.env.DISCOVERY_LIMIT) || 200;
+//
+// PRIORITY: env > agent config > default. The env var is what deploy-discovery.yml
+// sets and is the cost-control source of truth. Reversed from the old order
+// because we just had an incident where AGENT_CFG.scrapeLimit=1000 (left over
+// from the Playwright era's UI-set value) overrode env DISCOVERY_LIMIT=200,
+// causing a 5x cost overrun on the first Apify run + free-tier exhaustion.
+const LIMIT = Number(process.env.DISCOVERY_LIMIT) || AGENT_CFG.scrapeLimit || 200;
 const MIN_EMPLOYEES = AGENT_CFG.minEmployees ?? 3;
 const MAX_EMPLOYEES = AGENT_CFG.maxEmployees ?? 0;
 
@@ -453,6 +459,10 @@ async function main() {
     console.log("[discover] agent disabled via config.enabled=false — exiting cleanly");
     return;
   }
+  if (!APIFY_TOKEN) {
+    console.error("[discover] APIFY_API_TOKEN env var is missing — refusing to run (would just fail downstream)");
+    process.exit(2);
+  }
   console.log(`[discover] start · provider=apify · limit=${LIMIT}`);
 
   const candidates = await loadOrBuildPool();
@@ -536,6 +546,7 @@ async function main() {
   // candidate so we can run advertiserMatchesCompany() across pageNames.
   const positives = tagged.filter((t) => (totalByCvr.get(t.c.cvr) || 0) > 0);
   let phase2Items = [];
+  let phase2Succeeded = false;
   if (positives.length > 0) {
     try {
       const { items } = await apifyRun(
@@ -547,9 +558,13 @@ async function main() {
         `phase2-verify (${positives.length} candidates)`,
       );
       phase2Items = items;
+      phase2Succeeded = true;
     } catch (e) {
-      console.error(`[discover] phase2 failed: ${e.message} — will commit phase1 verdicts unverified`);
+      console.error(`[discover] phase2 failed: ${e.message} — positives will be left unverified (prior verdicts preserved)`);
     }
+  } else {
+    // No positives means everyone said totalCount=0; phase 2 was never needed.
+    phase2Succeeded = true;
   }
 
   // Map cvr → list of advertiser pageNames from phase2.
@@ -578,6 +593,16 @@ async function main() {
       fail++;
       continue;
     }
+    // BECK-bug guard: when totalCount>0 BUT phase2 didn't succeed, we have
+    // no way to verify the ads actually belong to this company. Leave the
+    // record untouched rather than risk flipping a verified verdict=true
+    // to verdict=false based on unverified data. (This is the same lesson
+    // the Playwright classifier learned the hard way back when Meta's
+    // challenge pages would silently wipe ICP-klar records.)
+    if (totalCount > 0 && !phase2Succeeded) {
+      fail++;
+      continue;
+    }
     const advertisers = advsByCvr.get(c.cvr) || [];
     let matched = 0;
     if (totalCount > 0) {
@@ -589,12 +614,6 @@ async function main() {
           advertiserMatchesCompany(a, c.name) ||
           advertiserMatchesCompany(a, brand),
       ).length;
-      // If phase2 returned no advertisers at all (either we skipped it
-      // because phase1 was empty, or the actor errored), but phase1 saw
-      // ads in DK — treat as inconclusive name match. We still record
-      // totalCount so downstream UI knows ads exist matching the
-      // keyword, but verdict stays cautious: matched=0, verdict=false
-      // means "ads exist but we couldn't verify they're THIS company".
     }
     const verdict = matched > 0;
     const previously = prev[c.cvr];
