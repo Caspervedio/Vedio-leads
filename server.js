@@ -4683,7 +4683,17 @@ function isApolloConfigured() {
 // + require the webhook. With Basic plan's 500 credits/month that's ~500
 // enrichments — enough for our 30/day target.
 
-const APOLLO_SEARCH_LIMIT = 5;     // people per company to enrich
+// People per company to enrich via /people/match (1 credit each). Was 5
+// for the original Kaspr replacement (full contact card with VPs+managers);
+// dropped to 2 because Vedio's outbound only needs the decision-maker pair
+// (typically CEO/Founder + Marketing/eComm Lead). At 60-130 fresh leads/day
+// this lands monthly credit burn around 3,900/mo — fits inside the 4,000
+// Apollo Pro budget with a small safety buffer. Bump back to 4-5 if/when
+// the plan is upgraded; the apolloSearchPeople seniority filter
+// ("c_suite, founder, owner, vp, director, head, manager") naturally ranks
+// the most senior contacts first, so smaller limits don't lose top-of-funnel
+// quality — they just skip the head-of-something second-tier roles.
+const APOLLO_SEARCH_LIMIT = 2;
 const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 
 // Strip Danish legal suffixes + simple-strip Danish characters for
