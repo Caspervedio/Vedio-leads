@@ -51,9 +51,12 @@ jobs:
           # Apify does the headless browser work, so we no longer need 2 vCPU +
           # 3Gi just to host chromium. Slimming down to 1 vCPU + 1Gi shaves
           # ~$0.40/run on baseline Cloud Run Jobs pricing.
-          # DISCOVERY_LIMIT lowered 1000 → 200: that's the daily Apify cost
-          # ceiling (200 × $0.0058 ≈ $1.16 onlyTotal pass + ~$0.30 phase-2
-          # verify on positives ≈ $1.50/run, ~$45/mo on the current cadence).
+          # DISCOVERY_LIMIT=300 is calibrated to STARTER tier ($29 credit,
+          # $50 overage hard cap, $0.005/result BRONZE pricing):
+          #   300 × ~1.05 (phase1 + ~5% phase2 tail) × 30 days × $0.005
+          #     ≈ $47/mo, under the $50 overage cap with headroom for
+          #     scheduler retries or unusually-high-hitrate days.
+          # Yield estimate: ~6–9 fresh ICP-klar callable leads/day.
           gcloud run jobs deploy "$JOB_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
@@ -67,7 +70,7 @@ jobs:
             --network=default \
             --subnet=leads-egress \
             --vpc-egress=all-traffic \
-            --set-env-vars "DATA_DIR=/data,DISCOVERY_BUCKET=$BUCKET,DISCOVERY_LIMIT=200" \
+            --set-env-vars "DATA_DIR=/data,DISCOVERY_BUCKET=$BUCKET,DISCOVERY_LIMIT=300" \
             --set-secrets "DATAFORDELER_KEY=datafordeler-key:latest,APIFY_API_TOKEN=apify-api-token:latest"
 
       - name: Show job ARN
