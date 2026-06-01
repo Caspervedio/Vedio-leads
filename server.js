@@ -1873,12 +1873,20 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       for (const c of icpKlar) { candidates.push(c); claimed.add(c.cvr); }
       const icpPushed = icpKlar.length;
 
+      // STRICT MODE — only promote confirmed Meta advertisers (icpFit from
+      // the scraper). The broadened tier + deep reserve are SKIPPED so the
+      // queue stays pure-quality. Disable by setting
+      // STRICT_ADVERTISER_MODE=false in env to restore the older behavior
+      // (broadened backfill + 100k pool.json reserve) if you ever need volume.
+      const STRICT_MODE = process.env.STRICT_ADVERTISER_MODE !== "false";
+      let broadenedNeed = 0;
+      if (!STRICT_MODE) {
       // TIER 2 — broadened backfill: only if the visible queue is below
       // the target. Phone hit-rate ~⅓, so we gross up 3× the shortfall,
       // capped per run to keep enrichment manageable.
       const dialableShortfall = Math.max(0, targetSize - actionable.length - icpPushed);
       const PER_RUN_CAP = 50;
-      const broadenedNeed = Math.min(dialableShortfall * 3, PER_RUN_CAP);
+      broadenedNeed = Math.min(dialableShortfall * 3, PER_RUN_CAP);
       if (broadenedNeed > 0) {
         const broadened = Object.values(pool)
           .filter((c) => queueQualifies(c) && underMaxEmp(c) && !claimed.has(c.cvr))
@@ -1887,19 +1895,11 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
           .slice(0, broadenedNeed);
         for (const c of broadened) { candidates.push(c); claimed.add(c.cvr); }
       }
-      const shortfall = candidates.length; // for downstream slicing/logs
-
       // DEEP RESERVE — if state.json doesn't have enough unclaimed
       // qualifiers (it no longer grows while the scraper is IP-blocked),
       // backfill from the full ~100k Datafordeler candidate pool so daily
       // volume never runs dry. Every pool entry is already industry-filtered
-      // (target DB07 codes) and active. Two-tier for quality:
-      //   tier 1 — known employees >= 3 (best Apollo/phone yield)
-      //   tier 2 — unknown size (Datafordeler reports null headcount for
-      //            most SMBs; still industry-qualified, Apollo reveals size)
-      // Confirmed-tiny (1-2 employees) are always excluded.
-      // Total cap = ICP-klar tier + broadened need. If state.json broadened
-      // ran short, pool.json reserve fills up to this cap.
+      // (target DB07 codes) and active.
       const totalCap = icpPushed + broadenedNeed;
       if (broadenedNeed > 0 && candidates.length < totalCap) {
         const seen = new Set([...claimed]);
@@ -1920,6 +1920,8 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
           seen.add(c.cvr); candidates.push(c);
         }
       }
+      } // /STRICT_MODE
+      const shortfall = candidates.length;
 
       // Promote them inline (mirrors /api/leads/promote logic)
       const nowIso = new Date().toISOString();
