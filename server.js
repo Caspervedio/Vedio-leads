@@ -1851,7 +1851,13 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       const actionable = leads.filter((l) => {
         if (l.lastAction === "not-relevant") return false;        // archived
         if (l.phone_missing === true) return false;               // no number → Mangler nummer
-        if (l.apollo_enrichment_pending === true) return false;   // still enriching
+        // Enrichment-pending no longer gates dialing when a phone exists.
+        // The phone is what makes a lead actionable; decision-maker contacts
+        // (email, title, LinkedIn from Apollo people/match) are async and
+        // arrive within minutes-to-hours of discovery — Nicolas can dial
+        // the switchboard and ask for the right person while enrichment
+        // completes in the background.
+        if (l.apollo_enrichment_pending === true && !(l.ph || l.phone)) return false;
         if (l.callback_at && new Date(l.callback_at).getTime() > now) return false; // scheduled later
         if (l.lastCallAt && (now - new Date(l.lastCallAt).getTime()) < 24*60*60*1000) return false; // called today
         return true;
@@ -5284,15 +5290,15 @@ function appendApolloLeadToUser(userId, org, orgEnrich) {
   // Dedupe — skip if we already have this org under either id form
   if (ud.leads.some((l) => l.cvr === syntheticCvr)) return false;
   if (org.domain && ud.leads.some((l) => (l.web || "").toLowerCase() === org.domain.toLowerCase())) return false;
-  // Phone gate decision:
-  //   * has phone → IMMEDIATELY dialable. apollo_enrichment_pending=false so
-  //     the autodialer pre-flight gate doesn't filter it out. Decision-maker
-  //     contacts (people/match, 1 credit each) can be filled later by the
-  //     manual /api/apollo/enrich/:cvr endpoint — not blocking the dial.
-  //   * no phone → mark apollo_enrichment_pending=true AND phone_missing=true.
-  //     drain-enrichment will try people/match to find a direct phone; if
-  //     that fails too, phone_missing stays true and the lead lives in the
-  //     "Mangler nummer" bucket (not the dialable queue).
+  // Every apollo-discover lead gets flagged for async decision-maker
+  // enrichment (Apollo people/match — ~5 credits/lead for ~5 contacts
+  // with email, title, LinkedIn). The drain-enrichment cron (every 5 min)
+  // picks them up in batches of 30 and fills the contacts in the background.
+  // Phone-having leads are STILL immediately dialable — the autodialer
+  // pre-flight gate now allows apollo_enrichment_pending=true when a
+  // phone is present, so Nicolas dials the switchboard while enrichment
+  // completes in parallel. Phone-missing leads stay parked until drain
+  // either finds a direct phone or gives up.
   const hasPhone = !!(org.phone || "").toString().trim();
   ud.leads.push({
     cvr: syntheticCvr,
@@ -5319,7 +5325,7 @@ function appendApolloLeadToUser(userId, org, orgEnrich) {
     meta_advertiser: !!(orgEnrich && orgEnrich.metaAdvertiser),
     ad_signals: orgEnrich?.metaAdSignals || [],
     apollo_company: orgEnrich || null,
-    apollo_enrichment_pending: !hasPhone && isApolloConfigured(),
+    apollo_enrichment_pending: isApolloConfigured(),
     apollo_enriched_at: null,
     phone_missing: !hasPhone,
     discovered_at: new Date().toISOString(),
