@@ -2,13 +2,16 @@
 /**
  * Lead Discovery — daily Meta-ads scraper.
  *
- * Runs as a Cloud Run Job (separate from the main web service so chromium
- * doesn't bloat the request-serving image).  One pass:
+ * Runs as a Cloud Run Job (separate from the main web service so the
+ * scrape engine doesn't bloat the request-serving image). One pass:
  *
  *   1. Walk Datafordeler for active Danish companies in target industries
  *      with at least MIN_EMPLOYEES.
- *   2. For each company, scrape facebook.com/ads/library with the brand
- *      name (legal-name minus GRUPPEN/HOLDING/A/S/ApS/etc).
+ *   2. Two-phase Apify scrape of facebook.com/ads/library:
+ *        a) onlyTotal:true sweep over all candidates (cheap count).
+ *        b) resultsLimit:5 follow-up on positives only (verify the ad's
+ *           advertiser name actually matches the company name — same
+ *           guard the old Playwright classifier had).
  *   3. Persist per-CVR state to gs://$DISCOVERY_BUCKET/discovery/state.json
  *      and a flip-log to gs://$DISCOVERY_BUCKET/discovery/flips_<date>.jsonl
  *      (companies that started/stopped advertising since last run).
@@ -17,18 +20,26 @@
  * the per-lead detail panel and any /api/ads-status caller in the main
  * service immediately reflects the fresh verdict.
  *
+ * Why Apify instead of in-process Playwright?
+ *   Meta serves empty results to GCP datacenter IPs. Residential proxy
+ *   would work but at our scan volume costs $40-60/mo AND introduces
+ *   per-page render fragility (captchas, layout drift). Apify's
+ *   facebook-ads-scraper actor handles all of that as a service. At
+ *   onlyTotal-mode pricing ($0.0058/result × ~200 candidates/day) the
+ *   monthly cost lands around $45/mo with much higher reliability.
+ *
  * Env:
  *   DATAFORDELER_KEY    — GraphQL apiKey, same secret main service uses
+ *   APIFY_API_TOKEN     — Apify account token (Secret Manager: apify-api-token)
  *   DISCOVERY_BUCKET    — GCS bucket name (defaults: vedio-leads-data)
  *   DATA_DIR            — local mount path for meta_ads.json (Cloud Run
  *                         mounts the same bucket at /data, so we just
  *                         write the file there alongside the main service)
- *   DISCOVERY_LIMIT     — max companies per run (default: 1000). Start small,
- *                         scale up once stable.
- *   CONCURRENCY         — parallel Playwright contexts (default: 5)
+ *   DISCOVERY_LIMIT     — max companies per run (default: 200). Hard cap on
+ *                         per-run cost: 200 × $0.0058 ≈ $1.16 floor + a small
+ *                         tail on verified positives.
  */
 
-const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 const fetch = require("node-fetch");
@@ -43,12 +54,6 @@ const FLIPS_FILE = path.join(
   "discovery",
   `flips_${new Date().toISOString().slice(0, 10)}.jsonl`,
 );
-// Datafordeler walk + enrich for the full 100k+ candidate pool takes ~2
-// hours. The daily run uses the cached pool so it's just state.json read
-// + scrape. 30 days is fine — CVR companies don't churn fast enough to
-// matter at the lead-discovery scale, and we save 2 hours of compute per
-// rebuild cycle. Set FORCE_POOL_REFRESH=1 on a manual run for an early
-// rebuild when the industry list or filter logic changes.
 // Agent runtime config — loaded from /data/discovery/config.json (the main
 // service writes it from the UI). Env-var fallback keeps the worker
 // runnable in dev and as a safety net if the config file is missing.
@@ -67,27 +72,24 @@ function loadAgentConfig() {
 }
 const AGENT_CFG = loadAgentConfig();
 const POOL_TTL_MS = (AGENT_CFG.poolTtlDays || 30) * 24 * 60 * 60 * 1000;
-const LIMIT = AGENT_CFG.scrapeLimit || Number(process.env.DISCOVERY_LIMIT) || 1000;
-// Concurrency 8 keeps total Meta-request rate at ~3.2/s
-// (8 contexts × 1 req per 2.5s delay). Below the threshold where Meta
-// throws bot challenges; above 5 we comfortably finish 1000 scrapes
-// inside the 1-hour Cloud Run Job timeout.
-const CONCURRENCY = AGENT_CFG.concurrency || Number(process.env.CONCURRENCY) || 8;
-const META_DELAY_MS = 2500; // per-context delay — keeps total throughput ~CONCURRENCY/2.5 req/s
-const POST_LOAD_WAIT_MS = 4000;
-// Employees filter: a confirmed ≥1 → MIN_EMPLOYEES gate; an entirely
-// missing CVR_Beskaeftigelse record → included (we can't tell, and the
-// scrape itself is the cheaper way to find out if they advertise).
-// Companies with a *confirmed* employee count below this drop out.
+// LIMIT is now a hard per-run cost cap. 200 candidates × $0.0058 onlyTotal ≈
+// $1.16 baseline + a small tail on verified positives. Stay under $2/run.
+const LIMIT = AGENT_CFG.scrapeLimit || Number(process.env.DISCOVERY_LIMIT) || 200;
 const MIN_EMPLOYEES = AGENT_CFG.minEmployees ?? 3;
-// Optional upper bound on employees (0 = no cap). Filters large groups so
-// the pool focuses on SMBs. Only applies when employee count is *known*.
 const MAX_EMPLOYEES = AGENT_CFG.maxEmployees ?? 0;
+
+// Apify config — Cloud Run Job pulls APIFY_API_TOKEN from Secret Manager.
+const APIFY_TOKEN = process.env.APIFY_API_TOKEN || "";
+const APIFY_ACTOR = "apify~facebook-ads-scraper";
+const APIFY_RUN_MEMORY_MB = 2048;
+const APIFY_RUN_TIMEOUT_S = 3600; // hard cap per run
+const APIFY_POLL_INTERVAL_MS = 5000;
+const APIFY_MAX_WAIT_MS = 25 * 60 * 1000; // 25 min — well under task-timeout
 
 // Curated DB07 codes — industries where active Meta-ads is a strong B2B
 // signal. Skipped on purpose: holding companies (642010), shell-co
 // patterns (701020), banking/finance (641900 etc), agriculture, public
-// admin.  Easy to expand later.
+// admin. Easy to expand later.
 const TARGET_INDUSTRY_CODES = [
   // Byggeri & håndværk
   "412000", "432100", "432200", "433100", "433200", "433410", "439990",
@@ -184,7 +186,7 @@ function brandNameFromLegal(legal) {
   return cleaned.length >= 2 ? cleaned : String(legal || "").trim();
 }
 
-// ── Meta ads scrape helpers (also duplicated from server.js) ──────────────────
+// ── Meta ads helpers (kept identical to server.js logic) ──────────────────────
 function normalizeCompanyName(s) {
   return String(s || "")
     .toLowerCase()
@@ -224,71 +226,65 @@ function buildAdsUrl(name) {
   return `https://www.facebook.com/ads/library/?${params.toString()}`;
 }
 
-function classifyAdsPage(text, companyName) {
-  if (!text) return { verdict: null, reason: "no body text" };
-  // ── Bot-challenge sentinels — Meta serves these when we're rate-limited.
-  //    If ANY of these appear, treat as inconclusive (verdict=null) so we
-  //    don't overwrite a previously-good record with a false-negative.
-  //    Bug history: an earlier version would pass the "ad library" gate on
-  //    Meta's challenge pages (because the challenge text often includes
-  //    "Ad Library") and then return verdict=false because no "sponsored"
-  //    markers were found. That wiped 57 ICP-klar records overnight at
-  //    hourly cadence. NEVER again.
-  if (/please verify|prove you are human|checkpoint|robot|captcha|unusual activity|bekræft at du er menneske|verificer|sikkerhedstjek/i.test(text)) {
-    return { verdict: null, reason: "bot challenge detected" };
-  }
-  // Page too short to be a real ad library result. Meta's challenge pages
-  // are typically <1500 chars; a real "no ads" page is >3000 chars (with
-  // header chrome, search controls, etc).
-  if (text.length < 1500) {
-    return { verdict: null, reason: `page too short (${text.length} chars)` };
-  }
-  if (!/annoncebibliotek/i.test(text) && !/ad library/i.test(text)) {
-    return { verdict: null, reason: "ads library chrome missing (bot challenge?)" };
-  }
-  // Explicit "no ads match" — the ONLY way we'll commit a definitive false.
-  // Without this exact text, we can't prove they have no ads — they might,
-  // and the page just didn't load properly. Treat as inconclusive.
-  const explicitNoAds = /ingen annoncer matcher/i.test(text) || /no ads match/i.test(text);
-  const parts = text.split(/sponsoreret|\bsponsored\b/i);
-  const advertisers = [];
-  for (let i = 0; i < parts.length - 1; i++) {
-    const lines = parts[i].split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length) advertisers.push(lines[lines.length - 1]);
-  }
-  const total = advertisers.length;
-  if (total === 0) {
-    // No "sponsored" markers found. Only call this definitively-false if
-    // we ALSO saw the explicit "no ads match" string — otherwise it could
-    // be a load failure or partial render.
-    if (explicitNoAds) return { verdict: false, matched: 0, total: 0, advertisers: [] };
-    return { verdict: null, reason: "no sponsored markers, no explicit empty-state" };
-  }
-  const matched = advertisers.filter((a) => advertiserMatchesCompany(a, companyName)).length;
-  return matched > 0
-    ? { verdict: true, matched, total, advertisers }
-    : { verdict: false, matched: 0, total, advertisers };
-}
+// ── Apify actor wrapper ──────────────────────────────────────────────────────
+// Async-start + poll. The sync endpoint caps at 5 minutes; 200 startUrls can
+// take longer, so we always use the async pattern for safety.
+async function apifyRun(input, label) {
+  if (!APIFY_TOKEN) throw new Error("APIFY_API_TOKEN env var is required");
+  console.log(`[apify] ${label}: starting actor with ${input.startUrls?.length || 0} startUrls`);
 
-async function scrapePageWithContext(context, name) {
-  const page = await context.newPage();
-  try {
-    await page.goto(buildAdsUrl(name), { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(POST_LOAD_WAIT_MS);
-    await page.waitForSelector('[role="main"], [role="article"]', { timeout: 5000 }).catch(() => {});
-    const text = await page.evaluate(() => document.body.innerText).catch(() => null);
-    return classifyAdsPage(text, name);
-  } finally {
-    await page.close().catch(() => {});
+  // 1. Start run
+  const startUrl = `https://api.apify.com/v2/acts/${APIFY_ACTOR}/runs?token=${APIFY_TOKEN}&memory=${APIFY_RUN_MEMORY_MB}&timeout=${APIFY_RUN_TIMEOUT_S}`;
+  const startResp = await fetch(startUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!startResp.ok) {
+    const body = await startResp.text();
+    throw new Error(`Apify start ${label} ${startResp.status}: ${body.substring(0, 400)}`);
   }
+  const { data: run } = await startResp.json();
+  console.log(`[apify] ${label}: run id=${run.id} status=${run.status}`);
+
+  // 2. Poll until terminal
+  const t0 = Date.now();
+  let status = run.status;
+  let runData = run;
+  while (status === "READY" || status === "RUNNING") {
+    if (Date.now() - t0 > APIFY_MAX_WAIT_MS) {
+      throw new Error(`Apify ${label} timeout after ${(APIFY_MAX_WAIT_MS / 60000).toFixed(0)} min (run ${run.id})`);
+    }
+    await new Promise((r) => setTimeout(r, APIFY_POLL_INTERVAL_MS));
+    const pollResp = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${APIFY_TOKEN}`);
+    if (!pollResp.ok) {
+      console.warn(`[apify] ${label}: poll ${pollResp.status} — retrying`);
+      continue;
+    }
+    const pollJson = await pollResp.json();
+    runData = pollJson.data;
+    status = runData.status;
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(0);
+    console.log(`[apify] ${label}: status=${status} elapsed=${elapsed}s`);
+  }
+
+  if (status !== "SUCCEEDED") {
+    throw new Error(`Apify ${label} ended with status ${status}: ${runData.statusMessage || "(no message)"}`);
+  }
+
+  // 3. Fetch dataset items
+  const datasetId = runData.defaultDatasetId;
+  const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}&format=json&clean=false`);
+  if (!itemsResp.ok) throw new Error(`Apify dataset fetch ${itemsResp.status} for ${label}`);
+  const items = await itemsResp.json();
+  // Charge metadata for observability — Apify exposes per-run charges on the run object.
+  const charge = runData?.usage?.totalChargeUsd ?? runData?.chargedEventCounts ?? "n/a";
+  console.log(`[apify] ${label}: ${items.length} dataset items · charge=${JSON.stringify(charge)}`);
+  return { items, runData };
 }
 
 // ── Datafordeler walk: build candidate pool ───────────────────────────────────
 async function fetchAllEnhedsIdsForCode(code) {
-  // Pagination — Datafordeler caps `first` at 1000, and the largest DB07
-  // codes (412000 construction, 477110 clothing retail, …) have several
-  // thousand companies. 10 pages = up to 10k IDs per code; that's enough
-  // even for the broadest categories without burning quota.
   const MAX_PAGES = 10;
   const ids = [];
   let cursor = null;
@@ -315,10 +311,6 @@ async function enrichBatch(ids) {
   const idList = ids.map((id) => `"${id}"`).join(",");
   const w = `CVREnhedsId: { in: [${idList}] }`;
   const sz = ids.length;
-  // 5th query added: CVR_Telefonnummer pulls registered switchboard
-  // phones for free. ~70% of active DK companies have one. Gives us a
-  // way to actually CALL these leads without paying for enrichment —
-  // SDR dials switchboard + asks for decision-maker by title.
   const [rN, rV, rB, rA, rT] = await Promise.all([
     dfGqlFetch(`{ CVR_Navn(first: ${sz * 6}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
     dfGqlFetch(`{ CVR_Virksomhed(first: ${sz}, where: { id: { in: [${idList}] } }) { edges { node { id CVRNummer status virksomhedStartdato } } } }`),
@@ -326,7 +318,6 @@ async function enrichBatch(ids) {
     dfGqlFetch(`{ CVR_Adressering(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId CVRAdresse_postdistrikt CVRAdresse_postnummer } } } }`),
     dfGqlFetch(`{ CVR_Telefonnummer(first: ${sz * 3}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
   ]);
-  // Names: keep all in insertion order so we can take the latest below
   const namesByEid = {};
   for (const e of rN?.CVR_Navn?.edges || []) {
     (namesByEid[e.node.CVREnhedsId] = namesByEid[e.node.CVREnhedsId] || []).push(e.node.vaerdi);
@@ -347,8 +338,6 @@ async function enrichBatch(ids) {
   for (const e of rA?.CVR_Adressering?.edges || []) {
     addrByEid[e.node.CVREnhedsId] = e.node;
   }
-  // Companies can have multiple registered phones (main, fax, etc).
-  // Keep the latest non-empty one — fax numbers are rare nowadays.
   const phoneByEid = {};
   for (const e of rT?.CVR_Telefonnummer?.edges || []) {
     const v = String(e.node.vaerdi || "").trim();
@@ -365,18 +354,18 @@ async function enrichBatch(ids) {
       name: names[names.length - 1] || "",
       status: statusByEid[eid] || "",
       founded: startByEid[eid] || "",
-      employees,        // null if no Beskaeftigelse record exists
-      hasEmpData,       // distinguishes "confirmed 0" from "unknown"
+      employees,
+      hasEmpData,
       city: addrByEid[eid]?.CVRAdresse_postdistrikt || "",
       zip: addrByEid[eid]?.CVRAdresse_postnummer || "",
-      phone: phoneByEid[eid] || "",   // registered switchboard from CVR (free)
+      phone: phoneByEid[eid] || "",
     };
   });
 }
 
 async function buildCandidatePool() {
   console.log(`[discover] walking ${TARGET_INDUSTRY_CODES.length} industry codes…`);
-  const allByEid = new Map(); // dedupe across codes
+  const allByEid = new Map();
   for (const code of TARGET_INDUSTRY_CODES) {
     try {
       const ids = await fetchAllEnhedsIdsForCode(code);
@@ -400,23 +389,20 @@ async function buildCandidatePool() {
     done += batch.length;
     if (done % 500 === 0) console.log(`  enriched ${done}/${allIds.length}`);
   }
-  // Filter: must be active + have a CVR + either confirmed ≥MIN_EMPLOYEES
-  // or no employee data at all (rather than confirmed 0).
   const filtered = enriched.filter((c) => {
     if (c.status !== "aktiv" || !c.cvr) return false;
     if (c.hasEmpData) {
       const e = c.employees || 0;
       if (e < MIN_EMPLOYEES) return false;
-      if (MAX_EMPLOYEES > 0 && e > MAX_EMPLOYEES) return false; // too big
+      if (MAX_EMPLOYEES > 0 && e > MAX_EMPLOYEES) return false;
       return true;
     }
-    return true; // unknown — keep, the scrape will tell us
+    return true;
   });
-  // Stable order — sort by CVR so runs are reproducible.
   filtered.sort((a, b) => a.cvr.localeCompare(b.cvr));
   const breakdown = {
     confirmedAtLeast: filtered.filter((c) => c.hasEmpData).length,
-    unknown:          filtered.filter((c) => !c.hasEmpData).length,
+    unknown: filtered.filter((c) => !c.hasEmpData).length,
   };
   console.log(`[discover] candidate pool: ${filtered.length} (confirmed ≥${MIN_EMPLOYEES}: ${breakdown.confirmedAtLeast}, unknown emp: ${breakdown.unknown})`);
   return filtered;
@@ -440,10 +426,7 @@ function appendJsonl(file, obj) {
   fs.appendFileSync(file, JSON.stringify(obj) + "\n");
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
 async function loadOrBuildPool() {
-  // Use cached pool if it exists and is fresher than POOL_TTL_MS.
-  // FORCE_POOL_REFRESH=1 forces a full rebuild — useful for manual runs.
   try {
     if (fs.existsSync(POOL_FILE) && process.env.FORCE_POOL_REFRESH !== "1") {
       const cached = JSON.parse(fs.readFileSync(POOL_FILE, "utf-8"));
@@ -463,36 +446,27 @@ async function loadOrBuildPool() {
   return candidates;
 }
 
+// ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   const startTime = Date.now();
-  // Honour the UI toggle — when the SDR flips META Scraper to OFF in
-  // the app, AGENT_CFG.enabled is set to false. Worker exits cleanly so
-  // Cloud Run Job doesn't burn compute on a paused agent.
   if (AGENT_CFG.enabled === false) {
     console.log("[discover] agent disabled via config.enabled=false — exiting cleanly");
     return;
   }
-  console.log(`[discover] start · limit=${LIMIT} concurrency=${CONCURRENCY}`);
+  console.log(`[discover] start · provider=apify · limit=${LIMIT}`);
 
   const candidates = await loadOrBuildPool();
   const prevState = loadJson(STATE_FILE, { companies: {} });
   const prev = prevState.companies || {};
-  // Rolling-window hitrate history — last N runs. Used to detect when
-  // the META scraper's signal density drops below a useful threshold so
-  // we know when to broaden tier-1 industry coverage. Keep last 100.
   const prevRuns = Array.isArray(prevState.runs) ? prevState.runs.slice(-99) : [];
-  // BECK-bug fix: Datafordeler's CVR_Beskaeftigelse returns transient
-  // nulls (the same company can come back with employees=12 one day and
-  // employees=null the next). When pool.json was built we got null for
-  // some companies that we *already know* are confirmed-size from earlier
-  // scrapes. Merge state.json's known employees back in so they land in
-  // tier 1 instead of getting buried in the unknown long tail forever.
+
+  // BECK-bug fix carry-over: merge state.json's known employees back in.
   const isConfirmedSize = (c) => {
     if (c.hasEmpData) return true;
     const knownEmp = prev[c.cvr]?.employees;
     return typeof knownEmp === "number" && knownEmp >= MIN_EMPLOYEES;
   };
-  // Two-tier rotation by signal density:
+  // Two-tier rotation by signal density (unchanged from Playwright version):
   //  1. confirmed ≥MIN_EMPLOYEES (high prior probability of advertising)
   //  2. unknown-employee long tail (low prior — sole props, shells)
   // Inside each tier, prioritise never-checked, then oldest.
@@ -508,162 +482,183 @@ async function main() {
   const neverChecked = work.filter((c) => !prev[c.cvr]?.ads?.checkedAt).length;
   const tier1 = work.filter((c) => c.hasEmpData).length;
   console.log(
-    `[discover] scraping Meta-ads for ${work.length} companies (${tier1} confirmed-size, ${work.length - tier1} unknown-size, ${neverChecked} never-checked overall)…`,
+    `[discover] scanning Meta-ads for ${work.length} companies (${tier1} confirmed-size, ${work.length - tier1} unknown-size, ${neverChecked} never-checked overall)…`,
   );
 
   const next = { ...prev };
   const metaAdsCache = loadJson(META_ADS_FILE, {});
   const flips = [];
 
-  // Residential-proxy support. Meta serves empty ad-library results to
-  // datacenter IPs (incl. all of GCP), so a residential/mobile proxy is
-  // required to see real ads. Configured via env (mounted from Secret
-  // Manager). When unset, runs direct (datacenter IP) — useful locally.
-  //   PROXY_SERVER    e.g. "http://gate.smartproxy.com:7000"
-  //   PROXY_USERNAME  proxy account user (often encodes country/session)
-  //   PROXY_PASSWORD  proxy account password
-  const PROXY_SERVER = process.env.PROXY_SERVER || "";
-  const PROXY_USERNAME = process.env.PROXY_USERNAME || "";
-  const PROXY_PASSWORD = process.env.PROXY_PASSWORD || "";
-  const launchOpts = {
-    headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  };
-  if (PROXY_SERVER) {
-    launchOpts.proxy = {
-      server: PROXY_SERVER,
-      ...(PROXY_USERNAME ? { username: PROXY_USERNAME, password: PROXY_PASSWORD } : {}),
-    };
-    console.log(`[discover] routing through residential proxy: ${PROXY_SERVER}`);
-  } else {
-    console.log("[discover] NO proxy configured — running on datacenter IP (Meta will likely serve empty results)");
-  }
-  const browser = await chromium.launch(launchOpts);
-  const contexts = await Promise.all(
-    Array.from({ length: CONCURRENCY }, () =>
-      browser.newContext({
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        locale: "da-DK",
-        viewport: { width: 1280, height: 800 },
-      }),
-    ),
-  );
-  // Bandwidth optimization — block heavy assets we never read (we only
-  // parse document.body.innerText). Cuts page weight ~80%, which keeps
-  // residential-proxy bandwidth costs low. Keep stylesheets + scripts +
-  // xhr/fetch so the ad results still render and load.
-  await Promise.all(
-    contexts.map((ctx) =>
-      ctx.route("**/*", (route) => {
-        const t = route.request().resourceType();
-        if (t === "image" || t === "media" || t === "font") return route.abort();
-        return route.continue();
-      }),
-    ),
-  );
+  // Pair each candidate with the brand-name search URL we'll send to Apify.
+  // We need a way to map dataset items back to the candidate — the actor
+  // echoes the inputUrl on each result, so a Map keyed on URL handles it.
+  const tagged = work.map((c) => {
+    const brand = brandNameFromLegal(c.name);
+    return { c, brand, url: buildAdsUrl(brand) };
+  });
+  const cvrByUrl = new Map(tagged.map((t) => [t.url, t.c.cvr]));
+  const brandByCvr = new Map(tagged.map((t) => [t.c.cvr, t.brand]));
 
-  let i = 0;
+  // ── Phase 1: cheap onlyTotal sweep over all candidates ─────────────────────
+  let phase1Items = [];
+  try {
+    const { items } = await apifyRun(
+      {
+        startUrls: tagged.map((t) => ({ url: t.url })),
+        onlyTotal: true,
+      },
+      "phase1-count",
+    );
+    phase1Items = items;
+  } catch (e) {
+    console.error(`[discover] phase1 failed: ${e.message}`);
+    // Without phase1 there's nothing to do — exit cleanly so the cron
+    // doesn't keep state but preserves prior runs.
+    saveJson(STATE_FILE, { ...prevState, lastError: e.message, lastErrorAt: new Date().toISOString() });
+    process.exit(1);
+  }
+
+  // Map each cvr → totalCount (and whether we got a result at all).
+  const totalByCvr = new Map();
+  for (const item of phase1Items) {
+    const cvr = cvrByUrl.get(item.inputUrl);
+    if (!cvr) continue;
+    const tc = Number(item.totalCount || 0);
+    totalByCvr.set(cvr, tc);
+  }
+  const phase1Hits = [...totalByCvr.values()].filter((n) => n > 0).length;
+  console.log(`[discover] phase1 done: ${totalByCvr.size}/${work.length} resolved · ${phase1Hits} with totalCount>0`);
+
+  // ── Phase 2: verify positives have an advertiser-name match ────────────────
+  // Even with `keyword_exact_phrase` Meta sometimes returns ads for similarly
+  // named pages. The current classifier rejects "Beck Institute" when scanning
+  // for "BECK"; we keep that guard. Phase 2 fetches up to 5 ads per positive
+  // candidate so we can run advertiserMatchesCompany() across pageNames.
+  const positives = tagged.filter((t) => (totalByCvr.get(t.c.cvr) || 0) > 0);
+  let phase2Items = [];
+  if (positives.length > 0) {
+    try {
+      const { items } = await apifyRun(
+        {
+          startUrls: positives.map((t) => ({ url: t.url })),
+          onlyTotal: false,
+          resultsLimit: 5,
+        },
+        `phase2-verify (${positives.length} candidates)`,
+      );
+      phase2Items = items;
+    } catch (e) {
+      console.error(`[discover] phase2 failed: ${e.message} — will commit phase1 verdicts unverified`);
+    }
+  }
+
+  // Map cvr → list of advertiser pageNames from phase2.
+  const advsByCvr = new Map();
+  for (const item of phase2Items) {
+    const cvr = cvrByUrl.get(item.inputUrl);
+    if (!cvr) continue;
+    const name = item.pageName || item.snapshot?.pageName || "";
+    if (!name) continue;
+    const list = advsByCvr.get(cvr) || [];
+    if (!list.includes(name)) list.push(name);
+    advsByCvr.set(cvr, list);
+  }
+
+  // ── Apply verdicts to state.json ────────────────────────────────────────────
   let ok = 0;
   let fail = 0;
   let withAds = 0;
 
-  const worker = async (workerIdx) => {
-    const ctx = contexts[workerIdx];
-    while (true) {
-      const myIdx = i++;
-      if (myIdx >= work.length) break;
-      const c = work[myIdx];
-      const search = brandNameFromLegal(c.name);
-      try {
-        const r = await scrapePageWithContext(ctx, search);
-        if (r.verdict !== null) {
-          const previously = prev[c.cvr];
-          const wasAds = previously?.ads?.verdict === true;
-          const isAds = r.verdict === true;
-          if (wasAds !== isAds && previously) {
-            // Flip detected — log it for the daily flips file.
-            flips.push({
-              cvr: c.cvr,
-              name: c.name,
-              flip: isAds ? "started" : "stopped",
-              at: new Date().toISOString(),
-              prev_checked: previously.ads?.checkedAt || null,
-            });
-          }
-          // ICP-fit gate — automatic rule that decides whether this lead
-          // should auto-flow into CloudTalk (Phase C). Knobs are read from
-          // the runtime agent config (UI-editable) with safe defaults.
-          const ICP_MIN_MATCHED_ADS = AGENT_CFG.icpMinAds ?? 3;
-          const ICP_MIN_EMPLOYEES_KNOWN = AGENT_CFG.icpMinEmployees ?? 5;
-          const icpFit =
-            r.verdict === true &&
-            (r.matched || 0) >= ICP_MIN_MATCHED_ADS &&
-            !!c.cvr &&
-            c.status === "aktiv" &&
-            (c.employees == null || c.employees >= ICP_MIN_EMPLOYEES_KNOWN);
-
-          next[c.cvr] = {
-            cvr: c.cvr,
-            enhedsId: c.enhedsId,
-            name: c.name,
-            brandName: search,
-            industry: c.code,
-            employees: c.employees,
-            city: c.city,
-            zip: c.zip,
-            phone: c.phone || previously?.phone || "",
-            status: c.status,
-            founded: c.founded,
-            ads: {
-              verdict: r.verdict,
-              matched: r.matched || 0,
-              total: r.total || 0,
-              advertisers: r.advertisers || [],
-              checkedAt: new Date().toISOString(),
-            },
-            // Pipeline-state fields. icpFit gates the auto-push to CloudTalk;
-            // pushed_to_cloudtalk_at + twenty_opportunity_id (set by Phase C
-            // and Phase D when wired) protect against duplicates downstream.
-            icpFit,
-            pushed_to_cloudtalk_at: previously?.pushed_to_cloudtalk_at || null,
-            twenty_opportunity_id: previously?.twenty_opportunity_id || null,
-          };
-          // Also update the main service's meta_ads.json so its detail
-          // panel reflects fresh data without a separate API call.
-          metaAdsCache[c.cvr] = {
-            name: c.name,
-            searchName: search,
-            verdict: r.verdict,
-            matched: r.matched || 0,
-            total: r.total || 0,
-            advertisers: r.advertisers || [],
-            checkedAt: new Date().toISOString(),
-          };
-          ok++;
-          if (isAds) withAds++;
-        } else {
-          fail++;
-        }
-      } catch (e) {
-        fail++;
-        if (myIdx < 3 || myIdx % 50 === 0) {
-          console.error(`  [${myIdx + 1}] ${c.cvr} (${search}) — ${e.message}`);
-        }
-      }
-      if (myIdx > 0 && myIdx % 50 === 0) {
-        console.log(`  ${myIdx + 1}/${work.length} · ok=${ok} fail=${fail} ads=${withAds}`);
-        // Checkpoint mid-run in case the Job is killed.
-        saveJson(STATE_FILE, { lastRunStartedAt: new Date(startTime).toISOString(), companies: next });
-        saveJson(META_ADS_FILE, metaAdsCache);
-      }
-      await new Promise((r) => setTimeout(r, META_DELAY_MS));
+  for (const { c, brand } of tagged) {
+    const totalCount = totalByCvr.get(c.cvr);
+    if (totalCount === undefined) {
+      // Apify returned nothing for this URL — treat as inconclusive so we
+      // don't wipe a previously-good record. Matches the Playwright
+      // classifier's verdict=null behaviour.
+      fail++;
+      continue;
     }
-  };
+    const advertisers = advsByCvr.get(c.cvr) || [];
+    let matched = 0;
+    if (totalCount > 0) {
+      // Try matching against both the legal name AND the brand name (the
+      // brand is what we searched for; advertiserMatchesCompany handles
+      // company-side normalization but is exact on the brand side).
+      matched = advertisers.filter(
+        (a) =>
+          advertiserMatchesCompany(a, c.name) ||
+          advertiserMatchesCompany(a, brand),
+      ).length;
+      // If phase2 returned no advertisers at all (either we skipped it
+      // because phase1 was empty, or the actor errored), but phase1 saw
+      // ads in DK — treat as inconclusive name match. We still record
+      // totalCount so downstream UI knows ads exist matching the
+      // keyword, but verdict stays cautious: matched=0, verdict=false
+      // means "ads exist but we couldn't verify they're THIS company".
+    }
+    const verdict = matched > 0;
+    const previously = prev[c.cvr];
+    const wasAds = previously?.ads?.verdict === true;
+    const isAds = verdict === true;
+    if (wasAds !== isAds && previously) {
+      flips.push({
+        cvr: c.cvr,
+        name: c.name,
+        flip: isAds ? "started" : "stopped",
+        at: new Date().toISOString(),
+        prev_checked: previously.ads?.checkedAt || null,
+      });
+    }
+    // ICP-fit gate — same rules as before; matched count still drives it.
+    const ICP_MIN_MATCHED_ADS = AGENT_CFG.icpMinAds ?? 3;
+    const ICP_MIN_EMPLOYEES_KNOWN = AGENT_CFG.icpMinEmployees ?? 5;
+    const icpFit =
+      verdict === true &&
+      matched >= ICP_MIN_MATCHED_ADS &&
+      !!c.cvr &&
+      c.status === "aktiv" &&
+      (c.employees == null || c.employees >= ICP_MIN_EMPLOYEES_KNOWN);
 
-  await Promise.all(contexts.map((_, idx) => worker(idx)));
-  await browser.close().catch(() => {});
+    next[c.cvr] = {
+      cvr: c.cvr,
+      enhedsId: c.enhedsId,
+      name: c.name,
+      brandName: brand,
+      industry: c.code,
+      employees: c.employees,
+      city: c.city,
+      zip: c.zip,
+      phone: c.phone || previously?.phone || "",
+      status: c.status,
+      founded: c.founded,
+      ads: {
+        verdict,
+        matched,
+        total: totalCount,
+        advertisers,
+        checkedAt: new Date().toISOString(),
+        // Source tag — useful when diffing pre/post-Apify state to
+        // confirm the rewrite landed end-to-end.
+        source: "apify",
+      },
+      icpFit,
+      pushed_to_cloudtalk_at: previously?.pushed_to_cloudtalk_at || null,
+      twenty_opportunity_id: previously?.twenty_opportunity_id || null,
+    };
+    metaAdsCache[c.cvr] = {
+      name: c.name,
+      searchName: brand,
+      verdict,
+      matched,
+      total: totalCount,
+      advertisers,
+      checkedAt: new Date().toISOString(),
+    };
+    ok++;
+    if (isAds) withAds++;
+  }
 
-  // Final write — append this run to the rolling hitrate history.
+  // ── Persist + summarise ─────────────────────────────────────────────────────
   const thisRun = {
     startedAt: new Date(startTime).toISOString(),
     completedAt: new Date().toISOString(),
@@ -671,15 +666,15 @@ async function main() {
     ok,
     fail,
     withAds,
-    // Hitrate = withAds / ok (companies with running ads / successful scrapes).
-    // Tracks whether the discovery pool still has useful signal density;
-    // if it drops below ~2% for 24h we should broaden tier-1 industries.
     hitratePct: ok > 0 ? Math.round((withAds / ok) * 10000) / 100 : 0,
     tier1Scanned: work.filter((c) => c.hasEmpData).length,
     flips: flips.length,
+    provider: "apify",
+    phase1Resolved: totalByCvr.size,
+    phase1Positives: phase1Hits,
+    phase2Verified: phase2Items.length,
   };
   const runs = [...prevRuns, thisRun];
-  // Compute rolling hitrate over last 10 runs for log visibility.
   const window = runs.slice(-10);
   const winOk = window.reduce((s, r) => s + (r.ok || 0), 0);
   const winAds = window.reduce((s, r) => s + (r.withAds || 0), 0);
@@ -704,9 +699,6 @@ async function main() {
   console.log(
     `[discover] done in ${minutes} min · ok=${ok} fail=${fail} ads=${withAds} flips=${flips.length} · hitrate=${thisRun.hitratePct}% (10-run rolling: ${winHitrate}%)`,
   );
-  // Warn if rolling hitrate looks low — manual broadening signal for now.
-  // (Auto-broadening lives in a future build once we have data at the
-  // new hourly cadence.)
   if (window.length >= 5 && winHitrate < 2.0) {
     console.log(
       `[discover] ⚠ rolling hitrate ${winHitrate}% below 2.0% threshold over last ${window.length} runs — consider broadening tier-1 industries`,

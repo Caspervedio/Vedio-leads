@@ -8,13 +8,14 @@
 #  - Independent versioning lets us tweak the scraper without redeploying
 #    the user-facing service
 #
-# Same Playwright base + chromium-bundled image the main service uses, so
-# the scrape behaviour matches what the manual /api/check-ads endpoint sees.
+# As of 2026-06-01 the Meta-ads scrape is delegated to Apify's
+# facebook-ads-scraper actor — no in-process browser, so this image is now
+# a plain node:20-slim. Cold start dropped from ~12s to ~2s and the image
+# is ~120 MB instead of ~1.5 GB. Old base was
+# mcr.microsoft.com/playwright:v1.60.0-jammy.
 
-FROM mcr.microsoft.com/playwright:v1.60.0-jammy
+FROM node:20-slim
 WORKDIR /app
-
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 COPY package*.json ./
 RUN npm ci --omit=dev

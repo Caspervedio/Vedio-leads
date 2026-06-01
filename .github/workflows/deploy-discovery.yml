@@ -48,21 +48,27 @@ jobs:
           IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/lead-discovery:${{ github.sha }}"
           # `gcloud run jobs deploy` creates the job if missing, updates it
           # otherwise — same UX as `run deploy` for services.
+          # Apify does the headless browser work, so we no longer need 2 vCPU +
+          # 3Gi just to host chromium. Slimming down to 1 vCPU + 1Gi shaves
+          # ~$0.40/run on baseline Cloud Run Jobs pricing.
+          # DISCOVERY_LIMIT lowered 1000 → 200: that's the daily Apify cost
+          # ceiling (200 × $0.0058 ≈ $1.16 onlyTotal pass + ~$0.30 phase-2
+          # verify on positives ≈ $1.50/run, ~$45/mo on the current cadence).
           gcloud run jobs deploy "$JOB_NAME" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --image "$IMAGE" \
             --task-timeout 7200 \
             --max-retries 1 \
-            --cpu 2 \
-            --memory 3Gi \
+            --cpu 1 \
+            --memory 1Gi \
             --add-volume "name=data,type=cloud-storage,bucket=$BUCKET" \
             --add-volume-mount "volume=data,mount-path=/data" \
             --network=default \
             --subnet=leads-egress \
             --vpc-egress=all-traffic \
-            --set-env-vars "DATA_DIR=/data,DISCOVERY_BUCKET=$BUCKET,DISCOVERY_LIMIT=1000,CONCURRENCY=5" \
-            --set-secrets "DATAFORDELER_KEY=datafordeler-key:latest"
+            --set-env-vars "DATA_DIR=/data,DISCOVERY_BUCKET=$BUCKET,DISCOVERY_LIMIT=200" \
+            --set-secrets "DATAFORDELER_KEY=datafordeler-key:latest,APIFY_API_TOKEN=apify-api-token:latest"
 
       - name: Show job ARN
         run: gcloud run jobs describe "$JOB_NAME" --project "$PROJECT_ID" --region "$REGION" --format='value(name)'
