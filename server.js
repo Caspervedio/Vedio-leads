@@ -5683,28 +5683,52 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     });
   }
 
-  // Real Twenty API call (placeholder — will fill in once endpoint shape
-  // is confirmed against the Twenty workspace's GraphQL API).
+  // Real Twenty CRM push — creates an Opportunity via Twenty's REST API.
+  // Stage is configurable via TWENTY_OPP_STAGE (default NEW; flip to KOLD
+  // once that enum option is added in Twenty Settings → Objects →
+  // Opportunity → stage). The lead's company name becomes the Opportunity
+  // name; amount is initialised at 0 DKK.
   try {
     const d = loadUserData(req.userId);
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
 
-    // TODO: Replace with real Twenty GraphQL mutation. The endpoint will
-    // look something like:
-    //   POST {workspaceUrl}/graphql
-    //   { query: "mutation createOpportunity(...) { ... }", variables: {...} }
-    // Shape isn't worth speculating about until we have the real schema.
-    const stubResponse = {
-      id: `placeholder_${Date.now()}`,
-      url: `${process.env.TWENTY_WORKSPACE_URL}/objects/opportunities/placeholder_${Date.now()}`,
+    const baseUrl = String(process.env.TWENTY_WORKSPACE_URL || "").replace(/\/+$/, "");
+    const stage = process.env.TWENTY_OPP_STAGE || "NEW";
+    const oppName = lead.name || `Vedio-lead ${cvr}`;
+    const payload = {
+      name: oppName,
+      stage,
+      amount: { amountMicros: 0, currencyCode: "DKK" },
+      source: "OTHER",
     };
-
-    lead.twenty_opportunity_id = stubResponse.id;
+    const r = await fetch(`${baseUrl}/rest/opportunities`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      console.warn("[twenty/push]", r.status, JSON.stringify(j).slice(0, 300));
+      return res.status(502).json({
+        error: `Twenty afviste push (${r.status}): ${(j.messages && j.messages[0]) || j.error || JSON.stringify(j).slice(0, 200)}`,
+      });
+    }
+    // Twenty's REST response shape: { data: { createOpportunity: {...} } }
+    const opp = j.data?.createOpportunity || j.data?.opportunity || j.data || {};
+    const opportunityId = opp.id;
+    const url = opportunityId ? `${baseUrl}/objects/opportunities/${opportunityId}` : null;
+    lead.twenty_opportunity_id = opportunityId;
     lead.twenty_pushed_at = new Date().toISOString();
-    lead.twenty_url = stubResponse.url;
+    lead.twenty_url = url;
+    lead.twenty_stage = stage;
+    if (notes) lead.twenty_pushed_notes = notes;
     saveUserData(req.userId, d);
-    res.json({ ok: true, opportunity: stubResponse });
+    logActivity("twenty-push", `🎯 ${lead.name} pushet til Twenty (stage: ${stage})`, { cvr, userId: req.userId, opportunityId });
+    res.json({ ok: true, opportunity: { id: opportunityId, url, stage } });
   } catch (e) {
     console.error("[twenty/push]", e.message);
     res.status(500).json({ error: e.message });
