@@ -5221,8 +5221,16 @@ const APOLLO_DISCOVER_KEYWORDS = [
   "consulting", "saas", "education", "hospitality", "tourism",
 ];
 
-// Apollo SMB sweet spot — matches Vedio's ICP (5-100 employees).
-const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["5,10", "11,20", "21,50", "51,100"];
+// Apollo SMB sweet spot — Vedio's ICP is 5-50 employees (micro/small/
+// small-med). The 51-100 medium bucket is excluded as too big — those
+// companies typically have in-house creative teams and a separate
+// procurement process that doesn't fit Vedio's outbound motion.
+const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["5,10", "11,20", "21,50"];
+// Hard cap enforced AFTER org-enrich. Apollo's search filter is loose
+// (returns some 50-80 emp companies even when "21,50" is requested), so
+// we re-check the enrich response's estimatedEmployees and reject anything
+// above this before appending to the leads pool.
+const APOLLO_DISCOVER_MAX_EMPLOYEES = 50;
 
 function loadApolloDiscoverState() {
   try {
@@ -5353,6 +5361,7 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
     pagesScanned: 0,
     candidatesSeen: 0,
     skippedDuplicates: 0,
+    skippedOversized: 0,
     enrichmentChecked: 0,
     advertisersFound: 0,
     leadsAppended: 0,
@@ -5418,13 +5427,25 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
       }
 
       if (orgEnrich && orgEnrich.metaAdvertiser) {
+        // Post-enrich size gate. Apollo's search filter returns some
+        // companies whose enriched headcount lands above the requested
+        // range (the ranges are advisory, not strict). Re-check here
+        // and skip oversized companies — Vedio's ICP is 5-50 emp; the
+        // 51+ medium bucket has in-house creative teams and doesn't
+        // convert on outbound.
+        const enrichedEmp = orgEnrich.estimatedEmployees || cand.employees;
+        if (enrichedEmp && enrichedEmp > APOLLO_DISCOVER_MAX_EMPLOYEES) {
+          stats.skippedOversized = (stats.skippedOversized || 0) + 1;
+          continue;
+        }
         stats.advertisersFound++;
         try {
           // Merge Apollo's switchboard if our discovery didn't have one
           const merged = {
             ...cand,
             phone: cand.phone || orgEnrich.phone || "",
-            employees: cand.employees || orgEnrich.employees || null,
+            // Prefer enrich's headcount — search's number is often missing
+            employees: enrichedEmp || null,
             industry: cand.industry || orgEnrich.industry || "",
             city: cand.city || orgEnrich.city || "",
           };
