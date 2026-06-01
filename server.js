@@ -1939,7 +1939,6 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
           seen.add(c.cvr); candidates.push(c);
         }
       }
-      }
       const shortfall = candidates.length;
       const safetyFloorCount = candidates.filter((c) => c._safetyFloor).length;
 
