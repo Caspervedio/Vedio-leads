@@ -3226,7 +3226,7 @@ function openDiscoveryDetail(cvr){
           <div style="font-size:13px;font-weight:700;color:#fff">${e(p.name||'—')}</div>
           ${p.title?`<div style="font-size:11px;color:var(--w55)">${e(p.title)}</div>`:''}
         </div>
-        ${p.phone?`<a href="tel:${p.phone}" style="color:var(--purple-light);font-size:13px;font-weight:600;text-decoration:none">${e(p.phone)}</a>`:''}
+        ${p.phone?`<button onclick="ringNow('${e(p.phone)}','','${e(p.name||'')}')" title="Ring via CloudTalk" style="all:unset;cursor:pointer;color:var(--purple-light);font-size:13px;font-weight:600">${e(p.phone)}</button>`:''}
         ${p.email?`<a href="mailto:${p.email}" style="color:var(--purple-light);font-size:12px;text-decoration:none">${e(p.email)}</a>`:''}
       </div>`).join('')
     : `<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:18px;text-align:center">
@@ -5284,7 +5284,7 @@ function renderAutodialerPage(){
           // company). In archive mode, show a "Genopret" button instead.
           // Phone — loud and clear: this is the number that gets dialed.
           const phoneDisplay = l.phone
-            ? `<a href="tel:${e(l.phone)}" onclick="event.stopPropagation()" style="font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd;text-decoration:none;letter-spacing:0.3px">${e(l.phone)}</a>`
+            ? `<button onclick="event.stopPropagation();ringNow('${e(l.phone)}','${e(l.cvr||'')}','${e(l.name||'')}')" title="Ring via CloudTalk" style="all:unset;cursor:pointer;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd;letter-spacing:0.3px">${e(l.phone)}</button>`
             : `<span style="font-size:11px;color:#fca5a5">ingen tlf</span>`;
           const lastCell = showArchive
             ? `<button onclick="event.stopPropagation();adRestoreLead('${e(l.cvr)}')" style="background:rgba(52,211,153,0.15);border:1px solid rgba(52,211,153,0.3);color:#6ee7b7;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;padding:5px 11px;border-radius:7px;cursor:pointer">↻ Genopret</button>`
@@ -5402,6 +5402,44 @@ function toggleSwitchboard(){
   if(body) body.style.display = window._cockpitSwitchboardMin?'none':'';
   // Flip the caret in the header without a full re-render.
   if(typeof renderCockpit==='function' && _cockpit && _cockpit.open) renderCockpit();
+}
+
+// Trigger a CloudTalk click-to-call. Never falls back to tel: (the OS
+// FaceTime/Phone app shouldn't intercept these — calls must go through
+// CloudTalk so the call lands on Nicolas's softphone and is recorded).
+// When CloudTalk says the agent isn't online, surface a clear message
+// pointing to the softphone instead of failing silently.
+async function ringNow(phone, cvr, leadName){
+  if(!phone){ showToast('Intet nummer på leadet'); return; }
+  try{
+    softphoneOnCallStart(leadName||phone);
+  }catch{}
+  try{
+    const r=await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone, cvr: cvr||''})});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){ showToast(`📞 CloudTalk ringer ${leadName?(' '+leadName):''}…`.trim()); return; }
+    if(r.status===503){
+      // Make the offline message highly visible (banner, not just a toast)
+      // — it's the most common cause of "click-to-call doesn't work".
+      showCloudTalkOfflineBanner(d.error||'Log ind i softphonen og sæt status til Online.');
+      return;
+    }
+    showToast('CloudTalk fejl: '+(d.error||'kunne ikke ringe'));
+  }catch(ex){
+    showToast('Netværksfejl: '+ex.message);
+  }
+}
+// Big yellow banner that points the SDR to the softphone when CloudTalk
+// rejects click-to-call. Auto-dismisses after 8s or on click.
+function showCloudTalkOfflineBanner(msg){
+  document.getElementById('ct-offline-banner')?.remove();
+  const el=document.createElement('div');
+  el.id='ct-offline-banner';
+  el.style.cssText='position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:1200;background:#1e1410;border:1px solid rgba(251,146,60,0.55);border-radius:12px;padding:14px 18px;color:#fdba74;font-size:13px;line-height:1.4;max-width:520px;box-shadow:0 12px 40px rgba(0,0,0,0.55),0 0 24px rgba(251,146,60,0.25);font-family:"Outfit",sans-serif;cursor:pointer';
+  el.innerHTML=`<div style="display:flex;align-items:flex-start;gap:10px"><span style="font-size:18px">⚠</span><div style="flex:1"><div style="font-weight:800;color:#fb923c;margin-bottom:3px">Softphone er ikke online</div><div>${e(msg)}</div></div></div>`;
+  el.onclick=()=>el.remove();
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 8000);
 }
 
 // Edit the phone number the autodialer/cockpit will call for a lead.
@@ -5758,7 +5796,7 @@ function renderCockpitDetail(c){
             <button onclick="toggleSwitchboard()" title="Minimér / vis switchboard" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;line-height:1;padding:0">${window._cockpitSwitchboardMin?'▸':'▾'}</button>
             <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase">Ring til switchboard — bed om</div>
           </div>
-          ${c.ph?`<a href="tel:${c.ph}" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:6px 11px;font-size:12px;font-weight:700;text-decoration:none;font-family:monospace">📞 ${fp(c.ph)}</a>`:''}
+          ${c.ph?`<button onclick="ringNow('${e(c.ph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring via CloudTalk" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;font-family:monospace">📞 ${fp(c.ph)}</button>`:''}
         </div>
         <div id="cockpit-switchboard-body" style="${window._cockpitSwitchboardMin?'display:none':''}">
         ${pending?`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)"><span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Apollo beriger — kontakter klar om få sekunder…</div>`:contacts.length?contacts.map((p,i)=>`
@@ -5790,10 +5828,10 @@ function renderCockpitDetail(c){
         <div style="flex:1;min-width:0">
           <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)}</div>
           ${cph
-            ? `<a href="tel:${e(cph)}" style="font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;text-decoration:none;line-height:1.1">${fp(cph)}</a>`
+            ? `<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring via CloudTalk">${fp(cph)}</button>`
             : `<div style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer — ret det på lead-rækken</div>`}
         </div>
-        ${cph?`<a href="tel:${e(cph)}" title="Ring" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;text-decoration:none;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</a>`:''}
+        ${cph?`<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring via CloudTalk" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;border:none;cursor:pointer;font-family:'Outfit',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</button>`:''}
       </div>`; })()}
 
       <!-- Post-call disposition. Required before next call — guarded by
@@ -5924,15 +5962,19 @@ async function cockpitStartDialer(){
     if(r.ok){
       showToast(`📞 CloudTalk ringer ${c.name}…`);
     } else if(r.status===503){
-      // Fallback — CloudTalk not ready. Use device's native tel: link.
-      window.location.href='tel:'+phone;
-      showToast(`📞 Ringer via enheden (${d.error||'CloudTalk klargøres'})`);
+      // CloudTalk rejected the click-to-call. Show the actionable banner
+      // (most common cause: agent not online in the softphone). DO NOT
+      // fall back to tel: — that opens FaceTime/Phone instead of routing
+      // through CloudTalk, which is never what the SDR wants.
+      _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
+      showCloudTalkOfflineBanner(d.error||'Log ind i softphonen og sæt status til Online.');
     } else {
+      _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
       showToast('CloudTalk fejl: '+(d.error||'kunne ikke ringe'));
     }
   }catch(ex){
-    window.location.href='tel:'+phone;
-    showToast('Fallback: ringer fra enheden ('+ex.message+')');
+    _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
+    showToast('Netværksfejl: '+ex.message);
   }
 }
 
@@ -6354,14 +6396,12 @@ async function cockpitManualCallConfirm(){
     const d=await r.json();
     if(r.ok){showToast('📞 CloudTalk ringer '+phone);return;}
     if(r.status===503){
-      window.location.href='tel:'+phone;
-      showToast('Ringer via enheden — CloudTalk klargøres');
+      showCloudTalkOfflineBanner(d.error||'Log ind i softphonen og sæt status til Online.');
       return;
     }
-    showToast('Fejl: '+(d.error||'ukendt'));
+    showToast('CloudTalk fejl: '+(d.error||'ukendt'));
   }catch(ex){
-    window.location.href='tel:'+phone;
-    showToast('Fallback: ringer fra enheden');
+    showToast('Netværksfejl: '+ex.message);
   }
 }
 function cockpitOpenManualSms(){

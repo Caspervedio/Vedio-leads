@@ -5361,7 +5361,15 @@ app.post("/api/cloudtalk/call", authMiddleware, async (req, res) => {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
-      return res.status(502).json({ error: `CloudTalk: ${r.status} ${JSON.stringify(d).slice(0, 200)}` });
+      // CloudTalk rejects click-to-call when the agent isn't Online in a
+      // softphone (web phone / desktop app / mobile). Surface an actionable
+      // message rather than the raw payload so the SDR knows what to do.
+      const msg = String((d.responseData && (d.responseData.message || d.responseData.error)) || d.error || d.message || "").toLowerCase();
+      const offline = /not.?logged|offline|active.?(call|interface).?(required|missing)|agent.*not.*online|status/.test(msg);
+      const friendly = offline
+        ? "Du er ikke online i CloudTalk-softphonen. Åbn softphonen (eller pop-ud-vinduet), log ind, og sæt status til Online — derefter virker click-to-call."
+        : `CloudTalk afviste opkaldet (${r.status}): ${JSON.stringify(d).slice(0, 160)}`;
+      return res.status(503).json({ error: friendly, configured: true, ready: !offline });
     }
     // Persist call init on the lead so the webhook can match call_ended.
     if (cvr) {
