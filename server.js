@@ -5700,7 +5700,10 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
       name: oppName,
       stage,
       amount: { amountMicros: 0, currencyCode: "DKK" },
-      source: "OTHER",
+      // Twenty's source enum: UNKNOWN / LINKEDIN / FACEBOOK / LEMLIST /
+      // WEBSITE. "UNKNOWN" is the right neutral default for Vedio Leads —
+      // our leads come from META scrape / Apollo / CSV / Datafordeler.
+      source: "UNKNOWN",
     };
     const r = await fetch(`${baseUrl}/rest/opportunities`, {
       method: "POST",
