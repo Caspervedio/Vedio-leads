@@ -1634,24 +1634,57 @@ function showCallPop(d){
   const hist = d.lead && d.lead.lastAction
     ? `<span style="color:var(--w55)">Sidste: ${e(lastActionLabel(d.lead.lastAction))}${d.lead.lastCallAt?` · ${new Date(d.lead.lastCallAt).toLocaleDateString('da-DK')}`:''}</span>`
     : (d.lead ? '<span style="color:var(--w35)">Ikke ringet før</span>' : '<span style="color:#fdba74">Nummer ikke i listen</span>');
+  // Chime on first appearance (different for inbound vs outbound).
+  try{ playCallChime(inbound?'inbound':'outbound'); }catch{}
+  // Inbound = bigger, greener border + pulsing glow; outbound = subtle.
+  const borderCol = inbound ? '#34d399' : 'rgba(124,58,237,0.5)';
+  const glowCol = inbound ? 'rgba(52,211,153,0.45)' : 'rgba(124,58,237,0.3)';
+  const labelCol = inbound ? '#34d399' : '#c4b5fd';
   const el=document.createElement('div');
   el.id='call-pop';
-  el.style.cssText='position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:1100;background:#14111f;border:1px solid rgba(124,58,237,0.5);border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,0.6),0 0 36px rgba(124,58,237,0.3);padding:16px 22px;min-width:440px;max-width:90vw;animation:softphoneFadeIn 0.2s';
+  el.style.cssText=`position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:1100;background:#14111f;border:1px solid ${borderCol};border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,0.6),0 0 36px ${glowCol};padding:${inbound?'20px 26px':'16px 22px'};min-width:${inbound?'520px':'440px'};max-width:90vw;animation:softphoneFadeIn 0.2s${inbound?';outline:0':''}`;
   el.innerHTML=`
-    <div style="display:flex;align-items:center;gap:14px">
-      <div style="font-size:30px">${inbound?'📲':'📞'}</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="font-size:${inbound?'36px':'30px'};${inbound?'animation:pulse-dot 1.2s ease-in-out infinite':''}">${inbound?'📲':'📞'}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:${inbound?'#34d399':'#c4b5fd'}">${inbound?'Indgående opkald':'Udgående opkald'}${d.lead&&d.lead.meta_advertiser?' · 🎯 Annoncør':''}</div>
-        <div style="font-size:17px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e(company)}</div>
+        <div style="font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:${labelCol}">${inbound?'Indgående opkald — ringer nu':'Udgående opkald'}${d.lead&&d.lead.meta_advertiser?' · 🎯 Annoncør':''}</div>
+        <div style="font-size:${inbound?'20px':'17px'};font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e(company)}</div>
         <div style="font-size:12px;color:var(--w55);font-family:monospace">${e(num)}${d.lead&&d.lead.city?` · ${e(d.lead.city)}`:''}</div>
         <div style="font-size:11px;margin-top:2px">${hist}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-        ${d.lead?`<button onclick="callPopOpenLead('${e(d.lead.cvr)}')" style="background:#7c3aed;border:0;color:#fff;border-radius:9px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Åbn lead ↗</button>`:''}
-        <button onclick="hideCallPop()" style="background:var(--w04);border:1px solid var(--w08);color:var(--w80);border-radius:9px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
+        ${inbound?`
+          <button onclick="callPopAccept('${d.lead?e(d.lead.cvr):''}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:0;color:#fff;border-radius:9px;padding:10px 18px;font-size:13px;font-weight:800;cursor:pointer;font-family:'Outfit',sans-serif;box-shadow:0 2px 8px rgba(34,197,94,0.35)" title="Åbn softphonen — tag opkaldet">✓ Tag opkaldet</button>
+          <button onclick="callPopDecline()" style="background:var(--w04);border:1px solid rgba(252,165,165,0.4);color:#fca5a5;border-radius:9px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Luk pop'en (CloudTalk afgør selv hvad der sker hvis du ikke tager)">✕ Afvis</button>
+        `:`
+          ${d.lead?`<button onclick="callPopOpenLead('${e(d.lead.cvr)}')" style="background:#7c3aed;border:0;color:#fff;border-radius:9px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Åbn lead ↗</button>`:''}
+          <button onclick="hideCallPop()" style="background:var(--w04);border:1px solid var(--w08);color:var(--w80);border-radius:9px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
+        `}
       </div>
     </div>`;
   document.body.appendChild(el);
+}
+// "Take the call" — focus the softphone (where the actual answer happens).
+// If a separate window is open use that; else expand the in-app dock.
+function callPopAccept(cvr){
+  hideCallPop();
+  if(window._softphoneWin && !window._softphoneWin.closed){
+    try{ window._softphoneWin.focus(); }catch{}
+  } else {
+    const dock=document.getElementById('softphone-dock');
+    const pill=document.getElementById('softphone-pill');
+    if(dock){ dock.style.display='flex'; localStorage.setItem('softphone_collapsed','0'); }
+    if(pill) pill.style.display='none';
+  }
+  if(cvr){ callPopOpenLead(cvr); }
+}
+// "Decline" just dismisses the pop. We can't actually reject the call from
+// outside CloudTalk — the call continues to ring until the agent picks up
+// or CloudTalk's routing rules kick in (voicemail / fail-over to mobile,
+// if configured in their dashboard).
+function callPopDecline(){
+  hideCallPop();
+  showToast('Pop lukket — CloudTalks regler håndterer opkaldet (voicemail / mobil-redirect)');
 }
 function callPopOpenLead(cvr){
   hideCallPop();
@@ -1696,10 +1729,41 @@ function softphoneOnCallStart(name){
     localStorage.setItem('softphone_collapsed','0');
   }
   softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
+  playCallChime('outbound');
   // Reset to "ready" after a generous window (CloudTalk doesn't emit
   // events to us cross-origin; this is a UI hint, not the truth).
   clearTimeout(window._softphoneStatusTimer);
   window._softphoneStatusTimer = setTimeout(()=>softphoneSetStatus('ready','klar'), 60000);
+}
+
+// Play a short notification chime when a call starts. Uses WebAudio so
+// there's no asset to host. Outbound = a short rising tone; inbound = a
+// distinct two-note pattern (so the SDR can tell ear-first).
+let _audioCtx=null;
+function _ac(){ if(!_audioCtx){ try{ _audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }catch{} } return _audioCtx; }
+function _beep(freq, durMs, startDelayMs, type='sine', gain=0.18){
+  const ctx=_ac(); if(!ctx) return;
+  if(ctx.state==='suspended') ctx.resume().catch(()=>{});
+  const t=ctx.currentTime + (startDelayMs||0)/1000;
+  const osc=ctx.createOscillator(); const g=ctx.createGain();
+  osc.type=type; osc.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + durMs/1000);
+  osc.connect(g); g.connect(ctx.destination);
+  osc.start(t); osc.stop(t + durMs/1000 + 0.05);
+}
+function playCallChime(kind){
+  // Skip if the user has muted via the toggle (localStorage)
+  if(localStorage.getItem('mute_call_chime')==='1') return;
+  if(kind==='inbound'){
+    // Two-note rising pattern: 660 → 880 Hz
+    _beep(660, 180, 0, 'sine', 0.22);
+    _beep(880, 220, 200, 'sine', 0.22);
+  } else {
+    // Outbound: single soft beep
+    _beep(740, 160, 0, 'sine', 0.18);
+  }
 }
 async function fetchOwners(){
   try{
@@ -5287,7 +5351,7 @@ async function openActivityLog(){
       const r=await fetch('/api/activity?limit=150',{headers:ah()});
       const d=await r.json();
       if(!d.events||!d.events.length){ feed.innerHTML='<div style="color:var(--w55);padding:24px;text-align:center">Ingen aktivitet endnu. Importér en CSV eller vent på næste agent-kørsel.</div>'; return; }
-      const icon={ 'csv-import':'📥','promote':'▶','advertiser':'🎯','scraper':'🔍','call':'📞','enrich':'✨' };
+      const icon={ 'csv-import':'📥','promote':'▶','advertiser':'🎯','scraper':'🔍','call':'📞','call-in':'📲','call-out':'📞','missed-call':'📵','enrich':'✨','ads-check':'🎯' };
       feed.innerHTML=d.events.map(ev=>{
         const t=new Date(ev.at);
         const when=isNaN(t.getTime())?'':t.toLocaleString('da-DK',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
@@ -6014,18 +6078,73 @@ function cockpitOpenCallbackPicker(c){
     { lbl:'i morgen kl. 09',  ms: 0, tomorrow:true },
     { lbl:'Aldrig — bare arkivér', ms: -1 },
   ];
+  // Default custom-time = tomorrow 10:00 local
+  const def=new Date(); def.setDate(def.getDate()+1); def.setHours(10,0,0,0);
+  const pad=(n)=>String(n).padStart(2,'0');
+  const defStr=`${def.getFullYear()}-${pad(def.getMonth()+1)}-${pad(def.getDate())}T${pad(def.getHours())}:${pad(def.getMinutes())}`;
   const bg=document.createElement('div');
   bg.className='modal-bg'; bg.id='cb-modal';
-  bg.innerHTML=`<div class="modal" style="width:380px;padding:22px 26px">
+  bg.innerHTML=`<div class="modal" style="width:420px;padding:22px 26px">
     <h3 style="margin:0 0 4px;font-size:16px;color:#fff">Ring tilbage</h3>
     <p style="font-size:12px;color:var(--w55);margin:0 0 16px;line-height:1.5">Hvornår skal <strong style="color:#fff">${e(c.name)}</strong> tilbage i kø?</p>
-    <div style="display:flex;flex-direction:column;gap:6px">
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
       ${opts.map((o,i)=>`<button onclick="cockpitSetCallback(${i})" style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer;text-align:left" onmouseover="this.style.borderColor='rgba(124,58,237,0.4)'" onmouseout="this.style.borderColor='var(--w08)'">${e(o.lbl)}<span style="color:var(--w35);font-size:11px">→</span></button>`).join('')}
+    </div>
+    <div style="font-size:10.5px;font-weight:800;color:var(--w35);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px">Vælg eget tidspunkt</div>
+    <input id="cb-custom" type="datetime-local" value="${defStr}" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:9px 12px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;margin-bottom:10px;color-scheme:dark">
+    <label style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--w80);cursor:pointer;margin-bottom:14px;user-select:none">
+      <input type="checkbox" id="cb-gcal" checked style="accent-color:#7c3aed"> Tilføj som event i Google Calendar
+    </label>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('cb-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer">Annullér</button>
+      <button onclick="cockpitSetCustomCallback()" style="background:#7c3aed;border:none;border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">📅 Planlæg callback</button>
     </div>
   </div>`;
   bg.onclick=(ev)=>{if(ev.target===bg)bg.remove();};
   document.body.appendChild(bg);
   _cockpit.callbackOptions = opts;
+}
+
+// Custom date/time + optional Google Calendar event. Uses a calendar.google.com
+// URL (no OAuth needed) — opens a pre-filled event the SDR confirms with one click.
+async function cockpitSetCustomCallback(){
+  const c=cockpitCurrent();if(!c)return;
+  const v=document.getElementById('cb-custom')?.value;
+  const gcal=document.getElementById('cb-gcal')?.checked;
+  if(!v){ showToast('Vælg dato + tid'); return; }
+  const when=new Date(v);
+  if(isNaN(when.getTime()) || when.getTime() < Date.now()-60000){ showToast('Tidspunktet skal være i fremtiden'); return; }
+  document.getElementById('cb-modal')?.remove();
+  const callbackAt=when.toISOString();
+  try{
+    await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({callback_at:callbackAt})});
+    c.callback_at=callbackAt;
+    showToast(`📅 Callback planlagt ${humanFutureTime(callbackAt)}`);
+  }catch(ex){showToast('Fejl: '+ex.message); return;}
+  if(gcal) openGoogleCalendarEvent(c, when);
+  setTimeout(()=>{ if(_cockpit.dialerState!=='paused' && _cockpit.dialerState!=='idle') cockpitAdvanceAfterDisposition(); },300);
+}
+
+// Open a Google Calendar event-creation URL pre-filled with lead details.
+// Default duration: 30 min. The SDR clicks "Save" in Google to add it to
+// their primary calendar — no OAuth/token storage needed.
+function openGoogleCalendarEvent(c, when){
+  const fmt=(d)=>d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z');
+  const end=new Date(when.getTime() + 30*60*1000);
+  const phone = c.phone || c.ph || '';
+  const title = `Ring tilbage: ${c.name||'lead'}`;
+  const details = [
+    phone?`📞 ${phone}`:'',
+    c.cvr?`CVR: ${c.cvr}`:'',
+    c.web?`Web: ${c.web}`:'',
+    c.em?`Email: ${c.em}`:'',
+    `\nAutomatisk planlagt i Vedio Leads.`,
+  ].filter(Boolean).join('\n');
+  const params=new URLSearchParams({
+    action:'TEMPLATE', text:title, dates:`${fmt(when)}/${fmt(end)}`, details,
+    location: phone || '',
+  });
+  window.open(`https://calendar.google.com/calendar/render?${params}`, '_blank', 'noopener');
 }
 
 async function cockpitSetCallback(idx){

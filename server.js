@@ -1207,6 +1207,7 @@ function loadDiscoveryPoolCandidates() {
 const DISCOVERY_CONFIG_DEFAULTS = {
   enabled: true,           // master switch — UI toggle flips this; worker exits early when false
   minEmployees: 3,         // tier-1 gate (confirmed headcount)
+  maxEmployees: 250,       // SMB ceiling — DK SMB threshold, filters out enterprises
   icpMinAds: 3,            // min Meta-ads to qualify as ICP
   icpMinEmployees: 5,      // min employees (when known) for ICP
   scrapeLimit: 1000,       // max companies scraped per run
@@ -5488,7 +5489,7 @@ async function fetchLatestCloudTalkCall() {
 // GET /api/activity — recent system activity feed. Merges the logged
 // events (imports, promotions, enrichment, calls) with the META scraper's
 // run history from state.json, newest first.
-app.get("/api/activity", authMiddleware, (req, res) => {
+app.get("/api/activity", authMiddleware, async (req, res) => {
   let events = [];
   try { events = JSON.parse(fs.readFileSync(ACTIVITY_FILE, "utf8")) || []; } catch {}
   // Fold in scraper runs
@@ -5503,6 +5504,35 @@ app.get("/api/activity", authMiddleware, (req, res) => {
       });
     }
   } catch {}
+  // Fold in recent CloudTalk calls — both answered + missed (talking_time=0).
+  // Lets the SDR see if anyone called back while they were away.
+  if (isCloudTalkConfigured()) {
+    try {
+      const r = await fetch(`${CLOUDTALK_API_BASE}/calls/index.json?limit=20`, {
+        headers: { Authorization: cloudTalkAuthHeader() },
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const calls = (j?.responseData?.data || []).map((row) => row.Cdr || row).filter(Boolean);
+        for (const c of calls) {
+          const inbound = /incom/i.test(c.type || "");
+          const talked = Number(c.talking_time || 0) > 0;
+          const missed = inbound && !talked;
+          const num = c.public_external || "";
+          const match = num ? findLeadByPhone(num) : null;
+          const who = match?.lead?.name || c.contact_name || num || "Ukendt nummer";
+          events.push({
+            at: c.started_at || c.ended_at,
+            type: missed ? "missed-call" : (inbound ? "call-in" : "call-out"),
+            message: missed
+              ? `📵 Missed ${inbound ? "indgående" : "udgående"}: ${who} (${num})`
+              : `📞 ${inbound ? "Indgående" : "Udgående"}: ${who} — ${talked ? Math.round(c.talking_time) + "s" : "voicemail"}`,
+            meta: { callId: c.id, number: num, cvr: match?.lead?.cvr || null, missed },
+          });
+        }
+      }
+    } catch (e) { /* network blip is fine */ }
+  }
   events.sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
   res.json({ events: events.slice(0, Number(req.query.limit) || 150) });
 });
