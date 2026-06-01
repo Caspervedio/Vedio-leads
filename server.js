@@ -1873,27 +1873,44 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       for (const c of icpKlar) { candidates.push(c); claimed.add(c.cvr); }
       const icpPushed = icpKlar.length;
 
-      // STRICT MODE — only promote confirmed Meta advertisers (icpFit from
-      // the scraper). The broadened tier + deep reserve are SKIPPED so the
-      // queue stays pure-quality. Disable by setting
-      // STRICT_ADVERTISER_MODE=false in env to restore the older behavior
-      // (broadened backfill + 100k pool.json reserve) if you ever need volume.
+      // STRICT MODE — only promote confirmed Meta advertisers (icpFit). The
+      // broadened tier + deep reserve are SKIPPED in normal operation.
+      //
+      // SAFETY FLOOR — if the SDR's dialable count drops below
+      // MIN_DIALABLE_FLOOR (default 40), strict mode TEMPORARILY allows the
+      // broadened tier in — JUST enough to refill the floor. Keeps quality
+      // on a normal day, prevents starvation on a bad-scraper day.
+      //
+      // STRICT_ADVERTISER_MODE=false disables strict entirely (legacy
+      // volume-favoring behavior with full broadened + 100k reserve).
       const STRICT_MODE = process.env.STRICT_ADVERTISER_MODE !== "false";
+      const MIN_DIALABLE_FLOOR = Math.max(0, Number(process.env.MIN_DIALABLE_FLOOR) || 40);
       let broadenedNeed = 0;
-      if (!STRICT_MODE) {
-      // TIER 2 — broadened backfill: only if the visible queue is below
-      // the target. Phone hit-rate ~⅓, so we gross up 3× the shortfall,
-      // capped per run to keep enrichment manageable.
-      const dialableShortfall = Math.max(0, targetSize - actionable.length - icpPushed);
+      let broadenedReason = "";
       const PER_RUN_CAP = 50;
+      if (!STRICT_MODE) {
+      // Legacy: fill toward the full target.
+      const dialableShortfall = Math.max(0, targetSize - actionable.length - icpPushed);
       broadenedNeed = Math.min(dialableShortfall * 3, PER_RUN_CAP);
+      broadenedReason = broadenedNeed > 0 ? "volume-target" : "";
+      } else {
+      // Strict + safety: refill ONLY toward the floor, not the full target.
+      const floorShortfall = Math.max(0, MIN_DIALABLE_FLOOR - actionable.length - icpPushed);
+      if (floorShortfall > 0) {
+        broadenedNeed = Math.min(floorShortfall * 3, PER_RUN_CAP);
+        broadenedReason = "safety-floor";
+      }
+      }
       if (broadenedNeed > 0) {
         const broadened = Object.values(pool)
           .filter((c) => queueQualifies(c) && underMaxEmp(c) && !claimed.has(c.cvr))
           .filter((c) => !c.pushed_to_cloudtalk_at && !c.twenty_opportunity_id)
           .sort((a, b) => queueScore(b) - queueScore(a))
           .slice(0, broadenedNeed);
-        for (const c of broadened) { candidates.push(c); claimed.add(c.cvr); }
+        for (const c of broadened) {
+          c._safetyFloor = (broadenedReason === "safety-floor"); // tag for promote loop
+          candidates.push(c); claimed.add(c.cvr);
+        }
       }
       // DEEP RESERVE — if state.json doesn't have enough unclaimed
       // qualifiers (it no longer grows while the scraper is IP-blocked),
@@ -1912,16 +1929,19 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
         for (const c of reserve) {
           if (candidates.length >= totalCap) break;
           if (!eligible(c) || !tier1(c)) continue;
+          c._safetyFloor = (broadenedReason === "safety-floor");
           seen.add(c.cvr); candidates.push(c);
         }
         for (const c of reserve) {
           if (candidates.length >= totalCap) break;
           if (!eligible(c) || tier1(c)) continue;
+          c._safetyFloor = (broadenedReason === "safety-floor");
           seen.add(c.cvr); candidates.push(c);
         }
       }
-      } // /STRICT_MODE
+      }
       const shortfall = candidates.length;
+      const safetyFloorCount = candidates.filter((c) => c._safetyFloor).length;
 
       // Promote them inline (mirrors /api/leads/promote logic)
       const nowIso = new Date().toISOString();
@@ -1945,6 +1965,9 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
           addedAt: nowIso,
           promotedFromReviewQueue: true,
           promotedByCron: true,
+          // Safety-floor leads aren't confirmed advertisers — flagged so the
+          // SDR + activity log can tell which are quality vs supply-fillers.
+          safety_floor: c._safetyFloor === true,
         });
         newCvrs.push(c.cvr);
       }
@@ -1959,8 +1982,11 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       }
       stats.usersProcessed++;
       if (newCvrs.length > 0) {
-        const icpNote = icpPushed > 0 ? ` (🎯 ${icpPushed} bekræftede annoncører fra Meta-scrape)` : "";
-        logActivity("promote", `Autodialer påfyldt: ${newCvrs.length} nye leads til ${userId}${icpNote}`, { userId, icpKlar: icpPushed });
+        const icpNote = icpPushed > 0 ? ` · 🎯 ${icpPushed} bekræftede annoncører` : "";
+        const safetyNote = safetyFloorCount > 0 ? ` · ⚠ ${safetyFloorCount} fra safety-floor (queue under gulv)` : "";
+        logActivity("promote", `Autodialer påfyldt: ${newCvrs.length} nye leads til ${userId}${icpNote}${safetyNote}`, {
+          userId, icpKlar: icpPushed, safetyFloor: safetyFloorCount,
+        });
       }
       console.log("[autodialer-maintain] user", userId, "promoted", newCvrs.length, "(icp-klar:", icpPushed, ") target", targetSize);
     } catch (e) {
