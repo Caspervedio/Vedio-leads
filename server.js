@@ -5179,6 +5179,266 @@ app.post("/api/cron/check-advertisers", async (req, res) => {
   res.json({ ok: true, stats });
 });
 
+// ─── APOLLO DISCOVERY ─────────────────────────────────────────────────
+// Parallel lead-discovery source to Apify (the Meta-ads scraper). Where
+// Apify finds advertisers by scanning Meta's Ad Library bottom-up (CVR
+// pool → who advertises), this path goes top-down via Apollo's company
+// database (DK SMB → does Apollo's tech-signal flag them as a Meta
+// advertiser?).
+//
+// Cost model:
+//   1. Apollo mixed_companies/search — FREE (returns 25 companies/page,
+//      includes domain + employees + industry)
+//   2. Apollo organizations/enrich on each domain — FREE (returns
+//      metaAdvertiser signal from technologies array)
+//   3. Per Apollo-positive lead: people/match (1 credit each, ~5 people)
+//      runs ASYNC via the existing drain-enrichment cron — not charged
+//      until the lead actually gets enriched
+//
+// Volume target: ~100-150 candidates scanned per run × ~15-25% Meta
+// advertiser hitrate = 15-30 fresh ICP leads/day pushed into the pipeline.
+// Combined with Apify's ~5/day, gets us toward the 30/day target.
+//
+// Deduplication: a state file tracks already-scanned Apollo org_ids so
+// we don't pay for the same domain twice. Cron rotates through Apollo's
+// result pages by maintaining a pageOffset cursor.
+
+const APOLLO_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "apollo_discover.json");
+
+// ICP industry keywords — chosen for likelihood of Meta-advertising activity
+// among DK SMBs. Apollo's keyword tags are looser than DB07 codes; these
+// catch the bulk of e-commerce, services, and SMB consumer brands.
+const APOLLO_DISCOVER_KEYWORDS = [
+  "e-commerce", "retail", "consumer goods", "apparel", "fashion",
+  "beauty", "health and wellness", "fitness", "food and beverage",
+  "marketing", "advertising", "design", "interior design",
+  "consulting", "saas", "education", "hospitality", "tourism",
+];
+
+// Apollo SMB sweet spot — matches Vedio's ICP (5-100 employees).
+const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["5,10", "11,20", "21,50", "51,100"];
+
+function loadApolloDiscoverState() {
+  try {
+    if (fs.existsSync(APOLLO_DISCOVER_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(APOLLO_DISCOVER_STATE_FILE, "utf8"));
+    }
+  } catch (e) { console.warn("[apollo-discover] state load:", e.message); }
+  return { scannedDomains: {}, scannedOrgIds: {}, pageCursor: 1, keywordCursor: 0, lastRunAt: null };
+}
+
+function saveApolloDiscoverState(s) {
+  fs.mkdirSync(path.dirname(APOLLO_DISCOVER_STATE_FILE), { recursive: true });
+  fs.writeFileSync(APOLLO_DISCOVER_STATE_FILE, JSON.stringify(s, null, 2));
+}
+
+// Single page of Apollo's company search. Returns orgs[] with name+domain+
+// employees+industry. Free — no credits charged. ~25 results per page.
+async function apolloSearchAdvertiserCandidates({ page, perPage = 25, employeeRanges, keywords }) {
+  const body = {
+    page: Math.max(1, page || 1),
+    per_page: Math.min(100, perPage),
+    organization_locations: ["Denmark"],
+    organization_num_employees_ranges: employeeRanges,
+  };
+  // Mix in keyword filter when provided. Apollo's keyword search is OR
+  // across the list — pass one keyword per call to keep result quality up.
+  if (keywords && keywords.length) {
+    body.q_organization_keyword_tags = keywords;
+  }
+  const r = await fetch(`${APOLLO_API_BASE}/mixed_companies/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": process.env.APOLLO_API_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Apollo discover-search ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const d = await r.json();
+  const orgs = d.organizations || d.accounts || [];
+  return orgs.map((o) => ({
+    id: o.id || o.organization_id || null,
+    name: o.name || "",
+    domain: String(o.website_url || o.primary_domain || "")
+      .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim(),
+    employees: o.estimated_num_employees || o.employees || null,
+    industry: o.industry || (o.industries && o.industries[0]) || "",
+    phone: o.primary_phone?.sanitized_number || o.phone || "",
+    linkedin: o.linkedin_url || "",
+    city: o.city || o.primary_city || "",
+  }));
+}
+
+// Push an Apollo-discovered advertiser into u1's leads pipeline. Same shape
+// as the META-scraper path so the autodialer/cockpit/drain-enrichment all
+// treat it uniformly. Uses synthetic id "apollo-<orgId>" as the cvr (real
+// DK CVRs are 8 digits — no collision).
+function appendApolloLeadToUser(userId, org, orgEnrich) {
+  const ud = loadUserData(userId);
+  if (!ud.leads) ud.leads = [];
+  const syntheticCvr = `apollo-${org.id}`;
+  // Dedupe — skip if we already have this org under either id form
+  if (ud.leads.some((l) => l.cvr === syntheticCvr)) return false;
+  if (org.domain && ud.leads.some((l) => (l.web || "").toLowerCase() === org.domain.toLowerCase())) return false;
+  ud.leads.push({
+    cvr: syntheticCvr,
+    name: org.name,
+    addr: "",
+    zip: "",
+    city: org.city,
+    ph: org.phone || "",
+    em: "",
+    web: org.domain,
+    ind: org.industry,
+    ic: "",
+    emp: typeof org.employees === "number" ? String(org.employees) : "",
+    emps: org.employees || null,
+    st: "aktiv",
+    yr: "",
+    form: "",
+    eq: 0,
+    res: 0,
+    omsaetning: 0,
+    // Discovery metadata
+    source: "apollo-discover",
+    icpFit: true,
+    meta_advertiser: !!(orgEnrich && orgEnrich.metaAdvertiser),
+    ad_signals: orgEnrich?.metaAdSignals || [],
+    apollo_company: orgEnrich || null,
+    apollo_enrichment_pending: isApolloConfigured(),
+    apollo_enriched_at: null,
+    discovered_at: new Date().toISOString(),
+    // Pipeline state
+    pushed_to_cloudtalk_at: null,
+    twenty_opportunity_id: null,
+  });
+  saveUserData(userId, ud);
+  return true;
+}
+
+app.post("/api/cron/apollo-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
+
+  // Per-run budget. 4 pages × 25 = 100 candidates → ~15-25 expected positives.
+  // Capped at 200 candidates to avoid one bad run torching credits.
+  const PAGES_PER_RUN = Math.max(1, Math.min(8, Number(req.query.pages) || 4));
+  const TARGET_USER = (req.query.userId || "u1").toString();
+
+  const state = loadApolloDiscoverState();
+  const stats = {
+    pagesScanned: 0,
+    candidatesSeen: 0,
+    skippedDuplicates: 0,
+    enrichmentChecked: 0,
+    advertisersFound: 0,
+    leadsAppended: 0,
+    errors: 0,
+    keywordsUsed: [],
+  };
+
+  for (let p = 0; p < PAGES_PER_RUN; p++) {
+    // Rotate through keywords + pages so each run scans a different slice
+    // of the DK SMB universe. State persists between runs so we don't
+    // repeat coverage until we've worked through the matrix.
+    const kw = APOLLO_DISCOVER_KEYWORDS[state.keywordCursor % APOLLO_DISCOVER_KEYWORDS.length];
+    const page = state.pageCursor;
+    stats.keywordsUsed.push(`${kw}#${page}`);
+
+    let candidates = [];
+    try {
+      candidates = await apolloSearchAdvertiserCandidates({
+        page,
+        perPage: 25,
+        employeeRanges: APOLLO_DISCOVER_EMPLOYEE_RANGES,
+        keywords: [kw],
+      });
+      stats.pagesScanned++;
+    } catch (e) {
+      console.warn("[apollo-discover] search failed:", e.message);
+      stats.errors++;
+      // Move cursor forward anyway so we don't loop on the same broken slice.
+    }
+
+    // Advance cursor — page+1 within the keyword until we exhaust pages,
+    // then switch keyword. Apollo caps at ~10 pages of 25 = 250 results
+    // before refusing further pagination on the same query.
+    if (candidates.length < 25 || state.pageCursor >= 10) {
+      state.pageCursor = 1;
+      state.keywordCursor = (state.keywordCursor + 1) % APOLLO_DISCOVER_KEYWORDS.length;
+    } else {
+      state.pageCursor++;
+    }
+
+    // For each candidate: skip if we've already checked the domain, otherwise
+    // call apolloOrgEnrich (FREE) to check the metaAdvertiser signal.
+    for (const cand of candidates) {
+      stats.candidatesSeen++;
+      const dKey = (cand.domain || "").toLowerCase();
+      if (!dKey || !cand.id) { stats.skippedDuplicates++; continue; }
+      if (state.scannedDomains[dKey] || state.scannedOrgIds[cand.id]) {
+        stats.skippedDuplicates++;
+        continue;
+      }
+      state.scannedDomains[dKey] = new Date().toISOString();
+      state.scannedOrgIds[cand.id] = true;
+
+      let orgEnrich = null;
+      try {
+        orgEnrich = await apolloOrgEnrich(cand.domain);
+        stats.enrichmentChecked++;
+        await new Promise((r) => setTimeout(r, 200)); // gentle on Apollo
+      } catch (e) {
+        console.warn("[apollo-discover] org-enrich failed:", cand.domain, e.message);
+        stats.errors++;
+        continue;
+      }
+
+      if (orgEnrich && orgEnrich.metaAdvertiser) {
+        stats.advertisersFound++;
+        try {
+          // Merge Apollo's switchboard if our discovery didn't have one
+          const merged = {
+            ...cand,
+            phone: cand.phone || orgEnrich.phone || "",
+            employees: cand.employees || orgEnrich.employees || null,
+            industry: cand.industry || orgEnrich.industry || "",
+            city: cand.city || orgEnrich.city || "",
+          };
+          const added = appendApolloLeadToUser(TARGET_USER, merged, orgEnrich);
+          if (added) {
+            stats.leadsAppended++;
+            logActivity(
+              "advertiser",
+              `🎯 Apollo discovery: ${cand.name} (${(orgEnrich.metaAdSignals || []).join(", ")})`,
+              { domain: cand.domain, userId: TARGET_USER, source: "apollo-discover" },
+            );
+          }
+        } catch (e) {
+          console.warn("[apollo-discover] append failed:", cand.name, e.message);
+          stats.errors++;
+        }
+      }
+    }
+  }
+
+  state.lastRunAt = new Date().toISOString();
+  saveApolloDiscoverState(state);
+  logActivity(
+    "discovery",
+    `Apollo-discover: ${stats.advertisersFound} annoncører fundet på ${stats.candidatesSeen} kandidater · ${stats.leadsAppended} tilføjet til ${TARGET_USER}`,
+    { stats },
+  );
+  console.log("[apollo-discover] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
+});
+
 // ─── KASPR ENRICHMENT (Phase B) ─────────────────────────────────────────
 // Turns CVR+company-name into decision-maker contacts (phone + email +
 // LinkedIn). Without this, ~70% of META-discovered leads have no phone
