@@ -5103,7 +5103,7 @@ function renderAutodialerPage(){
   const inWindow = (iso,ms)=>iso && (now - new Date(iso).getTime()) < ms;
 
   const sessionCounts = (windowMs)=>{
-    const c = { dialed:0, interested:0, no_answer:0, not_relevant:0, sms:0, twentyPushed:0 };
+    const c = { dialed:0, interested:0, no_answer:0, not_relevant:0, sms:0, follow_up:0, twentyPushed:0 };
     for(const l of leads){
       // "Dialed" = has a lastCallAt within the window
       if(windowMs===Infinity ? !!l.lastCallAt : inWindow(l.lastCallAt, windowMs)) c.dialed++;
@@ -5112,6 +5112,7 @@ function renderAutodialerPage(){
       const inDisp = windowMs===Infinity ? !!l.lastAction : inWindow(dispTime, windowMs);
       if(inDisp){
         if(l.lastAction==='interested') c.interested++;
+        else if(l.lastAction==='follow-up') c.follow_up++;
         else if(l.lastAction==='no-answer') c.no_answer++;
         else if(l.lastAction==='not-relevant') c.not_relevant++;
         else if(l.lastAction==='sms') c.sms++;
@@ -5476,6 +5477,7 @@ function renderAdActivityTable(today, week, all){
   const rows = [
     { lbl:'📞 Ringet',         t:today.dialed,        w:week.dialed,        a:all.dialed,        color:'#fff' },
     { lbl:'✓ Interesseret',    t:today.interested,    w:week.interested,    a:all.interested,    color:'#6ee7b7' },
+    { lbl:'📅 Follow-up planlagt', t:today.follow_up,  w:week.follow_up,     a:all.follow_up,     color:'#c4b5fd' },
     { lbl:'💬 SMS sendt',       t:today.sms,           w:week.sms,           a:all.sms,           color:'#a78bfa' },
     { lbl:'✕ Ingen svar',      t:today.no_answer,     w:week.no_answer,     a:all.no_answer,     color:'#60a5fa' },
     { lbl:'– Ikke relevant',   t:today.not_relevant,  w:week.not_relevant,  a:all.not_relevant,  color:'var(--w55)' },
@@ -5614,8 +5616,8 @@ function cockpitKeyHandler(ev){
   if(ev.key==='ArrowRight'){cockpitNext();ev.preventDefault();return;}
   if(ev.key==='ArrowLeft'){cockpitPrev();ev.preventDefault();return;}
   if(ev.key==='?'||(ev.key==='/'&&ev.shiftKey)){cockpitShowHelp();ev.preventDefault();return;}
-  if(ev.key>='1'&&ev.key<='4'){
-    const map={'1':'interested','2':'sms','3':'no-answer','4':'not-relevant'};
+  if(ev.key>='1'&&ev.key<='5'){
+    const map={'1':'interested','2':'sms','3':'no-answer','4':'not-relevant','5':'follow-up'};
     cockpitDisposition(map[ev.key]);
     ev.preventDefault();
   }
@@ -5690,10 +5692,11 @@ function renderCockpitQueue(){
   }).join('');
 }
 
-function lastActionLabel(a){return{'interested':'✓ Interesseret','sms':'💬 Sendt SMS','no-answer':'✕ Ingen svar','not-relevant':'– Ikke relevant'}[a]||a;}
+function lastActionLabel(a){return{'interested':'✓ Interesseret','follow-up':'📅 Follow-up planlagt','sms':'💬 Sendt SMS','no-answer':'✕ Ingen svar','not-relevant':'– Ikke relevant'}[a]||a;}
 function lastActionColor(a,which){
   const map={
     'interested':{bg:'rgba(52,211,153,0.18)',fg:'#34d399'},
+    'follow-up':{bg:'rgba(196,181,253,0.18)',fg:'#c4b5fd'},
     'sms':{bg:'rgba(167,139,250,0.18)',fg:'#a78bfa'},
     'no-answer':{bg:'rgba(96,165,250,0.18)',fg:'#60a5fa'},
     'not-relevant':{bg:'rgba(148,163,184,0.15)',fg:'#94a3b8'},
@@ -5835,26 +5838,53 @@ function renderCockpitDetail(c){
       </div>`; })()}
 
       <!-- Post-call disposition. Required before next call — guarded by
-           _cockpit.requireDisposition. Voicemail removed; SMS lives here
-           in slot 2 with the same icon-card style as the other actions. -->
+           _cockpit.requireDisposition. SMS lives here in slot 2 with the
+           same icon-card style as the other actions. Follow-up = "we
+           talked, schedule a follow-up call" (distinct from no-answer). -->
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Efter kald — vælg disposition</div>
-      <div id="cockpit-disposition-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
+      <div id="cockpit-disposition-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
         ${action('✓','Interesseret — Push til Twenty','1','cockpitDisposition(\'interested\')')}
+        ${action('📅','Vi talte — planlæg follow-up','5','cockpitDisposition(\'follow-up\')')}
         ${action('💬','Send SMS','2','cockpitDisposition(\'sms\')')}
         ${action('✕','Ingen svar → planlæg callback','3','cockpitDisposition(\'no-answer\')')}
         ${action('–','Ikke relevant → arkivér','4','cockpitDisposition(\'not-relevant\')')}
+      </div>
+      <!-- Always-available "schedule follow-up" — works before/during/after
+           a call, regardless of current disposition. Useful when an
+           Interesseret lead also wants a follow-up scheduled. -->
+      <div style="margin-bottom:18px;display:flex;justify-content:flex-end">
+        <button onclick="cockpitOpenCallbackPicker(cockpitCurrent())" title="Planlæg en follow-up uden at ændre disposition (også oven på Interesseret)" style="background:var(--w04);border:1px solid rgba(196,181,253,0.4);color:#c4b5fd;border-radius:9px;padding:7px 14px;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer">📅 Planlæg follow-up…</button>
       </div>
 
       <!-- Twenty push — manual trigger, NOT automatic on "Interesseret".
            Only enabled when lead is dispositioned as interested. -->
       ${c.lastAction==='interested' && !c.twenty_opportunity_id ? `
-        <div style="background:linear-gradient(135deg,rgba(96,165,250,0.10),rgba(96,165,250,0.02));border:1px solid rgba(96,165,250,0.30);border-radius:11px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+        <div style="background:linear-gradient(135deg,rgba(96,165,250,0.10),rgba(96,165,250,0.02));border:1px solid rgba(96,165,250,0.30);border-radius:11px;padding:14px 18px;margin-bottom:12px;display:flex;align-items:center;gap:14px">
           <span style="font-size:18px">🎯</span>
           <div style="flex:1">
             <div style="font-size:12.5px;font-weight:800;color:#fff">Klar til Twenty</div>
-            <div style="font-size:11px;color:var(--w55);margin-top:2px">Leadet er markeret som <strong style="color:#6ee7b7">Interesseret</strong>. Push manuelt til Twenty når du er klar — push'er ikke automatisk.</div>
+            <div style="font-size:11px;color:var(--w55);margin-top:2px">Leadet er markeret som <strong style="color:#6ee7b7">Interesseret</strong>. Push manuelt til Twenty når du er klar.</div>
           </div>
           <button onclick="cockpitPushToTwenty()" style="background:#60a5fa;border:none;border-radius:9px;padding:9px 16px;color:#0d0a14;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer">→ Push til Twenty</button>
+        </div>
+      `:''}
+      <!-- Interesseret + already pushed? Surface follow-up as the natural
+           next step so an interested customer gets a scheduled callback. -->
+      ${c.lastAction==='interested' && !c.callback_at ? `
+        <div style="background:linear-gradient(135deg,rgba(196,181,253,0.10),rgba(196,181,253,0.02));border:1px solid rgba(196,181,253,0.30);border-radius:11px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+          <span style="font-size:18px">📅</span>
+          <div style="flex:1">
+            <div style="font-size:12.5px;font-weight:800;color:#fff">Planlæg follow-up</div>
+            <div style="font-size:11px;color:var(--w55);margin-top:2px">Vil du ringe tilbage på et bestemt tidspunkt? Lægger sig oven på Interesseret — Twenty-push'en sker stadig.</div>
+          </div>
+          <button onclick="cockpitOpenCallbackPicker(cockpitCurrent())" style="background:#c4b5fd;border:none;border-radius:9px;padding:9px 16px;color:#0d0a14;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer">📅 Planlæg follow-up</button>
+        </div>
+      `:''}
+      <!-- Confirmation when a callback is scheduled. -->
+      ${c.callback_at ? `
+        <div style="background:rgba(196,181,253,0.10);border:1px solid rgba(196,181,253,0.30);border-radius:11px;padding:11px 16px;margin-bottom:18px;font-size:12px;color:#c4b5fd;display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <span>📅 Follow-up planlagt: <strong style="color:#fff">${new Date(c.callback_at).toLocaleString('da-DK',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</strong> · leadet er gemt og kommer tilbage til toppen af køen på tidspunktet</span>
+          <button onclick="cockpitOpenCallbackPicker(cockpitCurrent())" style="background:transparent;border:1px solid rgba(196,181,253,0.35);color:#c4b5fd;border-radius:7px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Ret tidspunkt</button>
         </div>
       `:''}
       ${c.twenty_opportunity_id ? `
@@ -6004,6 +6034,12 @@ async function cockpitDisposition(action){
     // question. Open the callback chooser; the lead gets a callback_at
     // timestamp + stays in the queue. Autodialer surfaces callbacks when
     // their time arrives.
+    cockpitOpenCallbackPicker(c);
+  } else if(action==='follow-up'){
+    // Talked to lead AND want a follow-up call later. Same picker as
+    // no-answer (lead reappears at top of queue when callback_at hits),
+    // but the disposition reads "📅 Follow-up planlagt" so stats /
+    // history reflect a real conversation, not a no-answer.
     cockpitOpenCallbackPicker(c);
   } else if(action==='interested'){
     showToast(`✓ Markeret som interesseret — klik "Push til Twenty" når du er klar (push'er ikke automatisk)`);
