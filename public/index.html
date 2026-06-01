@@ -5102,12 +5102,12 @@ function renderAutodialerPage(){
   const WEEK_MS = 7*DAY_MS;
   const inWindow = (iso,ms)=>iso && (now - new Date(iso).getTime()) < ms;
 
-  const sessionCounts = (windowMs)=>{
+  // sessionCounts now accepts an optional leads subset so we can compute
+  // both global totals AND per-SDR breakdown in admin view.
+  const countOver = (leadsArr, windowMs)=>{
     const c = { dialed:0, interested:0, no_answer:0, not_relevant:0, sms:0, follow_up:0, twentyPushed:0 };
-    for(const l of leads){
-      // "Dialed" = has a lastCallAt within the window
+    for(const l of leadsArr){
       if(windowMs===Infinity ? !!l.lastCallAt : inWindow(l.lastCallAt, windowMs)) c.dialed++;
-      // Dispositions — use lastDispositionAt as the timestamp
       const dispTime = l.lastDispositionAt || l.lastCallAt;
       const inDisp = windowMs===Infinity ? !!l.lastAction : inWindow(dispTime, windowMs);
       if(inDisp){
@@ -5117,19 +5117,33 @@ function renderAutodialerPage(){
         else if(l.lastAction==='not-relevant') c.not_relevant++;
         else if(l.lastAction==='sms') c.sms++;
       }
-      // SMS sent within window (separate from disposition since SMS can fire mid-call too)
       if(l.last_sms_at && (windowMs===Infinity ? true : inWindow(l.last_sms_at, windowMs))) {
-        // Only count if not already counted via disposition
         if(l.lastAction!=='sms') c.sms++;
       }
-      // Twenty pushes
       if(l.twenty_pushed_at && (windowMs===Infinity ? true : inWindow(l.twenty_pushed_at, windowMs))) c.twentyPushed++;
     }
     return c;
   };
+  const sessionCounts = (windowMs)=>countOver(leads, windowMs);
   const dayStats = sessionCounts(DAY_MS);
   const weekStats = sessionCounts(WEEK_MS);
   const allStats = sessionCounts(Infinity);
+  // Per-SDR breakdown for admin view: group merged leads by _owner.
+  let perSdr = null;
+  if(window._adminView){
+    const byOwner = new Map();
+    for(const l of leads){
+      const o = l._owner || 'unknown';
+      if(!byOwner.has(o)) byOwner.set(o, { name: l._ownerName || o, leads: [] });
+      byOwner.get(o).leads.push(l);
+    }
+    perSdr = [...byOwner.entries()].map(([owner, info])=>({
+      owner, name: info.name,
+      day: countOver(info.leads, DAY_MS),
+      week: countOver(info.leads, WEEK_MS),
+      all: countOver(info.leads, Infinity),
+    })).filter(s => s.all.dialed||s.all.interested||s.all.sms||s.all.follow_up||s.all.no_answer||s.all.not_relevant);
+  }
 
   // Conversion = interested / dialed (today)
   const convPct = dayStats.dialed>0 ? Math.round((dayStats.interested/dayStats.dialed)*100) : 0;
@@ -5168,7 +5182,7 @@ function renderAutodialerPage(){
   ].join('');
 
   // Activity breakdown table — secondary stats panel below the tile row
-  renderAdActivityTable(dayStats, weekStats, allStats);
+  renderAdActivityTable(dayStats, weekStats, allStats, perSdr);
 
   // List selector — chips for each user-defined list + "Alle leads".
   // Re-uses the same list state (`aList`) the cockpit reads from, so
@@ -5466,7 +5480,7 @@ async function adEditPhone(cvr){
 // all-time across the five disposition types + dialed total. Helps the
 // SDR see "am I improving" trends without needing a separate analytics
 // tool. Pure client-side computation from the leads array.
-function renderAdActivityTable(today, week, all){
+function renderAdActivityTable(today, week, all, perSdr){
   const el = document.getElementById('ad-activity');
   if(!el) return;
   // Skip rendering if there's literally no activity yet (clean empty state).
@@ -5509,7 +5523,38 @@ function renderAdActivityTable(today, week, all){
           </tr>`).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${perSdr && perSdr.length ? `
+      <div style="margin-top:14px;background:var(--dark2);border:1px solid var(--w08);border-radius:12px;overflow:hidden">
+        <div style="padding:11px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35)">📊 Pr. SDR</div>
+          <div style="font-size:11px;color:var(--w55)">Klik en SDR for at se deres aktivitet</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0">
+          ${perSdr.map(s=>{
+            const c=(i,d)=>d>0?`${Math.round(i/d*100)}%`:'—';
+            const cell=(v,c)=>`<div style="text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:${v>0?c:'var(--w35)'};font-size:12.5px">${v.toLocaleString('da-DK')}</div>`;
+            return `<div style="padding:14px 18px;border-right:1px solid var(--w08);border-bottom:1px solid var(--w08)">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+                <div style="font-size:13px;font-weight:800;color:#fff">${e(s.name)}</div>
+                <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.4px">${e(s.owner)}</span>
+              </div>
+              <div style="display:grid;grid-template-columns:auto repeat(3,1fr);gap:6px 14px;font-size:11.5px;color:var(--w55)">
+                <div></div><div style="text-align:right;font-size:9.5px;letter-spacing:0.6px;color:var(--w35);text-transform:uppercase">i dag</div><div style="text-align:right;font-size:9.5px;letter-spacing:0.6px;color:var(--w35);text-transform:uppercase">uge</div><div style="text-align:right;font-size:9.5px;letter-spacing:0.6px;color:var(--w35);text-transform:uppercase">all</div>
+                <div style="color:#fff;font-weight:600">📞 Ringet</div>${cell(s.day.dialed,'#fff')}${cell(s.week.dialed,'#fff')}${cell(s.all.dialed,'var(--w80)')}
+                <div style="color:#6ee7b7;font-weight:600">✓ Interesseret</div>${cell(s.day.interested,'#6ee7b7')}${cell(s.week.interested,'#6ee7b7')}${cell(s.all.interested,'#6ee7b7')}
+                <div style="color:#c4b5fd;font-weight:600">📅 Follow-up</div>${cell(s.day.follow_up,'#c4b5fd')}${cell(s.week.follow_up,'#c4b5fd')}${cell(s.all.follow_up,'#c4b5fd')}
+                <div style="color:#a78bfa;font-weight:600">💬 SMS</div>${cell(s.day.sms,'#a78bfa')}${cell(s.week.sms,'#a78bfa')}${cell(s.all.sms,'#a78bfa')}
+                <div style="color:#60a5fa;font-weight:600">✕ Ingen svar</div>${cell(s.day.no_answer,'#60a5fa')}${cell(s.week.no_answer,'#60a5fa')}${cell(s.all.no_answer,'#60a5fa')}
+                <div style="color:var(--w55);font-weight:600">– Ikke relevant</div>${cell(s.day.not_relevant,'var(--w55)')}${cell(s.week.not_relevant,'var(--w55)')}${cell(s.all.not_relevant,'var(--w55)')}
+                <div style="color:#60a5fa;font-weight:600">🎯 Pushet</div>${cell(s.day.twentyPushed,'#60a5fa')}${cell(s.week.twentyPushed,'#60a5fa')}${cell(s.all.twentyPushed,'#60a5fa')}
+              </div>
+              <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--w04);font-size:11px;color:var(--w55)">Konvertering · i dag <strong style="color:${s.day.dialed>0?'#fff':'var(--w35)'}">${c(s.day.interested,s.day.dialed)}</strong> · uge <strong style="color:${s.week.dialed>0?'#fff':'var(--w35)'}">${c(s.week.interested,s.week.dialed)}</strong> · all <strong style="color:${s.all.dialed>0?'#fff':'var(--w35)'}">${c(s.all.interested,s.all.dialed)}</strong></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `:''}`;
 }
 
 // Restore an archived lead back into the active queue. Clears lastAction

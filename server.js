@@ -2344,8 +2344,40 @@ app.patch("/api/leads/:cvr", authMiddleware, (req, res) => {
   const d = loadUserData(req.userId);
   const lead = d.leads.find((l) => l.cvr === req.params.cvr);
   if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+  // Capture state we'll log AFTER the merge.
+  const prevAction = lead.lastAction;
+  const prevCallbackAt = lead.callback_at;
+  const prevPhone = lead.phone || lead.ph || "";
   Object.assign(lead, req.body);
   saveUserData(req.userId, d);
+  // Log disposition changes + callback scheduling so admin's activity feed
+  // captures every SDR action (calls, dispositions, follow-ups, edits).
+  try {
+    const labels = {
+      "interested": "✓ Interesseret",
+      "follow-up": "📅 Follow-up",
+      "no-answer": "✕ Ingen svar",
+      "not-relevant": "– Ikke relevant",
+      "sms": "💬 SMS",
+    };
+    if (req.body.lastAction && req.body.lastAction !== prevAction && labels[req.body.lastAction]) {
+      logActivity("disposition", `${labels[req.body.lastAction]} — ${lead.name || lead.cvr} (${req.userId})`, {
+        userId: req.userId, cvr: lead.cvr, action: req.body.lastAction,
+      });
+    }
+    if (req.body.callback_at && req.body.callback_at !== prevCallbackAt) {
+      const when = new Date(req.body.callback_at);
+      const whenTxt = isNaN(when.getTime()) ? req.body.callback_at : when.toLocaleString("da-DK", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      logActivity("callback", `📅 Callback planlagt ${whenTxt} — ${lead.name || lead.cvr} (${req.userId})`, {
+        userId: req.userId, cvr: lead.cvr, callbackAt: req.body.callback_at,
+      });
+    }
+    if (req.body.phone !== undefined && (req.body.phone || "").replace(/\D/g, "") !== String(prevPhone).replace(/\D/g, "")) {
+      logActivity("phone-edit", `✎ Nummer rettet på ${lead.name || lead.cvr} (${req.userId})`, {
+        userId: req.userId, cvr: lead.cvr, newPhone: req.body.phone,
+      });
+    }
+  } catch (e) { /* logging is never fatal */ }
   res.json({ ok: true });
 });
 
