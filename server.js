@@ -5723,13 +5723,26 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
 
 const META_ADS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "meta_ads_discover.json");
 
+// Broad Danish keywords used to surface DK advertisers from Meta Ad Library.
+// Each run rotates through these via the keywordCursor in the state file so
+// we sweep different slices of the active-ad pool over time. Picked for two
+// properties: (1) common in DK ad copy (high recall) and (2) cross-industry
+// (avoids over-indexing on one niche). Apify's actor REQUIRES a q= param —
+// the no-keyword bulk URL returns 403 BLOCKED from Meta.
+const META_DISCOVER_KEYWORDS = [
+  "DK", "Danmark", "København", "Copenhagen",
+  "shop", "tilbud", "køb", "online", "ny", "spar",
+  "mode", "tøj", "skønhed", "mad", "rejse", "bolig",
+  "design", "fitness", "wellness", "gratis",
+];
+
 function loadMetaAdsDiscoverState() {
   try {
     if (fs.existsSync(META_ADS_DISCOVER_STATE_FILE)) {
       return JSON.parse(fs.readFileSync(META_ADS_DISCOVER_STATE_FILE, "utf8"));
     }
   } catch (e) { console.warn("[meta-ads-discover] state load:", e.message); }
-  return { scannedPageIds: {}, lastRunAt: null };
+  return { scannedPageIds: {}, lastRunAt: null, keywordCursor: 0 };
 }
 
 function saveMetaAdsDiscoverState(s) {
@@ -5737,17 +5750,24 @@ function saveMetaAdsDiscoverState(s) {
   fs.writeFileSync(META_ADS_DISCOVER_STATE_FILE, JSON.stringify(s, null, 2));
 }
 
-// Apify scrape of the DK Meta Ad Library with no keyword filter — returns
-// raw ad records, one per currently-running ad. Multiple ads from the same
+// Apify scrape of currently-running DK Meta ads for ONE keyword. Returns
+// raw ad records, one per matching ad. Multiple ads from the same
 // advertiser collapse via pageId dedup downstream.
-async function apifyDiscoverDkMetaAds({ resultsLimit = 400 }) {
+// Each call uses ONE keyword (Apify's actor requires q= or Meta returns
+// 403 BLOCKED). Caller rotates keywords across runs via state cursor.
+async function apifyDiscoverDkMetaAds({ resultsLimit = 200, keyword }) {
   const token = process.env.APIFY_API_TOKEN;
   if (!token) throw new Error("APIFY_API_TOKEN not configured");
-  // is_targeted_country=true narrows to ads explicitly targeting DK
-  // audiences (excludes global-EU campaigns where DK is incidental).
-  // Apollo's country=Denmark check is the second-layer filter to ensure
-  // the ADVERTISER is also based in DK, not just targeting it.
-  const url = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&is_targeted_country=true&media_type=all";
+  if (!keyword) throw new Error("keyword required (no-keyword bulk scrape is BLOCKED by Meta)");
+  const params = new URLSearchParams({
+    active_status: "active",
+    ad_type: "all",
+    country: "DK",
+    media_type: "all",
+    search_type: "keyword_unordered",
+    q: keyword,
+  });
+  const url = `https://www.facebook.com/ads/library/?${params.toString()}`;
   const input = {
     startUrls: [{ url }],
     onlyTotal: false,
@@ -5819,11 +5839,15 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo not configured" });
   }
-  // Per-run cap on Apify cost. resultsLimit=400 ≈ $2/run on BRONZE. With
-  // 1 run/day = $60/mo Apify, sits inside the $50+overage budget. The
-  // query param lets ops tune per-call (e.g., =100 for a smoke test).
-  const RESULTS_LIMIT = Math.max(50, Math.min(1000, Number(req.query.limit) || 400));
+  // Per-call cost knobs. Each keyword scrape: resultsLimit × $0.005.
+  // Default: 3 keywords × 100 ads = ~$1.50/run. 1 run/day = ~$45/mo.
+  // ?keywords= overrides the rotation (comma-sep list); ?limit= sets
+  // resultsLimit per keyword.
+  const RESULTS_LIMIT = Math.max(30, Math.min(500, Number(req.query.limit) || 100));
+  const KEYWORDS_PER_RUN = Math.max(1, Math.min(10, Number(req.query.keywords_per_run) || 3));
   const TARGET_USER = (req.query.userId || "u1").toString();
+  // Caller can pin a specific keyword list via ?keywords=DK,tøj,mode for testing.
+  const customKeywords = (req.query.keywords || "").toString().split(",").map((s) => s.trim()).filter(Boolean);
   const stats = {
     adsScraped: 0,
     uniqueAdvertisers: 0,
@@ -5835,19 +5859,43 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
     skippedSize: 0,
     icpFitAppended: 0,
     errors: 0,
+    keywordsUsed: [],
   };
 
-  // 1. Scrape current DK Meta ads
-  let items;
-  try {
-    items = await apifyDiscoverDkMetaAds({ resultsLimit: RESULTS_LIMIT });
-  } catch (e) {
-    return res.status(502).json({ error: `Apify discover failed: ${e.message}` });
+  // 1. Pick the keywords for this run — either custom from ?keywords= or
+  //    rotating through META_DISCOVER_KEYWORDS via the state cursor.
+  const state = loadMetaAdsDiscoverState();
+  let keywordsToUse;
+  if (customKeywords.length > 0) {
+    keywordsToUse = customKeywords;
+  } else {
+    keywordsToUse = [];
+    for (let i = 0; i < KEYWORDS_PER_RUN; i++) {
+      keywordsToUse.push(META_DISCOVER_KEYWORDS[(state.keywordCursor + i) % META_DISCOVER_KEYWORDS.length]);
+    }
+    state.keywordCursor = (state.keywordCursor + KEYWORDS_PER_RUN) % META_DISCOVER_KEYWORDS.length;
+  }
+  stats.keywordsUsed = keywordsToUse;
+
+  // 2. Scrape current DK Meta ads — one Apify run per keyword. Apify charges
+  //    per dataset item so parallelism doesn't affect cost; serial is simpler
+  //    and gentler on rate limits.
+  let items = [];
+  for (const kw of keywordsToUse) {
+    try {
+      const batch = await apifyDiscoverDkMetaAds({ resultsLimit: RESULTS_LIMIT, keyword: kw });
+      items.push(...batch);
+    } catch (e) {
+      console.warn(`[meta-ads-discover] keyword '${kw}' failed:`, e.message);
+      stats.errors++;
+    }
   }
   stats.adsScraped = items.length;
 
-  // 2. Dedupe to unique advertisers (and drop ones we've already processed)
-  const state = loadMetaAdsDiscoverState();
+  // 3. Dedupe to unique advertisers (and drop ones we've already processed
+  //    in past runs via the scannedPageIds map). The state object was loaded
+  //    earlier above when picking keywords; we mutate it through the run
+  //    and save once at the end.
   const fresh = adsToUniqueAdvertisers(items, state.scannedPageIds);
   stats.uniqueAdvertisers = new Set(items.map((it) => it.pageID || it.pageId || it.snapshot?.pageId)).size;
   stats.alreadyScanned = stats.uniqueAdvertisers - fresh.length;
