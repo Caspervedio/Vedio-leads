@@ -7052,18 +7052,21 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   res.json({ ok: true, stats });
 });
 
-// POST /api/cron/verify-leads — retroactive Meta Ad Library check on ALL
-// active leads regardless of source (Apollo discovery, Apify CVR-walk, CSV
-// imports, manual adds). Skips leads that are:
-//   * archived (lastAction='not-relevant')
-//   * missing a name (can't search Meta without one)
-//   * already verified recently (meta_verified_at within last 7d, override
-//     with ?force=1)
-// Batches via Apify onlyTotal:true. Default limit 100 per call (≈$0.50);
-// repeat the endpoint to drain a larger backlog. Leads flipped to inactive
-// route out of the dialer queue automatically via the hard filter in
-// autodialer-maintain. (Older endpoint name verify-existing-apollo-leads
-// still works as an alias for backwards-compat with any scheduled jobs.)
+// POST /api/cron/verify-leads — STRICT Meta Ad Library check on ALL active
+// leads. Critical fix 2026-06-02: previous version used onlyTotal:true which
+// only counted ads matching the search KEYWORD, not ads FROM the company.
+// This passed leads where Meta had ads mentioning "Comedy Zoo" in copy
+// (e.g. competing events) even when Comedy Zoo itself wasn't advertising.
+//
+// New flow: onlyTotal:false + resultsLimit:5 → returns up to 5 ad records
+// per query with pageName. We then check advertiserMatchesCompany() on
+// each returned pageName — only flip meta_verified_active=true if at
+// least one ad's pageName matches the lead's company name.
+//
+// When ?archive=1 the failures (verifiedInactive) get lastAction='not-
+// relevant' so they're permanently removed from the dialer, not just
+// hidden behind the Måske-relevant chip. Use this for the once-and-for-all
+// cleanup the operator asked for.
 async function runVerifyLeadsBatch(req, res) {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
@@ -7071,14 +7074,18 @@ async function runVerifyLeadsBatch(req, res) {
   if (!process.env.APIFY_API_TOKEN) {
     return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
   }
-  const LIMIT = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+  const LIMIT = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
   const TARGET_USER = (req.query.userId || "u1").toString();
   const FORCE = req.query.force === "1";
+  // ?archive=1 → permanently archive failures (lastAction='not-relevant').
+  // Operator asked for "once and for all get rid of those not running ads".
+  const ARCHIVE = req.query.archive === "1";
   const STALE_MS = 7 * 24 * 60 * 60 * 1000;
   const stats = {
     scanned: 0,
     verifiedActive: 0,
     verifiedInactive: 0,
+    archived: 0,
     skippedRecent: 0,
     skippedNoName: 0,
     errors: 0,
@@ -7105,27 +7112,81 @@ async function runVerifyLeadsBatch(req, res) {
     return res.json({ ok: true, stats, note: "nothing to verify (all recent or filtered)" });
   }
 
+  // STRICT verify — use onlyTotal:false + resultsLimit:5 so we get
+  // pageName fields back and can confirm the ads are actually FROM the
+  // company, not just ads mentioning the keyword in their copy.
   const startUrls = todo.map(({ lead, brand }) => ({
     url: buildAdsLibraryUrl(brand),
     _cvr: lead.cvr,
+    _name: lead.name,
+    _brand: brand,
   }));
 
   let items;
   try {
-    items = await apifyVerifyMetaAds(startUrls);
+    // Inline call to apifyRun (the async-poll one) since apifyVerifyMetaAds
+    // hardcodes onlyTotal:true.
+    const token = process.env.APIFY_API_TOKEN;
+    const input = {
+      startUrls: startUrls.map((s) => ({ url: s.url })),
+      onlyTotal: false,
+      resultsLimit: 5,
+    };
+    const startResp = await fetch(
+      `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/runs?token=${token}&memory=2048&timeout=3600`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+    );
+    if (!startResp.ok) throw new Error(`Apify start ${startResp.status}: ${(await startResp.text()).slice(0,300)}`);
+    const { data: run } = await startResp.json();
+    const t0 = Date.now();
+    let status = run.status;
+    let runData = run;
+    while (status === "READY" || status === "RUNNING") {
+      if (Date.now() - t0 > 25 * 60 * 1000) throw new Error("Apify verify timeout");
+      await new Promise((r) => setTimeout(r, 5000));
+      const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+      if (!poll.ok) continue;
+      runData = (await poll.json()).data;
+      status = runData.status;
+    }
+    if (status !== "SUCCEEDED") throw new Error(`Apify ended ${status}`);
+    const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`);
+    if (!itemsResp.ok) throw new Error(`Apify items fetch ${itemsResp.status}`);
+    items = await itemsResp.json();
   } catch (e) {
     return res.status(502).json({ error: `Apify verify failed: ${e.message}` });
   }
 
-  // Map back via inputUrl → cvr
-  const urlToCvr = new Map(startUrls.map((s) => [s.url, s._cvr]));
+  // Group items by inputUrl → list of pageNames
+  const urlToMeta = new Map(startUrls.map((s) => [s.url, s]));
+  const pageNamesByCvr = new Map();
+  for (const item of items) {
+    const meta = urlToMeta.get(item.inputUrl);
+    if (!meta) continue;
+    const pn = item.pageName || item.snapshot?.pageName || "";
+    if (!pn) continue;
+    if (!pageNamesByCvr.has(meta._cvr)) pageNamesByCvr.set(meta._cvr, []);
+    pageNamesByCvr.get(meta._cvr).push(pn);
+  }
+
+  // For each candidate: verify by name-match. If any returned pageName
+  // matches the lead's company name (advertiserMatchesCompany), the lead
+  // is actively advertising. Otherwise it's a false positive (Meta keyword
+  // hit ad copy of other companies) → mark inactive.
   const verifyByCvr = new Map();
   const checkedAt = new Date().toISOString();
-  for (const item of items) {
-    const cvr = urlToCvr.get(item.inputUrl);
-    if (!cvr) continue;
-    const total = Number(item.totalCount || 0);
-    verifyByCvr.set(cvr, { active: total > 0, totalCount: total, checkedAt });
+  for (const { lead, brand } of todo) {
+    const pageNames = pageNamesByCvr.get(lead.cvr) || [];
+    const matched = pageNames.filter((pn) =>
+      advertiserMatchesCompany(pn, lead.name) || advertiserMatchesCompany(pn, brand),
+    ).length;
+    verifyByCvr.set(lead.cvr, {
+      active: matched > 0,
+      matched,
+      totalCount: pageNames.length,
+      pageNames,
+      checkedAt,
+    });
   }
 
   // Apply verdicts back to user data
@@ -7136,15 +7197,25 @@ async function runVerifyLeadsBatch(req, res) {
     lead.meta_verified_active = v.active;
     lead.meta_verified_at = v.checkedAt;
     lead.meta_live_ad_count = v.totalCount;
+    lead.meta_live_advertisers = v.pageNames.slice(0, 5);
+    lead.meta_live_name_matched = v.matched;
     stats.scanned++;
     if (v.active) stats.verifiedActive++;
-    else stats.verifiedInactive++;
+    else {
+      stats.verifiedInactive++;
+      if (ARCHIVE) {
+        lead.lastAction = "not-relevant";
+        lead.archived_reason = "not-currently-advertising-on-meta";
+        lead.archived_at = checkedAt;
+        stats.archived++;
+      }
+    }
   }
   saveUserData(TARGET_USER, ud2);
 
   logActivity(
     "verification",
-    `Verify-leads: ${stats.scanned} tjekket · ${stats.verifiedActive} aktive · ${stats.verifiedInactive} flyttet til Måske-relevant${stats.skippedRecent?` (sprang ${stats.skippedRecent} nylige over)`:''}`,
+    `Verify-leads: ${stats.scanned} tjekket · ${stats.verifiedActive} aktive · ${stats.verifiedInactive} ikke aktive${ARCHIVE?` (${stats.archived} arkiveret)`:` (i Måske-relevant)`}`,
     { stats, userId: TARGET_USER },
   );
   console.log("[verify-leads]", JSON.stringify(stats));
