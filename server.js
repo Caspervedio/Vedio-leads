@@ -1851,6 +1851,13 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
       const actionable = leads.filter((l) => {
         if (l.lastAction === "not-relevant") return false;        // archived
         if (l.phone_missing === true) return false;               // no number → Mangler nummer
+        // Hard Meta-ad filter: Apollo's metaAdvertiser pixel-signal lags
+        // reality by 30-90d. Leads with meta_verified_active===false
+        // (Apollo flagged BUT Meta Ad Library shows 0 current DK ads at
+        // discovery time) go to the "Måske relevant" bucket instead.
+        // null = unverified (CSV / Apify path / pre-verify backfill) →
+        // pass through (Apify path has its own verdict guard).
+        if (l.meta_verified_active === false) return false;
         // Enrichment-pending no longer gates dialing when a phone exists.
         // The phone is what makes a lead actionable; decision-maker contacts
         // (email, title, LinkedIn from Apollo people/match) are async and
@@ -5301,7 +5308,91 @@ async function apolloSearchAdvertiserCandidates({ page, perPage = 25, employeeRa
 // as the META-scraper path so the autodialer/cockpit/drain-enrichment all
 // treat it uniformly. Uses synthetic id "apollo-<orgId>" as the cvr (real
 // DK CVRs are 8 digits — no collision).
-function appendApolloLeadToUser(userId, org, orgEnrich) {
+// ── Meta Ad Library live verification helpers (Apify-powered) ─────────
+// Strip company name down to a brand search term — drops legal suffixes
+// + group/holding noise so the Meta Ad Library keyword match works.
+// Mirrors discover-ads.js's brandNameFromLegal but applied to Apollo's
+// already-cleaned company names (which often DON'T have A/S suffix).
+function brandFromApolloName(name) {
+  return String(name || "")
+    .replace(/\b(GRUPPEN|GROUP|HOLDING|HOLDINGSELSKAB|DANMARK|DENMARK|SCANDINAVIA|NORDIC|EUROPE|EU)\b/gi, " ")
+    .replace(/\b(A\/S|ApS|IVS|I\/S|K\/S|P\/S|GmbH|Ltd|Inc|Corp|LLC)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildAdsLibraryUrl(brand) {
+  const params = new URLSearchParams({
+    active_status: "active",
+    ad_type: "all",
+    country: "DK",
+    is_targeted_country: "false",
+    media_type: "all",
+    search_type: "keyword_exact_phrase",
+    q: brand,
+  });
+  return `https://www.facebook.com/ads/library/?${params.toString()}`;
+}
+
+// Batch-verify a list of advertiser candidates via Apify's facebook-ads-
+// scraper. Uses onlyTotal:true so each URL returns 1 dataset item with
+// totalCount (cheap — ~$0.005/result on BRONZE tier). Async-start + poll
+// pattern so we don't hit the 5-min sync timeout for large batches.
+async function apifyVerifyMetaAds(startUrls) {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) throw new Error("APIFY_API_TOKEN not configured");
+  if (!startUrls || startUrls.length === 0) return [];
+  const input = {
+    startUrls: startUrls.map((s) => ({ url: s.url })),
+    onlyTotal: true,
+  };
+  // Start async
+  const startResp = await fetch(
+    `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/runs?token=${token}&memory=1024&timeout=1800`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!startResp.ok) {
+    const body = await startResp.text();
+    throw new Error(`Apify verify start ${startResp.status}: ${body.slice(0, 300)}`);
+  }
+  const { data: run } = await startResp.json();
+  // Poll for completion — 200 URLs typically finishes in 60-180s.
+  const t0 = Date.now();
+  const MAX_WAIT_MS = 20 * 60 * 1000;
+  let status = run.status;
+  let runData = run;
+  while (status === "READY" || status === "RUNNING") {
+    if (Date.now() - t0 > MAX_WAIT_MS) {
+      throw new Error(`Apify verify timeout after ${(MAX_WAIT_MS / 60000).toFixed(0)}min`);
+    }
+    await new Promise((r) => setTimeout(r, 4000));
+    const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+    if (!poll.ok) continue;
+    runData = (await poll.json()).data;
+    status = runData.status;
+  }
+  if (status !== "SUCCEEDED") {
+    throw new Error(`Apify verify ended with status ${status}`);
+  }
+  // Fetch dataset items
+  const itemsResp = await fetch(
+    `https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`,
+  );
+  if (!itemsResp.ok) throw new Error(`Apify verify dataset fetch ${itemsResp.status}`);
+  return itemsResp.json();
+}
+
+function appendApolloLeadToUser(userId, org, orgEnrich, verifyResult) {
+  // verifyResult: optional { active: boolean, totalCount: number, checkedAt: iso }
+  // from a live Meta Ad Library check (Apify). When undefined the lead is
+  // appended with meta_verified_active=null (the maybe-relevant verification
+  // never ran or was skipped). The autodialer pre-flight gate excludes leads
+  // with meta_verified_active===false from the dialable queue and routes
+  // them to the "Måske relevant" filter bucket instead.
   const ud = loadUserData(userId);
   if (!ud.leads) ud.leads = [];
   const syntheticCvr = `apollo-${org.id}`;
@@ -5342,6 +5433,13 @@ function appendApolloLeadToUser(userId, org, orgEnrich) {
     icpFit: true,
     meta_advertiser: !!(orgEnrich && orgEnrich.metaAdvertiser),
     ad_signals: orgEnrich?.metaAdSignals || [],
+    // Live Meta Ad Library verification result. true = confirmed running
+    // active ads in DK right now; false = Apollo flagged the pixel but
+    // Meta Ad Library shows zero current ads (autodialer skips these,
+    // they live in the "Måske relevant" bucket); null = not yet verified.
+    meta_verified_active: verifyResult ? verifyResult.active : null,
+    meta_verified_at: verifyResult ? verifyResult.checkedAt : null,
+    meta_live_ad_count: verifyResult ? verifyResult.totalCount : null,
     apollo_company: orgEnrich || null,
     apollo_enrichment_pending: isApolloConfigured(),
     apollo_enriched_at: null,
@@ -5375,9 +5473,16 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
     enrichmentChecked: 0,
     advertisersFound: 0,
     leadsAppended: 0,
+    verified: 0,
+    verifiedActive: 0,
+    verifiedInactive: 0,
     errors: 0,
     keywordsUsed: [],
   };
+  // Buffer of Apollo positives — appended to leads only AFTER batch
+  // Meta Ad Library verification so we know whether they go to the
+  // dialer queue or the "Måske relevant" bucket.
+  const positives = [];
 
   for (let p = 0; p < PAGES_PER_RUN; p++) {
     // Rotate through keywords + pages so each run scans a different slice
@@ -5449,30 +5554,84 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
           continue;
         }
         stats.advertisersFound++;
-        try {
-          // Merge Apollo's switchboard if our discovery didn't have one
-          const merged = {
+        // Defer the append. We'll batch-verify all positives against the
+        // live Meta Ad Library (Apify onlyTotal:true) in one call, then
+        // append in a single pass with the verification result attached.
+        // Apollo's metaAdvertiser flag is pixel-based and lags reality by
+        // 30-90 days — many "Facebook Custom Audiences" flagged companies
+        // stopped advertising months ago but never removed the pixel.
+        positives.push({
+          cand: {
             ...cand,
             phone: cand.phone || orgEnrich.phone || "",
-            // Prefer enrich's headcount — search's number is often missing
             employees: enrichedEmp || null,
             industry: cand.industry || orgEnrich.industry || "",
             city: cand.city || orgEnrich.city || "",
-          };
-          const added = appendApolloLeadToUser(TARGET_USER, merged, orgEnrich);
-          if (added) {
-            stats.leadsAppended++;
-            logActivity(
-              "advertiser",
-              `🎯 Apollo discovery: ${cand.name} (${(orgEnrich.metaAdSignals || []).join(", ")})`,
-              { domain: cand.domain, userId: TARGET_USER, source: "apollo-discover" },
-            );
-          }
-        } catch (e) {
-          console.warn("[apollo-discover] append failed:", cand.name, e.message);
-          stats.errors++;
-        }
+          },
+          orgEnrich,
+        });
       }
+    }
+  }
+
+  // ── Live Meta Ad Library verification (Apify batch) ─────────────────
+  // For each Apollo-flagged positive, query Meta Ad Library to confirm
+  // they're CURRENTLY running ads in DK (not just historically had a
+  // pixel installed). Active = totalCount > 0 → goes to dialer queue.
+  // Inactive = Apollo says yes but Meta says no current ads → routed
+  // to the "Måske relevant" bucket via meta_verified_active=false.
+  // Cost: ~$0.005 per positive on Apify STARTER BRONZE tier.
+  const verifyMap = new Map(); // domain → { active, totalCount, checkedAt }
+  if (positives.length > 0 && process.env.APIFY_API_TOKEN) {
+    try {
+      const startUrls = positives.map((p) => {
+        const brand = brandFromApolloName(p.cand.name);
+        const url = buildAdsLibraryUrl(brand);
+        return { url, _domain: p.cand.domain.toLowerCase(), _brand: brand };
+      });
+      const items = await apifyVerifyMetaAds(startUrls);
+      // Apify echoes the inputUrl on each result — map back via brand→url.
+      const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
+      const checkedAt = new Date().toISOString();
+      for (const item of items) {
+        const domain = urlToDomain.get(item.inputUrl);
+        if (!domain) continue;
+        const total = Number(item.totalCount || 0);
+        verifyMap.set(domain, { active: total > 0, totalCount: total, checkedAt });
+      }
+      stats.verified = verifyMap.size;
+      stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
+      stats.verifiedInactive = [...verifyMap.values()].filter((v) => !v.active).length;
+    } catch (e) {
+      console.warn("[apollo-discover] live Apify verify failed:", e.message);
+      stats.errors++;
+      // Verification failed but we don't fail the whole run — leads will
+      // be appended with meta_verified_active=null (un-verified) and the
+      // periodic retroactive cron can pick them up later.
+    }
+  }
+
+  // ── Append all positives with their verification result ─────────────
+  for (const { cand, orgEnrich } of positives) {
+    try {
+      const verify = verifyMap.get((cand.domain || "").toLowerCase()) || null;
+      const added = appendApolloLeadToUser(TARGET_USER, cand, orgEnrich, verify);
+      if (added) {
+        stats.leadsAppended++;
+        // Per-lead activity log entry shows verification status so the
+        // SDR can see why a lead went to "Måske relevant" vs the dialer.
+        const tag = verify
+          ? (verify.active ? "🎯 verificeret aktiv" : "📊 Apollo-signal kun (måske relevant)")
+          : "⚠ ikke verificeret";
+        logActivity(
+          "advertiser",
+          `${tag}: ${cand.name} (${(orgEnrich.metaAdSignals || []).join(", ")})`,
+          { domain: cand.domain, userId: TARGET_USER, source: "apollo-discover", verifyResult: verify },
+        );
+      }
+    } catch (e) {
+      console.warn("[apollo-discover] append failed:", cand.name, e.message);
+      stats.errors++;
     }
   }
 
@@ -5480,11 +5639,86 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   saveApolloDiscoverState(state);
   logActivity(
     "discovery",
-    `Apollo-discover: ${stats.advertisersFound} annoncører fundet på ${stats.candidatesSeen} kandidater · ${stats.leadsAppended} tilføjet til ${TARGET_USER}`,
+    `Apollo-discover: ${stats.advertisersFound} annoncører fundet · ${stats.verifiedActive || 0} verificeret aktive · ${stats.verifiedInactive || 0} kun-Apollo-signal · ${stats.leadsAppended} tilføjet til ${TARGET_USER}`,
     { stats },
   );
   console.log("[apollo-discover] done:", JSON.stringify(stats));
   res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
+});
+
+// POST /api/cron/verify-existing-apollo-leads — retroactive Meta Ad Library
+// check on already-imported apollo-discover leads where meta_verified_active
+// is null. Batches via Apify (one onlyTotal:true call for up to 100 leads).
+// Leads flipped to false get auto-routed out of the dialer queue by the
+// hard filter in autodialer-maintain. One-shot endpoint — run manually
+// once after deploy, then ongoing discovery handles its own verification.
+app.post("/api/cron/verify-existing-apollo-leads", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!process.env.APIFY_API_TOKEN) {
+    return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
+  }
+  const LIMIT = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const stats = { scanned: 0, verifiedActive: 0, verifiedInactive: 0, errors: 0 };
+
+  const ud = loadUserData(TARGET_USER);
+  // Pick unverified apollo-discover leads (meta_verified_active is null)
+  // that aren't already archived. Cap at LIMIT to bound per-run cost.
+  const todo = (ud.leads || []).filter((l) =>
+    l.source === "apollo-discover" &&
+    l.meta_verified_active === undefined || l.meta_verified_active === null
+  ).filter((l) => l.lastAction !== "not-relevant" && l.source === "apollo-discover")
+    .slice(0, LIMIT);
+
+  if (todo.length === 0) {
+    return res.json({ ok: true, stats, note: "no unverified apollo-discover leads" });
+  }
+
+  const startUrls = todo.map((l) => {
+    const brand = brandFromApolloName(l.name);
+    return { url: buildAdsLibraryUrl(brand), _cvr: l.cvr };
+  });
+
+  let items;
+  try {
+    items = await apifyVerifyMetaAds(startUrls);
+  } catch (e) {
+    return res.status(502).json({ error: `Apify verify failed: ${e.message}` });
+  }
+
+  // Map back via inputUrl → cvr
+  const urlToCvr = new Map(startUrls.map((s) => [s.url, s._cvr]));
+  const verifyByCvr = new Map();
+  for (const item of items) {
+    const cvr = urlToCvr.get(item.inputUrl);
+    if (!cvr) continue;
+    const total = Number(item.totalCount || 0);
+    verifyByCvr.set(cvr, { active: total > 0, totalCount: total, checkedAt: new Date().toISOString() });
+  }
+
+  // Apply verdicts back to user data
+  const ud2 = loadUserData(TARGET_USER);
+  for (const lead of ud2.leads || []) {
+    if (!verifyByCvr.has(lead.cvr)) continue;
+    const v = verifyByCvr.get(lead.cvr);
+    lead.meta_verified_active = v.active;
+    lead.meta_verified_at = v.checkedAt;
+    lead.meta_live_ad_count = v.totalCount;
+    stats.scanned++;
+    if (v.active) stats.verifiedActive++;
+    else stats.verifiedInactive++;
+  }
+  saveUserData(TARGET_USER, ud2);
+
+  logActivity(
+    "verification",
+    `Retroactive verify: ${stats.scanned} apollo-leads · ${stats.verifiedActive} aktive · ${stats.verifiedInactive} flyttet til Måske-relevant`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[verify-existing-apollo-leads]", JSON.stringify(stats));
+  res.json({ ok: true, stats });
 });
 
 // ─── KASPR ENRICHMENT (Phase B) ─────────────────────────────────────────

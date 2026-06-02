@@ -5047,6 +5047,7 @@ function renderAutodialerPage(){
   const showPhoneMissing = _adState.sourceFilter==='phone_missing';
   const showEnriching = _adState.sourceFilter==='enriching';
   const showAdvertiser = _adState.sourceFilter==='advertiser';
+  const showMaybeRelevant = _adState.sourceFilter==='maybe_relevant';
   const isEnriching = (l) => l.apollo_enrichment_pending===true;
   if(showArchive){
     filtered=filtered.filter(l=>l.lastAction==='not-relevant');
@@ -5054,12 +5055,19 @@ function renderAutodialerPage(){
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true);
   } else if(showEnriching){
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && isEnriching(l));
+  } else if(showMaybeRelevant){
+    // "Måske relevant" view — Apollo flagged metaAdvertiser=true but live
+    // Meta Ad Library found zero current DK ads. Pulled out of the dialer
+    // queue automatically; available here for manual review/overflow dialing.
+    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false);
   } else {
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant');
     // Hide leads still being enriched — they appear in "⏳ Beriges nu".
     filtered=filtered.filter(l=>!isEnriching(l));
     // Hide leads with no phone — they appear in "⚠ Mangler nummer".
     filtered=filtered.filter(l=>l.phone_missing!==true);
+    // Hide Apollo-flagged-but-not-currently-advertising → "🟡 Måske relevant".
+    filtered=filtered.filter(l=>l.meta_verified_active!==false);
     // "🎯 Annoncør" view — only Apollo-confirmed Meta advertisers.
     if(showAdvertiser){
       filtered=filtered.filter(l=>l.meta_advertiser===true);
@@ -5204,7 +5212,12 @@ function renderAutodialerPage(){
   const archivedCount=leads.filter(l=>l.lastAction==='not-relevant').length;
   const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true).length;
   const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true).length;
-  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true);
+  // "Måske relevant" — Apollo flagged metaAdvertiser=true (pixel installed)
+  // but a live Meta Ad Library check found 0 currently-running ads in DK.
+  // These are filtered out of the dialer queue but kept accessible here
+  // so the SDR can sanity-check or dial overflow as needed.
+  const maybeRelevantCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false).length;
+  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true && l.meta_verified_active!==false);
   const advertiserCount=activeLeads.filter(l=>l.meta_advertiser===true).length;
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
@@ -5225,6 +5238,11 @@ function renderAutodialerPage(){
     // dry. SDR opens this view to research a phone manually, then the
     // lead returns to the active queue once a number is added.
     ['phone_missing','⚠ Mangler nummer',phoneMissingCount],
+    // "Måske relevant" — Apollo metaAdvertiser=true (pixel signal) BUT
+    // live Meta Ad Library check returned 0 current DK ads. Pulled out
+    // of the dialer queue automatically; available here for the SDR
+    // who wants to dial overflow when ICP-klar runs lean.
+    ['maybe_relevant','🟡 Måske relevant',maybeRelevantCount],
     // Archive lives at the end as a separate concept — clicking it
     // swaps the queue to "only arkiverede leads" for review/restore.
     ['archived','✕ Arkiveret',archivedCount],
