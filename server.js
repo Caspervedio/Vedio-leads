@@ -5698,6 +5698,297 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
 });
 
+// ── META ADS-FIRST DISCOVERY ────────────────────────────────────────
+// Architectural pivot from Apollo-first. The old path was:
+//
+//   Apollo says "has Meta pixel" → maybe still advertising? → guess
+//   brand name → exact phrase match Meta → 25-40% false positives
+//
+// The new path is:
+//
+//   Meta Ad Library: who is CURRENTLY running ads in DK right now?
+//   → dedupe by pageId → resolve each pageName in Apollo →
+//   → apply ICP filter (DK + 5-50 emp) → append lead with
+//   → meta_verified_active=true baked in
+//
+// Why this is structurally better: every lead starts from ground truth
+// (verified currently advertising). No more name-matching guesswork —
+// Meta tells us the page name directly. Apollo's role narrows from
+// "discovery + enrichment" to pure enrichment (employees, country,
+// people contacts).
+//
+// Cost: ~$2/run on Apify (400 ads × $0.005 BRONZE) + Apollo's people-
+// match for the ICP-fit subset (~2 credits each). One run/day fits the
+// $50 Apify overage ceiling + 4k Apollo monthly credit.
+
+const META_ADS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "meta_ads_discover.json");
+
+function loadMetaAdsDiscoverState() {
+  try {
+    if (fs.existsSync(META_ADS_DISCOVER_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(META_ADS_DISCOVER_STATE_FILE, "utf8"));
+    }
+  } catch (e) { console.warn("[meta-ads-discover] state load:", e.message); }
+  return { scannedPageIds: {}, lastRunAt: null };
+}
+
+function saveMetaAdsDiscoverState(s) {
+  fs.mkdirSync(path.dirname(META_ADS_DISCOVER_STATE_FILE), { recursive: true });
+  fs.writeFileSync(META_ADS_DISCOVER_STATE_FILE, JSON.stringify(s, null, 2));
+}
+
+// Apify scrape of the DK Meta Ad Library with no keyword filter — returns
+// raw ad records, one per currently-running ad. Multiple ads from the same
+// advertiser collapse via pageId dedup downstream.
+async function apifyDiscoverDkMetaAds({ resultsLimit = 400 }) {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) throw new Error("APIFY_API_TOKEN not configured");
+  // is_targeted_country=true narrows to ads explicitly targeting DK
+  // audiences (excludes global-EU campaigns where DK is incidental).
+  // Apollo's country=Denmark check is the second-layer filter to ensure
+  // the ADVERTISER is also based in DK, not just targeting it.
+  const url = "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&is_targeted_country=true&media_type=all";
+  const input = {
+    startUrls: [{ url }],
+    onlyTotal: false,
+    resultsLimit,
+  };
+  const startResp = await fetch(
+    `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/runs?token=${token}&memory=2048&timeout=3600`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+  );
+  if (!startResp.ok) {
+    const body = await startResp.text();
+    throw new Error(`Apify start failed ${startResp.status}: ${body.slice(0, 400)}`);
+  }
+  const { data: run } = await startResp.json();
+  // Poll for completion
+  const t0 = Date.now();
+  const MAX_WAIT_MS = 25 * 60 * 1000;
+  let status = run.status;
+  let runData = run;
+  while (status === "READY" || status === "RUNNING") {
+    if (Date.now() - t0 > MAX_WAIT_MS) {
+      throw new Error(`Apify discover timeout after ${(MAX_WAIT_MS / 60000).toFixed(0)}min`);
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+    const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+    if (!poll.ok) continue;
+    runData = (await poll.json()).data;
+    status = runData.status;
+  }
+  if (status !== "SUCCEEDED") throw new Error(`Apify discover ended ${status}`);
+  const itemsResp = await fetch(
+    `https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`,
+  );
+  if (!itemsResp.ok) throw new Error(`Apify items fetch ${itemsResp.status}`);
+  return itemsResp.json();
+}
+
+// Dedup ads → unique advertisers. Some advertisers have many concurrent
+// ads (3-50), so 400 ad results typically collapse to ~120-200 unique
+// pageIds. We also drop advertisers we've already processed (state file)
+// so each run produces FRESH discoveries.
+function adsToUniqueAdvertisers(items, scannedPageIds) {
+  const seen = new Set();
+  const fresh = [];
+  for (const it of items) {
+    const pid = String(it.pageID || it.pageId || it.snapshot?.pageId || "");
+    if (!pid) continue;
+    if (seen.has(pid)) continue;
+    if (scannedPageIds[pid]) continue;
+    seen.add(pid);
+    fresh.push({
+      pageId: pid,
+      pageName: it.pageName || it.snapshot?.pageName || "",
+      pageProfileUri: it.snapshot?.pageProfileUri || "",
+      adArchiveId: String(it.adArchiveID || it.adArchiveId || ""),
+      pageProfilePictureUrl: it.snapshot?.pageProfilePictureUrl || "",
+    });
+  }
+  return fresh;
+}
+
+app.post("/api/cron/meta-ads-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!process.env.APIFY_API_TOKEN) {
+    return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
+  }
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Apollo not configured" });
+  }
+  // Per-run cap on Apify cost. resultsLimit=400 ≈ $2/run on BRONZE. With
+  // 1 run/day = $60/mo Apify, sits inside the $50+overage budget. The
+  // query param lets ops tune per-call (e.g., =100 for a smoke test).
+  const RESULTS_LIMIT = Math.max(50, Math.min(1000, Number(req.query.limit) || 400));
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const stats = {
+    adsScraped: 0,
+    uniqueAdvertisers: 0,
+    alreadyScanned: 0,
+    fresh: 0,
+    apolloResolved: 0,
+    apolloMisses: 0,
+    skippedNotDk: 0,
+    skippedSize: 0,
+    icpFitAppended: 0,
+    errors: 0,
+  };
+
+  // 1. Scrape current DK Meta ads
+  let items;
+  try {
+    items = await apifyDiscoverDkMetaAds({ resultsLimit: RESULTS_LIMIT });
+  } catch (e) {
+    return res.status(502).json({ error: `Apify discover failed: ${e.message}` });
+  }
+  stats.adsScraped = items.length;
+
+  // 2. Dedupe to unique advertisers (and drop ones we've already processed)
+  const state = loadMetaAdsDiscoverState();
+  const fresh = adsToUniqueAdvertisers(items, state.scannedPageIds);
+  stats.uniqueAdvertisers = new Set(items.map((it) => it.pageID || it.pageId || it.snapshot?.pageId)).size;
+  stats.alreadyScanned = stats.uniqueAdvertisers - fresh.length;
+  stats.fresh = fresh.length;
+
+  // 3. For each fresh advertiser: resolve to Apollo by name, then apply
+  //    ICP filter (DK + 5-50 emp). Apollo's free endpoints absorb the
+  //    cost — only people-match later (async drain-enrichment) charges.
+  const checkedAt = new Date().toISOString();
+  for (const adv of fresh) {
+    state.scannedPageIds[adv.pageId] = checkedAt;
+    if (!adv.pageName) { stats.apolloMisses++; continue; }
+    let apolloOrg = null;
+    let orgEnrich = null;
+    try {
+      apolloOrg = await apolloFindCompany({ name: adv.pageName });
+      // Brief throttle so we don't slam Apollo's search endpoint
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (e) {
+      stats.errors++;
+      continue;
+    }
+    if (!apolloOrg || !apolloOrg.domain) {
+      stats.apolloMisses++;
+      continue;
+    }
+    try {
+      orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (e) {
+      stats.errors++;
+      continue;
+    }
+    if (!orgEnrich) { stats.apolloMisses++; continue; }
+    stats.apolloResolved++;
+
+    // ICP filter — three gates from the user's spec:
+    //  (1) Currently running ads: guaranteed (came from Meta Ad Library)
+    //  (2) DANISH: Apollo's enrich country field
+    //  (3) Micro/small/small-med: 5-50 employees
+    if (orgEnrich.country && orgEnrich.country !== "Denmark") {
+      stats.skippedNotDk++;
+      continue;
+    }
+    const emp = orgEnrich.estimatedEmployees;
+    if (!emp || emp < 5 || emp > APOLLO_DISCOVER_MAX_EMPLOYEES) {
+      stats.skippedSize++;
+      continue;
+    }
+    // ICP-fit → append lead with meta_verified_active=true baked in.
+    // No need for the Apify verify pass — we sourced this lead FROM the
+    // Meta Ad Library, so by construction it has an active ad RIGHT NOW.
+    try {
+      const merged = {
+        id: apolloOrg.id,
+        name: adv.pageName || apolloOrg.name,
+        domain: apolloOrg.domain,
+        phone: orgEnrich.phone || "",
+        employees: emp,
+        industry: orgEnrich.industry || "",
+        city: orgEnrich.city || "",
+      };
+      const verifyResult = {
+        active: true,
+        totalCount: null, // we don't have the count from the bulk query
+        checkedAt,
+      };
+      // Reuse appendApolloLeadToUser but tag source distinctly so the
+      // dashboard can split ads-first vs Apollo-first volume.
+      const ud = loadUserData(TARGET_USER);
+      if (!ud.leads) ud.leads = [];
+      const syntheticCvr = `meta-${adv.pageId}`;
+      const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
+      const dupByDomain = apolloOrg.domain && ud.leads.some((l) => (l.web || "").toLowerCase() === apolloOrg.domain.toLowerCase());
+      // Also dedupe against the apollo-* synthetic id we used in the
+      // older Apollo-first path so we don't get the same brand twice.
+      const dupByApolloId = apolloOrg.id && ud.leads.some((l) => l.cvr === `apollo-${apolloOrg.id}`);
+      if (dupByCvr || dupByDomain || dupByApolloId) { stats.apolloMisses++; continue; }
+      const hasPhone = !!(merged.phone || "").toString().trim();
+      ud.leads.push({
+        cvr: syntheticCvr,
+        name: merged.name,
+        addr: "",
+        zip: "",
+        city: merged.city,
+        ph: merged.phone || "",
+        em: "",
+        web: merged.domain,
+        ind: merged.industry,
+        ic: "",
+        emp: typeof emp === "number" ? String(emp) : "",
+        emps: emp,
+        st: "aktiv",
+        yr: "",
+        form: "",
+        eq: 0,
+        res: 0,
+        omsaetning: 0,
+        source: "meta-ads-discover",
+        icpFit: true,
+        meta_advertiser: true,
+        ad_signals: ["Meta Ad Library (live)"],
+        meta_verified_active: true,
+        meta_verified_at: checkedAt,
+        meta_live_ad_count: null,
+        apollo_company: orgEnrich,
+        apollo_enrichment_pending: isApolloConfigured(),
+        apollo_enriched_at: null,
+        phone_missing: !hasPhone,
+        discovered_at: checkedAt,
+        pushed_to_cloudtalk_at: null,
+        twenty_opportunity_id: null,
+        // Meta-discovery breadcrumbs for the SDR
+        meta_page_id: adv.pageId,
+        meta_page_name: adv.pageName,
+        meta_ad_sample_archive: adv.adArchiveId,
+      });
+      saveUserData(TARGET_USER, ud);
+      stats.icpFitAppended++;
+      logActivity(
+        "advertiser",
+        `🟢 Verified live: ${adv.pageName} (${emp} emp, ${orgEnrich.industry || "—"})`,
+        { domain: apolloOrg.domain, userId: TARGET_USER, source: "meta-ads-discover", pageId: adv.pageId },
+      );
+    } catch (e) {
+      stats.errors++;
+      console.warn("[meta-ads-discover] append failed:", adv.pageName, e.message);
+    }
+  }
+
+  state.lastRunAt = checkedAt;
+  saveMetaAdsDiscoverState(state);
+  logActivity(
+    "discovery",
+    `Meta-ads-discover: ${stats.adsScraped} ads → ${stats.fresh} nye annoncører · ${stats.icpFitAppended} ICP-fit tilføjet · ${stats.skippedNotDk} ikke-DK · ${stats.skippedSize} udenfor 5-50 emp`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[meta-ads-discover] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
 // POST /api/cron/verify-leads — retroactive Meta Ad Library check on ALL
 // active leads regardless of source (Apollo discovery, Apify CVR-walk, CSV
 // imports, manual adds). Skips leads that are:

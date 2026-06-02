@@ -5225,6 +5225,8 @@ function renderAutodialerPage(){
     // Confirmed Meta advertisers (Apollo tech-stack signal) — the strongest
     // ICP. Sits first so the SDR can one-click to "only real advertisers".
     ['advertiser','🎯 Annoncører',advertiserCount],
+    // Ads-first discovery (sourced directly from live Meta Ad Library)
+    ['meta-ads-discover','🟢 Meta-ads live',srcCounts['meta-ads-discover']||0],
     ['meta-scraper','META',srcCounts['meta-scraper']||0],
     ['lookalike','Look-alike',srcCounts['lookalike']||0],
     ['google-maps','Maps',srcCounts['google-maps']||0],
