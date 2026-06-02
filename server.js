@@ -5861,6 +5861,129 @@ async function fetchLatestCloudTalkCall() {
   }
 }
 
+// GET /api/admin/lead-economics — daily $/lead trend + source breakdown.
+// Admin-only. Computes blended cost from fixed monthly subscriptions
+// (Apify + Apollo + GCP) prorated to the day, plus variable Apollo
+// credit burn per discovered lead. Aim is a single number the operator
+// can watch to know whether the funnel is still cheap enough to scale.
+//
+// Cost knobs are env vars so we can update the model without code:
+//   APIFY_MONTHLY_USD   default 45  (STARTER $29 + ~$16 overage)
+//   APOLLO_MONTHLY_USD  default 99  (Pro plan baseline)
+//   GCP_MONTHLY_USD     default 8   (Cloud Run + GCS + Scheduler)
+//   APOLLO_CREDIT_USD   default 0.025  ($99 / 4000 credits)
+//   APOLLO_CREDITS_PER_LEAD default 2  (= APOLLO_SEARCH_LIMIT)
+//
+// Returns per-day buckets for last 30 days + today/week/month aggregates.
+app.get("/api/admin/lead-economics", authMiddleware, async (req, res) => {
+  // Admin role check — non-admin SDRs shouldn't see cost data.
+  const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+  const me = allUsers.find((u) => u.id === req.userId);
+  if (!me || me.role !== "admin") {
+    return res.status(403).json({ error: "Admin only" });
+  }
+
+  const APIFY_MONTHLY_USD = Number(process.env.APIFY_MONTHLY_USD) || 45;
+  const APOLLO_MONTHLY_USD = Number(process.env.APOLLO_MONTHLY_USD) || 99;
+  const GCP_MONTHLY_USD = Number(process.env.GCP_MONTHLY_USD) || 8;
+  const APOLLO_CREDIT_USD = Number(process.env.APOLLO_CREDIT_USD) || 0.025;
+  const APOLLO_CREDITS_PER_LEAD = Number(process.env.APOLLO_CREDITS_PER_LEAD) || 2;
+
+  const FIXED_MONTHLY = APIFY_MONTHLY_USD + APOLLO_MONTHLY_USD + GCP_MONTHLY_USD;
+  const FIXED_DAILY = FIXED_MONTHLY / 30;
+
+  // Walk all user data files for leads with a discovered_at timestamp.
+  // Source-tagged events come from CVR-walk (apify/discover-ads), Apollo
+  // discovery, CSV imports, manual adds. Anything older than 30 days is
+  // outside the window and dropped.
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const WINDOW_DAYS = 30;
+  const cutoffMs = now - WINDOW_DAYS * DAY_MS;
+  const buckets = {}; // YYYY-MM-DD → { total, bySource: {...} }
+  const sourceTotals = {};
+
+  if (fs.existsSync(DATA_DIR)) {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+      try {
+        const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+        for (const lead of ud.leads || []) {
+          const ts = lead.discovered_at || lead.imported_at || lead.created_at || lead.addedAt;
+          if (!ts) continue;
+          const t = new Date(ts).getTime();
+          if (!t || t < cutoffMs) continue;
+          const day = new Date(t).toISOString().slice(0, 10);
+          const source = lead.source || "other";
+          if (!buckets[day]) buckets[day] = { total: 0, bySource: {} };
+          buckets[day].total++;
+          buckets[day].bySource[source] = (buckets[day].bySource[source] || 0) + 1;
+          sourceTotals[source] = (sourceTotals[source] || 0) + 1;
+        }
+      } catch (e) { console.warn("[lead-economics] read", f, e.message); }
+    }
+  }
+
+  // Build complete 30-day series (fill zeros for missing days) so the
+  // chart doesn't skip and the rolling averages are accurate.
+  const series = [];
+  for (let i = WINDOW_DAYS - 1; i >= 0; i--) {
+    const t = now - i * DAY_MS;
+    const day = new Date(t).toISOString().slice(0, 10);
+    const b = buckets[day] || { total: 0, bySource: {} };
+    // Per-day cost = prorated fixed + variable Apollo enrichment credits.
+    // Apify scrape is a fixed cost and already counted in APIFY_MONTHLY;
+    // Apollo people/match is the only variable cost (2 credits × leads
+    // × $0.025/credit). Other lead sources (CSV, manual) don't add
+    // variable cost — they share the fixed pool.
+    const variableUsd = b.total * APOLLO_CREDITS_PER_LEAD * APOLLO_CREDIT_USD;
+    const costUsd = FIXED_DAILY + variableUsd;
+    series.push({
+      day,
+      leads: b.total,
+      bySource: b.bySource,
+      costUsd: Math.round(costUsd * 100) / 100,
+      perLeadUsd: b.total > 0 ? Math.round((costUsd / b.total) * 1000) / 1000 : null,
+    });
+  }
+
+  // Aggregates — today is last 24h, week is last 7, month is full 30.
+  const agg = (days) => {
+    const slice = series.slice(-days);
+    const leads = slice.reduce((s, r) => s + r.leads, 0);
+    const cost = slice.reduce((s, r) => s + r.costUsd, 0);
+    return {
+      leads,
+      costUsd: Math.round(cost * 100) / 100,
+      perLeadUsd: leads > 0 ? Math.round((cost / leads) * 1000) / 1000 : null,
+    };
+  };
+
+  // Projected monthly from current 7-day pace
+  const week = agg(7);
+  const projectedMonthlyLeads = Math.round((week.leads / 7) * 30);
+
+  res.json({
+    series,
+    today: agg(1),
+    week,
+    month: agg(30),
+    projectedMonthlyLeads,
+    sourceTotals,
+    fixedMonthly: {
+      apify: APIFY_MONTHLY_USD,
+      apollo: APOLLO_MONTHLY_USD,
+      gcp: GCP_MONTHLY_USD,
+      total: FIXED_MONTHLY,
+    },
+    variableModel: {
+      apolloCreditsPerLead: APOLLO_CREDITS_PER_LEAD,
+      apolloUsdPerCredit: APOLLO_CREDIT_USD,
+      usdPerEnrichedLead: APOLLO_CREDITS_PER_LEAD * APOLLO_CREDIT_USD,
+    },
+  });
+});
+
 // GET /api/activity — recent system activity feed. Merges the logged
 // events (imports, promotions, enrichment, calls) with the META scraper's
 // run history from state.json, newest first.
