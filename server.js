@@ -5698,6 +5698,724 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
 });
 
+// ── LINKEDIN ADS DISCOVERY ────────────────────────────────────────
+// Captures B2B SaaS, agencies, consulting, recruiting — segments Meta
+// largely misses. Apify's silva95gustavo/linkedin-ad-library-scraper
+// returns currently-active LinkedIn ads for a search URL. Same pipeline
+// as meta-ads-discover: scrape → unique advertisers → Apollo resolve →
+// DK + 5-50 emp filter → append.
+//
+// LinkedIn's Ad Library doesn't expose a clean "currently running" filter,
+// so we accept all results and rely on the company-resolution step for ICP
+// quality. Expected yield ~20-40 unique B2B advertisers per run, very
+// little overlap with Meta-discovered leads.
+
+const LINKEDIN_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "linkedin_discover.json");
+
+// Rotation of LinkedIn Ad Library search URLs. Mix of:
+//  - country-only (broad DK B2B)
+//  - keyword + DK country (industry-specific)
+const LINKEDIN_DISCOVER_QUERIES = [
+  { label: "DK all",       url: "https://www.linkedin.com/ad-library/search?countries=DK" },
+  { label: "saas DK",      url: "https://www.linkedin.com/ad-library/search?countries=DK&keyword=saas" },
+  { label: "agency DK",    url: "https://www.linkedin.com/ad-library/search?countries=DK&keyword=agency" },
+  { label: "consulting DK",url: "https://www.linkedin.com/ad-library/search?countries=DK&keyword=consulting" },
+  { label: "marketing DK", url: "https://www.linkedin.com/ad-library/search?countries=DK&keyword=marketing" },
+  { label: "recruiting DK",url: "https://www.linkedin.com/ad-library/search?countries=DK&keyword=recruiting" },
+];
+
+function loadLinkedInDiscoverState() {
+  try {
+    if (fs.existsSync(LINKEDIN_DISCOVER_STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(LINKEDIN_DISCOVER_STATE_FILE, "utf8"));
+      return { scannedAdvertisers: {}, queryCursor: 0, lastRunAt: null, ...s };
+    }
+  } catch (e) { console.warn("[linkedin-discover] state load:", e.message); }
+  return { scannedAdvertisers: {}, queryCursor: 0, lastRunAt: null };
+}
+
+function saveLinkedInDiscoverState(s) {
+  fs.mkdirSync(path.dirname(LINKEDIN_DISCOVER_STATE_FILE), { recursive: true });
+  fs.writeFileSync(LINKEDIN_DISCOVER_STATE_FILE, JSON.stringify(s, null, 2));
+}
+
+// Adapter: LinkedIn Ad scraper response shapes vary across actor versions.
+// Look for common advertiser-name fields and normalize.
+function extractLinkedInAdvertiser(item) {
+  const name =
+    item.advertiserName ||
+    item.companyName ||
+    item.pageName ||
+    item.advertiser ||
+    item.company ||
+    item.organization ||
+    (item.advertiserInfo && (item.advertiserInfo.name || item.advertiserInfo.companyName)) ||
+    (item.snapshot && item.snapshot.advertiserName) ||
+    null;
+  const linkedinUrl =
+    item.advertiserUrl ||
+    item.advertiserLinkedInUrl ||
+    item.companyLinkedInUrl ||
+    item.linkedinUrl ||
+    item.advertiser_url ||
+    (item.advertiserInfo && item.advertiserInfo.url) ||
+    null;
+  return { name, linkedinUrl };
+}
+
+async function apifyLinkedInAdsScrape({ startUrl, resultsLimit }) {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) throw new Error("APIFY_API_TOKEN not configured");
+  const input = {
+    startUrls: [{ url: startUrl }],
+    resultsLimit,
+    skipDetails: true,
+  };
+  const startResp = await fetch(
+    `https://api.apify.com/v2/acts/silva95gustavo~linkedin-ad-library-scraper/runs?token=${token}&memory=1024&timeout=1800`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+  );
+  if (!startResp.ok) throw new Error(`LinkedIn Apify start ${startResp.status}: ${(await startResp.text()).slice(0,300)}`);
+  const { data: run } = await startResp.json();
+  // Poll
+  const t0 = Date.now();
+  const MAX_WAIT_MS = 20 * 60 * 1000;
+  let status = run.status;
+  let runData = run;
+  while (status === "READY" || status === "RUNNING") {
+    if (Date.now() - t0 > MAX_WAIT_MS) throw new Error("LinkedIn Apify timeout");
+    await new Promise((r) => setTimeout(r, 5000));
+    const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+    if (!poll.ok) continue;
+    runData = (await poll.json()).data;
+    status = runData.status;
+  }
+  if (status !== "SUCCEEDED") throw new Error(`LinkedIn Apify ended ${status}`);
+  const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`);
+  if (!itemsResp.ok) throw new Error(`LinkedIn dataset fetch ${itemsResp.status}`);
+  return itemsResp.json();
+}
+
+app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
+  if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
+
+  const RESULTS_LIMIT = Math.max(20, Math.min(300, Number(req.query.limit) || 100));
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const state = loadLinkedInDiscoverState();
+  const query = LINKEDIN_DISCOVER_QUERIES[state.queryCursor % LINKEDIN_DISCOVER_QUERIES.length];
+  state.queryCursor = (state.queryCursor + 1) % LINKEDIN_DISCOVER_QUERIES.length;
+
+  const stats = {
+    query: query.label,
+    adsScraped: 0,
+    uniqueAdvertisers: 0,
+    alreadyScanned: 0,
+    fresh: 0,
+    apolloResolved: 0,
+    apolloMisses: 0,
+    skippedNotDk: 0,
+    skippedSize: 0,
+    leadsAppended: 0,
+    errors: 0,
+  };
+
+  // 1. Scrape LinkedIn ads
+  let items = [];
+  try {
+    items = await apifyLinkedInAdsScrape({ startUrl: query.url, resultsLimit: RESULTS_LIMIT });
+  } catch (e) {
+    return res.status(502).json({ error: `LinkedIn Apify failed: ${e.message}` });
+  }
+  stats.adsScraped = items.length;
+
+  // 2. Dedupe to unique advertisers
+  const seenThisRun = new Set();
+  const fresh = [];
+  for (const it of items) {
+    const adv = extractLinkedInAdvertiser(it);
+    if (!adv.name) continue;
+    const key = adv.name.toLowerCase().trim();
+    if (seenThisRun.has(key)) continue;
+    seenThisRun.add(key);
+    if (state.scannedAdvertisers[key]) continue;
+    state.scannedAdvertisers[key] = new Date().toISOString();
+    fresh.push(adv);
+  }
+  stats.uniqueAdvertisers = seenThisRun.size;
+  stats.alreadyScanned = stats.uniqueAdvertisers - fresh.length;
+  stats.fresh = fresh.length;
+
+  // 3. For each fresh advertiser: resolve to Apollo + ICP filter
+  for (const adv of fresh) {
+    let apolloOrg = null;
+    let orgEnrich = null;
+    try {
+      apolloOrg = await apolloFindCompany({ name: adv.name });
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (_) { stats.errors++; continue; }
+    if (!apolloOrg || !apolloOrg.domain) { stats.apolloMisses++; continue; }
+
+    try {
+      orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (_) { stats.errors++; continue; }
+    if (!orgEnrich) { stats.apolloMisses++; continue; }
+    stats.apolloResolved++;
+
+    if (orgEnrich.country && orgEnrich.country !== "Denmark") { stats.skippedNotDk++; continue; }
+    const emp = orgEnrich.estimatedEmployees;
+    if (!emp || emp < 5 || emp > APOLLO_DISCOVER_MAX_EMPLOYEES) { stats.skippedSize++; continue; }
+
+    // Append directly — LinkedIn ad presence already proves they're actively
+    // marketing. Different platform from Meta, no need to cross-verify on
+    // Meta Ad Library (would push them to Måske-relevant incorrectly).
+    try {
+      const ud = loadUserData(TARGET_USER);
+      if (!ud.leads) ud.leads = [];
+      const syntheticCvr = `linkedin-${apolloOrg.id}`;
+      const dupes = ud.leads.some((l) =>
+        l.cvr === syntheticCvr ||
+        l.cvr === `apollo-${apolloOrg.id}` ||
+        l.cvr === `tech-${apolloOrg.id}` ||
+        l.cvr === `gmaps-${apolloOrg.id}` ||
+        (apolloOrg.domain && (l.web || "").toLowerCase() === apolloOrg.domain.toLowerCase())
+      );
+      if (dupes) continue;
+
+      const phone = orgEnrich.phone || "";
+      const hasPhone = !!phone.toString().trim();
+      const now = new Date().toISOString();
+      ud.leads.push({
+        cvr: syntheticCvr,
+        name: adv.name,
+        addr: "", zip: "", city: orgEnrich.city || "",
+        ph: phone, em: "", web: apolloOrg.domain, ind: orgEnrich.industry || "",
+        ic: "",
+        emp: typeof emp === "number" ? String(emp) : "",
+        emps: emp, st: "aktiv", yr: "", form: "",
+        eq: 0, res: 0, omsaetning: 0,
+        source: "linkedin-ads-discover",
+        icpFit: true,
+        meta_advertiser: false,
+        linkedin_advertiser: true,
+        ad_signals: ["LinkedIn Ad Library (live)"],
+        // null = not Meta-verified (different platform). Autodialer
+        // filter allows leads with meta_verified_active!==false through;
+        // LinkedIn-sourced leads are dialable without Meta check.
+        meta_verified_active: null,
+        meta_verified_at: null,
+        meta_live_ad_count: null,
+        linkedin_url: adv.linkedinUrl || orgEnrich.linkedinUrl || "",
+        apollo_company: orgEnrich,
+        apollo_enrichment_pending: isApolloConfigured(),
+        apollo_enriched_at: null,
+        phone_missing: !hasPhone,
+        discovered_at: now,
+        pushed_to_cloudtalk_at: null,
+        twenty_opportunity_id: null,
+      });
+      saveUserData(TARGET_USER, ud);
+      stats.leadsAppended++;
+    } catch (e) { stats.errors++; }
+  }
+
+  state.lastRunAt = new Date().toISOString();
+  saveLinkedInDiscoverState(state);
+  logActivity(
+    "discovery",
+    `LinkedIn-discover (${query.label}): ${stats.adsScraped} ads · ${stats.fresh} nye · ${stats.apolloResolved} apollo · ${stats.leadsAppended} tilføjet`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[linkedin-ads-discover] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
+// ── GOOGLE MAPS / OSM DAILY DISCOVERY ─────────────────────────────────
+// Wraps the existing /api/scrape/google-maps endpoint as a daily cron.
+// Iterates a rotation of category+city queries, runs each result through
+// the same ICP filter pipeline as ads-first (Apollo resolve → DK + 5-50
+// emp → live-Meta verify), appends only the verified-active ICP-fit.
+//
+// Yield expectation: LOW. OSM data is sparse, many DK local businesses
+// don't have CVR matches, and the Meta-advertiser hit rate is lower than
+// e-commerce-heavy keyword pulls. Realistic ~3-7 ICP/day. Treat as
+// supplementary, not primary.
+
+const GMAPS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "gmaps_discover.json");
+
+// Rotation pairs of (category, city). One pair per cron run. Categories
+// chosen for plausible Meta-ad activity: local consumer services that
+// frequently run Meta promotions (restaurants, beauty, retail).
+const GMAPS_DISCOVER_QUERIES = [
+  { category: "restaurant", city: "København" },
+  { category: "cafe",       city: "København" },
+  { category: "frisor",     city: "København" },
+  { category: "butik",      city: "København" },
+  { category: "restaurant", city: "Aarhus" },
+  { category: "cafe",       city: "Aarhus" },
+  { category: "butik",      city: "Aarhus" },
+  { category: "restaurant", city: "Odense" },
+  { category: "butik",      city: "Odense" },
+  { category: "restaurant", city: "Aalborg" },
+];
+
+function loadGmapsDiscoverState() {
+  try {
+    if (fs.existsSync(GMAPS_DISCOVER_STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(GMAPS_DISCOVER_STATE_FILE, "utf8"));
+      return { scannedNames: {}, queryCursor: 0, lastRunAt: null, ...s };
+    }
+  } catch (e) { console.warn("[gmaps-discover] state load:", e.message); }
+  return { scannedNames: {}, queryCursor: 0, lastRunAt: null };
+}
+
+function saveGmapsDiscoverState(s) {
+  fs.mkdirSync(path.dirname(GMAPS_DISCOVER_STATE_FILE), { recursive: true });
+  fs.writeFileSync(GMAPS_DISCOVER_STATE_FILE, JSON.stringify(s, null, 2));
+}
+
+app.post("/api/cron/gmaps-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
+  if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
+
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const LIMIT = Math.max(20, Math.min(200, Number(req.query.limit) || 80));
+  const state = loadGmapsDiscoverState();
+  const query = GMAPS_DISCOVER_QUERIES[state.queryCursor % GMAPS_DISCOVER_QUERIES.length];
+  state.queryCursor = (state.queryCursor + 1) % GMAPS_DISCOVER_QUERIES.length;
+
+  const stats = {
+    query: `${query.category} / ${query.city}`,
+    osmRaw: 0,
+    skippedDuplicates: 0,
+    apolloResolved: 0,
+    apolloMisses: 0,
+    skippedNotDk: 0,
+    skippedSize: 0,
+    verifiedActive: 0,
+    verifiedInactive: 0,
+    leadsAppended: 0,
+    errors: 0,
+  };
+
+  // 1. Scrape OSM directly using the existing helper (no HTTP roundtrip)
+  let parsed = [];
+  try {
+    const overpass = buildOsmQuery({ category: query.category, city: query.city, limit: LIMIT });
+    const r = await fetch(OSM_OVERPASS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json", "User-Agent": "VedioLeads/1.0" },
+      body: "data=" + encodeURIComponent(overpass),
+    });
+    if (!r.ok) throw new Error(`OSM ${r.status}`);
+    const data = await r.json();
+    const seen = new Set();
+    for (const el of data.elements || []) {
+      const p = parseOsmElement(el);
+      if (!p) continue;
+      const key = `${p.name.toLowerCase()}|${(p.city || "").toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      parsed.push(p);
+      if (parsed.length >= LIMIT) break;
+    }
+    stats.osmRaw = parsed.length;
+  } catch (e) {
+    return res.status(502).json({ error: `OSM scrape failed: ${e.message}` });
+  }
+
+  // 2. For each OSM business: resolve to Apollo by name (DK location), then ICP-filter
+  const candidatesPassed = [];
+  for (const p of parsed) {
+    const key = `${(p.name || "").toLowerCase()}|${(p.city || "").toLowerCase()}`;
+    if (state.scannedNames[key]) { stats.skippedDuplicates++; continue; }
+    state.scannedNames[key] = new Date().toISOString();
+
+    let apolloOrg = null;
+    let orgEnrich = null;
+    try {
+      apolloOrg = await apolloFindCompany({ name: p.name });
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (_) { stats.errors++; continue; }
+    if (!apolloOrg || !apolloOrg.domain) { stats.apolloMisses++; continue; }
+
+    try {
+      orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (_) { stats.errors++; continue; }
+    if (!orgEnrich) { stats.apolloMisses++; continue; }
+    stats.apolloResolved++;
+
+    if (orgEnrich.country && orgEnrich.country !== "Denmark") { stats.skippedNotDk++; continue; }
+    const emp = orgEnrich.estimatedEmployees;
+    if (!emp || emp < 5 || emp > APOLLO_DISCOVER_MAX_EMPLOYEES) { stats.skippedSize++; continue; }
+
+    candidatesPassed.push({
+      cand: {
+        id: apolloOrg.id,
+        name: p.name,
+        domain: apolloOrg.domain,
+        phone: p.phone || orgEnrich.phone || "",
+        employees: emp,
+        industry: orgEnrich.industry || query.category,
+        city: p.city || orgEnrich.city || "",
+      },
+      orgEnrich,
+    });
+  }
+
+  // 3. Batch live-Meta verify
+  const verifyMap = new Map();
+  if (candidatesPassed.length > 0) {
+    try {
+      const startUrls = candidatesPassed.map(({ cand }) => ({
+        url: buildAdsLibraryUrl(brandForMetaAdsSearch(cand.name)),
+        _domain: cand.domain.toLowerCase(),
+      }));
+      const items = await apifyVerifyMetaAds(startUrls);
+      const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
+      const checkedAt = new Date().toISOString();
+      for (const item of items) {
+        const domain = urlToDomain.get(item.inputUrl);
+        if (!domain) continue;
+        const total = Number(item.totalCount || 0);
+        verifyMap.set(domain, { active: total > 0, totalCount: total, checkedAt });
+      }
+      stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
+      stats.verifiedInactive = [...verifyMap.values()].filter((v) => !v.active).length;
+    } catch (e) {
+      console.warn("[gmaps-discover] verify failed:", e.message);
+      stats.errors++;
+    }
+  }
+
+  // 4. Append verified-active leads
+  for (const { cand, orgEnrich } of candidatesPassed) {
+    const verify = verifyMap.get((cand.domain || "").toLowerCase());
+    if (!verify || !verify.active) continue;
+    try {
+      const ud = loadUserData(TARGET_USER);
+      if (!ud.leads) ud.leads = [];
+      const syntheticCvr = `gmaps-${cand.id}`;
+      const dupes = ud.leads.some((l) =>
+        l.cvr === syntheticCvr ||
+        l.cvr === `apollo-${cand.id}` ||
+        l.cvr === `tech-${cand.id}` ||
+        (cand.domain && (l.web || "").toLowerCase() === cand.domain.toLowerCase())
+      );
+      if (dupes) continue;
+      const hasPhone = !!(cand.phone || "").toString().trim();
+      ud.leads.push({
+        cvr: syntheticCvr,
+        name: cand.name,
+        addr: "", zip: "", city: cand.city, ph: cand.phone || "", em: "",
+        web: cand.domain, ind: cand.industry, ic: "",
+        emp: typeof cand.employees === "number" ? String(cand.employees) : "",
+        emps: cand.employees, st: "aktiv", yr: "", form: "",
+        eq: 0, res: 0, omsaetning: 0,
+        source: "gmaps-discover",
+        icpFit: true, meta_advertiser: true,
+        ad_signals: [`Google Maps: ${query.category}`, "Meta Ad Library (live)"],
+        meta_verified_active: true,
+        meta_verified_at: verify.checkedAt,
+        meta_live_ad_count: verify.totalCount,
+        apollo_company: orgEnrich,
+        apollo_enrichment_pending: isApolloConfigured(),
+        apollo_enriched_at: null,
+        phone_missing: !hasPhone,
+        discovered_at: verify.checkedAt,
+        pushed_to_cloudtalk_at: null, twenty_opportunity_id: null,
+      });
+      saveUserData(TARGET_USER, ud);
+      stats.leadsAppended++;
+    } catch (e) { stats.errors++; }
+  }
+
+  state.lastRunAt = new Date().toISOString();
+  saveGmapsDiscoverState(state);
+  logActivity(
+    "discovery",
+    `Gmaps-discover (${stats.query}): ${stats.osmRaw} OSM · ${stats.apolloResolved} apollo · ${stats.verifiedActive} live · ${stats.leadsAppended} tilføjet`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[gmaps-discover] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
+// ── TECH-STACK DISCOVERY (Apollo currently_using_any_of_technology_uids) ──
+// Different angle from ads-first: instead of looking at WHO is advertising,
+// look at WHO has marketing-tech installed (Shopify, Klaviyo, Mailchimp,
+// HubSpot, ActiveCampaign). These tools all correlate strongly with "this
+// company spends money on marketing" — and the ones using e-commerce
+// stacks (Shopify + Klaviyo) almost universally advertise on Meta too.
+//
+// Same architecture as apollo-discover (search → org-enrich → ICP filter →
+// append lead) PLUS the live Meta Ad Library verify step that ads-first
+// uses, so the dialer only gets leads that are confirmed currently
+// advertising. Otherwise we'd re-introduce the Apollo-lag problem we
+// just solved.
+//
+// Tech rotation: 1 tech per run, cursor in state file. ~50 candidates per
+// run × 30-50% Apify-verified active = ~15-25 ICP-fit leads/day.
+
+const TECH_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "apollo_tech_discover.json");
+
+// Tech UIDs in priority order by ICP relevance. Klaviyo is the strongest
+// signal — it's specifically used by e-commerce brands for email marketing
+// + retargeting (heavy correlation with Meta ad spend). Shopify is second
+// (e-commerce platform). Mailchimp + ActiveCampaign + HubSpot have broader
+// usage so signal density is lower.
+const TECH_DISCOVER_UIDS = [
+  "klaviyo",
+  "shopify",
+  "active_campaign",
+  "mailchimp",
+  "hubspot",
+];
+
+function loadTechDiscoverState() {
+  try {
+    if (fs.existsSync(TECH_DISCOVER_STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(TECH_DISCOVER_STATE_FILE, "utf8"));
+      // Backfill missing fields if state from older code
+      return { scannedDomains: {}, scannedOrgIds: {}, techCursor: 0, lastRunAt: null, ...s };
+    }
+  } catch (e) { console.warn("[tech-discover] state load:", e.message); }
+  return { scannedDomains: {}, scannedOrgIds: {}, techCursor: 0, lastRunAt: null };
+}
+
+function saveTechDiscoverState(s) {
+  fs.mkdirSync(path.dirname(TECH_DISCOVER_STATE_FILE), { recursive: true });
+  fs.writeFileSync(TECH_DISCOVER_STATE_FILE, JSON.stringify(s, null, 2));
+}
+
+async function apolloSearchByTech({ techUid, page = 1, perPage = 25 }) {
+  const body = {
+    page: Math.max(1, page),
+    per_page: Math.min(100, perPage),
+    organization_locations: ["Denmark"],
+    organization_num_employees_ranges: APOLLO_DISCOVER_EMPLOYEE_RANGES,
+    currently_using_any_of_technology_uids: [techUid],
+  };
+  const r = await fetch(`${APOLLO_API_BASE}/mixed_companies/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Api-Key": process.env.APOLLO_API_KEY },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Apollo tech-search ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const d = await r.json();
+  const orgs = d.organizations || d.accounts || [];
+  return orgs.map((o) => ({
+    id: o.id || o.organization_id || null,
+    name: o.name || "",
+    domain: String(o.website_url || o.primary_domain || "")
+      .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim(),
+    employees: o.estimated_num_employees || null,
+    industry: o.industry || (o.industries && o.industries[0]) || "",
+    phone: o.primary_phone?.sanitized_number || o.phone || "",
+    city: o.city || "",
+  }));
+}
+
+app.post("/api/cron/tech-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
+  if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
+
+  // Per-run cap. 2 pages × 25 = 50 candidates per cycle. With Apify verify
+  // cost ($0.005 per candidate) + people-match (2 credits per ICP-fit, async
+  // via drain), the per-run hard cost is ~$0.25 + ~30-50 credits.
+  const PAGES_PER_RUN = Math.max(1, Math.min(5, Number(req.query.pages) || 2));
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const customTech = (req.query.tech || "").toString().trim();
+  const state = loadTechDiscoverState();
+  const tech = customTech || TECH_DISCOVER_UIDS[state.techCursor % TECH_DISCOVER_UIDS.length];
+  if (!customTech) state.techCursor = (state.techCursor + 1) % TECH_DISCOVER_UIDS.length;
+
+  const stats = {
+    tech,
+    pagesScanned: 0,
+    candidatesSeen: 0,
+    skippedDuplicates: 0,
+    skippedOversized: 0,
+    enrichmentChecked: 0,
+    candidatesPassedApolloFilter: 0,
+    verifiedActive: 0,
+    verifiedInactive: 0,
+    leadsAppended: 0,
+    errors: 0,
+  };
+
+  // 1. Scan Apollo by tech — collect candidates, then batch-verify with Apify
+  const candidatesPassed = [];
+  for (let p = 1; p <= PAGES_PER_RUN; p++) {
+    let candidates = [];
+    try {
+      candidates = await apolloSearchByTech({ techUid: tech, page: p, perPage: 25 });
+      stats.pagesScanned++;
+    } catch (e) {
+      console.warn(`[tech-discover] search ${tech}#${p} failed:`, e.message);
+      stats.errors++;
+      continue;
+    }
+    if (candidates.length === 0) break;
+
+    for (const cand of candidates) {
+      stats.candidatesSeen++;
+      const dKey = (cand.domain || "").toLowerCase();
+      if (!dKey || !cand.id) { stats.skippedDuplicates++; continue; }
+      if (state.scannedDomains[dKey] || state.scannedOrgIds[cand.id]) {
+        stats.skippedDuplicates++;
+        continue;
+      }
+      state.scannedDomains[dKey] = new Date().toISOString();
+      state.scannedOrgIds[cand.id] = true;
+
+      // Confirm DK + 5-50 emp via org-enrich (search filter is advisory)
+      let orgEnrich = null;
+      try {
+        orgEnrich = await apolloOrgEnrich(cand.domain);
+        stats.enrichmentChecked++;
+        await new Promise((r) => setTimeout(r, 200));
+      } catch (e) {
+        stats.errors++;
+        continue;
+      }
+      if (!orgEnrich) continue;
+      if (orgEnrich.country && orgEnrich.country !== "Denmark") continue;
+      const enrichedEmp = orgEnrich.estimatedEmployees || cand.employees;
+      if (enrichedEmp && enrichedEmp > APOLLO_DISCOVER_MAX_EMPLOYEES) {
+        stats.skippedOversized++;
+        continue;
+      }
+      if (!enrichedEmp || enrichedEmp < 5) continue;
+      stats.candidatesPassedApolloFilter++;
+
+      candidatesPassed.push({
+        cand: {
+          ...cand,
+          phone: cand.phone || orgEnrich.phone || "",
+          employees: enrichedEmp,
+          industry: cand.industry || orgEnrich.industry || "",
+          city: cand.city || orgEnrich.city || "",
+        },
+        orgEnrich,
+      });
+    }
+  }
+
+  // 2. Batch live-Meta verify the passed candidates — the same step that
+  //    keeps quality high in apollo-discover. Tech signal alone isn't proof
+  //    of current Meta-ad activity.
+  const verifyMap = new Map();
+  if (candidatesPassed.length > 0) {
+    try {
+      const startUrls = candidatesPassed.map(({ cand }) => {
+        const brand = brandForMetaAdsSearch(cand.name);
+        return { url: buildAdsLibraryUrl(brand), _domain: cand.domain.toLowerCase() };
+      });
+      const items = await apifyVerifyMetaAds(startUrls);
+      const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
+      const checkedAt = new Date().toISOString();
+      for (const item of items) {
+        const domain = urlToDomain.get(item.inputUrl);
+        if (!domain) continue;
+        const total = Number(item.totalCount || 0);
+        verifyMap.set(domain, { active: total > 0, totalCount: total, checkedAt });
+      }
+      stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
+      stats.verifiedInactive = [...verifyMap.values()].filter((v) => !v.active).length;
+    } catch (e) {
+      console.warn("[tech-discover] Apify verify failed:", e.message);
+      stats.errors++;
+    }
+  }
+
+  // 3. Append verified-active leads
+  for (const { cand, orgEnrich } of candidatesPassed) {
+    const verify = verifyMap.get((cand.domain || "").toLowerCase());
+    if (!verify || !verify.active) continue; // hard gate: must be currently advertising
+
+    try {
+      const ud = loadUserData(TARGET_USER);
+      if (!ud.leads) ud.leads = [];
+      const syntheticCvr = `tech-${cand.id}`;
+      const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
+      const dupByDomain = ud.leads.some((l) => (l.web || "").toLowerCase() === cand.domain.toLowerCase());
+      const dupByApolloId = ud.leads.some((l) => l.cvr === `apollo-${cand.id}`);
+      const dupByMetaId = ud.leads.some((l) => l.meta_page_id && l.web && l.web.toLowerCase() === cand.domain.toLowerCase());
+      if (dupByCvr || dupByDomain || dupByApolloId || dupByMetaId) continue;
+
+      const hasPhone = !!(cand.phone || "").toString().trim();
+      ud.leads.push({
+        cvr: syntheticCvr,
+        name: cand.name,
+        addr: "",
+        zip: "",
+        city: cand.city,
+        ph: cand.phone || "",
+        em: "",
+        web: cand.domain,
+        ind: cand.industry,
+        ic: "",
+        emp: typeof cand.employees === "number" ? String(cand.employees) : "",
+        emps: cand.employees,
+        st: "aktiv",
+        yr: "",
+        form: "",
+        eq: 0, res: 0, omsaetning: 0,
+        source: `tech-discover-${tech}`,
+        icpFit: true,
+        meta_advertiser: true,
+        ad_signals: [`Apollo tech: ${tech}`, "Meta Ad Library (live)"],
+        meta_verified_active: true,
+        meta_verified_at: verify.checkedAt,
+        meta_live_ad_count: verify.totalCount,
+        apollo_company: orgEnrich,
+        apollo_enrichment_pending: isApolloConfigured(),
+        apollo_enriched_at: null,
+        phone_missing: !hasPhone,
+        discovered_at: verify.checkedAt,
+        pushed_to_cloudtalk_at: null,
+        twenty_opportunity_id: null,
+        tech_signal: tech,
+      });
+      saveUserData(TARGET_USER, ud);
+      stats.leadsAppended++;
+      logActivity(
+        "advertiser",
+        `🛠 Tech+ads: ${cand.name} (${tech} + Meta live)`,
+        { domain: cand.domain, userId: TARGET_USER, source: `tech-discover-${tech}`, tech },
+      );
+    } catch (e) {
+      stats.errors++;
+      console.warn("[tech-discover] append failed:", cand.name, e.message);
+    }
+  }
+
+  state.lastRunAt = new Date().toISOString();
+  saveTechDiscoverState(state);
+  logActivity(
+    "discovery",
+    `Tech-discover (${tech}): ${stats.candidatesSeen} kandidater · ${stats.candidatesPassedApolloFilter} ICP · ${stats.verifiedActive} live · ${stats.leadsAppended} tilføjet`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[tech-discover] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, nextTech: TECH_DISCOVER_UIDS[state.techCursor % TECH_DISCOVER_UIDS.length] });
+});
+
 // ── META ADS-FIRST DISCOVERY ────────────────────────────────────────
 // Architectural pivot from Apollo-first. The old path was:
 //
@@ -5730,10 +6448,24 @@ const META_ADS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "meta_ads_
 // (avoids over-indexing on one niche). Apify's actor REQUIRES a q= param —
 // the no-keyword bulk URL returns 403 BLOCKED from Meta.
 const META_DISCOVER_KEYWORDS = [
-  "DK", "Danmark", "København", "Copenhagen",
-  "shop", "tilbud", "køb", "online", "ny", "spar",
-  "mode", "tøj", "skønhed", "mad", "rejse", "bolig",
-  "design", "fitness", "wellness", "gratis",
+  // Geographic — generic DK signal
+  "DK", "Danmark", "København", "Copenhagen", "Aarhus", "Odense", "Aalborg",
+  // Commerce intents
+  "shop", "tilbud", "køb", "bestil", "online", "ny", "spar", "rabat",
+  "udsalg", "gratis", "fragt", "levering",
+  // Consumer verticals
+  "mode", "tøj", "sko", "smykker", "ur", "taske",
+  "skønhed", "skincare", "makeup", "hår", "parfume",
+  "mad", "kaffe", "vin", "økologisk", "snack",
+  "møbler", "interiør", "bolig", "hjem", "have",
+  // Lifestyle / experience
+  "rejse", "ferie", "oplevelse", "wellness", "fitness", "yoga",
+  // Family
+  "børn", "baby", "legetøj",
+  // Pro / hobby
+  "sport", "cykel", "outdoor",
+  // Design / branding
+  "design", "håndlavet",
 ];
 
 function loadMetaAdsDiscoverState() {
