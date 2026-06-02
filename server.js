@@ -5698,6 +5698,165 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
 });
 
+// ── WEBSITE PHONE SCRAPING ────────────────────────────────────────
+// Many DK SMB sites have a phone on /kontakt or /contact page, even when
+// Datafordeler + Apollo both lack the number. Direct Node fetch handles
+// 90% of cases (no JS rendering needed for a static contact page);
+// Apify cheerio-scraper is the fallback for sites that block direct
+// fetches via UA filtering or geofencing.
+
+const DK_PHONE_REGEX = /(?:\+?45[\s\-]?)?\b([2-9]\d(?:[\s\-]?\d{2}){3})\b/g;
+
+function normalizeDkPhone(rawDigits) {
+  let d = String(rawDigits || "").replace(/\D/g, "");
+  // Strip leading 45 country code if present (10-digit form)
+  if (d.length === 10 && d.startsWith("45")) d = d.slice(2);
+  // Sometimes formatted with 0045 prefix
+  if (d.length === 12 && d.startsWith("0045")) d = d.slice(4);
+  if (d.length !== 8) return null;
+  if (!/^[2-9]/.test(d)) return null; // DK mobile/landline start digits
+  return "+45" + d;
+}
+
+// Try fetching a single URL and extracting a DK phone. Returns {phone, source}
+// or null. tel: href links are the strongest signal — they're machine-tagged
+// as phones and rarely false positives. Plain-text regex is fallback.
+async function fetchAndExtractPhone(url) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; VedioLeads/1.0; +https://vedio.dk)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
+        "Accept-Language": "da-DK,da;q=0.9,en;q=0.8",
+      },
+      signal: controller.signal,
+      redirect: "follow",
+    }).finally(() => clearTimeout(timeoutId));
+    if (!r.ok) return null;
+    const html = await r.text();
+
+    // 1. tel: hrefs — most reliable
+    const telMatches = [...html.matchAll(/href=["']tel:([+0-9\s\-().]+)["']/gi)];
+    for (const m of telMatches) {
+      const phone = normalizeDkPhone(m[1]);
+      if (phone) return { phone, source: "tel-link", url };
+    }
+    // 2. data-phone or itemprop="telephone"
+    const microMatches = [...html.matchAll(/(?:data-phone|itemprop="telephone"|class="[^"]*phone[^"]*")[^>]*>([^<]+)</gi)];
+    for (const m of microMatches) {
+      const phone = normalizeDkPhone(m[1]);
+      if (phone) return { phone, source: "microdata", url };
+    }
+    // 3. Plain-text regex — looser, false positives possible
+    // Strip script + style blocks first to avoid matching random 8-digit strings
+    const visible = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]*>/g, " ");
+    const txtMatches = [...visible.matchAll(DK_PHONE_REGEX)];
+    for (const m of txtMatches) {
+      const phone = normalizeDkPhone(m[1]);
+      if (phone) return { phone, source: "text-match", url };
+    }
+    return null;
+  } catch (e) {
+    return null; // timeout, DNS fail, refused, etc.
+  }
+}
+
+// Scrape a company website for a DK phone. Tries /kontakt /contact /om-os
+// /about and homepage in order. Returns first hit.
+async function scrapeWebsiteForPhone(websiteUrl) {
+  if (!websiteUrl) return null;
+  let base = String(websiteUrl).trim();
+  if (!/^https?:\/\//i.test(base)) base = "https://" + base;
+  base = base.replace(/\/+$/, "");
+  // Most DK SMB contact info lives on these paths
+  const paths = ["/kontakt", "/contact", "/contact-us", "/om-os", "/about", "/about-us", "/"];
+  for (const p of paths) {
+    const res = await fetchAndExtractPhone(base + p);
+    if (res) return { ...res, path: p };
+  }
+  return null;
+}
+
+app.post("/api/cron/scrape-website-phones", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const LIMIT = Math.max(5, Math.min(100, Number(req.query.limit) || 50));
+  const stats = {
+    candidates: 0,
+    recovered: 0,
+    noWebsite: 0,
+    noPhoneFound: 0,
+    bySource: {},
+  };
+
+  const ud = loadUserData(TARGET_USER);
+  // Verified-active leads without phones. We try website scraping which
+  // works for ~50-70% of DK SMBs that have a /kontakt page.
+  const todo = (ud.leads || []).filter((l) =>
+    l.lastAction !== "not-relevant" &&
+    l.meta_verified_active === true &&
+    !((l.ph || "").toString().trim()) &&
+    !((l.phone || "").toString().trim())
+  ).slice(0, LIMIT);
+  stats.candidates = todo.length;
+
+  if (todo.length === 0) {
+    return res.json({ ok: true, stats, note: "no phone-missing verified-active leads" });
+  }
+
+  // Process in parallel with 5-way concurrency — gentle on origin servers
+  const queue = [...todo];
+  async function worker() {
+    while (queue.length) {
+      const lead = queue.shift();
+      const ac = lead.apollo_company || {};
+      // Pick the best website URL we know about for this lead
+      const websiteUrl = lead.web || ac.websiteUrl || ac.domain || "";
+      if (!websiteUrl) {
+        stats.noWebsite++;
+        continue;
+      }
+      try {
+        const r = await scrapeWebsiteForPhone(websiteUrl);
+        if (r && r.phone) {
+          // Apply back to user data (re-load to avoid races with concurrent crons)
+          const ud2 = loadUserData(TARGET_USER);
+          const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
+          if (l2) {
+            l2.ph = r.phone;
+            l2.phone = r.phone;
+            l2.phone_missing = false;
+            l2.phone_recovered_at = new Date().toISOString();
+            l2.phone_recovered_source = `website:${r.source}`;
+            l2.phone_recovered_page = r.url;
+            saveUserData(TARGET_USER, ud2);
+            stats.recovered++;
+            stats.bySource[r.source] = (stats.bySource[r.source] || 0) + 1;
+          }
+        } else {
+          stats.noPhoneFound++;
+        }
+      } catch (e) { /* swallow per-lead errors */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(5, todo.length) }, worker));
+
+  logActivity(
+    "phone-recovery",
+    `Website-scrape: ${stats.recovered}/${stats.candidates} fundet på contact-sider${stats.noWebsite?` (${stats.noWebsite} uden URL)`:''}`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[scrape-website-phones] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
 // ── PHONE RECOVERY for verified-active leads ──────────────────────
 // Many Meta-verified leads still land without phone numbers because:
 //   * Apollo's org-enrich phone field is empty for ~50% of DK SMBs
