@@ -5698,6 +5698,130 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
 });
 
+// ── PHONE RECOVERY for verified-active leads ──────────────────────
+// Many Meta-verified leads still land without phone numbers because:
+//   * Apollo's org-enrich phone field is empty for ~50% of DK SMBs
+//   * Synthetic-CVR leads (apollo-*, tech-*, gmaps-*, meta-*) bypass the
+//     Datafordeler switchboard fallback in enrichUserLeadsViaApolloAsync
+//     (which only triggers for real 8-digit CVRs)
+//
+// This endpoint hunts for the missing phones via two free paths:
+//   1. Real 8-digit CVR → direct lookupDatafordeler() → CVR_Telefonnummer
+//   2. Synthetic CVR → searchDatafordeler() by company name, find a confident
+//      match, get its phone
+//
+// Free pass (no Apollo credits used). If both fail, the lead stays in the
+// Mangler-nummer bucket. People-match credit reveal could be a later
+// upgrade but that's $$$/lead.
+async function tryRecoverPhoneForLead(lead) {
+  // Path 1: Real DK 8-digit CVR
+  if (/^\d{8}$/.test(String(lead.cvr || ""))) {
+    try {
+      const c = await lookupDatafordeler(String(lead.cvr));
+      if (c && c.phone) return { phone: c.phone, source: "df-cvr-lookup" };
+    } catch (_) { /* CVR not in DF */ }
+  }
+
+  // Path 2: Search Datafordeler by company name → strongest exact-name match
+  const name = (lead.name || "").trim();
+  if (!name) return null;
+  try {
+    const filters = { _from: 0, _size: 5 };
+    if (lead.city) filters.city = lead.city;
+    const results = await searchDatafordeler(name, filters);
+    const rows = (results && (results.companies || results.results || results.rows)) || [];
+    if (!rows.length) return null;
+    // Normalize name for matching — strip A/S, ApS, etc.
+    const norm = (s) => String(s || "").toLowerCase()
+      .replace(/\b(a\/s|aps|ivs|i\/s|p\/s|k\/s)\b/gi, "")
+      .replace(/\s+/g, " ").trim();
+    const target = norm(name);
+    // First pass: exact normalized-name match
+    let best = rows.find((c) => norm(c.name) === target);
+    // Second pass: target is a substring (lead has shorter brand name than CVR registration)
+    if (!best) best = rows.find((c) => target.length >= 4 && norm(c.name).includes(target));
+    if (!best || !best.cvr) return null;
+    // Phone might already be in the search result; otherwise direct lookup
+    if (best.phone) return { phone: best.phone, source: "df-name-search" };
+    try {
+      const c = await lookupDatafordeler(String(best.cvr));
+      if (c && c.phone) return { phone: c.phone, source: "df-name-lookup", recoveredCvr: best.cvr };
+    } catch (_) { /* fall through */ }
+  } catch (_) { /* search failed */ }
+
+  return null;
+}
+
+app.post("/api/cron/recover-phones", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  // Cap at 200/run — Datafordeler tolerates this volume comfortably.
+  const LIMIT = Math.max(10, Math.min(500, Number(req.query.limit) || 200));
+  const stats = {
+    candidates: 0,
+    recovered: 0,
+    notFound: 0,
+    errors: 0,
+    bySource: {},
+  };
+
+  const ud = loadUserData(TARGET_USER);
+  // Target: leads that are verified-active Meta advertisers but have no phone
+  // and aren't archived. These are "high value but uncallable" — solving the
+  // phone gap unlocks immediate dial value.
+  const todo = (ud.leads || []).filter((l) =>
+    l.lastAction !== "not-relevant" &&
+    l.meta_verified_active === true &&
+    !((l.ph || "").toString().trim()) &&
+    !((l.phone || "").toString().trim())
+  ).slice(0, LIMIT);
+  stats.candidates = todo.length;
+
+  if (todo.length === 0) {
+    return res.json({ ok: true, stats, note: "no phone-missing verified-active leads" });
+  }
+
+  // Process one at a time (Datafordeler rate limits — gentle is safer than fast)
+  for (const lead of todo) {
+    try {
+      const r = await tryRecoverPhoneForLead(lead);
+      if (r && r.phone) {
+        // Re-load + apply (state can shift between iterations if other crons fire)
+        const ud2 = loadUserData(TARGET_USER);
+        const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
+        if (l2) {
+          l2.ph = r.phone;
+          l2.phone = r.phone; // both fields for downstream compat
+          l2.phone_missing = false;
+          l2.phone_recovered_at = new Date().toISOString();
+          l2.phone_recovered_source = r.source;
+          if (r.recoveredCvr) l2.df_cvr_match = r.recoveredCvr;
+          saveUserData(TARGET_USER, ud2);
+          stats.recovered++;
+          stats.bySource[r.source] = (stats.bySource[r.source] || 0) + 1;
+        }
+      } else {
+        stats.notFound++;
+      }
+      // Gentle Datafordeler rate
+      await new Promise((r) => setTimeout(r, 150));
+    } catch (e) {
+      stats.errors++;
+      console.warn("[recover-phones]", lead.cvr, e.message);
+    }
+  }
+
+  logActivity(
+    "phone-recovery",
+    `Phone recovery: ${stats.recovered}/${stats.candidates} fundet via Datafordeler${stats.errors?` (${stats.errors} fejl)`:''}`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[recover-phones] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
 // ── LINKEDIN ADS DISCOVERY ────────────────────────────────────────
 // Captures B2B SaaS, agencies, consulting, recruiting — segments Meta
 // largely misses. Apify's silva95gustavo/linkedin-ad-library-scraper
