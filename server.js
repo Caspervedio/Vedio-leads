@@ -1149,7 +1149,17 @@ app.post("/api/list-builder/search", authMiddleware, async (req, res) => {
   }
   if (codes.size === 0) return res.status(400).json({ error: "Ingen gyldige branchekoder" });
 
-  const cityFilter = String(body.city || "").trim().toLowerCase();
+  // Normalize city input to match Datafordeler's storage convention.
+  // DF stores "Århus C", "Århus N", "Århus V" etc — user typically types
+  // "Aarhus". The Danish ligature Aa ↔ Å are equivalent; same for ø/oe
+  // and æ/ae. We normalize BOTH sides for substring matching.
+  const normaliseCity = (s) => String(s || "")
+    .toLowerCase()
+    .replace(/å/g, "aa")
+    .replace(/ø/g, "oe")
+    .replace(/æ/g, "ae")
+    .trim();
+  const cityFilter = normaliseCity(body.city);
   const zipPrefix = String(body.zipPrefix || "").trim();
   const empMin = body.employeesMin != null ? Number(body.employeesMin) : null;
   const empMax = body.employeesMax != null ? Number(body.employeesMax) : null;
@@ -1230,12 +1240,19 @@ app.post("/api/list-builder/search", authMiddleware, async (req, res) => {
     const adr = adrMap.get(eid) || {};
     const besk = beskMap.get(eid) || {};
     const br = brancheMap.get(eid) || {};
-    const city = String(adr.CVRAdresse_postdistrikt || "").toLowerCase();
+    const cityRaw = String(adr.CVRAdresse_postdistrikt || "");
+    const cityNormalised = normaliseCity(cityRaw);
     const zip = String(adr.CVRAdresse_postnummer || "");
-    if (cityFilter && !city.includes(cityFilter)) continue;
+    // Bidirectional Aa↔Å match — "aarhus" matches "Århus C"
+    if (cityFilter && !cityNormalised.includes(cityFilter)) continue;
     if (zipPrefix && !zip.startsWith(zipPrefix)) continue;
     const employees = besk.antal ?? besk.intervalFra ?? null;
-    if (empMin != null && (employees == null || employees < empMin)) continue;
+    // Only filter when we KNOW the employee count. Unknown employee data is
+    // very common in DK (small businesses don't always report headcount to
+    // CVR). Including those leads is the right default — the SDR can still
+    // see and assess them. Was previously dropping unknown-emp leads which
+    // killed all small businesses (frisør salons, etc) from results.
+    if (empMin != null && employees != null && employees < empMin) continue;
     if (empMax != null && employees != null && employees > empMax) continue;
     out.push({
       cvr: String(vrk.CVRNummer || ""),
