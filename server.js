@@ -177,8 +177,12 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutter
 function getDfGqlUrl() {
   const key = process.env.DATAFORDELER_KEY;
   if (!key) throw new Error("DATAFORDELER_KEY mangler i .env");
-  console.log(`[df] Key length: ${key.length}, first 10: ${key.substring(0,10)}`);
-  return `https://graphql.datafordeler.dk/CVR/v1?apiKey=${encodeURIComponent(key)}`;
+  // 2026-06-02: Datafordeler deprecated /CVR/v1 — it returns silent 404
+  // for all POSTs even with a valid IP-whitelisted API key. The new
+  // endpoint /CVR/v2 is a drop-in replacement (same schema names:
+  // CVR_Branche, CVR_Virksomhed, CVR_Navn, CVR_Adressering, CVR_Telefonnummer,
+  // CVR_Beskaeftigelse, etc). Confirmed working with same DATAFORDELER_KEY.
+  return `https://graphql.datafordeler.dk/CVR/v2?apiKey=${encodeURIComponent(key)}`;
 }
 
 function cacheGet(key) {

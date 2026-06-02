@@ -165,7 +165,9 @@ const TARGET_INDUSTRY_CODES = [
 function getDfGqlUrl() {
   const key = process.env.DATAFORDELER_KEY;
   if (!key) throw new Error("DATAFORDELER_KEY env var is required");
-  return `https://graphql.datafordeler.dk/CVR/v1?apiKey=${encodeURIComponent(key)}`;
+  // Datafordeler deprecated /CVR/v1 in late May 2026 — returns silent 404.
+  // /CVR/v2 is a drop-in replacement with identical schema.
+  return `https://graphql.datafordeler.dk/CVR/v2?apiKey=${encodeURIComponent(key)}`;
 }
 
 async function dfGqlFetch(gql) {
