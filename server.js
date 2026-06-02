@@ -5309,16 +5309,68 @@ async function apolloSearchAdvertiserCandidates({ page, perPage = 25, employeeRa
 // treat it uniformly. Uses synthetic id "apollo-<orgId>" as the cvr (real
 // DK CVRs are 8 digits — no collision).
 // ── Meta Ad Library live verification helpers (Apify-powered) ─────────
-// Strip company name down to a brand search term — drops legal suffixes
-// + group/holding noise so the Meta Ad Library keyword match works.
-// Mirrors discover-ads.js's brandNameFromLegal but applied to Apollo's
-// already-cleaned company names (which often DON'T have A/S suffix).
-function brandFromApolloName(name) {
-  return String(name || "")
-    .replace(/\b(GRUPPEN|GROUP|HOLDING|HOLDINGSELSKAB|DANMARK|DENMARK|SCANDINAVIA|NORDIC|EUROPE|EU)\b/gi, " ")
-    .replace(/\b(A\/S|ApS|IVS|I\/S|K\/S|P\/S|GmbH|Ltd|Inc|Corp|LLC)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+// Strip a company name down to the brand string Meta would actually search
+// against. Real-world cases this has to handle, from observed lead data:
+//   "Organic Boost A/S"                  → "Organic Boost"  (drop legal suffix)
+//   "Stine Goya A/S"                     → "Stine Goya"
+//   "GRAFIKR A/S | Shopify Platinum Partner" → "GRAFIKR" (first pipe-segment, then strip A/S)
+//   "Butter 🧈 (Acquired by Miro)"       → "Butter"  (parenthetical + emoji)
+//   "pej gruppen - scandinavian trend"   → "pej gruppen"  (first dash-segment)
+//   "Endomondo | Under Armour …"         → "Endomondo"
+//   "Ferm Living ApS"                    → "Ferm Living"
+//   "Mobility Denmark"                   → "Mobility Denmark"  (KEEP — Denmark is part of brand)
+//   "Granturismo Cars A/S"               → "Granturismo Cars"
+// Key design choice: strip legal suffixes only at the END, never mid-name.
+// Avoids the bug where "Mobility Denmark" became just "Mobility" — which
+// then matched thousands of unrelated ads.
+function brandForMetaAdsSearch(name) {
+  let s = String(name || "").trim();
+  if (!s) return "";
+  // 1. Take only the first pipe-separator segment ("Brand | descriptor" → "Brand")
+  s = s.split(/\s*\|\s*/)[0].trim();
+  // 2. Same for em-dash / en-dash / hyphen with spaces ("Brand - tagline")
+  //    Only split when there's whitespace around the dash — hyphenated brand
+  //    names like "Coca-Cola" should stay intact.
+  s = s.split(/\s+[-–—]\s+/)[0].trim();
+  // 3. Drop parentheticals — descriptors, not brand ("Butter (Acquired by …)" → "Butter")
+  s = s.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  // 4. Strip legal suffix(es) at the END only (multiple passes for stacked
+  //    suffixes like "Foo A/S Holding").
+  let prev = "";
+  while (prev !== s) {
+    prev = s;
+    // Only strip FORMAL legal-entity suffixes. Do NOT strip GRUPPEN /
+    // HOLDING — those words are often part of the actual brand name
+    // ("Aller Gruppen", "Lego Holding"). Risk of false-negatives by
+    // keeping them outweighs the noise of including them in search.
+    s = s.replace(/[\s,.]+(A\/S|ApS|IVS|I\/S|K\/S|P\/S|S\/A|GmbH|Ltd\.?|Inc\.?|Corp\.?|LLC|S\.?A\.?|N\.?V\.?)\s*$/i, "").trim();
+  }
+  // 5. Strip emojis that confuse exact-phrase matching
+  s = s.replace(/[\u{1F300}-\u{1FAFF}\u{1F600}-\u{1F64F}\u{1F900}-\u{1F9FF}\u{2600}-\u{27BF}]/gu, " ")
+       .replace(/\s+/g, " ")
+       .trim();
+  // 6. Trailing punctuation
+  s = s.replace(/[,;:.]+$/, "").trim();
+  return s;
+}
+
+// Legacy alias — the old name was inaccurate (the function works for any
+// lead source, not just Apollo). Keep both bindings so older call sites
+// still work if any.
+const brandFromApolloName = brandForMetaAdsSearch;
+
+// Derive an Instagram profile URL from a Facebook page URL. Meta links
+// the two for business accounts and most use the same handle; if we
+// hit the rare exception, the link 404s gracefully. Returns "" when no
+// Facebook URL is available.
+function instagramFromFacebook(fbUrl) {
+  if (!fbUrl) return "";
+  const m = String(fbUrl).match(/facebook\.com\/(?:pages\/[^/]+\/)?([^/?#]+)/i);
+  if (!m || !m[1]) return "";
+  const handle = m[1].replace(/^@/, "");
+  // Skip numeric-only IDs (those are Facebook page IDs, not handles)
+  if (/^\d+$/.test(handle)) return "";
+  return `https://www.instagram.com/${handle}/`;
 }
 
 function buildAdsLibraryUrl(brand) {
@@ -5646,13 +5698,19 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   res.json({ ok: true, stats, state: { keywordCursor: state.keywordCursor, pageCursor: state.pageCursor } });
 });
 
-// POST /api/cron/verify-existing-apollo-leads — retroactive Meta Ad Library
-// check on already-imported apollo-discover leads where meta_verified_active
-// is null. Batches via Apify (one onlyTotal:true call for up to 100 leads).
-// Leads flipped to false get auto-routed out of the dialer queue by the
-// hard filter in autodialer-maintain. One-shot endpoint — run manually
-// once after deploy, then ongoing discovery handles its own verification.
-app.post("/api/cron/verify-existing-apollo-leads", async (req, res) => {
+// POST /api/cron/verify-leads — retroactive Meta Ad Library check on ALL
+// active leads regardless of source (Apollo discovery, Apify CVR-walk, CSV
+// imports, manual adds). Skips leads that are:
+//   * archived (lastAction='not-relevant')
+//   * missing a name (can't search Meta without one)
+//   * already verified recently (meta_verified_at within last 7d, override
+//     with ?force=1)
+// Batches via Apify onlyTotal:true. Default limit 100 per call (≈$0.50);
+// repeat the endpoint to drain a larger backlog. Leads flipped to inactive
+// route out of the dialer queue automatically via the hard filter in
+// autodialer-maintain. (Older endpoint name verify-existing-apollo-leads
+// still works as an alias for backwards-compat with any scheduled jobs.)
+async function runVerifyLeadsBatch(req, res) {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
@@ -5661,25 +5719,42 @@ app.post("/api/cron/verify-existing-apollo-leads", async (req, res) => {
   }
   const LIMIT = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
   const TARGET_USER = (req.query.userId || "u1").toString();
-  const stats = { scanned: 0, verifiedActive: 0, verifiedInactive: 0, errors: 0 };
+  const FORCE = req.query.force === "1";
+  const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+  const stats = {
+    scanned: 0,
+    verifiedActive: 0,
+    verifiedInactive: 0,
+    skippedRecent: 0,
+    skippedNoName: 0,
+    errors: 0,
+  };
 
   const ud = loadUserData(TARGET_USER);
-  // Pick unverified apollo-discover leads (meta_verified_active is null)
-  // that aren't already archived. Cap at LIMIT to bound per-run cost.
-  const todo = (ud.leads || []).filter((l) =>
-    l.source === "apollo-discover" &&
-    l.meta_verified_active === undefined || l.meta_verified_active === null
-  ).filter((l) => l.lastAction !== "not-relevant" && l.source === "apollo-discover")
-    .slice(0, LIMIT);
-
-  if (todo.length === 0) {
-    return res.json({ ok: true, stats, note: "no unverified apollo-discover leads" });
+  const now = Date.now();
+  // Pick candidates from ALL sources. Skip archived; skip leads with no
+  // usable name; skip leads we verified recently (unless force=1).
+  const todo = [];
+  for (const l of ud.leads || []) {
+    if (l.lastAction === "not-relevant") continue;
+    const brand = brandForMetaAdsSearch(l.name);
+    if (!brand || brand.length < 3) { stats.skippedNoName++; continue; }
+    if (!FORCE && l.meta_verified_at) {
+      const age = now - new Date(l.meta_verified_at).getTime();
+      if (age < STALE_MS) { stats.skippedRecent++; continue; }
+    }
+    todo.push({ lead: l, brand });
+    if (todo.length >= LIMIT) break;
   }
 
-  const startUrls = todo.map((l) => {
-    const brand = brandFromApolloName(l.name);
-    return { url: buildAdsLibraryUrl(brand), _cvr: l.cvr };
-  });
+  if (todo.length === 0) {
+    return res.json({ ok: true, stats, note: "nothing to verify (all recent or filtered)" });
+  }
+
+  const startUrls = todo.map(({ lead, brand }) => ({
+    url: buildAdsLibraryUrl(brand),
+    _cvr: lead.cvr,
+  }));
 
   let items;
   try {
@@ -5691,11 +5766,12 @@ app.post("/api/cron/verify-existing-apollo-leads", async (req, res) => {
   // Map back via inputUrl → cvr
   const urlToCvr = new Map(startUrls.map((s) => [s.url, s._cvr]));
   const verifyByCvr = new Map();
+  const checkedAt = new Date().toISOString();
   for (const item of items) {
     const cvr = urlToCvr.get(item.inputUrl);
     if (!cvr) continue;
     const total = Number(item.totalCount || 0);
-    verifyByCvr.set(cvr, { active: total > 0, totalCount: total, checkedAt: new Date().toISOString() });
+    verifyByCvr.set(cvr, { active: total > 0, totalCount: total, checkedAt });
   }
 
   // Apply verdicts back to user data
@@ -5714,12 +5790,14 @@ app.post("/api/cron/verify-existing-apollo-leads", async (req, res) => {
 
   logActivity(
     "verification",
-    `Retroactive verify: ${stats.scanned} apollo-leads · ${stats.verifiedActive} aktive · ${stats.verifiedInactive} flyttet til Måske-relevant`,
+    `Verify-leads: ${stats.scanned} tjekket · ${stats.verifiedActive} aktive · ${stats.verifiedInactive} flyttet til Måske-relevant${stats.skippedRecent?` (sprang ${stats.skippedRecent} nylige over)`:''}`,
     { stats, userId: TARGET_USER },
   );
-  console.log("[verify-existing-apollo-leads]", JSON.stringify(stats));
+  console.log("[verify-leads]", JSON.stringify(stats));
   res.json({ ok: true, stats });
-});
+}
+app.post("/api/cron/verify-leads", runVerifyLeadsBatch);
+app.post("/api/cron/verify-existing-apollo-leads", runVerifyLeadsBatch); // legacy alias
 
 // ─── KASPR ENRICHMENT (Phase B) ─────────────────────────────────────────
 // Turns CVR+company-name into decision-maker contacts (phone + email +

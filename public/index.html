@@ -5938,6 +5938,19 @@ function renderCockpitDetail(c){
           ${aco.websiteUrl?`<a href="${e(aco.websiteUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🌐 Website ↗</a>`:''}
           ${aco.linkedinUrl?`<a href="${e(aco.linkedinUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a>`:''}
           ${aco.facebookUrl?`<a href="${e(aco.facebookUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">📘 Facebook ↗</a>`:''}
+          ${(()=>{
+            // Derive Instagram URL from the Facebook handle. Apollo doesn't
+            // return Instagram directly but Meta business accounts usually
+            // share the handle across FB + IG, so this is a 90%+ accuracy
+            // shortcut. Skips numeric-only IDs (those are page IDs, not handles).
+            if(!aco.facebookUrl) return '';
+            const m = String(aco.facebookUrl).match(/facebook\.com\/(?:pages\/[^/]+\/)?([^/?#]+)/i);
+            if(!m||!m[1]) return '';
+            const handle = m[1].replace(/^@/,'');
+            if(/^\d+$/.test(handle)) return '';
+            const igUrl = `https://www.instagram.com/${handle}/`;
+            return `<a href="${e(igUrl)}" target="_blank" rel="noopener" style="color:#f472b6;text-decoration:none" title="Best-guess fra Facebook-handle">📷 Instagram ↗</a>`;
+          })()}
           <!-- Meta Ads Library — always shown so SDR can verify current ad activity even if our scrape didn't see any. Pre-filled with the company name. -->
           <a href="${metaAdsLibUrl(c.name||aco.name)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="Tjek hvilke ads de kører lige nu">🎯 Meta Ads Library ↗</a>
           ${(c.adsMatched||0)>0?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.15);color:#fb923c;font-size:10.5px;font-weight:800;border:1px solid rgba(251,146,60,0.3)" title="META scrape fandt ${c.adsMatched} aktive ads ved seneste run">🔥 ${c.adsMatched} aktive ads</span>`:''}
