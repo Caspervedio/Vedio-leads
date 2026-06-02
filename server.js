@@ -1081,6 +1081,281 @@ async function scrapeMetaAds(name, opts = {}) {
   }
 }
 
+// ── LIST BUILDER ──────────────────────────────────────────────────────
+// Pulls a curated DK company list from Datafordeler by industry +
+// city/postcode + employee range. Wraps the existing GraphQL walkers
+// (CVR_Branche → CVR_Virksomhed → CVR_Navn/CVR_Adressering/CVR_Beskaeftigelse/
+// CVR_Telefonnummer) into one endpoint that returns a ready-to-display list.
+//
+// Use case: "Build me all DK bakeries in Aarhus with 5-20 employees" →
+// gives operator a list they can review and bulk-push to the autodialer
+// (where the same Apollo enrich + Meta verify gates apply as for the
+// daily discovery crons).
+
+// Curated industry presets with friendly Danish labels. UI shows the label,
+// passes the DB07 codes. Each preset is a small bundle of related codes so
+// the operator doesn't have to know DB07. (We have ~700 DB07 codes total —
+// only the most-common SMB categories are surfaced here.)
+const LIST_BUILDER_INDUSTRIES = [
+  { id: "restaurant",   label: "Restauranter & cafeer", codes: ["561010", "561020", "563000", "563010"] },
+  { id: "bakery",       label: "Bagerier & konditori",  codes: ["107110", "472100"] },
+  { id: "hotel",        label: "Hoteller & kroer",      codes: ["551000", "551010", "551020", "551110", "551120"] },
+  { id: "frisor",       label: "Frisør & beauty",       codes: ["960210", "960220", "960400"] },
+  { id: "fitness",      label: "Fitness & wellness",    codes: ["931100", "931200", "931300", "961040"] },
+  { id: "tandlaege",    label: "Tandlæger & klinikker", codes: ["862100", "862200", "869020"] },
+  { id: "fysio",        label: "Fysioterapi & sundhed", codes: ["869090", "869900"] },
+  { id: "butik",        label: "Detailbutikker (tøj/sko/smykker)", codes: ["477110", "477120", "477210", "477300", "477500"] },
+  { id: "moebler",      label: "Møbler & interiør",     codes: ["475100", "477820", "310900"] },
+  { id: "ecommerce",    label: "E-commerce / web-shop", codes: ["478910", "478990"] },
+  { id: "it",           label: "IT/software/webbureau", codes: ["620100", "620200", "621000", "622000", "631100"] },
+  { id: "marketing",    label: "Reklame, marketing, design", codes: ["731000", "733000", "741010"] },
+  { id: "consulting",   label: "Konsulent & rådgivning", codes: ["702000", "702200", "702100"] },
+  { id: "haandvaerk",   label: "Tømrer/murer/maler/el/VVS", codes: ["412000", "432100", "432200", "433100", "433200", "433410"] },
+  { id: "auto",         label: "Auto (værksted/handel)", codes: ["451120", "452010"] },
+  { id: "transport",    label: "Transport & logistik",   codes: ["494100", "493900", "522900"] },
+  { id: "advokat",      label: "Advokater, jura",       codes: ["691000"] },
+  { id: "revisor",      label: "Revisorer & regnskab",  codes: ["692000"] },
+  { id: "ejendom",      label: "Ejendomsmæglere",       codes: ["683110", "683210"] },
+  { id: "rejse",        label: "Rejsebureauer & oplevelse", codes: ["791100", "791200"] },
+];
+
+app.get("/api/list-builder/industries", authMiddleware, (req, res) => {
+  res.json(LIST_BUILDER_INDUSTRIES);
+});
+
+// POST /api/list-builder/search
+// Body: {
+//   industries: ["restaurant","bakery"]   // preset ids OR raw DB07 codes
+//   city: "Aarhus"                          // optional, exact match (case-insensitive)
+//   zipPrefix: "8"                          // optional, e.g. "8" matches all Aarhus postcodes
+//   employeesMin: 5 employeesMax: 20        // optional, applied AFTER fetch
+//   limit: 200                              // max companies to fetch (default 200, cap 1000)
+// }
+app.post("/api/list-builder/search", authMiddleware, async (req, res) => {
+  const body = req.body || {};
+  const requested = Array.isArray(body.industries) ? body.industries : [];
+  if (!requested.length) return res.status(400).json({ error: "Vælg mindst en branche" });
+
+  // Resolve preset ids → DB07 codes (passthrough raw codes too)
+  const codes = new Set();
+  for (const item of requested) {
+    const preset = LIST_BUILDER_INDUSTRIES.find((p) => p.id === item);
+    if (preset) preset.codes.forEach((c) => codes.add(c));
+    else if (/^\d{6}$/.test(String(item))) codes.add(String(item));
+  }
+  if (codes.size === 0) return res.status(400).json({ error: "Ingen gyldige branchekoder" });
+
+  const cityFilter = String(body.city || "").trim().toLowerCase();
+  const zipPrefix = String(body.zipPrefix || "").trim();
+  const empMin = body.employeesMin != null ? Number(body.employeesMin) : null;
+  const empMax = body.employeesMax != null ? Number(body.employeesMax) : null;
+  const LIMIT = Math.max(10, Math.min(1000, Number(body.limit) || 200));
+
+  const stats = { codesScanned: 0, idsFound: 0, enriched: 0, returned: 0 };
+  const allIds = new Set();
+
+  // 1. Fetch all enheds IDs for each industry code (paginated up to 3 pages × 1000)
+  for (const code of [...codes]) {
+    stats.codesScanned++;
+    let cursor = null;
+    for (let p = 0; p < 3; p++) {
+      try {
+        const afterClause = cursor ? `, after: "${cursor}"` : "";
+        const r = await dfGqlFetch(
+          `{ CVR_Branche(first: 1000${afterClause}, where: { vaerdi: { eq: "${code}" } }) { pageInfo { hasNextPage endCursor } edges { node { CVREnhedsId } } } }`,
+        );
+        const d = r?.CVR_Branche;
+        for (const e of (d?.edges || [])) allIds.add(e.node.CVREnhedsId);
+        if (!d?.pageInfo?.hasNextPage) break;
+        cursor = d.pageInfo.endCursor;
+        if (allIds.size >= LIMIT * 5) break; // cap fetch — filters reduce after
+      } catch (e) {
+        console.warn("[list-builder] code", code, "page", p, ":", e.message);
+        break;
+      }
+    }
+  }
+  stats.idsFound = allIds.size;
+  if (allIds.size === 0) {
+    return res.json({ ok: true, stats, companies: [] });
+  }
+
+  // 2. Enrich in batches of 100 — names, addresses, employees, phones, status
+  const ids = [...allIds].slice(0, LIMIT * 5); // hard cap on enrichment
+  const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  const navnMap = new Map(), adrMap = new Map(), tlfMap = new Map();
+  const beskMap = new Map(), vrkMap = new Map(), brancheMap = new Map();
+  for (const batch of chunk(ids, 100)) {
+    const idList = batch.map((id) => `"${id}"`).join(",");
+    const w = `CVREnhedsId: { in: [${idList}] }`;
+    const sz = batch.length;
+    try {
+      const [rN, rA, rT, rBe, rV, rB] = await Promise.all([
+        dfGqlFetch(`{ CVR_Navn(first: ${sz * 6}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
+        dfGqlFetch(`{ CVR_Adressering(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId CVRAdresse_postnummer CVRAdresse_postdistrikt CVRAdresse_vejnavn CVRAdresse_husnummerFra } } } }`),
+        dfGqlFetch(`{ CVR_Telefonnummer(first: ${sz * 3}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
+        dfGqlFetch(`{ CVR_Beskaeftigelse(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId antal intervalFra intervalTil } } } }`),
+        dfGqlFetch(`{ CVR_Virksomhed(first: ${sz}, where: { id: { in: [${idList}] } }) { edges { node { id CVRNummer status virksomhedStartdato } } } }`),
+        dfGqlFetch(`{ CVR_Branche(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi vaerdiTekst } } } }`),
+      ]);
+      for (const e of rN?.CVR_Navn?.edges || []) {
+        if (!navnMap.has(e.node.CVREnhedsId)) navnMap.set(e.node.CVREnhedsId, []);
+        navnMap.get(e.node.CVREnhedsId).push(e.node.vaerdi);
+      }
+      for (const e of rA?.CVR_Adressering?.edges || []) adrMap.set(e.node.CVREnhedsId, e.node);
+      for (const e of rT?.CVR_Telefonnummer?.edges || []) {
+        const v = String(e.node.vaerdi || "").trim();
+        if (v) tlfMap.set(e.node.CVREnhedsId, v);
+      }
+      for (const e of rBe?.CVR_Beskaeftigelse?.edges || []) beskMap.set(e.node.CVREnhedsId, e.node);
+      for (const e of rV?.CVR_Virksomhed?.edges || []) vrkMap.set(e.node.id, e.node);
+      for (const e of rB?.CVR_Branche?.edges || []) brancheMap.set(e.node.CVREnhedsId, e.node);
+    } catch (e) {
+      console.warn("[list-builder] enrich batch failed:", e.message);
+    }
+  }
+  stats.enriched = vrkMap.size;
+
+  // 3. Build company objects + apply filters
+  const out = [];
+  for (const eid of ids) {
+    const vrk = vrkMap.get(eid);
+    if (!vrk) continue;
+    if (vrk.status !== "aktiv") continue;
+    const names = navnMap.get(eid) || [];
+    const adr = adrMap.get(eid) || {};
+    const besk = beskMap.get(eid) || {};
+    const br = brancheMap.get(eid) || {};
+    const city = String(adr.CVRAdresse_postdistrikt || "").toLowerCase();
+    const zip = String(adr.CVRAdresse_postnummer || "");
+    if (cityFilter && !city.includes(cityFilter)) continue;
+    if (zipPrefix && !zip.startsWith(zipPrefix)) continue;
+    const employees = besk.antal ?? besk.intervalFra ?? null;
+    if (empMin != null && (employees == null || employees < empMin)) continue;
+    if (empMax != null && employees != null && employees > empMax) continue;
+    out.push({
+      cvr: String(vrk.CVRNummer || ""),
+      enhedsId: eid,
+      name: names[names.length - 1] || `CVR ${vrk.CVRNummer}`,
+      status: vrk.status,
+      founded: vrk.virksomhedStartdato || "",
+      address: [adr.CVRAdresse_vejnavn, adr.CVRAdresse_husnummerFra].filter(Boolean).join(" "),
+      city: adr.CVRAdresse_postdistrikt || "",
+      zip,
+      phone: tlfMap.get(eid) || "",
+      employees,
+      employeesInterval: besk.intervalFra != null && besk.intervalTil != null ? `${besk.intervalFra}-${besk.intervalTil}` : "",
+      industry: br.vaerdiTekst || "",
+      industryCode: String(br.vaerdi || ""),
+    });
+    if (out.length >= LIMIT) break;
+  }
+  stats.returned = out.length;
+  res.json({ ok: true, stats, companies: out });
+});
+
+// POST /api/list-builder/add-to-dialer
+// Body: { cvrs: ["12345678", ...], verifyMeta: true }
+// Bulk-promote a curated list to u1's dialer with the same gates the
+// daily discovery crons use: Apollo enrich → DK + 5-50 emp → optional
+// live Meta Ad Library verify. Existing leads (matched by cvr) skipped.
+app.post("/api/list-builder/add-to-dialer", authMiddleware, async (req, res) => {
+  const body = req.body || {};
+  const cvrs = Array.isArray(body.cvrs) ? body.cvrs.map(String).filter((c) => /^\d{8}$/.test(c)) : [];
+  const verifyMeta = body.verifyMeta !== false; // default true
+  if (cvrs.length === 0) return res.status(400).json({ error: "Ingen CVR-numre angivet" });
+
+  const TARGET_USER = req.userId || "u1";
+  const stats = { requested: cvrs.length, added: 0, alreadyExists: 0, errors: 0, parkedNoMeta: 0 };
+
+  const ud = loadUserData(TARGET_USER);
+  if (!ud.leads) ud.leads = [];
+  const existingByCvr = new Set(ud.leads.map((l) => l.cvr));
+
+  // Resolve each CVR via Datafordeler in parallel-ish (3-way concurrency)
+  const queue = [...cvrs];
+  const candidates = [];
+  async function worker() {
+    while (queue.length) {
+      const cvr = queue.shift();
+      if (existingByCvr.has(cvr)) { stats.alreadyExists++; continue; }
+      try {
+        const c = await lookupDatafordeler(cvr);
+        if (!c) { stats.errors++; continue; }
+        candidates.push(c);
+      } catch (e) { stats.errors++; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, cvrs.length) }, worker));
+
+  // Optional live-Meta verify so we don't pollute the dialer
+  let verifyMap = new Map();
+  if (verifyMeta && process.env.APIFY_API_TOKEN && candidates.length > 0) {
+    try {
+      const startUrls = candidates.map((c) => ({
+        url: buildAdsLibraryUrl(brandForMetaAdsSearch(c.name)),
+        _cvr: c.cvr,
+      }));
+      const items = await apifyVerifyMetaAds(startUrls);
+      const urlToCvr = new Map(startUrls.map((s) => [s.url, s._cvr]));
+      const checkedAt = new Date().toISOString();
+      for (const item of items) {
+        const cvr = urlToCvr.get(item.inputUrl);
+        if (!cvr) continue;
+        verifyMap.set(cvr, { active: Number(item.totalCount || 0) > 0, totalCount: Number(item.totalCount || 0), checkedAt });
+      }
+    } catch (e) {
+      console.warn("[list-builder] verify failed:", e.message);
+    }
+  }
+
+  // Append leads
+  const checkedAt = new Date().toISOString();
+  for (const c of candidates) {
+    const verify = verifyMap.get(c.cvr);
+    const hasPhone = !!(c.phone || "").toString().trim();
+    if (verifyMeta && verify && !verify.active) { stats.parkedNoMeta++; continue; }
+    ud.leads.push({
+      cvr: c.cvr,
+      name: c.name,
+      addr: c.address || "",
+      zip: c.zip || "",
+      city: c.city || "",
+      ph: c.phone || "",
+      em: c.email || "",
+      web: "",
+      ind: c.industry || "",
+      ic: c.industryCode || "",
+      emp: c.employees || "",
+      emps: typeof c.employeeCount === "number" ? c.employeeCount : null,
+      st: c.status || "aktiv",
+      yr: c.founded || "",
+      form: c.form || "",
+      eq: c.equity || 0, res: c.result || 0, omsaetning: c.revenue || 0,
+      source: "list-builder",
+      icpFit: !!(verify && verify.active),
+      meta_advertiser: !!(verify && verify.active),
+      ad_signals: verify && verify.active ? ["Meta Ad Library (live)"] : [],
+      meta_verified_active: verify ? verify.active : null,
+      meta_verified_at: verify ? verify.checkedAt : null,
+      meta_live_ad_count: verify ? verify.totalCount : null,
+      apollo_enrichment_pending: isApolloConfigured(),
+      apollo_enriched_at: null,
+      phone_missing: !hasPhone,
+      discovered_at: checkedAt,
+      pushed_to_cloudtalk_at: null, twenty_opportunity_id: null,
+    });
+    stats.added++;
+  }
+  saveUserData(TARGET_USER, ud);
+  logActivity(
+    "list-builder",
+    `Liste-builder: ${stats.added} leads tilføjet · ${stats.parkedNoMeta} ikke i Meta · ${stats.alreadyExists} eksisterede allerede`,
+    { stats, userId: TARGET_USER },
+  );
+  res.json({ ok: true, stats });
+});
+
 // POST /api/check-ads/:cvr — scrape Meta and update cache for one company.
 // Accepts an optional `name` override in the body (so the UI can let users
 // hand-tune the search term per row). If omitted, we derive a brand-name
