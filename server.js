@@ -8024,10 +8024,17 @@ app.get("/api/admin/cloudtalk-audit", authMiddleware, async (req, res) => {
 // phone numbers with empty + phone_missing=true so the autodialer-maintain
 // pre-flight gate keeps them out of the dial queue. Apollo-returned foreign
 // HQ phones (Baum und Pferdgarten's +1 etc) burn CloudTalk credits silently.
-app.post("/api/admin/strip-non-dk-phones", authMiddleware, async (req, res) => {
-  const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
-  const me = allUsers.find((u) => u.id === req.userId);
-  if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+// Dual auth: admin session (via authMiddleware) OR cron secret (so the
+// operator + I can both trigger this cleanup). Same body shape either way.
+async function runStripNonDkPhones(req, res) {
+  // Cron-secret path skips the admin role check
+  const viaCron = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
+  if (!viaCron) {
+    if (!req.userId) return res.status(401).json({ error: "Not logged in" });
+    const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+    const me = allUsers.find((u) => u.id === req.userId);
+    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  }
   const stats = { stripped: 0, byPrefix: {}, examples: [] };
   if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats });
   for (const f of fs.readdirSync(DATA_DIR)) {
@@ -8067,9 +8074,29 @@ app.post("/api/admin/strip-non-dk-phones", authMiddleware, async (req, res) => {
     { stats },
   );
   res.json({ ok: true, stats });
-});
+}
+// Two routes pointing at the same handler — admin-session OR cron-secret.
+app.post("/api/admin/strip-non-dk-phones", authMiddleware, runStripNonDkPhones);
+app.post("/api/cron/strip-non-dk-phones", runStripNonDkPhones);
 
 app.post("/api/cloudtalk/call", authMiddleware, async (req, res) => {
+  // HARD GUARD — only DK-domestic calls allowed. CloudTalk Essential
+  // doesn't cover international and each int'l call burns credits.
+  // Defense in depth: client-side guard ALSO blocks, but the server
+  // is the final word. Returns 400 (not 503) so the SDR sees a clear
+  // error message and doesn't think it's an outage.
+  const requestedPhone = String(req.body?.phone || "").replace(/[^0-9+]/g, "");
+  const isDkPhone = requestedPhone.startsWith("+45")
+    || (requestedPhone.startsWith("45") && requestedPhone.length === 10)
+    || /^\d{8}$/.test(requestedPhone);
+  if (requestedPhone && !isDkPhone) {
+    console.warn("[cloudtalk/call] blocked non-DK dial:", requestedPhone, "userId=", req.userId);
+    return res.status(400).json({
+      error: `Kun DK-numre tillades. ${requestedPhone} starter ikke med +45.`,
+      blockedNonDk: true,
+      attempted: requestedPhone,
+    });
+  }
   if (!isCloudTalkReady()) {
     // 503 with a clear message so the frontend can fall back to tel: link.
     return res.status(503).json({

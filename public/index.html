@@ -5750,17 +5750,19 @@ function toggleSwitchboard(){
 // pointing to the softphone instead of failing silently.
 async function ringNow(phone, cvr, leadName){
   if(!phone){ showToast('Intet nummer på leadet'); return; }
-  // International-call guard. CloudTalk Essential plan only includes DK
-  // domestic calls — international numbers burn credits FAST. Apollo
-  // sometimes returns foreign HQ phones (we've seen +1 US numbers,
-  // +49 Germany, +46 Sweden) for DK companies. Confirm with the SDR
-  // before dialing anything non-+45.
+  // HARD GUARD — we only call DK numbers. CloudTalk Essential covers
+  // DK-domestic only; international calls burn credits per-minute fast.
+  // Apollo sometimes returns foreign HQ phones (+1 US, +49 DE, +46 SE)
+  // for DK companies — we block those at the source rather than asking
+  // the SDR to make the call every time.
   const digits = String(phone).replace(/[^0-9+]/g,'');
-  const isDk = digits.startsWith('+45') || digits.startsWith('45') && digits.length === 10
+  const isDk = digits.startsWith('+45') || (digits.startsWith('45') && digits.length === 10)
               || /^\d{8}$/.test(digits);
   if(!isDk){
-    const confirmed = confirm(`⚠ ${phone} ser ikke ud til at være et DK-nummer.\n\nCloudTalk Essential dækker kun DK-domestic — udlandsopkald koster credits.\n\nVil du ringe alligevel?`);
-    if(!confirmed) return;
+    showToast(`⛔ ${phone} er ikke DK — kun +45 numre tillades. Ret nummeret eller arkivér leadet.`);
+    // Also log to console so we have a record if it's happening often
+    console.warn('[ringNow] blocked non-DK dial:', phone, 'on lead', cvr, leadName);
+    return;
   }
   try{
     softphoneOnCallStart(leadName||phone);
