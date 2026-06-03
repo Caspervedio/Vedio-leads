@@ -7916,11 +7916,16 @@ app.get("/api/cloudtalk/status", authMiddleware, (req, res) => {
 //   * List of non-DK leads (specific offenders Apollo gave foreign HQs to)
 //   * Recent CloudTalk calls (last 50) with talked-to + cost-relevant info
 //   * Recent CloudTalk SMS (last 20)
-app.get("/api/admin/cloudtalk-audit", authMiddleware, async (req, res) => {
-  // Admin-only — credit audit is a billing/cost concern, not for SDRs
-  const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
-  const me = allUsers.find((u) => u.id === req.userId);
-  if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+async function runCloudtalkAudit(req, res) {
+  // Dual-auth: admin session OR cron-secret. Credit audit is admin-only
+  // for the session path; cron-secret bypasses for ops debugging.
+  const viaCron = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
+  if (!viaCron) {
+    if (!req.userId) return res.status(401).json({ error: "Not logged in" });
+    const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+    const me = allUsers.find((u) => u.id === req.userId);
+    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  }
 
   // 1. Survey ACTIVE leads' phone numbers by country prefix
   const byPrefix = {};
@@ -8018,7 +8023,9 @@ app.get("/api/admin/cloudtalk-audit", authMiddleware, async (req, res) => {
       ? `${nonDkLeads.length} active leads have non-DK phones — dialing them burns credits. Recommend purging or marking phone_missing=true for these.`
       : "No non-DK phones found in active dialer.",
   });
-});
+}
+app.get("/api/admin/cloudtalk-audit", authMiddleware, runCloudtalkAudit);
+app.get("/api/cron/cloudtalk-audit", runCloudtalkAudit);
 
 // POST /api/admin/strip-non-dk-phones — defensive cleanup: replace non-DK
 // phone numbers with empty + phone_missing=true so the autodialer-maintain
