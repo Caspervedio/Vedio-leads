@@ -324,13 +324,19 @@ tr.chk td{background:var(--bluebg)}
 
 /* ─── EMBEDDED SOFTPHONE (CloudTalk Phone iframe) ──────────────────────
    Fixed bottom-right dock + collapsed pill. Sits above all SPA content
-   but below the login overlay. */
+   but below the login overlay. .expanded gives more room for the SMS
+   detail view which gets clipped at the default 600px height. */
 #softphone-dock{
   position:fixed;bottom:18px;right:18px;width:380px;height:600px;z-index:900;
   background:#14111f;border:1px solid rgba(124,58,237,0.35);border-radius:14px;
   box-shadow:0 24px 64px rgba(0,0,0,0.55),0 0 32px rgba(124,58,237,0.18);
   overflow:hidden;display:flex;flex-direction:column;
-  animation:softphoneFadeIn 0.22s cubic-bezier(0.22,1,0.36,1)
+  animation:softphoneFadeIn 0.22s cubic-bezier(0.22,1,0.36,1);
+  transition:width 0.18s cubic-bezier(0.22,1,0.36,1),height 0.18s cubic-bezier(0.22,1,0.36,1)
+}
+#softphone-dock.expanded{
+  width:min(600px,calc(100vw - 40px));
+  height:min(840px,calc(100vh - 40px))
 }
 @keyframes softphoneFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 #softphone-header{
@@ -789,6 +795,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <span style="font-size:12px;font-weight:700;color:#fff;letter-spacing:0.3px">📞 Softphone</span>
       <span id="softphone-substatus" style="font-size:10px;color:rgba(255,255,255,0.55);font-weight:500"></span>
     </div>
+    <button id="softphone-expand" onclick="softphoneExpand()" title="Udvid (større visning til SMS m.v.)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">⤢</button>
     <button id="softphone-popout" onclick="softphoneOpenWindow()" title="Åbn softphone i eget vindue (anbefalet — fuld mikrofon/højttaler-adgang)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:13px;line-height:1">⧉</button>
     <button id="softphone-reload" onclick="softphoneReload()" title="Genindlæs softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">↻</button>
     <button id="softphone-collapse" onclick="softphoneToggle()" title="Skjul softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 8px;font-size:16px;line-height:1;font-weight:700">−</button>
@@ -800,7 +807,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   </div>
   <iframe id="softphone-iframe"
           src="about:blank"
-          allow="microphone *; camera *; autoplay; speaker-selection *; clipboard-read; clipboard-write"
+          allow="microphone *; camera *; autoplay; speaker-selection *; clipboard-read; clipboard-write; web-share *; display-capture *; notifications *; encrypted-media *"
           referrerpolicy="strict-origin"
           title="CloudTalk Phone"></iframe>
 </div>
@@ -1563,6 +1570,9 @@ function softphoneInit(){
   const collapsed = localStorage.getItem('softphone_collapsed')==='1';
   if(collapsed){ dock.style.display='none'; pill.style.display='flex'; }
   else { dock.style.display='flex'; pill.style.display='none'; }
+  // Restore last expanded state (default: compact 380×600)
+  const expanded = localStorage.getItem('softphone_expanded')==='1';
+  if(expanded) dock.classList.add('expanded');
 }
 function softphoneToggle(){
   const dock=document.getElementById('softphone-dock');
@@ -1581,6 +1591,21 @@ function softphoneToggle(){
     softphoneInit();
   }
 }
+// Toggle the dock between default 380×600 and expanded 600×840 size.
+// CloudTalk's SMS detail view + contacts list don't fit at 600px tall
+// (header + tabs + active call + body all stacked). Expanded gives
+// enough room without forcing a popout. Persisted in localStorage so
+// the SDR's preference survives reloads.
+function softphoneExpand(){
+  const dock = document.getElementById('softphone-dock');
+  if(!dock) return;
+  const wasExpanded = dock.classList.contains('expanded');
+  dock.classList.toggle('expanded');
+  localStorage.setItem('softphone_expanded', wasExpanded ? '0' : '1');
+  const btn = document.getElementById('softphone-expand');
+  if(btn) btn.title = wasExpanded ? 'Udvid (større visning til SMS m.v.)' : 'Skift til kompakt størrelse';
+}
+
 function softphoneReload(){
   const iframe=document.getElementById('softphone-iframe');
   if(!iframe)return;
