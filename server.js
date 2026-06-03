@@ -5534,16 +5534,40 @@ const APOLLO_DISCOVER_KEYWORDS = [
   "consulting", "saas", "education", "hospitality", "tourism",
 ];
 
-// Apollo SMB sweet spot — Vedio's ICP is 5-50 employees (micro/small/
-// small-med). The 51-100 medium bucket is excluded as too big — those
-// companies typically have in-house creative teams and a separate
-// procurement process that doesn't fit Vedio's outbound motion.
-const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["5,10", "11,20", "21,50"];
-// Hard cap enforced AFTER org-enrich. Apollo's search filter is loose
-// (returns some 50-80 emp companies even when "21,50" is requested), so
-// we re-check the enrich response's estimatedEmployees and reject anything
-// above this before appending to the leads pool.
-const APOLLO_DISCOVER_MAX_EMPLOYEES = 50;
+// Vedio's ICP (tightened 2026-06-02 to premium SMB / founder-led segment):
+//   * 1-15 employees: owner-led companies where the founder/CEO takes
+//     the call, no procurement layer, single-decision-maker outbound.
+//   * 2-15M DKK revenue (≈ $280k-2.15M USD): cash-positive enough to
+//     afford 10-50k DKK/video, not so big they have an in-house team.
+// Loose-end behaviour mirrors employee handling: companies with NO
+// revenue data in Apollo are KEPT (not filtered) — most small DK brands
+// aren't in Apollo's revenue index. Filter only rejects KNOWN-and-out-of-range.
+const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["1,5", "6,10", "11,15"];
+const APOLLO_DISCOVER_MIN_EMPLOYEES = 1;
+const APOLLO_DISCOVER_MAX_EMPLOYEES = 15;
+// Apollo returns annualRevenue in USD typically. Convert from DKK at
+// ~7.0 DKK/USD: 2M DKK → $285k, 15M DKK → $2.15M.
+const APOLLO_DISCOVER_MIN_REVENUE_USD = 285000;
+const APOLLO_DISCOVER_MAX_REVENUE_USD = 2150000;
+
+// Returns true if a lead PASSES the ICP gate (DK + emp range + revenue range).
+// All three checks treat null/unknown as "no info — include". Strict reject
+// only when we KNOW a value is out of range.
+function passesIcpGate(orgEnrich, fallbackEmp) {
+  if (!orgEnrich) return false;
+  // Country: Apollo populates this for most orgs; null means unknown — include
+  if (orgEnrich.country && orgEnrich.country !== "Denmark") return false;
+  // Employees
+  const emp = orgEnrich.estimatedEmployees || fallbackEmp;
+  if (emp != null && (emp < APOLLO_DISCOVER_MIN_EMPLOYEES || emp > APOLLO_DISCOVER_MAX_EMPLOYEES)) return false;
+  // Revenue: Apollo's annualRevenue in USD. Null = unknown → include.
+  const rev = orgEnrich.annualRevenue;
+  if (rev != null && rev > 0) {
+    if (rev < APOLLO_DISCOVER_MIN_REVENUE_USD) return false;
+    if (rev > APOLLO_DISCOVER_MAX_REVENUE_USD) return false;
+  }
+  return true;
+}
 
 function loadApolloDiscoverState() {
   try {
@@ -5890,14 +5914,12 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
       }
 
       if (orgEnrich && orgEnrich.metaAdvertiser) {
-        // Post-enrich size gate. Apollo's search filter returns some
-        // companies whose enriched headcount lands above the requested
-        // range (the ranges are advisory, not strict). Re-check here
-        // and skip oversized companies — Vedio's ICP is 5-50 emp; the
-        // 51+ medium bucket has in-house creative teams and doesn't
-        // convert on outbound.
+        // Post-enrich ICP gate (Vedio sweet spot: DK + 1-15 emp + 2-15M
+        // DKK revenue). Apollo's search filter is loose so we re-check
+        // enrichedEmployees + annualRevenue here. passesIcpGate() handles
+        // null fields gracefully (unknown = include).
         const enrichedEmp = orgEnrich.estimatedEmployees || cand.employees;
-        if (enrichedEmp && enrichedEmp > APOLLO_DISCOVER_MAX_EMPLOYEES) {
+        if (!passesIcpGate(orgEnrich, enrichedEmp)) {
           stats.skippedOversized = (stats.skippedOversized || 0) + 1;
           continue;
         }
@@ -6445,9 +6467,13 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
     if (!orgEnrich) { stats.apolloMisses++; continue; }
     stats.apolloResolved++;
 
-    if (orgEnrich.country && orgEnrich.country !== "Denmark") { stats.skippedNotDk++; continue; }
+    // ICP gate — DK + 1-15 emp + 2-15M DKK revenue. Unknown fields = include.
+    if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees)) {
+      if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk++;
+      else stats.skippedSize++;
+      continue;
+    }
     const emp = orgEnrich.estimatedEmployees;
-    if (!emp || emp < 5 || emp > APOLLO_DISCOVER_MAX_EMPLOYEES) { stats.skippedSize++; continue; }
 
     // Append directly — LinkedIn ad presence already proves they're actively
     // marketing. Different platform from Meta, no need to cross-verify on
@@ -6632,9 +6658,13 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
     if (!orgEnrich) { stats.apolloMisses++; continue; }
     stats.apolloResolved++;
 
-    if (orgEnrich.country && orgEnrich.country !== "Denmark") { stats.skippedNotDk++; continue; }
+    // ICP gate — DK + 1-15 emp + 2-15M DKK revenue. Unknown fields = include.
+    if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees)) {
+      if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk++;
+      else stats.skippedSize++;
+      continue;
+    }
     const emp = orgEnrich.estimatedEmployees;
-    if (!emp || emp < 5 || emp > APOLLO_DISCOVER_MAX_EMPLOYEES) { stats.skippedSize++; continue; }
 
     candidatesPassed.push({
       cand: {
@@ -6873,10 +6903,12 @@ app.post("/api/cron/tech-discover", async (req, res) => {
         continue;
       }
       if (!orgEnrich) continue;
-      if (orgEnrich.country && orgEnrich.country !== "Denmark") continue;
+      // ICP gate — DK + 1-15 emp + 2-15M DKK revenue (passesIcpGate handles
+      // null fields gracefully: unknown = include).
       const enrichedEmp = orgEnrich.estimatedEmployees || cand.employees;
-      if (enrichedEmp && enrichedEmp > APOLLO_DISCOVER_MAX_EMPLOYEES) {
-        stats.skippedOversized++;
+      if (!passesIcpGate(orgEnrich, enrichedEmp)) {
+        if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk = (stats.skippedNotDk||0)+1;
+        else stats.skippedOversized++;
         continue;
       }
       if (!enrichedEmp || enrichedEmp < 5) continue;
@@ -7246,13 +7278,14 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
     // ICP filter — three gates from the user's spec:
     //  (1) Currently running ads: guaranteed (came from Meta Ad Library)
     //  (2) DANISH: Apollo's enrich country field
-    //  (3) Micro/small/small-med: 5-50 employees
-    if (orgEnrich.country && orgEnrich.country !== "Denmark") {
-      stats.skippedNotDk++;
+    //  (3) Premium SMB ICP: 1-15 employees + 2-15M DKK revenue (≈$285k-$2.15M USD)
+    if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees)) {
+      if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk++;
+      else stats.skippedSize++;
       continue;
     }
     const emp = orgEnrich.estimatedEmployees;
-    if (!emp || emp < 5 || emp > APOLLO_DISCOVER_MAX_EMPLOYEES) {
+    if (false) { // legacy guard, kept for diff readability
       stats.skippedSize++;
       continue;
     }

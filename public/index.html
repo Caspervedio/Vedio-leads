@@ -4070,11 +4070,14 @@ const _lbState = {
   industries: [],          // selected preset ids
   city: '',
   zipPrefix: '',
-  // Default empMin=1 (any active company) — was 5 which filtered out most
-  // service businesses (frisør, fysio, butik, advokat) which average 1-3
-  // ansatte. SDR can tighten manually for specific verticals.
+  // Vedio premium-SMB ICP defaults — founder-led businesses with budget
+  // (1-15 ansatte, 2-15M DKK omsætning). Datafordeler doesn't reliably
+  // expose revenue per-company, so the revenue filter is best-effort
+  // (applied post-fetch when CVR_AarsrapportSucces returns).
   empMin: 1,
-  empMax: 50,
+  empMax: 15,
+  revenueMinMioDkk: 2,
+  revenueMaxMioDkk: 15,
   limit: 200,
   presets: null,           // fetched from /api/list-builder/industries
   results: null,           // {companies, stats}
