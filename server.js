@@ -7445,6 +7445,83 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   res.json({ ok: true, stats });
 });
 
+// POST /api/cron/purge-outside-icp — one-shot cleanup against the current
+// ICP gate (1-15 emp + 2-15M DKK revenue + DK). Uses stored apollo_company
+// data — no Apify spend, no Apollo credits. Null-tolerant (unknown data =
+// keep). Companies failing the gate get lastAction='not-relevant' with
+// archived_reason='outside-new-icp:<reason>' so the action is reversible.
+app.post("/api/cron/purge-outside-icp", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const stats = {
+    activeBefore: 0,
+    archived: 0,
+    archivedNotDk: 0,
+    archivedTooManyEmp: 0,
+    archivedTooFewEmp: 0,
+    archivedRevenueTooLow: 0,
+    archivedRevenueTooHigh: 0,
+    keptKnown: 0,
+    keptUnknown: 0,
+  };
+  const samples = [];
+
+  const ud = loadUserData(TARGET_USER);
+  if (!ud.leads) ud.leads = [];
+  const checkedAt = new Date().toISOString();
+
+  for (const lead of ud.leads) {
+    if (lead.lastAction === "not-relevant") continue;
+    stats.activeBefore++;
+    const ac = lead.apollo_company || {};
+    const country = ac.country;
+    const emp = ac.estimatedEmployees ?? (typeof lead.emps === "number" ? lead.emps : null);
+    const rev = ac.annualRevenue;
+    const name = lead.name || "?";
+
+    // Apply same passesIcpGate logic with detailed reason tracking
+    let reason = null;
+    if (country && country !== "Denmark") reason = "not-dk";
+    else if (emp != null && emp > APOLLO_DISCOVER_MAX_EMPLOYEES) reason = "too-many-emp";
+    else if (emp != null && emp < APOLLO_DISCOVER_MIN_EMPLOYEES) reason = "too-few-emp";
+    else if (rev != null && rev > 0 && rev < APOLLO_DISCOVER_MIN_REVENUE_USD) reason = "revenue-too-low";
+    else if (rev != null && rev > 0 && rev > APOLLO_DISCOVER_MAX_REVENUE_USD) reason = "revenue-too-high";
+
+    if (reason) {
+      lead.lastAction = "not-relevant";
+      lead.archived_reason = `outside-new-icp:${reason}`;
+      lead.archived_at = checkedAt;
+      stats.archived++;
+      if (reason === "not-dk") stats.archivedNotDk++;
+      else if (reason === "too-many-emp") stats.archivedTooManyEmp++;
+      else if (reason === "too-few-emp") stats.archivedTooFewEmp++;
+      else if (reason === "revenue-too-low") stats.archivedRevenueTooLow++;
+      else if (reason === "revenue-too-high") stats.archivedRevenueTooHigh++;
+      if (samples.length < 15) {
+        const detail = reason === "too-many-emp" ? `${emp} emp`
+          : reason === "revenue-too-high" ? `$${(rev / 1e6).toFixed(1)}M rev`
+          : reason === "not-dk" ? `country=${country}`
+          : reason;
+        samples.push({ name, reason, detail });
+      }
+    } else {
+      if (emp == null && rev == null) stats.keptUnknown++;
+      else stats.keptKnown++;
+    }
+  }
+
+  saveUserData(TARGET_USER, ud);
+  logActivity(
+    "purge-outside-icp",
+    `ICP-purge: ${stats.archived} arkiveret (${stats.archivedTooManyEmp} for store · ${stats.archivedRevenueTooHigh} for høj omsætning · ${stats.archivedNotDk} ikke-DK)`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[purge-outside-icp]", JSON.stringify(stats));
+  res.json({ ok: true, stats, samples });
+});
+
 // POST /api/cron/verify-leads — STRICT Meta Ad Library check on ALL active
 // leads. Critical fix 2026-06-02: previous version used onlyTotal:true which
 // only counted ads matching the search KEYWORD, not ads FROM the company.
