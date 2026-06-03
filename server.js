@@ -1319,11 +1319,18 @@ app.post("/api/list-builder/add-to-dialer", authMiddleware, async (req, res) => 
       }));
       const items = await apifyVerifyMetaAds(startUrls);
       const urlToCvr = new Map(startUrls.map((s) => [s.url, s._cvr]));
+      const byUrl = new Map();
+      for (const it of items) {
+        const u = it.inputUrl;
+        if (!byUrl.has(u)) byUrl.set(u, []);
+        byUrl.get(u).push(it);
+      }
       const checkedAt = new Date().toISOString();
-      for (const item of items) {
-        const cvr = urlToCvr.get(item.inputUrl);
+      for (const [url, group] of byUrl) {
+        const cvr = urlToCvr.get(url);
         if (!cvr) continue;
-        verifyMap.set(cvr, { active: Number(item.totalCount || 0) > 0, totalCount: Number(item.totalCount || 0), checkedAt });
+        const c = classifyAdActivity(group);
+        verifyMap.set(cvr, { active: c.recent90d > 0, activeNow: c.activeNow, recent90d: c.recent90d, totalCount: c.total, checkedAt });
       }
     } catch (e) {
       console.warn("[list-builder] verify failed:", e.message);
@@ -5693,9 +5700,19 @@ function instagramFromFacebook(fbUrl) {
   return `https://www.instagram.com/${handle}/`;
 }
 
+// "Recent" = currently active OR ended within the last 90 days. The
+// softer hook ("we noticed you've been advertising recently" vs the
+// harder "we see you're advertising right now") converts well, and
+// pauses are common — a company that paused last week still has all
+// the creative infrastructure + decision-makers + budget intent.
+const META_RECENT_WINDOW_DAYS = 90;
+
 function buildAdsLibraryUrl(brand) {
   const params = new URLSearchParams({
-    active_status: "active",
+    // active_status: "all" — includes both currently-running AND recently-
+    // paused. We post-filter by ad endDate to keep only the last 90 days
+    // (Meta's Ad Library otherwise shows ads going back ~12 months).
+    active_status: "all",
     ad_type: "all",
     country: "DK",
     is_targeted_country: "false",
@@ -5706,6 +5723,25 @@ function buildAdsLibraryUrl(brand) {
   return `https://www.facebook.com/ads/library/?${params.toString()}`;
 }
 
+// Returns counts for ads: { activeNow, recent90d, total } given the raw
+// Apify response items. "recent90d" includes both currently-active ads
+// AND ads whose endDateFormatted is within the last 90 days. Used by
+// verify-leads + discovery to decide if a lead is "still relevant".
+function classifyAdActivity(items) {
+  const now = Date.now();
+  const cutoffMs = now - META_RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  let activeNow = 0, recent90d = 0;
+  for (const it of items) {
+    const isActive = !!it.isActive;
+    if (isActive) { activeNow++; recent90d++; continue; }
+    const endStr = it.endDateFormatted || it.endDate || it.availability?.end || "";
+    if (!endStr) continue;
+    const endMs = new Date(endStr).getTime();
+    if (!isNaN(endMs) && endMs >= cutoffMs) recent90d++;
+  }
+  return { activeNow, recent90d, total: items.length };
+}
+
 // Batch-verify a list of advertiser candidates via Apify's facebook-ads-
 // scraper. Uses onlyTotal:true so each URL returns 1 dataset item with
 // totalCount (cheap — ~$0.005/result on BRONZE tier). Async-start + poll
@@ -5714,9 +5750,15 @@ async function apifyVerifyMetaAds(startUrls) {
   const token = process.env.APIFY_API_TOKEN;
   if (!token) throw new Error("APIFY_API_TOKEN not configured");
   if (!startUrls || startUrls.length === 0) return [];
+  // resultsLimit:5 (not onlyTotal:true anymore) — we now need per-ad
+  // date + isActive fields to apply the 90-day recent-activity window.
+  // Cost: 5 ad-results/lead × $0.005 = $0.025/lead (was $0.005). Roughly
+  // 5x more expensive but unlocks "recently paused" leads which roughly
+  // doubles the addressable pool. Net pool-per-dollar is positive.
   const input = {
     startUrls: startUrls.map((s) => ({ url: s.url })),
-    onlyTotal: true,
+    onlyTotal: false,
+    resultsLimit: 5,
   };
   // Start async
   const startResp = await fetch(
@@ -5960,14 +6002,21 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
         return { url, _domain: p.cand.domain.toLowerCase(), _brand: brand };
       });
       const items = await apifyVerifyMetaAds(startUrls);
-      // Apify echoes the inputUrl on each result — map back via brand→url.
+      // Group items by URL → classifyAdActivity gives us {activeNow, recent90d, total}.
       const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
+      const byUrl = new Map();
+      for (const it of items) {
+        const u = it.inputUrl;
+        if (!byUrl.has(u)) byUrl.set(u, []);
+        byUrl.get(u).push(it);
+      }
       const checkedAt = new Date().toISOString();
-      for (const item of items) {
-        const domain = urlToDomain.get(item.inputUrl);
+      for (const [url, group] of byUrl) {
+        const domain = urlToDomain.get(url);
         if (!domain) continue;
-        const total = Number(item.totalCount || 0);
-        verifyMap.set(domain, { active: total > 0, totalCount: total, checkedAt });
+        const c = classifyAdActivity(group);
+        // "active" now means active OR recently-active within 90 days
+        verifyMap.set(domain, { active: c.recent90d > 0, activeNow: c.activeNow, recent90d: c.recent90d, totalCount: c.total, checkedAt });
       }
       stats.verified = verifyMap.size;
       stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
@@ -6690,12 +6739,18 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
       }));
       const items = await apifyVerifyMetaAds(startUrls);
       const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
+      const byUrl = new Map();
+      for (const it of items) {
+        const u = it.inputUrl;
+        if (!byUrl.has(u)) byUrl.set(u, []);
+        byUrl.get(u).push(it);
+      }
       const checkedAt = new Date().toISOString();
-      for (const item of items) {
-        const domain = urlToDomain.get(item.inputUrl);
+      for (const [url, group] of byUrl) {
+        const domain = urlToDomain.get(url);
         if (!domain) continue;
-        const total = Number(item.totalCount || 0);
-        verifyMap.set(domain, { active: total > 0, totalCount: total, checkedAt });
+        const c = classifyAdActivity(group);
+        verifyMap.set(domain, { active: c.recent90d > 0, activeNow: c.activeNow, recent90d: c.recent90d, totalCount: c.total, checkedAt });
       }
       stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
       stats.verifiedInactive = [...verifyMap.values()].filter((v) => !v.active).length;
@@ -6939,12 +6994,18 @@ app.post("/api/cron/tech-discover", async (req, res) => {
       });
       const items = await apifyVerifyMetaAds(startUrls);
       const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
+      const byUrl = new Map();
+      for (const it of items) {
+        const u = it.inputUrl;
+        if (!byUrl.has(u)) byUrl.set(u, []);
+        byUrl.get(u).push(it);
+      }
       const checkedAt = new Date().toISOString();
-      for (const item of items) {
-        const domain = urlToDomain.get(item.inputUrl);
+      for (const [url, group] of byUrl) {
+        const domain = urlToDomain.get(url);
         if (!domain) continue;
-        const total = Number(item.totalCount || 0);
-        verifyMap.set(domain, { active: total > 0, totalCount: total, checkedAt });
+        const c = classifyAdActivity(group);
+        verifyMap.set(domain, { active: c.recent90d > 0, activeNow: c.activeNow, recent90d: c.recent90d, totalCount: c.total, checkedAt });
       }
       stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
       stats.verifiedInactive = [...verifyMap.values()].filter((v) => !v.active).length;
@@ -7103,7 +7164,10 @@ async function apifyDiscoverDkMetaAds({ resultsLimit = 200, keyword }) {
   if (!token) throw new Error("APIFY_API_TOKEN not configured");
   if (!keyword) throw new Error("keyword required (no-keyword bulk scrape is BLOCKED by Meta)");
   const params = new URLSearchParams({
-    active_status: "active",
+    // "all" includes recently-paused advertisers (last 90 days). Wider net
+    // of companies actively investing in marketing infrastructure even if
+    // they're between campaigns. classifyAdActivity() filters post-fetch.
+    active_status: "all",
     ad_type: "all",
     country: "DK",
     media_type: "all",
