@@ -7908,6 +7908,167 @@ app.get("/api/cloudtalk/status", authMiddleware, (req, res) => {
   });
 });
 
+// GET /api/admin/cloudtalk-audit — survey current lead phones + CloudTalk
+// recent activity to find the credit drain. CloudTalk Essential covers
+// DK-domestic only; non-+45 numbers + SMS sends + voicemail attempts all
+// consume credits. Returns:
+//   * Per-user phone breakdown by country prefix
+//   * List of non-DK leads (specific offenders Apollo gave foreign HQs to)
+//   * Recent CloudTalk calls (last 50) with talked-to + cost-relevant info
+//   * Recent CloudTalk SMS (last 20)
+app.get("/api/admin/cloudtalk-audit", authMiddleware, async (req, res) => {
+  // Admin-only — credit audit is a billing/cost concern, not for SDRs
+  const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+  const me = allUsers.find((u) => u.id === req.userId);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+  // 1. Survey ACTIVE leads' phone numbers by country prefix
+  const byPrefix = {};
+  const nonDkLeads = [];
+  if (fs.existsSync(DATA_DIR)) {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+      try {
+        const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+        for (const l of ud.leads || []) {
+          if (l.lastAction === "not-relevant") continue;
+          const phone = String(l.ph || l.phone || "").replace(/[^0-9+]/g, "");
+          if (!phone) continue;
+          // Classify the prefix
+          let prefix = "unknown";
+          if (phone.startsWith("+45") || (phone.startsWith("45") && phone.length === 10) || /^\d{8}$/.test(phone)) {
+            prefix = "DK (+45)";
+          } else if (phone.startsWith("+1")) prefix = "US/CA (+1)";
+          else if (phone.startsWith("+44")) prefix = "UK (+44)";
+          else if (phone.startsWith("+49")) prefix = "DE (+49)";
+          else if (phone.startsWith("+46")) prefix = "SE (+46)";
+          else if (phone.startsWith("+47")) prefix = "NO (+47)";
+          else if (phone.startsWith("+33")) prefix = "FR (+33)";
+          else if (phone.startsWith("+")) prefix = "other-intl";
+          byPrefix[prefix] = (byPrefix[prefix] || 0) + 1;
+          if (prefix !== "DK (+45)") {
+            nonDkLeads.push({
+              cvr: l.cvr,
+              name: l.name,
+              phone,
+              prefix,
+              source: l.source,
+            });
+          }
+        }
+      } catch (_) { /* skip bad file */ }
+    }
+  }
+
+  // 2. CloudTalk recent calls + SMS — paginated CDR endpoints
+  let recentCalls = [];
+  let recentSms = [];
+  let callStats = { total: 0, domestic: 0, international: 0, totalMinutes: 0 };
+  if (isCloudTalkConfigured()) {
+    try {
+      const r = await fetch(`${CLOUDTALK_API_BASE}/calls/index.json?limit=50`, {
+        headers: { Authorization: cloudTalkAuthHeader() },
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const calls = (j?.responseData?.data || []).map((row) => row.Cdr || row).filter(Boolean);
+        recentCalls = calls.map((c) => {
+          const num = String(c.public_external || "").replace(/[^0-9+]/g, "");
+          const isDom = num.startsWith("+45") || (num.startsWith("45") && num.length === 10);
+          const talkedSec = Number(c.talking_time || 0);
+          callStats.total++;
+          if (isDom) callStats.domestic++; else callStats.international++;
+          callStats.totalMinutes += talkedSec / 60;
+          return {
+            startedAt: c.started_at,
+            number: num,
+            type: c.type,
+            talkedSec,
+            domestic: isDom,
+            agent: c.agent_first_name || c.agent_name,
+          };
+        });
+      }
+    } catch (e) { console.warn("[ct-audit] calls fetch:", e.message); }
+    try {
+      const r = await fetch(`${CLOUDTALK_API_BASE}/sms/index.json?limit=20`, {
+        headers: { Authorization: cloudTalkAuthHeader() },
+      });
+      if (r.ok) {
+        const j = await r.json();
+        recentSms = (j?.responseData?.data || []).map((row) => row.Sms || row).filter(Boolean).map((s) => ({
+          sentAt: s.created || s.sent_at,
+          to: s.phone_number || s.to,
+          status: s.status,
+          direction: s.direction,
+          textPreview: String(s.text || "").slice(0, 80),
+        }));
+      }
+    } catch (e) { console.warn("[ct-audit] sms fetch:", e.message); }
+  }
+
+  res.json({
+    phoneSurveyByPrefix: byPrefix,
+    nonDkLeadCount: nonDkLeads.length,
+    nonDkLeads: nonDkLeads.slice(0, 50),
+    cloudtalkRecentCalls: recentCalls.slice(0, 25),
+    cloudtalkRecentSms: recentSms,
+    callStats,
+    recommendations: nonDkLeads.length > 0
+      ? `${nonDkLeads.length} active leads have non-DK phones — dialing them burns credits. Recommend purging or marking phone_missing=true for these.`
+      : "No non-DK phones found in active dialer.",
+  });
+});
+
+// POST /api/admin/strip-non-dk-phones — defensive cleanup: replace non-DK
+// phone numbers with empty + phone_missing=true so the autodialer-maintain
+// pre-flight gate keeps them out of the dial queue. Apollo-returned foreign
+// HQ phones (Baum und Pferdgarten's +1 etc) burn CloudTalk credits silently.
+app.post("/api/admin/strip-non-dk-phones", authMiddleware, async (req, res) => {
+  const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+  const me = allUsers.find((u) => u.id === req.userId);
+  if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  const stats = { stripped: 0, byPrefix: {}, examples: [] };
+  if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats });
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+    const userId = f.slice("data_".length, -".json".length);
+    if (!userId) continue;
+    const ud = loadUserData(userId);
+    let dirty = false;
+    for (const l of ud.leads || []) {
+      if (l.lastAction === "not-relevant") continue;
+      const raw = String(l.ph || l.phone || "").replace(/[^0-9+]/g, "");
+      if (!raw) continue;
+      const isDk = raw.startsWith("+45") || (raw.startsWith("45") && raw.length === 10) || /^\d{8}$/.test(raw);
+      if (isDk) continue;
+      // Capture prefix for stats
+      let prefix = "other-intl";
+      if (raw.startsWith("+1")) prefix = "US/CA"; else if (raw.startsWith("+44")) prefix = "UK";
+      else if (raw.startsWith("+49")) prefix = "DE"; else if (raw.startsWith("+46")) prefix = "SE";
+      else if (raw.startsWith("+47")) prefix = "NO";
+      stats.byPrefix[prefix] = (stats.byPrefix[prefix] || 0) + 1;
+      if (stats.examples.length < 10) stats.examples.push({ name: l.name, was: raw, prefix });
+      // Strip — keep the bad number in a side field for audit
+      l.phone_non_dk_orig = raw;
+      l.ph = "";
+      l.phone = "";
+      l.phone_missing = true;
+      l.phone_recovered_at = null;
+      l.phone_recovered_source = `stripped-non-dk:${prefix}`;
+      stats.stripped++;
+      dirty = true;
+    }
+    if (dirty) saveUserData(userId, ud);
+  }
+  logActivity(
+    "ct-credit-saver",
+    `Strip non-DK phones: ${stats.stripped} fjernet (${Object.entries(stats.byPrefix).map(([k,v])=>`${k}=${v}`).join(", ")})`,
+    { stats },
+  );
+  res.json({ ok: true, stats });
+});
+
 app.post("/api/cloudtalk/call", authMiddleware, async (req, res) => {
   if (!isCloudTalkReady()) {
     // 503 with a clear message so the frontend can fall back to tel: link.

@@ -5750,6 +5750,18 @@ function toggleSwitchboard(){
 // pointing to the softphone instead of failing silently.
 async function ringNow(phone, cvr, leadName){
   if(!phone){ showToast('Intet nummer på leadet'); return; }
+  // International-call guard. CloudTalk Essential plan only includes DK
+  // domestic calls — international numbers burn credits FAST. Apollo
+  // sometimes returns foreign HQ phones (we've seen +1 US numbers,
+  // +49 Germany, +46 Sweden) for DK companies. Confirm with the SDR
+  // before dialing anything non-+45.
+  const digits = String(phone).replace(/[^0-9+]/g,'');
+  const isDk = digits.startsWith('+45') || digits.startsWith('45') && digits.length === 10
+              || /^\d{8}$/.test(digits);
+  if(!isDk){
+    const confirmed = confirm(`⚠ ${phone} ser ikke ud til at være et DK-nummer.\n\nCloudTalk Essential dækker kun DK-domestic — udlandsopkald koster credits.\n\nVil du ringe alligevel?`);
+    if(!confirmed) return;
+  }
   try{
     softphoneOnCallStart(leadName||phone);
   }catch{}
