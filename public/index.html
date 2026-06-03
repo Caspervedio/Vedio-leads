@@ -5759,17 +5759,55 @@ function showCloudTalkOfflineBanner(msg){
 // Edit the phone number the autodialer/cockpit will call for a lead.
 // Lets the SDR correct a wrong number (e.g. an Apollo foreign-HQ number)
 // without leaving the queue. Persists via PATCH /api/leads/:cvr.
+// Edit phone from INSIDE the cockpit — same backend PATCH as adEditPhone
+// but re-renders the cockpit instead of the autodialer list. Auto-normalises
+// 8-digit DK input to +45 prefix so SDR can paste raw numbers from Google.
+async function cockpitEditPhone(cvr){
+  const lead = (leads||[]).find(l => l.cvr === cvr);
+  const current = (lead && (lead.phone || lead.ph)) || '';
+  const v = prompt('Nummer autodialeren ringer til (med +45 landekode):', current);
+  if (v === null) return;
+  let phone = (v || '').trim().replace(/\s+/g,'');
+  // Normalize: 8 raw digits → prepend +45
+  if (/^\d{8}$/.test(phone)) phone = '+45' + phone;
+  // Also: if user pasted with leading zeros or 0045
+  if (phone.startsWith('0045')) phone = '+' + phone.slice(2);
+  try {
+    const r = await fetch('/api/leads/' + encodeURIComponent(cvr), {
+      method: 'PATCH',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, ph: phone, phone_missing: !phone }),
+    });
+    if (r.ok) {
+      if (lead) {
+        lead.phone = phone;
+        lead.ph = phone;
+        lead.phone_missing = !phone;
+      }
+      showToast(phone ? ('✓ Nummer opdateret: ' + phone) : 'Nummer fjernet');
+      if (typeof renderCockpit === 'function') renderCockpit();
+    } else {
+      showToast('Kunne ikke opdatere nummer');
+    }
+  } catch (e) {
+    showToast('Fejl: ' + e.message);
+  }
+}
+
 async function adEditPhone(cvr){
   const lead=(leads||[]).find(l=>l.cvr===cvr);
-  const current=lead?(lead.phone||''):'';
+  const current=lead?(lead.phone||lead.ph||''):'';
   const v=prompt('Nummer autodialeren ringer til (med +45 landekode):', current);
   if(v===null) return;             // cancelled
-  const phone=v.trim();
+  let phone=(v||'').trim().replace(/\s+/g,'');
+  // Normalize raw 8-digit DK numbers to +45 prefix (same as cockpitEditPhone)
+  if(/^\d{8}$/.test(phone)) phone='+45'+phone;
+  if(phone.startsWith('0045')) phone='+'+phone.slice(2);
   try{
-    const r=await fetch('/api/leads/'+encodeURIComponent(cvr),{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone, phone_missing: !phone})});
+    const r=await fetch('/api/leads/'+encodeURIComponent(cvr),{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone, ph: phone, phone_missing: !phone})});
     if(r.ok){
-      if(lead){ lead.phone=phone; lead.phone_missing=!phone; }
-      showToast(phone?('✓ Nummer opdateret'):'Nummer fjernet — flyttet til Mangler nummer');
+      if(lead){ lead.phone=phone; lead.ph=phone; lead.phone_missing=!phone; }
+      showToast(phone?('✓ Nummer opdateret: '+phone):'Nummer fjernet — flyttet til Mangler nummer');
       renderAutodialerPage();
     } else { showToast('Kunne ikke opdatere nummer'); }
   }catch(e){ showToast('Fejl: '+e.message); }
@@ -6303,15 +6341,19 @@ function renderCockpitDetail(c){
         </div>
       </div>
 
-      <!-- Call status + LOUD phone number — this is the number being dialed -->
+      <!-- Call status + LOUD phone number — this is the number being dialed.
+           Phone is INLINE-editable via the ✎ icon (no need to leave the
+           cockpit to fix a wrong number). When the phone is missing, the
+           edit button is the primary CTA — Nicolas can paste a number found
+           via Google/LinkedIn research and immediately dial it. -->
       ${(()=>{ const cph=c.phone||c.ph||''; return `
       <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:16px">
         <span style="font-size:20px">📞</span>
         <div style="flex:1;min-width:0">
           <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)}</div>
           ${cph
-            ? `<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring via CloudTalk">${fp(cph)}</button>`
-            : `<div style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer — ret det på lead-rækken</div>`}
+            ? `<div style="display:flex;align-items:center;gap:8px"><button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring via CloudTalk">${fp(cph)}</button><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" title="Ret nummeret" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:4px 8px;color:var(--w55);font-size:12px;cursor:pointer;line-height:1" onmouseover="this.style.color='#c4b5fd';this.style.borderColor='rgba(196,181,253,0.4)'" onmouseout="this.style.color='var(--w55)';this.style.borderColor='var(--w08)'">✎ ret</button></div>`
+            : `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer</span><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer">+ Indtast nummer</button></div>`}
         </div>
         ${cph?`<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring via CloudTalk" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;border:none;cursor:pointer;font-family:'Outfit',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</button>`:''}
       </div>`; })()}
