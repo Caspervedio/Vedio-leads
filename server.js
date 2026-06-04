@@ -6240,48 +6240,47 @@ app.post("/api/cron/scrape-website-phones", async (req, res) => {
 // Mangler-nummer bucket. People-match credit reveal could be a later
 // upgrade but that's $$$/lead.
 async function tryRecoverPhoneForLead(lead) {
-  // Path 1: Real DK 8-digit CVR
+  // PATH 1 — Real DK 8-digit CVR → direct Datafordeler lookup
   if (/^\d{8}$/.test(String(lead.cvr || ""))) {
     try {
       const c = await lookupDatafordeler(String(lead.cvr));
       if (c && c.phone) return { phone: c.phone, source: "df-cvr-lookup" };
-    } catch (_) { /* CVR not in DF */ }
+    } catch (_) { /* fall through */ }
   }
 
-  // Path 2: Search Datafordeler by company name → strongest exact-name match
   const name = (lead.name || "").trim();
-  if (!name) return null;
+  if (!name) return null; // can't search with no name
+
+  // PATH 2 — Datafordeler name search → if match found + has phone, use it
   try {
     const filters = { _from: 0, _size: 5 };
     if (lead.city) filters.city = lead.city;
     const results = await searchDatafordeler(name, filters);
     const rows = (results && (results.companies || results.results || results.rows)) || [];
-    if (!rows.length) return null;
-    // Normalize name for matching — strip A/S, ApS, etc.
-    const norm = (s) => String(s || "").toLowerCase()
-      .replace(/\b(a\/s|aps|ivs|i\/s|p\/s|k\/s)\b/gi, "")
-      .replace(/\s+/g, " ").trim();
-    const target = norm(name);
-    // First pass: exact normalized-name match
-    let best = rows.find((c) => norm(c.name) === target);
-    // Second pass: target is a substring (lead has shorter brand name than CVR registration)
-    if (!best) best = rows.find((c) => target.length >= 4 && norm(c.name).includes(target));
-    if (!best || !best.cvr) return null;
-    // Phone might already be in the search result; otherwise direct lookup
-    if (best.phone) return { phone: best.phone, source: "df-name-search" };
-    try {
-      const c = await lookupDatafordeler(String(best.cvr));
-      if (c && c.phone) return { phone: c.phone, source: "df-name-lookup", recoveredCvr: best.cvr };
-    } catch (_) { /* fall through */ }
-  } catch (_) { /* search failed */ }
+    if (rows.length) {
+      const norm = (s) => String(s || "").toLowerCase()
+        .replace(/\b(a\/s|aps|ivs|i\/s|p\/s|k\/s)\b/gi, "")
+        .replace(/\s+/g, " ").trim();
+      const target = norm(name);
+      let best = rows.find((c) => norm(c.name) === target);
+      if (!best) best = rows.find((c) => target.length >= 4 && norm(c.name).includes(target));
+      if (best && best.cvr) {
+        if (best.phone) return { phone: best.phone, source: "df-name-search" };
+        try {
+          const c = await lookupDatafordeler(String(best.cvr));
+          if (c && c.phone) return { phone: c.phone, source: "df-name-lookup", recoveredCvr: best.cvr };
+        } catch (_) { /* fall through */ }
+      }
+    }
+    // No DF match → continue to Path 3 (don't return null here)
+  } catch (_) { /* fall through to Path 3 */ }
 
-  // Path 3: Apify Google SERP — query `"$NAME" +45 telefon` and parse
-  // organic-result snippets for DK phone patterns. Most DK companies have
-  // their phone in Google Business listings + their own /kontakt page,
-  // both of which surface in Google's first 5-10 results.
-  // Cost: ~$0.005/lead. Hit rate observed: 50-70% on phone-missing
-  // verified-active leads. Helper handles its own errors → just returns
-  // null on any failure so the pipeline degrades gracefully.
+  // PATH 3 — Apify Google SERP scrape. Most reliable for companies not
+  // in Datafordeler's phone registry (small brands, religious/cultural
+  // orgs, non-CVR-registered orgs). Apify google-search-scraper returns
+  // organic snippets that typically contain "Telefon (+45) XX XX XX XX"
+  // pulled directly from the company's own /kontakt page or Google
+  // Business listing. Cost ~$0.005/lead.
   try {
     const serpResult = await tryGoogleSerpForPhone(name);
     if (serpResult && serpResult.phone) return serpResult;
