@@ -6693,17 +6693,42 @@ const GMAPS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "gmaps_discov
 // Rotation pairs of (category, city). One pair per cron run. Categories
 // chosen for plausible Meta-ad activity: local consumer services that
 // frequently run Meta promotions (restaurants, beauty, retail).
+// Note: mom-and-pop categories (restaurant, cafe, butik) churn through OSM
+// but very few have Apollo records — yield is ~0%. Professional services
+// + serious retail (clinics, opticians, real estate, jewellery) have
+// websites + Apollo coverage. Tilted heavily that way.
 const GMAPS_DISCOVER_QUERIES = [
-  { category: "restaurant", city: "København" },
-  { category: "cafe",       city: "København" },
-  { category: "frisor",     city: "København" },
-  { category: "butik",      city: "København" },
-  { category: "restaurant", city: "Aarhus" },
-  { category: "cafe",       city: "Aarhus" },
-  { category: "butik",      city: "Aarhus" },
-  { category: "restaurant", city: "Odense" },
-  { category: "butik",      city: "Odense" },
-  { category: "restaurant", city: "Aalborg" },
+  // Beauty + body clinics (1-15 emp sweet spot, marketing-active)
+  { category: "skønhedsklinik", city: "København" },
+  { category: "skønhedsklinik", city: "Aarhus"     },
+  { category: "fysioterapi",    city: "København" },
+  { category: "fysioterapi",    city: "Aarhus"     },
+  { category: "tandlæge",       city: "København" },
+  { category: "tandlæge",       city: "Aarhus"     },
+  // Optics + jewellery (small retail with websites)
+  { category: "optiker",        city: "København" },
+  { category: "optiker",        city: "Aarhus"     },
+  { category: "optiker",        city: "Odense"     },
+  { category: "juveler",        city: "København" },
+  // Real estate (always has websites, often 5-15 emp)
+  { category: "ejendomsmægler", city: "København" },
+  { category: "ejendomsmægler", city: "Aarhus"     },
+  { category: "ejendomsmægler", city: "Odense"     },
+  { category: "ejendomsmægler", city: "Aalborg"    },
+  // Professional services
+  { category: "advokat",        city: "København" },
+  { category: "advokat",        city: "Aarhus"     },
+  { category: "revisor",        city: "København" },
+  { category: "revisor",        city: "Aarhus"     },
+  { category: "arkitekt",       city: "København" },
+  // Other Apollo-indexed verticals
+  { category: "vinforhandler",  city: "København" },
+  { category: "blomster",       city: "København" },
+  { category: "frisor",         city: "København" },
+  { category: "frisor",         city: "Aarhus"     },
+  // Less-scraped cities (less dedupe collisions)
+  { category: "skønhedsklinik", city: "Esbjerg"    },
+  { category: "ejendomsmægler", city: "Vejle"      },
 ];
 
 function loadGmapsDiscoverState() {
@@ -6926,11 +6951,25 @@ const TECH_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "apollo_tech_d
 // (e-commerce platform). Mailchimp + ActiveCampaign + HubSpot have broader
 // usage so signal density is lower.
 const TECH_DISCOVER_UIDS = [
+  // Email marketing
   "klaviyo",
-  "shopify",
-  "active_campaign",
   "mailchimp",
+  "active_campaign",
+  "omnisend",
+  // CRM / marketing automation
   "hubspot",
+  // E-commerce platforms (DTC-friendly)
+  "shopify",
+  "woocommerce",
+  "magento",
+  "bigcommerce",
+  // Payments (likely on DK DTC sites)
+  "stripe",
+  "klarna",
+  // Reviews / loyalty (only on serious DTC shops)
+  "yotpo",
+  // DTC support
+  "gorgias",
 ];
 
 function loadTechDiscoverState() {
@@ -7211,22 +7250,37 @@ const META_ADS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "meta_ads_
 const META_DISCOVER_KEYWORDS = [
   // Geographic — generic DK signal
   "DK", "Danmark", "København", "Copenhagen", "Aarhus", "Odense", "Aalborg",
+  "Esbjerg", "Frederiksberg", "Vejle",
   // Commerce intents
   "shop", "tilbud", "køb", "bestil", "online", "ny", "spar", "rabat",
-  "udsalg", "gratis", "fragt", "levering",
-  // Consumer verticals
-  "mode", "tøj", "sko", "smykker", "ur", "taske",
+  "udsalg", "gratis", "fragt", "levering", "abonnement", "box",
+  "lancering", "kollektion", "nyhed",
+  // Consumer verticals — fashion
+  "mode", "tøj", "sko", "smykker", "ur", "taske", "accessories",
+  "børnetøj", "herremode", "dametøj",
+  // Beauty
   "skønhed", "skincare", "makeup", "hår", "parfume",
+  "klinik", "wellness", "massage", "neglesalon",
+  // Food + drink
   "mad", "kaffe", "vin", "økologisk", "snack",
+  "øl", "spiritus", "gin", "te", "kosttilskud", "protein",
+  // Home + interior
   "møbler", "interiør", "bolig", "hjem", "have",
+  "lampe", "lys", "tæppe", "have & grill",
   // Lifestyle / experience
-  "rejse", "ferie", "oplevelse", "wellness", "fitness", "yoga",
-  // Family
-  "børn", "baby", "legetøj",
+  "rejse", "ferie", "oplevelse", "fitness", "yoga", "pilates",
+  // Family + pets
+  "børn", "baby", "legetøj", "hund", "kat", "kæledyr", "foder",
   // Pro / hobby
-  "sport", "cykel", "outdoor",
+  "sport", "cykel", "outdoor", "vandring", "ski",
   // Design / branding
-  "design", "håndlavet",
+  "design", "håndlavet", "håndværk", "kunst", "vintage",
+  // Sustainability
+  "bæredygtig", "genbrug", "økologi",
+  // Gifts
+  "gave", "julegave", "fødselsdag",
+  // Plants + garden
+  "planter", "blomster",
 ];
 
 function loadMetaAdsDiscoverState() {
