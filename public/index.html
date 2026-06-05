@@ -6508,7 +6508,7 @@ function renderCockpitDetail(c){
               </div>
             </div>
           </div>
-        `).join(''):`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">Ingen kontakter fundet endnu.<br><button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Berig med Apollo</button></div>`}
+        `).join(''):`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">${c.apollo_enrichment_deferred?`<div style="margin-bottom:6px;color:var(--w80)">Beslutningstager ikke hentet endnu.</div><div style="margin-bottom:8px;font-size:10.5px;color:var(--w35)">Du kan ringe på hovednummeret med det samme.<br>Klik for at finde direkte kontakt (~1 Apollo credit)</div>`:`Ingen kontakter fundet endnu.<br>`}<button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Find beslutningstager</button></div>`}
         </div>
       </div>
 

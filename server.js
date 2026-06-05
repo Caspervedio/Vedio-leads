@@ -1973,8 +1973,24 @@ function queueScore(c) {
 //
 // Concurrency 5 so 30 leads finish in ~6s without slamming Apollo's
 // rate limit. Skips CVRs already enriched in the last 30 days.
-async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
+// FRUGAL ENRICHMENT POLICY (June 2026):
+//   1. Datafordeler-first phone resolution (FREE). If CVR registry has a
+//      switchboard, accept it as the call number and skip Apollo entirely.
+//   2. Apollo people/match (1 credit each, LIMIT=1) ONLY when:
+//        (a) lead has no phone after Datafordeler attempt, OR
+//        (b) caller explicitly invoked /api/apollo/enrich/:cvr?force=1
+//   3. Decision-maker name+title (Apollo /match metadata) is fetched
+//      ON-DEMAND from cockpit via the "Find beslutningstager" button
+//      — not pre-fetched at promote time.
+//
+// Why this matters: ~70% of DK SMBs have a Datafordeler switchboard.
+// Pre-Apollo we burned 2 credits on every one of those 70 for contact info
+// the SDR mostly doesn't need at queue-fill time. Now those 70 leads cost
+// 0 credits and only the ~30 phone-missing leads + ~10 cockpit-clicks/day
+// burn credits.
+async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
   if (!isApolloConfigured()) return;
+  const force = !!opts.force; // skip frugal skip when user clicked the button
   const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
   const now = Date.now();
   const queue = [...cvrs];
@@ -1985,8 +2001,38 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         const ud = loadUserData(userId);
         const lead = (ud.leads || []).find((l) => l.cvr === cvr);
         if (!lead) continue;
-        // Skip if recently enriched
-        if (lead.apollo_enriched_at && (now - new Date(lead.apollo_enriched_at).getTime()) < FRESH_MS) continue;
+        // Skip if recently enriched (unless forced)
+        if (!force && lead.apollo_enriched_at && (now - new Date(lead.apollo_enriched_at).getTime()) < FRESH_MS) continue;
+
+        // STEP 0 (frugal) — Datafordeler phone-first. Try CVR registry
+        // before spending any Apollo credits. ~70% hit rate on DK SMBs.
+        let dfPhone = "";
+        if (!lead.phone && /^\d{8}$/.test(String(cvr))) {
+          try {
+            const df = await lookupDatafordeler(String(cvr));
+            dfPhone = df?.ph || df?.phone || "";
+          } catch (_) { /* registry miss */ }
+        }
+
+        // STEP 1 (frugal skip) — if we already have a phone (Datafordeler
+        // either now or from earlier scrape) AND this is the auto-drain
+        // path (not user-forced), DON'T burn Apollo credits. Mark the
+        // lead callable + leave contacts empty. SDR can click "Find
+        // beslutningstager" in cockpit to fetch on-demand.
+        const phoneAvailable = lead.phone || dfPhone;
+        if (phoneAvailable && !force) {
+          const ud2 = loadUserData(userId);
+          const lead2 = (ud2.leads || []).find((l) => l.cvr === cvr);
+          if (!lead2) continue;
+          if (!lead2.phone) lead2.phone = dfPhone;
+          lead2.phone_missing = false;
+          lead2.apollo_enrichment_pending = false; // stop drain re-picking
+          lead2.apollo_enrichment_deferred = true; // signal: contacts unfetched, fetch on cockpit-open
+          saveUserData(userId, ud2);
+          continue;
+        }
+
+        // STEP 2 — phone-missing OR force=true: spend Apollo credits.
         const { contacts, company } = await enrichWithApollo({ name: lead.name, domain: lead.web || lead.website });
         // Re-load (state could have shifted between worker iterations)
         const ud2 = loadUserData(userId);
@@ -1996,6 +2042,7 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
         lead2.apollo_company = company || null;
         lead2.apollo_enriched_at = new Date().toISOString();
         lead2.apollo_enrichment_pending = false;
+        lead2.apollo_enrichment_deferred = false; // we just fetched contacts
         // Meta-advertiser signal (our ICP) — pulled free from Apollo's tech
         // stack. meta_advertiser=true means they run Meta ad campaigns.
         lead2.meta_advertiser = !!(company && company.metaAdvertiser);
@@ -2004,28 +2051,11 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs) {
           logActivity("advertiser", `🎯 Annoncør fundet: ${lead2.name} (${(lead2.ad_signals || []).join(", ")})`, { cvr, userId });
         }
         // Phone priority: Apollo direct dial > Datafordeler switchboard >
-        // Apollo org switchboard. lead.phone may already have a switchboard
-        // from the discovery scrape (Datafordeler); we only overwrite if
-        // a person's direct dial is available.
+        // Apollo org switchboard.
         const directDial = (contacts.find((c) => c.phone) || {}).phone;
         if (directDial) lead2.phone = directDial;
+        else if (!lead2.phone && dfPhone) lead2.phone = dfPhone;
         else if (!lead2.phone && company?.phone) lead2.phone = company.phone;
-        // Datafordeler switchboard fallback — broadened-ICP leads come from
-        // the pool with no phone, and Apollo whiffs on ~half of DK SMBs.
-        // The CVR registry has a free switchboard number for ~70% of active
-        // companies, so try it before giving up. Keeps phone coverage high
-        // without spending Apollo phone-reveal credits.
-        if (!lead2.phone && /^\d{8}$/.test(String(cvr))) {
-          try {
-            const df = await lookupDatafordeler(String(cvr));
-            const dfPhone = df?.ph || df?.phone || "";
-            if (dfPhone) lead2.phone = dfPhone;
-          } catch (_) { /* registry miss — lead lands in Mangler nummer */ }
-        }
-        // Flag leads with no phone so the Autodialer can exclude them from
-        // the active call queue (they stay accessible in a "Mangler nummer"
-        // view for manual research). Phone webhook (build #3) will populate
-        // these via Apollo's async reveal.
         lead2.phone_missing = !lead2.phone;
         saveUserData(userId, ud2);
       } catch (e) {
@@ -4997,13 +5027,22 @@ function isApolloConfigured() {
 // for the original Kaspr replacement (full contact card with VPs+managers);
 // dropped to 2 because Vedio's outbound only needs the decision-maker pair
 // (typically CEO/Founder + Marketing/eComm Lead). At 60-130 fresh leads/day
-// this lands monthly credit burn around 3,900/mo — fits inside the 4,000
-// Apollo Pro budget with a small safety buffer. Bump back to 4-5 if/when
-// the plan is upgraded; the apolloSearchPeople seniority filter
-// ("c_suite, founder, owner, vp, director, head, manager") naturally ranks
-// the most senior contacts first, so smaller limits don't lose top-of-funnel
-// quality — they just skip the head-of-something second-tier roles.
-const APOLLO_SEARCH_LIMIT = 2;
+// Apollo enrichment is the dominant credit cost (1 credit per /match call).
+// LIMIT=1 means we fetch just the single highest-seniority decision-maker
+// per company — usually founder/CEO/owner thanks to the seniority filter
+// ("c_suite, founder, owner, vp, director, head, manager" — sorted in that
+// priority order by Apollo). The SDR almost always wants just one name
+// to ask for when calling; the second contact is rarely actioned and
+// doubles the credit cost. Drop to 1 unless you upgrade the plan.
+//
+// COST MATH at LIMIT=1, frugal pipeline:
+//   - Phone-already-known leads (~70% via Datafordeler switchboard): 0 credits
+//   - Phone-missing leads (~30%): 1 credit each via Apollo
+//   - On-demand "Find beslutningstager" clicks in cockpit: 1 credit each
+//   => 100 leads/day × 30% × 1 cr = 30 cr/day = ~900 cr/mo baseline
+//      + ~10-20 cockpit reveals/day = ~300 cr/mo top-up
+//      ≈ 1,200 cr/mo on a 4,000 cr Apollo Pro plan, with headroom.
+const APOLLO_SEARCH_LIMIT = 1;
 const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 
 // Strip Danish legal suffixes + simple-strip Danish characters for
