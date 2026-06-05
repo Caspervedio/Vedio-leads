@@ -6795,6 +6795,10 @@ async function enrichLeadWithKaspr(cvr, context){
       showToast('Apollo ikke konfigureret endnu — venter på API-nøgle i Secret Manager');
       return;
     }
+    if(r.status===429 && d.code==='APOLLO_CAP_REACHED'){
+      showToast(`⏸️ Apollo dagsbudget brugt op (${d.spent}/${d.cap}) — prøv igen i morgen`);
+      return;
+    }
     if(!r.ok){showToast('Apollo fejl: '+(d.error||'ukendt'));return;}
     const n=(d.contacts||[]).length;
     showToast(n>0?`✓ ${n} beslutningstagere fundet${d.cached?` (${d.cached} cache)`:''}`:'Ingen kontakter fundet — Apollo har ikke data for denne virksomhed');

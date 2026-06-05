@@ -1994,8 +1994,9 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
   const FRESH_MS = 30 * 24 * 60 * 60 * 1000;
   const now = Date.now();
   const queue = [...cvrs];
+  let capReached = false; // shared flag — short-circuits remaining workers
   async function worker() {
-    while (queue.length) {
+    while (queue.length && !capReached) {
       const cvr = queue.shift();
       try {
         const ud = loadUserData(userId);
@@ -2059,6 +2060,16 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
         lead2.phone_missing = !lead2.phone;
         saveUserData(userId, ud2);
       } catch (e) {
+        if (e && e.code === "APOLLO_CAP_REACHED") {
+          // Daily cap hit mid-batch — signal sibling workers to stop
+          // processing further. Remaining queued CVRs stay pending and
+          // will be picked up by tomorrow's drain-enrichment.
+          capReached = true;
+          console.warn(`[apollo/promote-enrich] daily cap reached at ${e.spent}/${e.cap} — stopping batch (${queue.length} CVRs deferred to tomorrow)`);
+          // Re-queue this CVR for tomorrow
+          queue.unshift(cvr);
+          return;
+        }
         console.warn("[apollo/promote-enrich]", cvr, e.message);
       }
     }
@@ -5045,6 +5056,85 @@ function isApolloConfigured() {
 const APOLLO_SEARCH_LIMIT = 1;
 const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 
+// ─── APOLLO DAILY CREDIT CAP ─────────────────────────────────────────────
+// Apollo plan = 2,000 credits/month, used Mon-Fri only (~22 working days).
+// 2,000 / 22 ≈ 91 cr/day budget. Set hard cap at 100/day with a small
+// safety buffer; on a typical day we expect ~55-75 burned (30 drain
+// enrichments + 25 cockpit reveals + 0-20 spikes). Cap exists to prevent
+// a runaway loop or an unusually busy cockpit day from draining the
+// monthly budget mid-week.
+//
+// Counter file: /data/discovery/apollo_spend.json
+// Reset: at the first call of a new Europe/Copenhagen calendar day.
+// Enforcement points:
+//   - apolloMatchPerson() — throws CAP_REACHED before the API call
+//   - drain-enrichment cron — bails the worker loop when cap is hit
+//   - /api/apollo/enrich/:cvr — returns 429 to the cockpit button
+const APOLLO_DAILY_CAP = 100;
+const APOLLO_SPEND_FILE = path.join(DATA_DIR, "discovery", "apollo_spend.json");
+
+function _cphDateStr(d = new Date()) {
+  // YYYY-MM-DD in Europe/Copenhagen — stable across UTC midnight.
+  // Intl.DateTimeFormat handles DST transitions correctly.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Copenhagen",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === "year").value;
+  const m = parts.find((p) => p.type === "month").value;
+  const dd = parts.find((p) => p.type === "day").value;
+  return `${y}-${m}-${dd}`;
+}
+
+function loadApolloSpend() {
+  const today = _cphDateStr();
+  try {
+    if (fs.existsSync(APOLLO_SPEND_FILE)) {
+      const s = JSON.parse(fs.readFileSync(APOLLO_SPEND_FILE, "utf8"));
+      if (s.date === today) return { date: today, spent: s.spent || 0, history: s.history || {} };
+      // Day rolled over — archive yesterday's count, reset today's.
+      const history = s.history || {};
+      if (s.date) history[s.date] = s.spent || 0;
+      // Cap history to 60 days
+      const days = Object.keys(history).sort();
+      while (days.length > 60) delete history[days.shift()];
+      return { date: today, spent: 0, history };
+    }
+  } catch (e) { console.warn("[apollo-spend] load:", e.message); }
+  return { date: today, spent: 0, history: {} };
+}
+
+function saveApolloSpend(state) {
+  try {
+    fs.mkdirSync(path.dirname(APOLLO_SPEND_FILE), { recursive: true });
+    fs.writeFileSync(APOLLO_SPEND_FILE, JSON.stringify(state, null, 2));
+  } catch (e) { console.warn("[apollo-spend] save:", e.message); }
+}
+
+function getApolloSpendToday() {
+  const s = loadApolloSpend();
+  return { date: s.date, spent: s.spent, cap: APOLLO_DAILY_CAP, remaining: Math.max(0, APOLLO_DAILY_CAP - s.spent), history: s.history };
+}
+
+function incrementApolloSpend(n = 1) {
+  const s = loadApolloSpend();
+  s.spent = (s.spent || 0) + n;
+  saveApolloSpend(s);
+  return s.spent;
+}
+
+// Sentinel thrown by apolloMatchPerson when the daily cap is reached.
+// Callers should catch this specifically and break out of their loops
+// rather than treating it as a transient error.
+class ApolloCapReachedError extends Error {
+  constructor(spent, cap) {
+    super(`Apollo daily cap reached: ${spent}/${cap} credits used today`);
+    this.code = "APOLLO_CAP_REACHED";
+    this.spent = spent;
+    this.cap = cap;
+  }
+}
+
 // Strip Danish legal suffixes + simple-strip Danish characters for
 // Apollo's name matching. Apollo stores names without legal forms
 // ("FDM TRAVEL" not "FDM TRAVEL A/S") and its search is ASCII-leaning:
@@ -5124,6 +5214,14 @@ async function apolloSearchPeople({ name, domain, organizationId }) {
 }
 
 async function apolloMatchPerson(personId) {
+  // Pre-flight cap check — never make the API call (and burn the credit)
+  // if today's budget is already spent. Throws a typed sentinel so the
+  // caller can break cleanly instead of treating it as a transient err.
+  const spendState = loadApolloSpend();
+  if (spendState.spent >= APOLLO_DAILY_CAP) {
+    throw new ApolloCapReachedError(spendState.spent, APOLLO_DAILY_CAP);
+  }
+
   const r = await fetch(`${APOLLO_API_BASE}/people/match`, {
     method: "POST",
     headers: {
@@ -5141,6 +5239,9 @@ async function apolloMatchPerson(personId) {
     throw new Error(`Apollo match ${r.status}: ${text.slice(0, 200)}`);
   }
   const d = await r.json();
+  // Increment AFTER a successful response — failed calls don't count
+  // against the budget (Apollo doesn't bill on errors either).
+  incrementApolloSpend(1);
   return d.person || null;
 }
 
@@ -5306,6 +5407,9 @@ async function enrichWithApollo({ name, domain }) {
       }
       await new Promise((r) => setTimeout(r, APOLLO_MATCH_DELAY_MS));
     } catch (e) {
+      // Re-throw cap-reached so the outer caller can break the batch
+      // cleanly. Other errors are per-person — log and continue.
+      if (e && e.code === "APOLLO_CAP_REACHED") throw e;
       console.warn("[apollo/match]", sr.id, e.message);
     }
   }
@@ -5331,7 +5435,7 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
   if (fresh && !req.query.force) {
     return res.json({ ok: true, cached: "user", contacts: lead.contacts || [] });
   }
-  // Pool-level cache (cron writes here too)
+  // Pool-level cache (cron writes here too) — also free, no credit cost
   const pool = loadDiscoveryState().companies || {};
   const poolEntry = pool[cvr];
   if (poolEntry?.apollo_enriched_at && (Date.now() - new Date(poolEntry.apollo_enriched_at).getTime()) < FRESH_MS && !req.query.force) {
@@ -5373,9 +5477,38 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
     }
     res.json({ ok: true, cached: false, contacts, company });
   } catch (e) {
+    if (e && e.code === "APOLLO_CAP_REACHED") {
+      console.warn("[apollo/enrich] cap reached:", e.message);
+      return res.status(429).json({
+        error: `Apollo dagsbudget brugt op (${e.spent}/${e.cap} credits i dag). Prøv igen i morgen.`,
+        code: "APOLLO_CAP_REACHED",
+        spent: e.spent,
+        cap: e.cap,
+      });
+    }
     console.error("[apollo/enrich]", e.message);
     res.status(502).json({ error: e.message });
   }
+});
+
+// GET /api/apollo/credit-status — admin/cockpit visibility into today's
+// Apollo credit burn. Returns spent/cap/remaining + 7-day history.
+// Used by Dashboard widget + cockpit reveal-button to predict whether
+// the next click will succeed.
+app.get("/api/apollo/credit-status", authMiddleware, (req, res) => {
+  const s = getApolloSpendToday();
+  // Trim history to last 14 days for the dashboard sparkline
+  const hist = s.history || {};
+  const days = Object.keys(hist).sort().slice(-14);
+  const recentHistory = Object.fromEntries(days.map((d) => [d, hist[d]]));
+  res.json({
+    ok: true,
+    date: s.date,
+    spent: s.spent,
+    cap: s.cap,
+    remaining: s.remaining,
+    history: recentHistory,
+  });
 });
 
 // Apollo auto-enrichment cron — same pattern as the Kaspr attempt, but
@@ -5448,11 +5581,18 @@ app.post("/api/cron/drain-enrichment", async (req, res) => {
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo not configured" });
   }
+  // Daily-cap pre-flight. If we've already burned the 100/day budget,
+  // bail before even loading the queue. Schedulers still fire — we
+  // just return a no-op result. Counter resets at CPH midnight.
+  const spendNow = getApolloSpendToday();
+  if (spendNow.spent >= APOLLO_DAILY_CAP) {
+    return res.json({ ok: true, skipped: "daily-cap-reached", spend: spendNow });
+  }
   // Cap total leads processed this run. Each lead ≈ Apollo (1-2s) +
   // Datafordeler phone fallback (~2s); at concurrency 5, 30 leads ≈ 25-35s,
   // comfortably under the 300s request timeout.
   const limit = Math.max(1, Math.min(60, Number(req.query.limit) || 30));
-  const stats = { usersProcessed: 0, enriched: 0, perUser: {} };
+  const stats = { usersProcessed: 0, enriched: 0, perUser: {}, capReachedMidRun: false };
   if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats, note: "no DATA_DIR" });
 
   let budget = limit;
@@ -5477,7 +5617,17 @@ app.post("/api/cron/drain-enrichment", async (req, res) => {
     } catch (e) {
       console.warn("[drain-enrichment]", userId, e.message);
     }
+    // Re-check the cap after each user — if a previous user's batch
+    // flipped the cap, stop processing further users this run.
+    const sp = loadApolloSpend();
+    if (sp.spent >= APOLLO_DAILY_CAP) {
+      stats.capReachedMidRun = true;
+      break;
+    }
   }
+  // Attach final spend snapshot so the cron caller (and any operator
+  // tail'ing logs) can see how much budget is left.
+  stats.spend = getApolloSpendToday();
   console.log("[drain-enrichment] done:", JSON.stringify(stats));
   res.json({ ok: true, stats });
 });
