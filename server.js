@@ -7458,9 +7458,9 @@ const BRANCHE_WALK_CODES = [
   { code: "477210", label: "Skobutik"          },
   { code: "475100", label: "Møbler"            },
   { code: "477820", label: "Interiør"          },
-  // E-commerce
-  { code: "478910", label: "E-commerce"        },
-  { code: "478990", label: "Web-shop"          },
+  // E-commerce (DB07 47.91.* = internet retail — THE high-yield code)
+  { code: "479110", label: "Detailhandel internet" },
+  { code: "478990", label: "Anden detailhandel"    },
   // Pro services (high marketing intent)
   { code: "731000", label: "Marketing-bureau"  },
   { code: "741010", label: "Design/web"        },
@@ -7498,9 +7498,12 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
 
   const TARGET_USER = (req.query.userId || "u1").toString();
-  // Hard cap on Apollo lookups per run — these are fast (~1s each) but
-  // we still want a predictable upper bound for budget planning.
-  const MAX_CANDIDATES_TO_APOLLO = Math.max(20, Math.min(200, Number(req.query.limit) || 80));
+  // Hard cap on Apollo lookups per run. Apollo find-company match rate
+  // for small DK SMBs varies 5-30% by industry (restaurants ~27%,
+  // micro-salons ~5%), so we need ~80 lookups to land 5-15 ICP-fit
+  // candidates after all gates. Each lookup is ~1s, so 80 × 1s = ~80s
+  // per run, well under the 1800s scheduler attempt-deadline.
+  const MAX_CANDIDATES_TO_APOLLO = Math.max(20, Math.min(200, Number(req.query.limit) || 120));
 
   const state = loadBrancheWalkState();
   // Override cursor via ?code=XXXXXX for manual smoke-test runs
