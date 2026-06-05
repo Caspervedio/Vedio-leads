@@ -6918,6 +6918,17 @@ const GMAPS_DISCOVER_QUERIES = [
   // Less-scraped cities (less dedupe collisions)
   { category: "skønhedsklinik", city: "Esbjerg"    },
   { category: "ejendomsmægler", city: "Vejle"      },
+  // Q2 2026 expansion — more city/category coverage
+  { category: "fysioterapi",    city: "Esbjerg"    },
+  { category: "fysioterapi",    city: "Odense"     },
+  { category: "tandlæge",       city: "Odense"     },
+  { category: "tandlæge",       city: "Aalborg"    },
+  { category: "advokat",        city: "Odense"     },
+  { category: "advokat",        city: "Aalborg"    },
+  { category: "revisor",        city: "Odense"     },
+  { category: "revisor",        city: "Vejle"      },
+  { category: "ejendomsmægler", city: "Randers"    },
+  { category: "frisor",         city: "Odense"     },
 ];
 
 function loadGmapsDiscoverState() {
@@ -7159,6 +7170,11 @@ const TECH_DISCOVER_UIDS = [
   "yotpo",
   // DTC support
   "gorgias",
+  // Added Q2 2026 — DTC subscription + SMS marketing stack
+  "recharge",
+  "attentive",
+  "postscript",
+  "judgeme",
 ];
 
 function loadTechDiscoverState() {
@@ -7405,6 +7421,307 @@ app.post("/api/cron/tech-discover", async (req, res) => {
   res.json({ ok: true, stats, nextTech: TECH_DISCOVER_UIDS[state.techCursor % TECH_DISCOVER_UIDS.length] });
 });
 
+// ─── BRANCHE-WALK DISCOVERY ──────────────────────────────────────────────
+// 5th discovery source. Walks the DK CVR registry directly via Datafordeler
+// by DB07 industry code. Critical property: spends ZERO Apollo /match
+// credits at discovery — only the FREE org-enrich call (for revenue ICP
+// gate + marketing-tech detection). The Apollo /match credit is deferred
+// to cockpit-open via the "Find beslutningstager" button.
+//
+// Five quality gates (parity with meta-ads-discover's "verified active ad"
+// signal):
+//   1. DB07 code in DTC-heavy whitelist (consumer-facing industries only)
+//   2. Datafordeler status == "aktiv" (filters dissolved/inactive)
+//   3. Apollo finds the org (proxies "is this a real business")
+//   4. Marketing tech in Apollo's tech stack (proxies "marketing-active")
+//   5. passesIcpGate (DK + 1-15 emp + 2-15M DKK revenue)
+//
+// Rotation: 1 DB07 code per cron run, advancing cursor by 1. 21 codes ×
+// 2 cycles/day Mon-Fri = each code hit ~2× per month. Fresh slices.
+const BRANCHE_WALK_STATE_FILE = path.join(DATA_DIR, "discovery", "branche_walk_discover.json");
+const BRANCHE_WALK_CODES = [
+  // Food + hospitality
+  { code: "561010", label: "Restauranter"      },
+  { code: "563000", label: "Cafeer"            },
+  { code: "472100", label: "Bagerier"          },
+  { code: "551110", label: "Hoteller"          },
+  // Beauty + body
+  { code: "960210", label: "Frisør"            },
+  { code: "960220", label: "Skønhedsklinik"    },
+  { code: "961040", label: "Wellness"          },
+  // Fitness + health
+  { code: "931200", label: "Fitness"           },
+  { code: "862100", label: "Tandlæger"         },
+  { code: "869090", label: "Fysioterapi"       },
+  // Retail (consumer-facing)
+  { code: "477110", label: "Tøjbutik"          },
+  { code: "477210", label: "Skobutik"          },
+  { code: "475100", label: "Møbler"            },
+  { code: "477820", label: "Interiør"          },
+  // E-commerce
+  { code: "478910", label: "E-commerce"        },
+  { code: "478990", label: "Web-shop"          },
+  // Pro services (high marketing intent)
+  { code: "731000", label: "Marketing-bureau"  },
+  { code: "741010", label: "Design/web"        },
+  { code: "683210", label: "Ejendomsmægler"    },
+  { code: "791100", label: "Rejsebureau"       },
+  // Optics, jewellery
+  { code: "477800", label: "Optikere"          },
+];
+
+// Marketing-tech regex applied to Apollo's technology_names list.
+// Presence of ANY of these tools => marketing-active. We're deliberately
+// generous here — even basic GA + FB Pixel signals a company that
+// invests in funnel measurement, which is our buyer profile.
+const MARKETING_TECH_RE = /\b(facebook pixel|meta pixel|meta ads|facebook ads|google ads|google analytics|google tag manager|klaviyo|mailchimp|active.?campaign|hubspot|omnisend|shopify|woocommerce|magento|bigcommerce|stripe|klarna|tiktok pixel|tiktok ads|linkedin insight|hotjar|segment|attentive|gorgias|yotpo)\b/i;
+
+function loadBrancheWalkState() {
+  try {
+    if (fs.existsSync(BRANCHE_WALK_STATE_FILE)) {
+      const s = JSON.parse(fs.readFileSync(BRANCHE_WALK_STATE_FILE, "utf8"));
+      return { codeCursor: 0, scannedCvrs: {}, lastRunAt: null, ...s };
+    }
+  } catch (e) { console.warn("[branche-walk] state load:", e.message); }
+  return { codeCursor: 0, scannedCvrs: {}, lastRunAt: null };
+}
+
+function saveBrancheWalkState(s) {
+  fs.mkdirSync(path.dirname(BRANCHE_WALK_STATE_FILE), { recursive: true });
+  fs.writeFileSync(BRANCHE_WALK_STATE_FILE, JSON.stringify(s, null, 2));
+}
+
+app.post("/api/cron/branche-walk-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
+
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  // Hard cap on Apollo lookups per run — these are fast (~1s each) but
+  // we still want a predictable upper bound for budget planning.
+  const MAX_CANDIDATES_TO_APOLLO = Math.max(20, Math.min(200, Number(req.query.limit) || 80));
+
+  const state = loadBrancheWalkState();
+  // Override cursor via ?code=XXXXXX for manual smoke-test runs
+  const customCode = String(req.query.code || "").trim();
+  const codeEntry = customCode
+    ? { code: customCode, label: `manual:${customCode}` }
+    : BRANCHE_WALK_CODES[state.codeCursor % BRANCHE_WALK_CODES.length];
+  if (!customCode) state.codeCursor = (state.codeCursor + 1) % BRANCHE_WALK_CODES.length;
+
+  const stats = {
+    db07: codeEntry.code,
+    label: codeEntry.label,
+    dfCandidatesRaw: 0,
+    dfCandidatesActive: 0,
+    skippedDupCvr: 0,
+    skippedAlreadyInDialer: 0,
+    apolloLookups: 0,
+    apolloMatched: 0,
+    apolloMatchMissed: 0,
+    skippedNoMarketingTech: 0,
+    skippedIcpFail: 0,
+    leadsAppended: 0,
+    errors: 0,
+  };
+  const checkedAt = new Date().toISOString();
+
+  // ─── STEP 1 — Datafordeler walk by DB07 code ──────────────────────────
+  const enhedsIds = new Set();
+  let cursor = null;
+  for (let p = 0; p < 3; p++) {
+    try {
+      const afterClause = cursor ? `, after: "${cursor}"` : "";
+      const r = await dfGqlFetch(
+        `{ CVR_Branche(first: 1000${afterClause}, where: { vaerdi: { eq: "${codeEntry.code}" } }) { pageInfo { hasNextPage endCursor } edges { node { CVREnhedsId } } } }`,
+      );
+      const d = r?.CVR_Branche;
+      for (const e of (d?.edges || [])) enhedsIds.add(e.node.CVREnhedsId);
+      if (!d?.pageInfo?.hasNextPage) break;
+      cursor = d.pageInfo.endCursor;
+    } catch (e) {
+      console.warn("[branche-walk] DF walk failed:", e.message);
+      stats.errors++;
+      break;
+    }
+  }
+  stats.dfCandidatesRaw = enhedsIds.size;
+  if (enhedsIds.size === 0) {
+    console.log("[branche-walk] no DF candidates for", codeEntry.code);
+    return res.json({ ok: true, stats, note: "no DF candidates" });
+  }
+
+  // ─── STEP 2 — Enrich DF candidates with name/cvr/phone/employees/status
+  const ids = [...enhedsIds].slice(0, MAX_CANDIDATES_TO_APOLLO * 3); // overshoot — many will be filtered
+  const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  const navnMap = new Map(), adrMap = new Map(), tlfMap = new Map();
+  const beskMap = new Map(), vrkMap = new Map();
+  for (const batch of chunk(ids, 100)) {
+    const idList = batch.map((id) => `"${id}"`).join(",");
+    const w = `CVREnhedsId: { in: [${idList}] }`;
+    const sz = batch.length;
+    try {
+      const [rN, rA, rT, rBe, rV] = await Promise.all([
+        dfGqlFetch(`{ CVR_Navn(first: ${sz * 6}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
+        dfGqlFetch(`{ CVR_Adressering(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId CVRAdresse_postnummer CVRAdresse_postdistrikt } } } }`),
+        dfGqlFetch(`{ CVR_Telefonnummer(first: ${sz * 3}, where: { ${w} }) { edges { node { CVREnhedsId vaerdi } } } }`),
+        dfGqlFetch(`{ CVR_Beskaeftigelse(first: ${sz}, where: { ${w} }) { edges { node { CVREnhedsId antal intervalFra intervalTil } } } }`),
+        dfGqlFetch(`{ CVR_Virksomhed(first: ${sz}, where: { id: { in: [${idList}] } }) { edges { node { id CVRNummer status } } } }`),
+      ]);
+      for (const e of rN?.CVR_Navn?.edges || []) {
+        if (!navnMap.has(e.node.CVREnhedsId)) navnMap.set(e.node.CVREnhedsId, []);
+        navnMap.get(e.node.CVREnhedsId).push(e.node.vaerdi);
+      }
+      for (const e of rA?.CVR_Adressering?.edges || []) adrMap.set(e.node.CVREnhedsId, e.node);
+      for (const e of rT?.CVR_Telefonnummer?.edges || []) {
+        const v = String(e.node.vaerdi || "").trim();
+        if (v) tlfMap.set(e.node.CVREnhedsId, v);
+      }
+      for (const e of rBe?.CVR_Beskaeftigelse?.edges || []) beskMap.set(e.node.CVREnhedsId, e.node);
+      for (const e of rV?.CVR_Virksomhed?.edges || []) vrkMap.set(e.node.id, e.node);
+    } catch (e) {
+      console.warn("[branche-walk] DF enrich batch failed:", e.message);
+      stats.errors++;
+    }
+  }
+
+  // ─── STEP 3 — Filter on active + employee range + dedup vs scanned/dialer
+  const dialerUd = loadUserData(TARGET_USER);
+  const dialerCvrs = new Set((dialerUd.leads || []).map((l) => String(l.cvr)));
+  const candidatesForApollo = [];
+  for (const eid of ids) {
+    const vrk = vrkMap.get(eid);
+    if (!vrk) continue;
+    if (vrk.status !== "aktiv") continue;
+    stats.dfCandidatesActive++;
+    const cvr = String(vrk.CVRNummer || "");
+    if (!cvr) continue;
+    if (state.scannedCvrs[cvr]) { stats.skippedDupCvr++; continue; }
+    if (dialerCvrs.has(cvr)) { stats.skippedAlreadyInDialer++; continue; }
+    const besk = beskMap.get(eid) || {};
+    const employees = besk.antal ?? besk.intervalFra ?? null;
+    // Hard employee filter at DF level (1-15) — Apollo's number may
+    // differ, but the CVR-reported antal is the trust-anchor for DK.
+    if (employees != null && (employees < APOLLO_DISCOVER_MIN_EMPLOYEES || employees > APOLLO_DISCOVER_MAX_EMPLOYEES)) continue;
+    const names = navnMap.get(eid) || [];
+    const adr = adrMap.get(eid) || {};
+    candidatesForApollo.push({
+      cvr,
+      enhedsId: eid,
+      name: names[0] || "",
+      city: adr.CVRAdresse_postdistrikt || "",
+      zip: adr.CVRAdresse_postnummer || "",
+      phone: tlfMap.get(eid) || "",
+      employees,
+    });
+    if (candidatesForApollo.length >= MAX_CANDIDATES_TO_APOLLO) break;
+  }
+
+  // ─── STEP 4 — For each candidate: Apollo org-enrich + marketing-tech + ICP
+  for (const cand of candidatesForApollo) {
+    if (!cand.name) continue;
+    stats.apolloLookups++;
+    state.scannedCvrs[cand.cvr] = checkedAt;
+    try {
+      // Apollo lookup by name (returns id + domain if found)
+      const found = await apolloFindCompany({ name: cand.name });
+      if (!found || !found.domain) {
+        stats.apolloMatchMissed++;
+        continue;
+      }
+      stats.apolloMatched++;
+      // FREE org-enrich for tech stack + revenue + employee count
+      const orgEnrich = await apolloOrgEnrich(found.domain);
+      if (!orgEnrich) {
+        stats.apolloMatchMissed++;
+        continue;
+      }
+      // Gate 4: marketing-tech check
+      const techNames = Array.isArray(orgEnrich.technologyNames) ? orgEnrich.technologyNames : [];
+      const hasMarketingTech = techNames.some((t) => MARKETING_TECH_RE.test(String(t)));
+      if (!hasMarketingTech) {
+        stats.skippedNoMarketingTech++;
+        continue;
+      }
+      // Gate 5: standard ICP gate (DK + emp + revenue)
+      if (!passesIcpGate(orgEnrich, cand.employees)) {
+        stats.skippedIcpFail++;
+        continue;
+      }
+      // ─── Append the lead ───────────────────────────────────────────
+      const ud = loadUserData(TARGET_USER);
+      const dupByCvr = (ud.leads || []).some((l) => String(l.cvr) === cand.cvr);
+      if (dupByCvr) { stats.skippedAlreadyInDialer++; continue; }
+      const phone = cand.phone || orgEnrich.phone || "";
+      const matchedTech = techNames.find((t) => MARKETING_TECH_RE.test(String(t))) || "";
+      ud.leads.push({
+        cvr: cand.cvr,
+        name: cand.name,
+        addr: "",
+        zip: cand.zip,
+        city: cand.city,
+        ph: phone,
+        em: "",
+        web: found.domain,
+        ind: orgEnrich.industry || "",
+        ic: codeEntry.code,
+        emp: typeof cand.employees === "number" ? String(cand.employees) : (orgEnrich.estimatedEmployees ? String(orgEnrich.estimatedEmployees) : ""),
+        emps: cand.employees || orgEnrich.estimatedEmployees || null,
+        st: "aktiv",
+        yr: "",
+        form: "",
+        eq: 0,
+        res: 0,
+        omsaetning: orgEnrich.annualRevenue || 0,
+        source: `branche-walk-${codeEntry.code}`,
+        source_label: codeEntry.label,
+        icpFit: true,
+        // Marketing-tech proxy for the "is this a marketing buyer" signal
+        meta_advertiser: !!orgEnrich.metaAdvertiser,
+        ad_signals: orgEnrich.metaAdSignals || [matchedTech].filter(Boolean),
+        marketing_tech_match: matchedTech,
+        apollo_company: orgEnrich,
+        apollo_enrichment_pending: !phone, // only drain to Apollo /match if no phone
+        apollo_enrichment_deferred: !!phone, // signal: contacts unfetched, click button to load
+        apollo_enriched_at: null,
+        phone_missing: !phone,
+        discovered_at: checkedAt,
+        pushed_to_cloudtalk_at: null,
+        twenty_opportunity_id: null,
+      });
+      saveUserData(TARGET_USER, ud);
+      stats.leadsAppended++;
+      logActivity(
+        "discovery",
+        `🟢 Branche-walk (${codeEntry.label}): ${cand.name} — ${matchedTech}`,
+        { cvr: cand.cvr, source: `branche-walk-${codeEntry.code}`, userId: TARGET_USER },
+      );
+      // Small breather between Apollo calls — respect rate limits
+      await new Promise((r) => setTimeout(r, 250));
+    } catch (e) {
+      stats.errors++;
+      console.warn("[branche-walk] candidate failed:", cand.name, e.message);
+    }
+  }
+
+  state.lastRunAt = checkedAt;
+  // Garbage-collect scannedCvrs older than 60 days to keep state lean.
+  const cutoff = Date.now() - 60 * 24 * 60 * 60 * 1000;
+  for (const [cvr, ts] of Object.entries(state.scannedCvrs)) {
+    if (new Date(ts).getTime() < cutoff) delete state.scannedCvrs[cvr];
+  }
+  saveBrancheWalkState(state);
+
+  logActivity(
+    "discovery",
+    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.apolloMatched}/${stats.apolloLookups} Apollo · ${stats.leadsAppended} tilføjet`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[branche-walk] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, nextCode: BRANCHE_WALK_CODES[state.codeCursor % BRANCHE_WALK_CODES.length] });
+});
+
 // ── META ADS-FIRST DISCOVERY ────────────────────────────────────────
 // Architectural pivot from Apollo-first. The old path was:
 //
@@ -7470,6 +7787,15 @@ const META_DISCOVER_KEYWORDS = [
   "gave", "julegave", "fødselsdag",
   // Plants + garden
   "planter", "blomster",
+  // Q2 2026 expansion — niche DTC verticals + cities
+  "Helsingør", "Næstved", "Holstebro", "Slagelse", "Roskilde",
+  "kollektion", "drop", "premium", "håndplukket",
+  "ren hud", "hudpleje", "selvbruner", "duft",
+  "luksus", "designer", "særlig",
+  "kost", "tilskud", "vitaminer", "raw",
+  "fest", "konfirmation", "bryllup",
+  "spil", "brætspil", "puslespil",
+  "musik", "vinyl", "instrument",
 ];
 
 function loadMetaAdsDiscoverState() {
