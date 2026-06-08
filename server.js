@@ -5018,7 +5018,61 @@ app.post("/api/scrape/tech-stack", authMiddleware, async (req, res) => {
 // - Slower per-request (1–5s typical) — but a single query returns
 //   hundreds of POIs vs Google's 20/page → fewer requests overall.
 
-const OSM_OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+// Overpass public mirrors — failover in order. overpass-api.de is the
+// canonical instance but is heavily rate-limited and frequently returns
+// 504 during peak hours. kumi.systems is a well-maintained German mirror
+// with looser limits. coffee is a third-party that we keep as last resort.
+const OSM_OVERPASS_MIRRORS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
+const OSM_OVERPASS_URL = OSM_OVERPASS_MIRRORS[0]; // legacy callers still hit primary
+
+// Try each mirror in order, retrying once per mirror on transient
+// errors (502/503/504/network). Returns the first successful response
+// body parsed as JSON, or throws if all mirrors fail.
+async function fetchOverpass(overpassQuery, opts = {}) {
+  const maxAttempts = opts.maxAttempts || 2; // per-mirror
+  const timeoutMs   = opts.timeoutMs   || 60000;
+  let lastErr = null;
+  for (const url of OSM_OVERPASS_MIRRORS) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": "VedioLeads/1.0 (sales-prospecting)",
+          },
+          body: "data=" + encodeURIComponent(overpassQuery),
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        if (r.ok) return await r.json();
+        // Transient 5xx — retry once on same mirror, then move on
+        if ([502, 503, 504].includes(r.status) && attempt < maxAttempts) {
+          await new Promise((res) => setTimeout(res, 1500 * attempt));
+          continue;
+        }
+        lastErr = new Error(`OSM ${url.split("/")[2]} → ${r.status}`);
+        break; // fall through to next mirror
+      } catch (e) {
+        clearTimeout(t);
+        lastErr = new Error(`OSM ${url.split("/")[2]} → ${e.message}`);
+        if (attempt < maxAttempts) {
+          await new Promise((res) => setTimeout(res, 1500 * attempt));
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  throw lastErr || new Error("OSM: all mirrors failed");
+}
 
 // Category id → OSM tag pairs. Each category may map to multiple tags
 // (e.g. "frisør" covers both shop=hairdresser and shop=beauty).
@@ -5099,7 +5153,10 @@ function buildOsmQuery({ category, city, cities, q, limit = 100 }) {
   if (parts.length === 0) return null;
   // out body center N — N caps the result count per element type. We
   // multiply by 2 since we ask for both nodes and ways.
-  return `[out:json][timeout:30];${areaClause}(${parts.join("")});out body center ${limit * 2};`;
+  // timeout=90 = Overpass query timeout (server-side execution cap).
+  // Was 30 → too tight at peak hours; bumped to give the engine more
+  // room before it 504s, especially when the primary mirror is slow.
+  return `[out:json][timeout:90];${areaClause}(${parts.join("")});out body center ${limit * 2};`;
 }
 
 function parseOsmElement(el) {
@@ -7203,17 +7260,14 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
     errors: 0,
   };
 
-  // 1. Scrape OSM directly using the existing helper (no HTTP roundtrip)
+  // 1. Scrape OSM via the multi-mirror fetcher with retry/backoff.
+  // The public Overpass instance frequently returns 504 during peak
+  // hours — fetchOverpass falls back to kumi.systems and private.coffee
+  // mirrors automatically.
   let parsed = [];
   try {
     const overpass = buildOsmQuery({ category: query.category, city: query.city, limit: LIMIT });
-    const r = await fetch(OSM_OVERPASS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json", "User-Agent": "VedioLeads/1.0" },
-      body: "data=" + encodeURIComponent(overpass),
-    });
-    if (!r.ok) throw new Error(`OSM ${r.status}`);
-    const data = await r.json();
+    const data = await fetchOverpass(overpass, { timeoutMs: 60000 });
     const seen = new Set();
     for (const el of data.elements || []) {
       const p = parseOsmElement(el);
