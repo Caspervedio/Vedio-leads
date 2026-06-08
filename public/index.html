@@ -821,11 +821,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
      The tiny ⚙ button switches between modes — popup is recommended
      for SMS reliability + first-class mic/audio permissions. -->
 <div id="softphone-pill-wrap" style="position:fixed;bottom:18px;right:18px;z-index:900;display:none;align-items:center;gap:6px">
-  <button id="softphone-pill" onclick="softphoneToggle()" title="Åbn softphone">
+  <button id="softphone-pill" onclick="softphoneToggle()" title="Åbn CloudTalk i eget vindue">
     <span style="font-size:16px">📞</span>
-    <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px">Åbn softphone</span>
+    <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px">Open CloudTalk App</span>
   </button>
-  <button id="softphone-mode-toggle" onclick="softphoneSwitchMode()" title="Skift tilstand: pop-up ↔ indlejret softphone" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;width:30px;height:30px;border-radius:50%;font-size:13px;line-height:1;font-family:'Outfit',sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:background 0.12s,transform 0.12s" onmouseover="this.style.background='rgba(255,255,255,0.22)';this.style.transform='scale(1.08)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='scale(1)'">⚙</button>
+  <button id="softphone-mode-toggle" onclick="softphoneSwitchMode()" title="Skift tilstand: pop-up ↔ indlejret CloudTalk" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;width:30px;height:30px;border-radius:50%;font-size:13px;line-height:1;font-family:'Outfit',sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:background 0.12s,transform 0.12s" onmouseover="this.style.background='rgba(255,255,255,0.22)';this.style.transform='scale(1.08)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='scale(1)'">⚙</button>
 </div>
 
 <!-- SIDEBAR -->
@@ -1592,8 +1592,8 @@ function softphoneSwitchMode(){
   // user might switch back, so we keep it warm).
   softphoneInit();
   showToast(next === 'popup'
-    ? '📞 Skiftet til pop-up tilstand (anbefalet)'
-    : '📞 Skiftet til indlejret tilstand');
+    ? '📞 CloudTalk App pop-up tilstand (anbefalet)'
+    : '📞 CloudTalk dock-tilstand (indlejret)');
 }
 function softphoneInit(){
   const dock=document.getElementById('softphone-dock');
@@ -1608,13 +1608,13 @@ function softphoneInit(){
     // bundle from being fetched in this tab).
     dock.style.display='none';
     pillWrap.style.display='flex';
-    if(pillLabel) pillLabel.textContent = 'Åbn softphone';
+    if(pillLabel) pillLabel.textContent = 'Open CloudTalk App';
     // Hint the SDR if they don't have a popup open yet
-    softphoneSetStatus(_softphoneWin && !_softphoneWin.closed ? 'ready' : '', _softphoneWin && !_softphoneWin.closed ? 'pop-up åben' : '');
+    softphoneSetStatus(_softphoneWin && !_softphoneWin.closed ? 'ready' : '', _softphoneWin && !_softphoneWin.closed ? 'CloudTalk App åben' : '');
     return;
   }
   // ── Dock mode (opt-in) ──
-  if(pillLabel) pillLabel.textContent = 'Softphone';
+  if(pillLabel) pillLabel.textContent = 'Vis CloudTalk dock';
   // Lazy-load: only set src once when the dock or pill first becomes visible.
   if(iframe.src==='about:blank' || !iframe.src.startsWith('https://phone.cloudtalk.io')){
     iframe.src = SOFTPHONE_URL;
@@ -1756,7 +1756,7 @@ function softphoneOpenWindow(){
     _softphoneWin = window.open(SOFTPHONE_URL, 'vedio_softphone', feats);
     if(_softphoneWin){
       _softphoneWin.focus();
-      showToast('📞 Softphone åbnet i eget vindue — log ind + tillad mikrofon der');
+      showToast('📞 CloudTalk App åbnet i eget vindue — log ind + tillad mikrofon der');
       // Collapse the dock (if in dock mode) since the window is now the
       // active phone.
       const dock=document.getElementById('softphone-dock');
