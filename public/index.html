@@ -1297,6 +1297,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <!-- Manual call / SMS -->
     <button class="btn btn-sm" onclick="cockpitOpenManualCall()" title="Indtast et nummer og ring manuelt" style="padding:8px 12px">📞 Manuelt opkald</button>
     <button class="btn btn-sm" onclick="cockpitOpenManualSms()" title="Indtast et nummer og send SMS manuelt" style="padding:8px 12px">💬 Manuel SMS</button>
+    <button class="btn btn-sm" onclick="openLinkedinLookupModal()" title="Paste en LinkedIn URL → Apollo afslører direct dial (1 credit)" style="padding:8px 12px">🔎 LinkedIn-opslag</button>
     <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog">📋 Aktivitet</button>
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
     <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
@@ -2047,6 +2048,7 @@ async function doLogin(){
         localStorage.setItem('vl_token',authToken);
         showApp();await loadUserState();sv('discovery');
         setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
+        checkLinkedinLookupParam();
         return;
       }
     }catch(err){}
@@ -2145,6 +2147,7 @@ async function loadUserState(){
           setTimeout(()=>{
             ['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
           },80);
+          checkLinkedinLookupParam();
           return;
         } else {
           localStorage.removeItem('vl_token');
@@ -7465,6 +7468,111 @@ async function cockpitManualCallConfirm(){
 }
 function cockpitOpenManualSms(){
   cockpitOpenSmsModal({ phone:'', name:'', cvr:'' });
+}
+
+// ─── LinkedIn URL → direct dial (SalesQL-style lookup) ────────────────
+// Paste a LinkedIn /in/ URL → calls Apollo's people/match by linkedin_url
+// + reveal_phone_number. 1 Apollo credit per successful reveal. Triggered
+// either via the cockpit "🔎 LinkedIn-opslag" button or auto-fired when
+// the page loads with ?lookup-linkedin=... in the URL (bookmarklet flow).
+function openLinkedinLookupModal(prefillUrl = ""){
+  document.getElementById('li-lookup-modal')?.remove();
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg'; bg.id = 'li-lookup-modal';
+  const bookmarkletUrl = location.origin + '/?lookup-linkedin=';
+  const bmJs = `javascript:(function(){var u=encodeURIComponent(window.location.href);window.open('${bookmarkletUrl}'+u,'_blank');})();`;
+  bg.innerHTML = `<div class="modal" style="width:520px;padding:22px 26px">
+    <h3 style="margin:0 0 4px;font-size:16px;color:#fff">🔎 LinkedIn → direct dial</h3>
+    <p style="font-size:12px;color:var(--w55);margin:0 0 14px">Paste en LinkedIn /in/ URL → Apollo slår personen op og afslører mobil/direct nummer hvis det findes. Koster <strong style="color:#c4b5fd">1 Apollo-credit</strong> per heldigt opslag.</p>
+    <input id="li-url" type="url" placeholder="https://www.linkedin.com/in/john-doe-12345" value="${e(prefillUrl)}" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:11px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;margin-bottom:10px">
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:14px">
+      <button onclick="document.getElementById('li-lookup-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer">Annullér</button>
+      <button onclick="runLinkedinLookup()" id="li-lookup-go" style="background:#7c3aed;border:none;border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">🔍 Slå op (1 credit)</button>
+    </div>
+    <div id="li-lookup-result" style="font-size:12px;color:var(--w80);line-height:1.55"></div>
+    <hr style="border:none;border-top:1px solid var(--w08);margin:18px 0 12px">
+    <div style="font-size:11px;color:var(--w55);line-height:1.6">
+      <strong style="color:#fff;font-size:11.5px">🔖 Hurtig-tip — installér bookmarklet</strong><br>
+      Træk denne knap til din browser-bogmærke-bjælke. Når du er inde på en LinkedIn-profil, klik den → vinduet åbner med URL'en automatisk udfyldt.<br><br>
+      <a href="${e(bmJs)}" onclick="event.preventDefault();showToast('Træk knappen til bogmærke-bjælken — kan ikke aktiveres ved klik')" style="display:inline-block;padding:7px 14px;background:linear-gradient(135deg,#7c3aed,#a78bfa);color:#fff;border-radius:8px;text-decoration:none;font-weight:700;font-size:11.5px;cursor:grab" title="Træk mig til bogmærke-bjælken">🔖 Vedio LinkedIn-opslag</a>
+    </div>
+  </div>`;
+  bg.onclick = (ev) => { if (ev.target === bg) bg.remove(); };
+  document.body.appendChild(bg);
+  setTimeout(() => document.getElementById('li-url')?.focus(), 50);
+  // If a URL was pre-filled (bookmarklet path), auto-run the lookup
+  if (prefillUrl) setTimeout(() => runLinkedinLookup(), 200);
+}
+
+async function runLinkedinLookup(){
+  const urlEl = document.getElementById('li-url');
+  const url = urlEl?.value.trim() || '';
+  const resultEl = document.getElementById('li-lookup-result');
+  const goBtn = document.getElementById('li-lookup-go');
+  if (!url) { showToast('Indtast LinkedIn URL'); return; }
+  if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Slår op i Apollo…';
+  if (goBtn) { goBtn.disabled = true; goBtn.style.opacity = '0.6'; }
+  try {
+    const r = await fetch('/api/apollo/lookup-linkedin', {
+      method: 'POST',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = await r.json();
+    if (r.status === 429) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">⏸️ ${e(d.error || 'Daily cap reached')}</span>`;
+      return;
+    }
+    if (!r.ok) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">${e(d.error || 'Fejl ved opslag')}</span>`;
+      return;
+    }
+    if (!d.found) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--w55)">Apollo har ikke denne person i deres database. Prøv hovednummeret eller Google-research.</span>`;
+      return;
+    }
+    const c = d.contact || {};
+    const co = d.company || {};
+    const phones = d.phones || [];
+    const phonesHtml = phones.length
+      ? phones.map(ph => {
+          const isDirect = ph.type === 'mobile' || ph.type === 'direct' || ph.type === 'work_direct';
+          const badge = isDirect
+            ? `<span style="background:rgba(52,211,153,0.18);color:#6ee7b7;border:1px solid rgba(52,211,153,0.35);padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;margin-left:4px">✓ ${e(ph.typeLabel)}</span>`
+            : `<span style="color:var(--w35);font-size:10px;margin-left:4px">${e(ph.typeLabel)}</span>`;
+          return `<div><a href="tel:${e(ph.number)}" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:13px">📞 ${e(ph.number)}</a>${badge}</div>`;
+        }).join('')
+      : '<div style="color:var(--w55)">Apollo har personen men ingen telefon afsløret. Prøv Google/SERP-research.</div>';
+    if (resultEl) resultEl.innerHTML = `
+      <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:12px 14px">
+        <div style="font-size:13.5px;font-weight:800;color:#fff;margin-bottom:2px">${e(c.name || '—')}</div>
+        <div style="font-size:11.5px;color:var(--w80);margin-bottom:8px">${e(c.title || '')} ${co.name ? '· ' + e(co.name) : ''}</div>
+        ${phonesHtml}
+        ${c.email ? `<div style="margin-top:6px"><a href="mailto:${e(c.email)}" style="color:#c4b5fd;text-decoration:none;font-size:12px">✉ ${e(c.email)}</a></div>` : ''}
+        ${c.linkedin ? `<div style="margin-top:4px"><a href="${e(c.linkedin)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none;font-size:11.5px">🔗 LinkedIn ↗</a></div>` : ''}
+        <div style="margin-top:10px;font-size:10.5px;color:var(--w35)">Apollo credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '100'}</div>
+      </div>`;
+  } catch (ex) {
+    if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">Netværksfejl: ${e(ex.message)}</span>`;
+  } finally {
+    if (goBtn) { goBtn.disabled = false; goBtn.style.opacity = ''; }
+  }
+}
+
+// Bookmarklet handler — if the URL has ?lookup-linkedin=<encoded-url>,
+// auto-open the lookup modal with that URL pre-filled.
+function checkLinkedinLookupParam(){
+  try {
+    const params = new URLSearchParams(location.search);
+    const u = params.get('lookup-linkedin');
+    if (u) {
+      // Clear the param so refresh doesn't re-fire
+      const cleanUrl = location.pathname + (location.hash || '');
+      history.replaceState({}, '', cleanUrl);
+      // Defer until app has booted
+      setTimeout(() => openLinkedinLookupModal(decodeURIComponent(u)), 400);
+    }
+  } catch {}
 }
 
 async function cockpitSaveNote(text){

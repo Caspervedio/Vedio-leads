@@ -5761,6 +5761,77 @@ app.get("/api/apollo/status", authMiddleware, (req, res) => {
   res.json({ configured: isApolloConfigured(), provider: "apollo.io" });
 });
 
+// POST /api/apollo/lookup-linkedin — SalesQL-style "paste a LinkedIn URL,
+// get the contact's direct dial" lookup. The bookmarklet in /public/
+// triggers this with the current LinkedIn profile URL pre-filled.
+//
+// Apollo's /people/match accepts linkedin_url as a match key — same
+// 1-credit cost as our other person-match calls. Respects the daily
+// 100-credit cap.
+app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Apollo ikke konfigureret", configured: false });
+  }
+  const url = String(req.body?.url || req.body?.linkedin_url || "").trim();
+  if (!url) return res.status(400).json({ error: "linkedin_url påkrævet" });
+  // Validate that it's a LinkedIn URL — Apollo will reject anything else,
+  // and we'd rather error early than burn a credit on a malformed lookup.
+  if (!/^https?:\/\/([a-z]+\.)?linkedin\.com\/in\//i.test(url)) {
+    return res.status(400).json({ error: "Indtast et LinkedIn /in/ profil-URL (f.eks. https://www.linkedin.com/in/john-doe-12345)" });
+  }
+  // Daily cap pre-flight — same as everywhere else
+  const spendNow = getApolloSpendToday();
+  if (spendNow.spent >= APOLLO_DAILY_CAP) {
+    return res.status(429).json({
+      error: `Apollo dagsbudget brugt op (${spendNow.spent}/${spendNow.cap}). Prøv igen i morgen.`,
+      code: "APOLLO_CAP_REACHED",
+      spent: spendNow.spent,
+      cap: spendNow.cap,
+    });
+  }
+  try {
+    // Apollo's /people/match by linkedin_url — accepts the bare URL or
+    // a normalised slug. We pass the URL verbatim.
+    const r = await fetch(`${APOLLO_API_BASE}/people/match`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Api-Key": process.env.APOLLO_API_KEY,
+      },
+      body: JSON.stringify({
+        linkedin_url: url,
+        reveal_personal_emails: true,
+        reveal_phone_number: true,
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      return res.status(502).json({ error: `Apollo ${r.status}: ${txt.slice(0, 200)}` });
+    }
+    const d = await r.json();
+    const person = d.person || null;
+    if (!person) return res.json({ ok: true, found: false, message: "Apollo har ikke denne person i deres database" });
+    // Apollo billed us — increment the daily counter
+    incrementApolloSpend(1);
+    const contact = mapApolloPersonToContact(person);
+    // Resolve organisation info too — useful for the SDR to see context
+    const company = person.organization ? mapApolloOrganization(person.organization) : null;
+    res.json({
+      ok: true,
+      found: true,
+      contact,
+      company,
+      // Convenience aggregations
+      phones: contact?.phones || [],
+      directDial: contact?.phones?.find((p) => p.type === "mobile" || p.type === "direct" || p.type === "work_direct")?.number || null,
+      spendAfter: getApolloSpendToday(),
+    });
+  } catch (e) {
+    console.error("[apollo/lookup-linkedin]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo ikke konfigureret — tilføj APOLLO_API_KEY i Secret Manager", configured: false });
