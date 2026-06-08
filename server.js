@@ -5513,14 +5513,15 @@ async function apolloMatchPerson(personId) {
     body: JSON.stringify({
       id: personId,
       reveal_personal_emails: true,
-      // 2026-06-08 — turning on phone reveal. Apollo now supports inline
-      // reveal for most contacts without requiring a webhook_url; for the
-      // rare contacts where async reveal IS required, Apollo returns the
-      // number async via webhook (unsupported here) — those just won't
-      // populate phone fields and we fall back to other sources
-      // (CVR Tegningsregel, LinkedIn scrape). Cost: 1 credit per
-      // successful reveal (already accounted for in APOLLO_DAILY_CAP).
-      reveal_phone_number: true,
+      // 2026-06-08 — phone reveal disabled. Apollo's API requires a
+      // webhook_url for reveal_phone_number because it's an async
+      // operation — phone numbers Apollo hasn't pre-cached take seconds
+      // to minutes to look up from third-party sources and are POSTed
+      // back to the supplied webhook. Until we wire /api/apollo/phone-
+      // reveal-webhook with signature verification + lead-stamping, we
+      // skip the reveal flag and rely on whatever phones Apollo has
+      // already cached in phone_numbers[] (typically 30-50% of contacts).
+      // reveal_phone_number: true,  // requires webhook — see TODO
     }),
   });
   if (!r.ok) {
@@ -5801,7 +5802,10 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
       body: JSON.stringify({
         linkedin_url: url,
         reveal_personal_emails: true,
-        reveal_phone_number: true,
+        // Phone reveal disabled — requires webhook_url (Apollo async).
+        // We surface whatever phones are in the cached phone_numbers[]
+        // array, which covers most B2B contacts.
+        // reveal_phone_number: true,  // TODO: wire async webhook
       }),
     });
     if (!r.ok) {
