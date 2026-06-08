@@ -9452,25 +9452,53 @@ app.post("/api/cloudtalk/webhook", express.json({ type: "*/*" }), (req, res) => 
       setActiveCall(null);
     }
 
-    // Match the event back to a lead by CloudTalk call_id and persist
-    // the disposition/duration.
+    // Match the event back to a lead and persist the call history.
+    //
+    // Match strategy — try in order:
+    //   1. lastCloudTalkCallId  (works for OUTBOUND — we set it on dial)
+    //   2. phone match           (catches INBOUND where there's no callId
+    //                             link, and any case where the webhook
+    //                             fires before /api/cloudtalk/call had
+    //                             a chance to set the id)
+    //
+    // Was the root cause of "incoming calls not always registered" —
+    // inbound calls fell through gate #1 silently.
     const callId = evt.call_id || evt.id;
-    if (callId) {
-      // Scan all users' leads for the matching call (cheap with current scale).
-      // User files are DATA_DIR/data_<id>.json — same pattern as loadUserData.
+    const fallbackNumber = extNumber || "";
+    if (callId || fallbackNumber) {
       if (fs.existsSync(DATA_DIR)) {
         for (const f of fs.readdirSync(DATA_DIR)) {
           if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
           try {
             const userData = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
-            const lead = (userData.leads || []).find((l) => String(l.lastCloudTalkCallId) === String(callId));
-            if (lead) {
-              lead.lastCallEndedAt = new Date().toISOString();
+            let lead = null;
+            if (callId) {
+              lead = (userData.leads || []).find((l) => String(l.lastCloudTalkCallId) === String(callId));
+            }
+            if (!lead && fallbackNumber) {
+              const target = phoneKey(fallbackNumber);
+              if (target && target.length >= 6) {
+                lead = (userData.leads || []).find((l) => phoneKey(l.phone || l.ph) === target);
+              }
+            }
+            if (!lead) continue;
+            const nowIso = new Date().toISOString();
+            // Set lastCallAt on the lead if missing — covers inbound where
+            // we didn't pre-set it from /api/cloudtalk/call. Don't overwrite
+            // an existing value (avoids clobbering outbound timestamps).
+            if (!lead.lastCallAt || isEnd) lead.lastCallAt = lead.lastCallAt || nowIso;
+            if (isEnd) {
+              lead.lastCallEndedAt = nowIso;
               lead.lastCallDuration = evt.talking_time_seconds || evt.duration || null;
               lead.lastCallRecordingUrl = evt.recording_url || null;
-              fs.writeFileSync(path.join(DATA_DIR, f), JSON.stringify(userData, null, 2));
-              break;
             }
+            // Record direction so the UI can label "Indgående/Udgående".
+            if (direction) lead.lastCallDirection = direction;
+            // Stamp the CloudTalk id on inbound leads too, so a subsequent
+            // call-end event lands on the right lead without re-matching.
+            if (callId && !lead.lastCloudTalkCallId) lead.lastCloudTalkCallId = String(callId);
+            fs.writeFileSync(path.join(DATA_DIR, f), JSON.stringify(userData, null, 2));
+            break;
           } catch { /* skip malformed user files */ }
         }
       }
@@ -9480,6 +9508,130 @@ app.post("/api/cloudtalk/webhook", express.json({ type: "*/*" }), (req, res) => 
     console.error("[cloudtalk-webhook]", e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// POST /api/cron/cloudtalk-call-sync — safety net for the webhook.
+//
+// Polls CloudTalk's calls/index.json for the most recent N calls, matches
+// each by phone to a lead, and writes call history if we don't have it
+// recorded yet. Catches the cases where the webhook doesn't fire (e.g.
+// CloudTalk webhook config drift, Cloud Run cold-start dropping the
+// request, or webhook never wired for inbound events).
+//
+// Idempotent — uses the CloudTalk call id as the dedup key
+// (lead.cloudTalkCallIds[] keeps the last 50 ids we've ingested per lead).
+// Runs every 15 minutes on weekdays.
+app.post("/api/cron/cloudtalk-call-sync", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isCloudTalkConfigured()) return res.status(503).json({ error: "CloudTalk not configured" });
+
+  // CloudTalk caps at 100 per page; 50 is enough headroom between
+  // 15-min poll cycles (call volume is typically <20/hr).
+  const limit = Math.max(10, Math.min(100, Number(req.query.limit) || 50));
+  const stats = { polled: 0, inbound: 0, outbound: 0, missed: 0, newlyRecorded: 0, unmatched: 0, alreadyRecorded: 0, errors: 0 };
+
+  let calls = [];
+  try {
+    const r = await fetch(`${CLOUDTALK_API_BASE}/calls/index.json?limit=${limit}`, {
+      headers: { Authorization: cloudTalkAuthHeader() },
+    });
+    if (!r.ok) {
+      console.warn("[cloudtalk-call-sync] CT API", r.status);
+      return res.status(502).json({ error: `CloudTalk API ${r.status}` });
+    }
+    const j = await r.json();
+    calls = (j?.responseData?.data || []).map((row) => row.Cdr || row).filter(Boolean);
+  } catch (e) {
+    console.error("[cloudtalk-call-sync] fetch", e.message);
+    return res.status(502).json({ error: e.message });
+  }
+  stats.polled = calls.length;
+
+  // Walk every user data file ONCE to load + index by phone — much faster
+  // than re-reading the file for every call.
+  const userFiles = [];
+  if (fs.existsSync(DATA_DIR)) {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+      try {
+        const userData = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+        const byPhone = new Map();
+        for (const lead of (userData.leads || [])) {
+          const k = phoneKey(lead.phone || lead.ph);
+          if (k && k.length >= 6) byPhone.set(k, lead);
+        }
+        userFiles.push({ path: path.join(DATA_DIR, f), userData, byPhone, dirty: false });
+      } catch { /* skip malformed */ }
+    }
+  }
+
+  for (const c of calls) {
+    const inbound = /incom/i.test(c.type || "");
+    const talked = Number(c.talking_time || 0) > 0;
+    if (inbound) stats.inbound++; else stats.outbound++;
+    if (inbound && !talked) stats.missed++;
+
+    const num = c.public_external || "";
+    const k = phoneKey(num);
+    if (!k || k.length < 6) { stats.unmatched++; continue; }
+
+    let matched = null;
+    let matchedFile = null;
+    for (const f of userFiles) {
+      const lead = f.byPhone.get(k);
+      if (lead) { matched = lead; matchedFile = f; break; }
+    }
+    if (!matched) { stats.unmatched++; continue; }
+
+    // Dedup — has this exact call already been recorded?
+    if (!Array.isArray(matched.cloudTalkCallIds)) matched.cloudTalkCallIds = [];
+    if (matched.cloudTalkCallIds.includes(String(c.id))) {
+      stats.alreadyRecorded++;
+      continue;
+    }
+    matched.cloudTalkCallIds.push(String(c.id));
+    // Cap history list — keep the most recent 50 ids per lead
+    if (matched.cloudTalkCallIds.length > 50) {
+      matched.cloudTalkCallIds = matched.cloudTalkCallIds.slice(-50);
+    }
+
+    // Write the call history. Use whichever timestamp the call has.
+    const startedAt = c.started_at || c.ended_at || new Date().toISOString();
+    matched.lastCallAt = startedAt;
+    if (c.ended_at) matched.lastCallEndedAt = c.ended_at;
+    matched.lastCallDuration = Number(c.talking_time || 0) || null;
+    matched.lastCallDirection = inbound ? "inbound" : "outbound";
+    if (c.recording_url) matched.lastCallRecordingUrl = c.recording_url;
+    matched.lastCloudTalkCallId = String(c.id);
+    if (inbound && !talked) matched.lastCallMissed = true;
+    else matched.lastCallMissed = false;
+    matchedFile.dirty = true;
+    stats.newlyRecorded++;
+
+    // Activity log entry so it surfaces in the Dashboard feed
+    const lbl = inbound && !talked ? "📵 Missed indgående"
+      : inbound ? `📞 Indgående (${Math.round(c.talking_time || 0)}s)`
+      : `📞 Udgående (${Math.round(c.talking_time || 0)}s)`;
+    try {
+      logActivity(
+        inbound && !talked ? "missed-call" : "call",
+        `${lbl}: ${matched.name || num} (${num})`,
+        { cvr: matched.cvr, callId: String(c.id), direction: inbound ? "inbound" : "outbound" },
+      );
+    } catch {}
+  }
+
+  // Flush dirty user files
+  for (const f of userFiles) {
+    if (!f.dirty) continue;
+    try { fs.writeFileSync(f.path, JSON.stringify(f.userData, null, 2)); }
+    catch (e) { console.warn("[cloudtalk-call-sync] save", f.path, e.message); stats.errors++; }
+  }
+
+  console.log("[cloudtalk-call-sync] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
 });
 
 // ─── TWENTY CRM PUSH (Phase D stub) ─────────────────────────────────────
