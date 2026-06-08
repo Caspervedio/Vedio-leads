@@ -6810,16 +6810,41 @@ function renderCockpitDetail(c){
            cockpit to fix a wrong number). When the phone is missing, the
            edit button is the primary CTA — Nicolas can paste a number found
            via Google/LinkedIn research and immediately dial it. -->
-      ${(()=>{ const cph=c.phone||c.ph||''; return `
-      <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:16px">
+      ${(()=>{ const cph=c.phone||c.ph||''; const btw = cockpitBestTimeWindow(); return `
+      <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:16px">
         <span style="font-size:20px">📞</span>
         <div style="flex:1;min-width:0">
-          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)}</div>
+          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)} <span style="margin-left:8px;padding:2px 7px;border-radius:5px;background:${btw.bg};color:${btw.fg};border:1px solid ${btw.border};font-size:10px;font-weight:700;letter-spacing:0.3px" title="${e(btw.tip)}">${e(btw.label)}</span></div>
           ${cph
             ? `<div style="display:flex;align-items:center;gap:8px"><button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring via CloudTalk">${fp(cph)}</button><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" title="Ret nummeret" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:4px 8px;color:var(--w55);font-size:12px;cursor:pointer;line-height:1" onmouseover="this.style.color='#c4b5fd';this.style.borderColor='rgba(196,181,253,0.4)'" onmouseout="this.style.color='var(--w55)';this.style.borderColor='var(--w08)'">✎ ret</button></div>`
             : `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer</span><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer">+ Indtast nummer</button></div>`}
         </div>
         ${cph?`<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring via CloudTalk" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;border:none;cursor:pointer;font-family:'Outfit',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</button>`:''}
+      </div>`; })()}
+
+      <!-- Quick-research deep links + gatekeeper script library.
+           Pre-fills Google / LinkedIn searches with the lead name + main
+           contact name. Saves Nicolas 30s of typing per lead when the
+           direct dial isn't in Apollo. Scripts library is a one-click
+           clipboard library of gatekeeper-bypass openers. -->
+      ${(()=>{
+        const company = c.name || '';
+        const dm = (c.contacts && c.contacts.find(x=>x.name && x.name!=='—')) || null;
+        const dmName = dm ? dm.name : '';
+        const gq = encodeURIComponent(`"${company}" ${dmName?'"'+dmName+'" ':''}+45 mobil direkte`);
+        const liq = encodeURIComponent(dmName ? `${dmName} ${company}` : company);
+        return `
+      <div style="background:var(--w04);border:1px solid var(--w08);border-radius:11px;padding:10px 14px;margin-bottom:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">Find direct dial</span>
+        <a href="https://www.google.com/search?q=${gq}" target="_blank" rel="noopener" style="padding:5px 11px;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:7px;color:#c4b5fd;font-size:11px;font-weight:700;text-decoration:none">🔎 Google</a>
+        <a href="https://www.linkedin.com/search/results/people/?keywords=${liq}" target="_blank" rel="noopener" style="padding:5px 11px;background:rgba(10,102,194,0.18);border:1px solid rgba(10,102,194,0.4);border-radius:7px;color:#93c5fd;font-size:11px;font-weight:700;text-decoration:none">💼 LinkedIn</a>
+        <a href="https://www.krak.dk/firma/${encodeURIComponent(company)}" target="_blank" rel="noopener" style="padding:5px 11px;background:rgba(255,255,255,0.06);border:1px solid var(--w08);border-radius:7px;color:var(--w80);font-size:11px;font-weight:700;text-decoration:none">📒 Krak</a>
+        <span style="flex:1"></span>
+        <button onclick="cockpitToggleScripts()" style="padding:5px 11px;background:rgba(251,146,60,0.15);border:1px solid rgba(251,146,60,0.35);border-radius:7px;color:#fdba74;font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">🛡 Gatekeeper-scripts ▾</button>
+      </div>
+      <div id="cockpit-script-library" style="display:none;background:var(--dark2);border:1px solid var(--w08);border-radius:11px;padding:12px 14px;margin-bottom:18px;font-size:12px;line-height:1.55">
+        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Klik for at kopiere</div>
+        ${COCKPIT_GATEKEEPER_SCRIPTS.map(s=>`<div style="margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><button onclick="cockpitCopyScript(${JSON.stringify(s.body).replace(/"/g,'&quot;')})" style="flex-shrink:0;padding:3px 8px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Kopier til udklipsholder">📋 ${e(s.label)}</button><span style="color:var(--w80);font-style:italic">"${e(s.body)}"</span></div>`).join('')}
       </div>`; })()}
 
       <!-- Post-call disposition. Required before next call — guarded by
@@ -7445,6 +7470,69 @@ async function cockpitSaveNote(text){
 }
 function cockpitShowHelp(){
   showToast('Genveje: 1=Interesseret · 2=SMS · 3=Ingen svar · 4=Ikke relevant · → næste · ← forrige · esc=luk');
+}
+
+// ─── Gatekeeper-bypass helpers ─────────────────────────────────────────
+// "Best time to call" — Danish business hours intuition. Gatekeepers
+// are densest 09-11 and 13-15 (the morning + afternoon admin shifts).
+// The "sweet spots" are lunchtime (11:30-12:30) when admins are away
+// and reception is thinner, and the late-afternoon (15:30-17:00) when
+// decision-makers wrap up their day and reception is winding down.
+// Surfaced as a small chip next to the call-status line.
+function cockpitBestTimeWindow(){
+  const now = new Date();
+  const dow = now.getDay(); // 0=Sun … 6=Sat
+  const mins = now.getHours() * 60 + now.getMinutes();
+  // Outside Mon-Fri
+  if(dow === 0 || dow === 6){
+    return { label:'🔴 Weekend — gatekeeper utilgængelig', bg:'rgba(248,113,113,0.15)', fg:'#fca5a5', border:'rgba(248,113,113,0.3)', tip:'Weekenden — DK businesses lukker fredag eftermiddag' };
+  }
+  // Before 08:00 or after 17:00
+  if(mins < 8*60 || mins >= 17*60){
+    return { label:'🔴 Uden for arbejdstid', bg:'rgba(248,113,113,0.15)', fg:'#fca5a5', border:'rgba(248,113,113,0.3)', tip:'DK arbejdstid er ca. 08:00-17:00' };
+  }
+  // 11:30-12:30 — lunchtime sweet spot
+  if(mins >= 11*60+30 && mins < 12*60+30){
+    return { label:'🟢 Sweet spot — lunchtime', bg:'rgba(52,211,153,0.18)', fg:'#6ee7b7', border:'rgba(52,211,153,0.35)', tip:'Gatekeepere er ofte til frokost — direct beslutningstagere svarer oftere' };
+  }
+  // 15:30-17:00 — late afternoon sweet spot
+  if(mins >= 15*60+30 && mins < 17*60){
+    return { label:'🟢 Sweet spot — sen eftermiddag', bg:'rgba(52,211,153,0.18)', fg:'#6ee7b7', border:'rgba(52,211,153,0.35)', tip:'Receptioner pakker sammen — beslutningstagere ofte direkte tilgængelige' };
+  }
+  // Everything else 08:00-17:00 = "gatekeeper-tæt"
+  return { label:'🟠 Gatekeeper-tæt periode', bg:'rgba(251,146,60,0.15)', fg:'#fdba74', border:'rgba(251,146,60,0.3)', tip:'Standard arbejdstid — overvej at vente til 11:30 eller efter 15:30 for direct dials' };
+}
+
+// Gatekeeper-bypass scripts — short Danish openers that re-route past
+// reception/admin to the right decision-maker. Click any → copies to
+// clipboard so SDR can read it off-screen or paste in notes.
+const COCKPIT_GATEKEEPER_SCRIPTS = [
+  { label:'Marketing',  body:'Hej, det er Nicolas fra Vedio. Jeg vil rigtig gerne snakke med jeres marketingansvarlige — hvem er det jeg skal stilles videre til?' },
+  { label:'Annoncer',   body:'Hej, jeg ringer i forbindelse med jeres Facebook-annoncer. Hvem hos jer er ansvarlig for det reklamebudget?' },
+  { label:'Direktør',   body:'Hej, det er Nicolas. Jeg har et kort spørgsmål til direktøren — kan du stille mig videre?' },
+  { label:'Salg',       body:'Hej, jeg ringer fra Vedio. Hvem håndterer indkommende kommercielle henvendelser hos jer?' },
+  { label:'Video',      body:'Hej, vi laver videoproduktion til DK-brands og jeg vil gerne snakke med den der er ansvarlig for jeres content/marketing — hvem er det?' },
+  { label:'Direkte nr', body:'Kan jeg eventuelt få et direkte nummer eller en mobil, så jeg kan ringe direkte næste gang? Det sparer alles tid.' },
+  { label:'Tilbagekald',body:'Kan du give mig deres direkte nummer, så de selv ringer tilbage på et tidspunkt der passer dem?' },
+];
+
+function cockpitToggleScripts(){
+  const el = document.getElementById('cockpit-script-library');
+  if(!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+async function cockpitCopyScript(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    showToast('📋 Script kopieret — paste i noter eller læs højt');
+  }catch(ex){
+    // Fallback for older browsers / unfocused windows
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); showToast('📋 Script kopieret'); }
+    catch{ showToast('Kopier manuelt: '+text.slice(0,40)+'...'); }
+    document.body.removeChild(ta);
+  }
 }
 async function startDiscoveryRun(){
   try{
