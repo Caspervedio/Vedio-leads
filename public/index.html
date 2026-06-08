@@ -7776,7 +7776,11 @@ function ownerBadges(cvr){
 
 function showToast(msg,dur=2500){
   let t=document.getElementById('toast-msg');
-  if(!t){t=document.createElement('div');t.id='toast-msg';t.style.cssText='position:fixed;bottom:24px;right:24px;background:var(--dark2);border:1px solid rgba(124,58,237,0.3);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.5),0 0 30px rgba(124,58,237,0.18);transition:opacity .3s;font-family:Outfit,sans-serif';document.body.appendChild(t);}
+  if(!t){t=document.createElement('div');t.id='toast-msg';
+    // bottom:84px clears the softphone pill at bottom:18px (height ~46px,
+    // 4px gap, +16px breathing room). At pill height 46+18=64px, toast
+    // bottom 84px sits cleanly ABOVE the pill so they never collide.
+    t.style.cssText='position:fixed;bottom:84px;right:24px;background:var(--dark2);border:1px solid rgba(124,58,237,0.3);color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.5),0 0 30px rgba(124,58,237,0.18);transition:opacity .3s;font-family:Outfit,sans-serif';document.body.appendChild(t);}
   t.textContent=msg;t.style.opacity='1';
   clearTimeout(t._t);t._t=setTimeout(()=>{t.style.opacity='0';},dur);
 }
