@@ -357,7 +357,6 @@ tr.chk td{background:var(--bluebg)}
 #softphone-status-dot.calling{background:#fb923c;box-shadow:0 0 0 2px rgba(251,146,60,0.22);animation:pulse-dot 1.2s ease-in-out infinite}
 #softphone-iframe{flex:1;width:100%;border:0;background:#1a1626;display:block}
 #softphone-pill{
-  position:fixed;bottom:18px;right:18px;z-index:900;
   display:flex;align-items:center;gap:8px;padding:10px 16px;
   background:linear-gradient(135deg,#7c3aed,#a78bfa);
   border:0;border-radius:24px;color:#fff;cursor:pointer;
@@ -816,11 +815,18 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           referrerpolicy="strict-origin"
           title="CloudTalk Phone"></iframe>
 </div>
-<!-- Collapsed pill — shown when dock is hidden. Click to re-expand. -->
-<button id="softphone-pill" onclick="softphoneToggle()" title="Åbn softphone" style="display:none">
-  <span style="font-size:16px">📞</span>
-  <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px">Softphone</span>
-</button>
+<!-- Collapsed pill — softphone launcher.
+     In popup mode (default): click opens a fresh popup window.
+     In dock mode (opt-in):   click reveals the iframe dock.
+     The tiny ⚙ button switches between modes — popup is recommended
+     for SMS reliability + first-class mic/audio permissions. -->
+<div id="softphone-pill-wrap" style="position:fixed;bottom:18px;right:18px;z-index:900;display:none;align-items:center;gap:6px">
+  <button id="softphone-pill" onclick="softphoneToggle()" title="Åbn softphone">
+    <span style="font-size:16px">📞</span>
+    <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px">Åbn softphone</span>
+  </button>
+  <button id="softphone-mode-toggle" onclick="softphoneSwitchMode()" title="Skift tilstand: pop-up ↔ indlejret softphone" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;width:30px;height:30px;border-radius:50%;font-size:13px;line-height:1;font-family:'Outfit',sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:background 0.12s,transform 0.12s" onmouseover="this.style.background='rgba(255,255,255,0.22)';this.style.transform='scale(1.08)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='scale(1)'">⚙</button>
+</div>
 
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sb">
@@ -1548,18 +1554,67 @@ function showApp(){
   startCallPolling();
 }
 
-// ─── Embedded softphone (CloudTalk Phone iframe) ──────────────────────
-// Single global instance, persistent across SPA navigation. The iframe
-// is lazily src'd on first reveal so first paint isn't blocked by
-// CloudTalk's bundle. Collapse state persists in localStorage. When a
-// call is fired via /api/cloudtalk/call we auto-expand and flash the
-// dot so the SDR knows where to look.
+// ─── Softphone — popup-default, iframe-dock opt-in ────────────────────
+// Two modes:
+//   'popup' (default): pill click → opens CloudTalk in a fresh popup
+//                      window. First-class browser permissions (full
+//                      mic + audio), full-size UI (no iframe layout
+//                      glitches in SMS view), reliable across the
+//                      board. Recommended.
+//   'dock':            pill click → reveals an embedded iframe in a
+//                      docked panel bottom-right. Legacy mode kept as
+//                      opt-in for SDRs who prefer never to leave the
+//                      Vedio Leads window. SMS view can be fragile due
+//                      to cross-origin iframe restrictions.
+//
+// Inbound calls show a screen-pop notification banner inside the main
+// app regardless of mode — so popup-mode SDRs never miss a ring even
+// if the popup window is minimized.
 const SOFTPHONE_URL = 'https://phone.cloudtalk.io/';
+const SOFTPHONE_MODE_KEY = 'softphone_mode';
+function getSoftphoneMode(){
+  // Default to 'popup' for new sessions / first-time users
+  const m = localStorage.getItem(SOFTPHONE_MODE_KEY);
+  return m === 'dock' ? 'dock' : 'popup';
+}
+function softphoneSwitchMode(){
+  const current = getSoftphoneMode();
+  const next = current === 'popup' ? 'dock' : 'popup';
+  localStorage.setItem(SOFTPHONE_MODE_KEY, next);
+  // Tearing down: if switching FROM popup, close the popup window so
+  // the SDR doesn't have a stale CloudTalk window floating around.
+  if(current === 'popup' && _softphoneWin && !_softphoneWin.closed){
+    try{ _softphoneWin.close(); }catch{}
+    _softphoneWin = null;
+  }
+  // If switching FROM dock to popup, hide the dock (iframe stays loaded
+  // in memory but invisible — could be GC'd by clearing src, but the
+  // user might switch back, so we keep it warm).
+  softphoneInit();
+  showToast(next === 'popup'
+    ? '📞 Skiftet til pop-up tilstand (anbefalet)'
+    : '📞 Skiftet til indlejret tilstand');
+}
 function softphoneInit(){
   const dock=document.getElementById('softphone-dock');
-  const pill=document.getElementById('softphone-pill');
+  const pillWrap=document.getElementById('softphone-pill-wrap');
   const iframe=document.getElementById('softphone-iframe');
-  if(!dock||!pill||!iframe)return;
+  if(!dock||!pillWrap||!iframe)return;
+  const mode = getSoftphoneMode();
+  const pillLabel = document.getElementById('softphone-pill-label');
+  if(mode === 'popup'){
+    // Popup mode — pill is always the launcher; dock + iframe stay
+    // hidden (and the iframe is NOT loaded, saving CloudTalk's ~3MB
+    // bundle from being fetched in this tab).
+    dock.style.display='none';
+    pillWrap.style.display='flex';
+    if(pillLabel) pillLabel.textContent = 'Åbn softphone';
+    // Hint the SDR if they don't have a popup open yet
+    softphoneSetStatus(_softphoneWin && !_softphoneWin.closed ? 'ready' : '', _softphoneWin && !_softphoneWin.closed ? 'pop-up åben' : '');
+    return;
+  }
+  // ── Dock mode (opt-in) ──
+  if(pillLabel) pillLabel.textContent = 'Softphone';
   // Lazy-load: only set src once when the dock or pill first becomes visible.
   if(iframe.src==='about:blank' || !iframe.src.startsWith('https://phone.cloudtalk.io')){
     iframe.src = SOFTPHONE_URL;
@@ -1573,24 +1628,33 @@ function softphoneInit(){
   }
   // Restore last collapse state (default: docked open after login).
   const collapsed = localStorage.getItem('softphone_collapsed')==='1';
-  if(collapsed){ dock.style.display='none'; pill.style.display='flex'; }
-  else { dock.style.display='flex'; pill.style.display='none'; }
-  // Restore last expanded state (default: compact 380×600)
+  if(collapsed){ dock.style.display='none'; pillWrap.style.display='flex'; }
+  else { dock.style.display='flex'; pillWrap.style.display='none'; }
+  // Restore last expanded state
   const expanded = localStorage.getItem('softphone_expanded')==='1';
   if(expanded) dock.classList.add('expanded');
 }
 function softphoneToggle(){
+  const mode = getSoftphoneMode();
+  if(mode === 'popup'){
+    // Pill click in popup mode = open / focus the popup window
+    softphoneOpenWindow();
+    // Refresh status to reflect "popup open"
+    softphoneInit();
+    return;
+  }
+  // Dock mode toggle (existing behaviour)
   const dock=document.getElementById('softphone-dock');
-  const pill=document.getElementById('softphone-pill');
-  if(!dock||!pill)return;
+  const pillWrap=document.getElementById('softphone-pill-wrap');
+  if(!dock||!pillWrap)return;
   const isOpen = dock.style.display !== 'none';
   if(isOpen){
     dock.style.display='none';
-    pill.style.display='flex';
+    pillWrap.style.display='flex';
     localStorage.setItem('softphone_collapsed','1');
   } else {
     dock.style.display='flex';
-    pill.style.display='none';
+    pillWrap.style.display='none';
     localStorage.setItem('softphone_collapsed','0');
     // First open may need to lazy-load the iframe.
     softphoneInit();
@@ -1683,18 +1747,22 @@ function softphoneOpenSmsInPopout(){
 
 let _softphoneWin = null;
 function softphoneOpenWindow(){
-  const feats = 'width=400,height=680,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
+  // 520×780 — same dimensions as the popout-default SMS popup so all
+  // CloudTalk views (dialer, SMS, contacts, call history) get enough
+  // room. Was 400×680, which was tight for SMS detail.
+  const feats = 'width=520,height=780,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
   try{
     if(_softphoneWin && !_softphoneWin.closed){ _softphoneWin.focus(); return; }
     _softphoneWin = window.open(SOFTPHONE_URL, 'vedio_softphone', feats);
     if(_softphoneWin){
       _softphoneWin.focus();
       showToast('📞 Softphone åbnet i eget vindue — log ind + tillad mikrofon der');
-      // Collapse the dock since the window is now the active phone.
+      // Collapse the dock (if in dock mode) since the window is now the
+      // active phone.
       const dock=document.getElementById('softphone-dock');
-      const pill=document.getElementById('softphone-pill');
+      const pillWrap=document.getElementById('softphone-pill-wrap');
       if(dock)dock.style.display='none';
-      if(pill){pill.style.display='flex';}
+      if(pillWrap)pillWrap.style.display='flex';
       localStorage.setItem('softphone_collapsed','1');
     } else {
       showToast('Popup blokeret — tillad popups for dette site og prøv igen');
@@ -1775,10 +1843,15 @@ function callPopAccept(cvr){
   if(window._softphoneWin && !window._softphoneWin.closed){
     try{ window._softphoneWin.focus(); }catch{}
   } else {
-    const dock=document.getElementById('softphone-dock');
-    const pill=document.getElementById('softphone-pill');
-    if(dock){ dock.style.display='flex'; localStorage.setItem('softphone_collapsed','0'); }
-    if(pill) pill.style.display='none';
+    // In popup mode, open the popup. In dock mode, reveal the dock.
+    if(getSoftphoneMode() === 'popup'){
+      softphoneOpenWindow();
+    } else {
+      const dock=document.getElementById('softphone-dock');
+      const pillWrap=document.getElementById('softphone-pill-wrap');
+      if(dock){ dock.style.display='flex'; localStorage.setItem('softphone_collapsed','0'); }
+      if(pillWrap) pillWrap.style.display='none';
+    }
   }
   if(cvr){ callPopOpenLead(cvr); }
 }
@@ -1822,14 +1895,30 @@ function softphoneSetStatus(kind, label){
 // the SDR can interact with the ringing softphone, (b) flip the status
 // dot to "calling" so it's visually obvious where the call is happening.
 function softphoneOnCallStart(name){
+  const mode = getSoftphoneMode();
+  if(mode === 'popup'){
+    // Auto-open the popup if not yet open. If already open, focus it
+    // so the SDR sees the ringing softphone immediately.
+    if(!_softphoneWin || _softphoneWin.closed){
+      softphoneOpenWindow();
+    } else {
+      try{ _softphoneWin.focus(); }catch{}
+    }
+    softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
+    playCallChime('outbound');
+    clearTimeout(window._softphoneStatusTimer);
+    window._softphoneStatusTimer = setTimeout(()=>softphoneSetStatus('ready','pop-up åben'), 60000);
+    return;
+  }
+  // ── Dock mode (existing behaviour) ──
   const dock=document.getElementById('softphone-dock');
-  const pill=document.getElementById('softphone-pill');
+  const pillWrap=document.getElementById('softphone-pill-wrap');
   if(dock && dock.style.display==='none'){
     // Auto-expand the dock when a call fires — but only if the iframe
     // is actually loaded. If still loading, leave the pill visible so
     // the pulse is the visible signal.
     dock.style.display='flex';
-    if(pill)pill.style.display='none';
+    if(pillWrap)pillWrap.style.display='none';
     localStorage.setItem('softphone_collapsed','0');
   }
   softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
@@ -1933,13 +2022,22 @@ async function logout(){
   leadContacts={};
   leads=[];lists=[{id:'all',name:'Alle leads'}];
   // Tear down the embedded softphone — drops the CloudTalk session
-  // so the next SDR who logs in starts clean.
+  // so the next SDR who logs in starts clean. Also closes the popup
+  // window in popup mode so the CloudTalk session there is dropped too.
   const dock=document.getElementById('softphone-dock');
-  const pill=document.getElementById('softphone-pill');
+  const pillWrap=document.getElementById('softphone-pill-wrap');
   const iframe=document.getElementById('softphone-iframe');
   if(dock)dock.style.display='none';
-  if(pill)pill.style.display='none';
+  if(pillWrap)pillWrap.style.display='none';
   if(iframe)iframe.src='about:blank';
+  if(_softphoneWin && !_softphoneWin.closed){
+    try{ _softphoneWin.close(); }catch{}
+    _softphoneWin = null;
+  }
+  if(_softphoneSmsWin && !_softphoneSmsWin.closed){
+    try{ _softphoneSmsWin.close(); }catch{}
+    _softphoneSmsWin = null;
+  }
   stopCallPolling();
   showLogin();
 }
