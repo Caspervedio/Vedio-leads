@@ -5513,7 +5513,14 @@ async function apolloMatchPerson(personId) {
     body: JSON.stringify({
       id: personId,
       reveal_personal_emails: true,
-      // reveal_phone_number requires webhook_url — skipped for now
+      // 2026-06-08 — turning on phone reveal. Apollo now supports inline
+      // reveal for most contacts without requiring a webhook_url; for the
+      // rare contacts where async reveal IS required, Apollo returns the
+      // number async via webhook (unsupported here) — those just won't
+      // populate phone fields and we fall back to other sources
+      // (CVR Tegningsregel, LinkedIn scrape). Cost: 1 credit per
+      // successful reveal (already accounted for in APOLLO_DAILY_CAP).
+      reveal_phone_number: true,
     }),
   });
   if (!r.ok) {
@@ -5530,9 +5537,57 @@ async function apolloMatchPerson(personId) {
 // Map Apollo's people/match response → our normalised contact shape.
 // Captures all the high-signal fields Apollo returns for free (same
 // 1 credit/match call) so the SDR sees richer context per decision-maker.
+// Apollo phone_numbers[] uses these `type` values; rank them so the
+// SDR sees the most useful phone first. Direct/mobile beat switchboards.
+// Type → priority weight (higher = better)
+const APOLLO_PHONE_TYPE_RANK = {
+  "mobile":        100,
+  "work_direct":   90,
+  "direct":        85,
+  "work":          70,
+  "main":          50,
+  "home_phone":    20,
+  "":              10,
+};
+function _rankApolloPhone(ph) {
+  const t = String(ph.type || "").toLowerCase();
+  return APOLLO_PHONE_TYPE_RANK[t] != null ? APOLLO_PHONE_TYPE_RANK[t] : 30;
+}
+// Human-readable Danish label for a phone type.
+function _labelApolloPhone(type) {
+  const t = String(type || "").toLowerCase();
+  return ({
+    "mobile":      "Mobil",
+    "work_direct": "Direct dial",
+    "direct":      "Direct dial",
+    "work":        "Arbejde",
+    "main":        "Switchboard",
+    "home_phone":  "Privat",
+  })[t] || (t ? t : "Telefon");
+}
+
 function mapApolloPersonToContact(p, fallbackTitle) {
   if (!p) return null;
-  const phoneObj = (p.phone_numbers && p.phone_numbers[0]) || {};
+  // Surface ALL phones the match response contains (not just the first).
+  // Apollo often returns 2-4 phones per contact with type labels — mobile,
+  // direct dial, work, main switchboard. Sort by usefulness so the SDR
+  // can dial the highest-quality one first.
+  const phonesRaw = Array.isArray(p.phone_numbers) ? p.phone_numbers : [];
+  const phones = phonesRaw
+    .map((ph) => ({
+      number: ph.sanitized_number || ph.raw_number || "",
+      type: String(ph.type || "").toLowerCase(),
+      typeLabel: _labelApolloPhone(ph.type),
+      status: String(ph.status || "").toLowerCase(),
+      dncStatus: ph.dnc_status || null,
+      position: ph.position || 0,
+    }))
+    .filter((p) => p.number)
+    // De-dup on number — Apollo sometimes returns the same number twice
+    .filter((p, i, arr) => arr.findIndex((x) => x.number === p.number) === i)
+    .sort((a, b) => _rankApolloPhone(b) - _rankApolloPhone(a));
+  // Primary phone = the highest-ranked one (mobile > direct > work > main).
+  const primary = phones[0] || {};
   // Employment history → keep just title + company name + dates for brevity.
   const employmentHistory = (p.employment_history || []).slice(0, 5).map((e) => ({
     title: e.title || "",
@@ -5544,7 +5599,10 @@ function mapApolloPersonToContact(p, fallbackTitle) {
   return {
     name: p.name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
     title: p.title || fallbackTitle || "",
-    phone: phoneObj.sanitized_number || phoneObj.raw_number || "",
+    phone: primary.number || "",             // best dial-able number
+    phoneType: primary.type || "",            // "mobile" | "direct" | "work" | …
+    phoneTypeLabel: primary.typeLabel || "",  // Danish label
+    phones,                                   // ALL phones with type metadata
     email: p.email || (p.personal_emails && p.personal_emails[0]) || "",
     emailStatus: p.email_status || "",
     emailCatchall: !!p.email_domain_catchall,

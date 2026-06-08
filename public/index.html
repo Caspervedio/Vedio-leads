@@ -6785,6 +6785,16 @@ function renderCockpitDetail(c){
               ${p.headline&&p.headline!==p.title?`<div style="font-size:11px;color:var(--w55);font-style:italic;margin-bottom:6px">"${e(trunc(p.headline,120))}"</div>`:''}
               <div style="font-size:11px;color:var(--w55);line-height:1.7">
                 ${emailPill(p.email,p.emailStatus,p.emailCatchall)}
+                ${(p.phones&&p.phones.length)?p.phones.map((ph,j)=>{
+                  // Highest-quality phone (mobile/direct) gets a green badge
+                  // so the SDR instantly sees which to dial to bypass the
+                  // gatekeeper. Click-to-call wires to ringNow.
+                  const isDirect = ph.type==='mobile'||ph.type==='direct'||ph.type==='work_direct';
+                  const badge = isDirect
+                    ? `<span style="background:rgba(52,211,153,0.18);color:#6ee7b7;border:1px solid rgba(52,211,153,0.35);padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;margin-left:4px">✓ ${e(ph.typeLabel)}</span>`
+                    : `<span style="color:var(--w35);font-size:10px;margin-left:4px">${e(ph.typeLabel)}</span>`;
+                  return `<br><a href="javascript:void(0)" onclick="ringNow('${e(ph.number)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:11.5px">📞 ${e(ph.number)}</a>${badge}`;
+                }).join(''):(p.phone?`<br><a href="javascript:void(0)" onclick="ringNow('${e(p.phone)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:11.5px">📞 ${e(p.phone)}</a>`:'')}
                 ${p.linkedin?`<br><a href="${e(p.linkedin)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a>`:''}
                 ${p.location?`<br><span style="color:var(--w35)">📍 ${e(p.location)}${p.timeZone?` · ${e(p.timeZone)}`:''}</span>`:''}
                 ${p.employmentHistory&&p.employmentHistory.length>1?`<br><span style="color:var(--w35)">Tidligere: ${e(p.employmentHistory.slice(1,3).map(h=>h.org).filter(Boolean).join(' · '))}</span>`:''}
