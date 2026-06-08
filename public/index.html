@@ -1986,7 +1986,7 @@ async function doLogin(){
         const d=await r.json();
         authToken=d.token;currentUser=d.user;
         localStorage.setItem('vl_token',authToken);
-        showApp();await loadUserState();sv('search');
+        showApp();await loadUserState();sv('discovery');
         setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
         return;
       }
@@ -2082,7 +2082,7 @@ async function loadUserState(){
           currentUser=await me.json();
           showApp();
           await loadUserState();
-          sv('search');
+          sv('discovery');
           setTimeout(()=>{
             ['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
           },80);
