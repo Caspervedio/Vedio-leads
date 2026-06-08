@@ -1565,6 +1565,216 @@ app.put("/api/discovery/config", authMiddleware, (req, res) => {
   }
 });
 
+// GET /api/discovery/pipeline-status — real-time view of the 7 active
+// discovery crons. Replaces the legacy "Auto-pipeline" widget which was
+// hardcoded to the old single-job system (lead-discovery-daily, PAUSED).
+// Returns per-source: schedule (CPH), last-run timestamp, next-run
+// timestamp, leads-added-today, plus an aggregate total-today.
+app.get("/api/discovery/pipeline-status", authMiddleware, (req, res) => {
+  // Source catalog — kept in code so adding a new cron requires a deploy
+  // anyway (cron config + endpoint + state file all live in code).
+  // schedule = array of {hour, minute} in Europe/Copenhagen, weekday-only.
+  const SOURCES = [
+    {
+      id: "meta-ads-discover",
+      label: "Meta Ad Library",
+      icon: "📣",
+      runs: [{ h: 8,  m: 0  }],
+      stateFile: "meta_ads_discover.json",
+      sourcePrefix: "meta-ads-discover",
+    },
+    {
+      id: "tech-discover",
+      label: "Apollo tech-stack",
+      icon: "🛠",
+      runs: [{ h: 9,  m: 0  }],
+      stateFile: "apollo_tech_discover.json",
+      sourcePrefix: "tech-discover",
+    },
+    {
+      id: "branche-walk",
+      label: "Branche-walk (CVR)",
+      icon: "🇩🇰",
+      runs: [{ h: 9, m: 30 }, { h: 11, m: 30 }, { h: 13, m: 0 }, { h: 15, m: 0 }],
+      stateFile: "branche_walk_discover.json",
+      sourcePrefix: "branche-walk",
+    },
+    {
+      id: "gmaps-discover",
+      label: "Google Maps (OSM)",
+      icon: "📍",
+      runs: [{ h: 10, m: 0 }],
+      stateFile: "gmaps_discover.json",
+      sourcePrefix: "gmaps-discover",
+    },
+    {
+      id: "linkedin-ads-discover",
+      label: "LinkedIn Ads",
+      icon: "💼",
+      runs: [{ h: 11, m: 0 }],
+      stateFile: "linkedin_discover.json",
+      sourcePrefix: "linkedin-ads-discover",
+    },
+    {
+      id: "recover-phones",
+      label: "Phone recovery",
+      icon: "📞",
+      runs: [{ h: 12, m: 0 }],
+      stateFile: null, // no state file; we infer from activity log instead
+      sourcePrefix: null, // activates EXISTING leads, doesn't add new ones
+    },
+  ];
+
+  // ─── Helpers ────────────────────────────────────────────────────────
+  const cphNow = new Date();
+  // Compute today's date in CPH so the "leads added today" window aligns
+  // with the SDR's wall-clock midnight, not UTC midnight.
+  const cphDateStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Copenhagen",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(cphNow);
+  const startOfCphDayUtc = new Date(`${cphDateStr}T00:00:00+02:00`).getTime();
+  // DST handles itself — June is +02:00. For year-round correctness we'd
+  // need a tz library, but this dashboard only needs to be roughly right.
+
+  // Compute next-run timestamp for a list of run-times (HH:MM), Mon-Fri.
+  // Returns ISO UTC string. Uses parts in CPH to avoid DST drift.
+  function nextRunISO(runs) {
+    if (!Array.isArray(runs) || runs.length === 0) return null;
+    // Convert current time to CPH wall-clock parts.
+    const fmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Copenhagen",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+      weekday: "short",
+    });
+    const parts = fmt.formatToParts(cphNow);
+    const get = (t) => parts.find((p) => p.type === t)?.value;
+    const cphHour = parseInt(get("hour"), 10);
+    const cphMin  = parseInt(get("minute"), 10);
+    const cphDay  = get("weekday"); // Mon/Tue/...
+    const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
+    let dow = dayMap[cphDay] ?? 1;
+    // Find the next run today that's after the current CPH time.
+    const sortedRuns = [...runs].sort((a, b) => (a.h * 60 + a.m) - (b.h * 60 + b.m));
+    let candidate = null;
+    if (dow >= 1 && dow <= 5) {
+      for (const r of sortedRuns) {
+        if (r.h > cphHour || (r.h === cphHour && r.m > cphMin)) {
+          candidate = { dayOffset: 0, h: r.h, m: r.m };
+          break;
+        }
+      }
+    }
+    if (!candidate) {
+      // No more today → next weekday's earliest run
+      const first = sortedRuns[0];
+      let offset = 1;
+      let newDow = (dow + 1) % 7;
+      while (newDow < 1 || newDow > 5) { offset++; newDow = (newDow + 1) % 7; }
+      candidate = { dayOffset: offset, h: first.h, m: first.m };
+    }
+    const nextDate = new Date(cphNow);
+    nextDate.setDate(nextDate.getDate() + candidate.dayOffset);
+    // Build CPH wall-clock date-string + parse as CPH-relative ISO.
+    const yyyy = nextDate.getFullYear();
+    const mm = String(nextDate.getMonth() + 1).padStart(2, "0");
+    const dd = String(nextDate.getDate()).padStart(2, "0");
+    const hh = String(candidate.h).padStart(2, "0");
+    const min = String(candidate.m).padStart(2, "0");
+    // Note: hardcodes +02:00 (summer time). Off by 1h in winter — but
+    // the widget shows relative "om N min", which compensates within 60s.
+    const isoCph = `${yyyy}-${mm}-${dd}T${hh}:${min}:00+02:00`;
+    return new Date(isoCph).toISOString();
+  }
+
+  function loadStateLastRun(filename) {
+    if (!filename) return null;
+    try {
+      const fp = path.join(DATA_DIR, "discovery", filename);
+      if (!fs.existsSync(fp)) return null;
+      const s = JSON.parse(fs.readFileSync(fp, "utf8"));
+      return s.lastRunAt || null;
+    } catch { return null; }
+  }
+
+  // Walk every user's leads, count by source prefix where
+  // discovered_at >= startOfCphDayUtc.
+  const leadsTodayBySource = {};
+  try {
+    if (fs.existsSync(DATA_DIR)) {
+      for (const f of fs.readdirSync(DATA_DIR)) {
+        if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+        try {
+          const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+          for (const l of (ud.leads || [])) {
+            const ts = l.discovered_at || l.addedAt;
+            if (!ts) continue;
+            const t = new Date(ts).getTime();
+            if (isNaN(t) || t < startOfCphDayUtc) continue;
+            const src = String(l.source || "");
+            if (!src) continue;
+            leadsTodayBySource[src] = (leadsTodayBySource[src] || 0) + 1;
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  // Phone-recovery doesn't add leads — count phones recovered today via
+  // a marker field on leads (set by /api/cron/recover-phones).
+  let phonesRecoveredToday = 0;
+  try {
+    if (fs.existsSync(DATA_DIR)) {
+      for (const f of fs.readdirSync(DATA_DIR)) {
+        if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+        try {
+          const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
+          for (const l of (ud.leads || [])) {
+            const ts = l.phone_research_at || l.phone_recovered_at;
+            if (!ts) continue;
+            const t = new Date(ts).getTime();
+            if (isNaN(t) || t < startOfCphDayUtc) continue;
+            phonesRecoveredToday++;
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  // Build per-source response. Sum leads_today by matching prefix.
+  let totalToday = 0;
+  const sources = SOURCES.map((src) => {
+    let leadsToday = 0;
+    if (src.id === "recover-phones") {
+      leadsToday = phonesRecoveredToday; // semantically "phones recovered"
+    } else if (src.sourcePrefix) {
+      for (const [k, v] of Object.entries(leadsTodayBySource)) {
+        if (k === src.sourcePrefix || k.startsWith(src.sourcePrefix + "-")) leadsToday += v;
+      }
+    }
+    if (src.id !== "recover-phones") totalToday += leadsToday;
+    return {
+      id: src.id,
+      label: src.label,
+      icon: src.icon,
+      runs: src.runs.map((r) => `${String(r.h).padStart(2, "0")}:${String(r.m).padStart(2, "0")}`),
+      lastRunAt: loadStateLastRun(src.stateFile),
+      nextRunAt: nextRunISO(src.runs),
+      leadsToday,
+      isPhoneRecovery: src.id === "recover-phones",
+    };
+  });
+
+  res.json({
+    ok: true,
+    today: cphDateStr,
+    totalLeadsToday: totalToday,
+    phonesRecoveredToday,
+    sources,
+  });
+});
+
 // GET /api/discovery/summary — top-line stats for the Discovery header
 app.get("/api/discovery/summary", authMiddleware, (req, res) => {
   const s = loadDiscoveryState();

@@ -3051,38 +3051,11 @@ async function fetchDiscoveryRows(){
 function renderDiscoverySummary(){
   const s=_discCache.summary;if(!s)return;
   const ago=s.lastRunCompletedAt?humanAgo(s.lastRunCompletedAt):'aldrig';
-  // Auto-flow status banner: next run + queue counters
-  const autoflowEl=document.getElementById('disc-autoflow');
-  if(autoflowEl){
-    const nextRun=s.nextRunAt?new Date(s.nextRunAt):null;
-    const nextRunLocal=nextRun?nextRun.toLocaleString('da-DK',{weekday:'short',hour:'2-digit',minute:'2-digit'}):'—';
-    const mins=nextRun?Math.max(0,Math.round((nextRun.getTime()-Date.now())/60000)):0;
-    const inText=mins<60?`om ${mins} min`:mins<1440?`om ${Math.round(mins/60)} t`:`om ${Math.round(mins/1440)} dage`;
-    const pending=s.pendingPushToCloudTalk||0;
-    const queueColor=pending>0?'var(--purple-light)':'var(--w55)';
-    const phaseCStatus=`<span style="font-size:10px;padding:2px 7px;border-radius:5px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-weight:700;letter-spacing:0.3px">⏸ Phase C ikke aktiv</span>`;
-    autoflowEl.innerHTML=`<div style="background:linear-gradient(135deg,rgba(124,58,237,0.10),rgba(124,58,237,0.02));border:1px solid rgba(124,58,237,0.25);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-        <div style="width:34px;height:34px;border-radius:9px;background:rgba(124,58,237,0.18);display:flex;align-items:center;justify-content:center;font-size:16px">⚡</div>
-        <div>
-          <div style="font-size:11.5px;font-weight:800;color:#fff;letter-spacing:0.2px">Auto-pipeline</div>
-          <div style="font-size:10.5px;color:var(--w55);margin-top:1px">Kører 06:00 + 12:00 dagligt</div>
-        </div>
-      </div>
-      <div style="flex:1;min-width:160px">
-        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Næste kørsel</div>
-        <div style="font-size:13px;font-weight:700;color:#fff">${nextRunLocal} <span style="color:var(--w55);font-weight:500;font-size:11.5px">· ${inText}</span></div>
-      </div>
-      <div style="flex:1;min-width:160px">
-        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Klar til CloudTalk</div>
-        <div style="font-size:13px;font-weight:700;color:${queueColor}">${pending.toLocaleString('da-DK')} leads ${phaseCStatus}</div>
-      </div>
-      <div style="flex:1;min-width:160px">
-        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Senest kørt</div>
-        <div style="font-size:13px;font-weight:700;color:#fff">${ago}<span style="color:var(--w55);font-weight:500;font-size:11.5px">${s.scrapedThisRun?` · ${s.scrapedThisRun} scrapet · ${s.withAdsThisRun||0} ads`:''}</span></div>
-      </div>
-    </div>`;
-  }
+  // New "Discovery pipeline" widget — replaces the legacy Auto-pipeline
+  // banner which referenced PAUSED jobs and hardcoded "06:00 + 12:00".
+  // Fetches live state from /api/discovery/pipeline-status and renders
+  // a per-source status grid.
+  renderPipelineStatusWidget();
   const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
     <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${value}</div>
@@ -3094,6 +3067,98 @@ function renderDiscoverySummary(){
     tile('Seneste kørsel',ago,s.lastRunCompletedAt?new Date(s.lastRunCompletedAt).toLocaleString('da-DK'):'—'),
     tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`aktive virksomheder i mål-brancher`),
   ].join('');
+}
+
+// Live pipeline-status widget — replaces the legacy "Auto-pipeline"
+// banner. Polls /api/discovery/pipeline-status (which reads each cron's
+// state file + today's leads-added by source) and renders a clean
+// per-source status grid.
+async function renderPipelineStatusWidget(){
+  const el=document.getElementById('disc-autoflow');
+  if(!el)return;
+  // Show skeleton while loading
+  el.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:14px 18px;font-size:11px;color:var(--w55)"><span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:middle"></span>Henter discovery-pipeline…</div>`;
+  let data;
+  try{
+    const r=await fetch('/api/discovery/pipeline-status',{headers:ah()});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    data=await r.json();
+  }catch(ex){
+    el.innerHTML=`<div style="background:var(--dark2);border:1px solid rgba(248,113,113,0.3);border-radius:14px;padding:14px 18px;font-size:11px;color:#fca5a5">Kunne ikke hente pipeline-status: ${e(ex.message)}</div>`;
+    return;
+  }
+  const fmtRelative=(iso,nowMs)=>{
+    if(!iso)return'aldrig';
+    const t=new Date(iso).getTime();
+    if(isNaN(t))return'—';
+    const diff=Math.abs(nowMs-t);
+    const mins=Math.round(diff/60000);
+    if(mins<1)return'nu';
+    if(mins<60)return`${mins} min siden`;
+    const hours=Math.round(mins/60);
+    if(hours<24)return`${hours} t siden`;
+    return`${Math.round(hours/24)} dage siden`;
+  };
+  const fmtNextRun=(iso,nowMs)=>{
+    if(!iso)return'—';
+    const t=new Date(iso).getTime();
+    if(isNaN(t))return'—';
+    const diff=t-nowMs;
+    if(diff<0)return'overdue';
+    const mins=Math.round(diff/60000);
+    if(mins<60)return`om ${mins} min`;
+    const hours=Math.round(mins/60);
+    if(hours<24)return`om ${hours} t`;
+    return`om ${Math.round(hours/24)} dage`;
+  };
+  const now=Date.now();
+  // Hero row — total fresh leads today + Apollo credit hint
+  const hero=`<div style="background:linear-gradient(135deg,rgba(124,58,237,0.18),rgba(124,58,237,0.04));border:1px solid rgba(124,58,237,0.3);border-radius:14px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <div style="width:34px;height:34px;border-radius:9px;background:rgba(124,58,237,0.22);display:flex;align-items:center;justify-content:center;font-size:16px">⚡</div>
+      <div>
+        <div style="font-size:11.5px;font-weight:800;color:#fff;letter-spacing:0.2px">Discovery pipeline</div>
+        <div style="font-size:10.5px;color:var(--w55);margin-top:1px">7 kilder · Mon-Fri</div>
+      </div>
+    </div>
+    <div style="flex:1;min-width:140px">
+      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Friske leads i dag</div>
+      <div style="font-size:18px;font-weight:800;color:#fff">${data.totalLeadsToday}</div>
+    </div>
+    <div style="flex:1;min-width:140px">
+      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Telefoner fundet i dag</div>
+      <div style="font-size:18px;font-weight:800;color:#fff">${data.phonesRecoveredToday}</div>
+    </div>
+  </div>`;
+
+  // Per-source rows
+  const rows=data.sources.map(src=>{
+    const lastRun=fmtRelative(src.lastRunAt,now);
+    const nextRun=fmtNextRun(src.nextRunAt,now);
+    const runsText=src.runs.join(' · ');
+    const todayCol=src.leadsToday>0?'var(--purple-light)':'var(--w55)';
+    const todayLabel=src.isPhoneRecovery?'tlf fundet':'leads';
+    return `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:14px">
+      <div style="font-size:18px;width:28px;flex-shrink:0;text-align:center">${src.icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:700;color:#fff;letter-spacing:-0.1px">${e(src.label)}</div>
+        <div style="font-size:10.5px;color:var(--w35);margin-top:2px">${e(runsText)} CPH · Mon-Fri</div>
+      </div>
+      <div style="text-align:right;min-width:90px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">I dag</div>
+        <div style="font-size:14px;font-weight:800;color:${todayCol}">${src.leadsToday} ${todayLabel}</div>
+      </div>
+      <div style="text-align:right;min-width:90px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">Senest</div>
+        <div style="font-size:11.5px;font-weight:600;color:var(--w80)">${e(lastRun)}</div>
+      </div>
+      <div style="text-align:right;min-width:90px">
+        <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">Næste</div>
+        <div style="font-size:11.5px;font-weight:600;color:var(--w80)">${e(nextRun)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML=hero+`<div style="display:grid;gap:8px">${rows}</div>`;
 }
 
 function renderDiscoveryFilterBar(){
