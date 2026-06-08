@@ -1890,6 +1890,12 @@ function softphoneSetStatus(kind, label){
     if(pill)pill.classList.add('calling');
   }
   if(sub)sub.textContent = label || '';
+  // Auto-stop the ringback loop whenever the status changes away
+  // from 'calling' — covers the 60s safety reset + any explicit
+  // status flip.
+  if(kind !== 'calling' && typeof softphoneStopRingback === 'function'){
+    softphoneStopRingback();
+  }
 }
 // Called from the click-to-call flow to (a) auto-expand the dock so
 // the SDR can interact with the ringing softphone, (b) flip the status
@@ -1906,6 +1912,7 @@ function softphoneOnCallStart(name){
     }
     softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
     playCallChime('outbound');
+    softphoneStartRingback(45000); // looping ringback until pickup / 45s timeout
     clearTimeout(window._softphoneStatusTimer);
     window._softphoneStatusTimer = setTimeout(()=>softphoneSetStatus('ready','pop-up åben'), 60000);
     return;
@@ -1923,6 +1930,7 @@ function softphoneOnCallStart(name){
   }
   softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
   playCallChime('outbound');
+  softphoneStartRingback(45000); // looping ringback until pickup / 45s timeout
   // Reset to "ready" after a generous window (CloudTalk doesn't emit
   // events to us cross-origin; this is a UI hint, not the truth).
   clearTimeout(window._softphoneStatusTimer);
@@ -1957,6 +1965,47 @@ function playCallChime(kind){
     // Outbound: single soft beep
     _beep(740, 160, 0, 'sine', 0.18);
   }
+}
+
+// ─── Outbound ringback tone ────────────────────────────────────────────
+// Plays a continuous "calling" sound while the call is being placed —
+// just like a normal phone where you hear ringing until the other party
+// picks up. The CloudTalk softphone runs in a separate window/iframe so
+// we can't hear its native ringback through speakers; this is the
+// substitute.
+//
+// Pattern: Danish/European ringback — ~1 sec tone at 425 Hz, ~3 sec
+// silence, looping. Auto-stops after maxDuration (default 45s) as a
+// safety net; explicit softphoneStopRingback() fires sooner on
+// disposition, navigation, or status change.
+let _ringbackTimer = null;
+let _ringbackStartedAt = 0;
+function softphoneStartRingback(maxDurationMs = 45000){
+  // Respect the existing mute toggle
+  if(localStorage.getItem('mute_call_chime')==='1') return;
+  const ctx = _ac(); if(!ctx) return;
+  if(ctx.state==='suspended') ctx.resume().catch(()=>{});
+  // Clear any previous loop
+  softphoneStopRingback();
+  _ringbackStartedAt = Date.now();
+  const playTone = () => {
+    if(Date.now() - _ringbackStartedAt > maxDurationMs){
+      softphoneStopRingback();
+      return;
+    }
+    // 1-second tone at 425 Hz (European standard call-progress tone),
+    // slightly quieter than the chime so it's not jarring on repeat.
+    _beep(425, 1000, 0, 'sine', 0.10);
+  };
+  playTone();                              // first tone immediately
+  _ringbackTimer = setInterval(playTone, 4000); // then every 4s (1s tone + 3s silence)
+}
+function softphoneStopRingback(){
+  if(_ringbackTimer){
+    clearInterval(_ringbackTimer);
+    _ringbackTimer = null;
+  }
+  _ringbackStartedAt = 0;
 }
 async function fetchOwners(){
   try{
@@ -6944,6 +6993,9 @@ function cockpitPauseDialer(){
 // ─── Disposition handling ───────────────────────────────────────────────
 async function cockpitDisposition(action){
   const c=cockpitCurrent();if(!c)return;
+  // Marking a disposition implies the call is over (either it finished
+  // or the SDR is moving past it) — kill any active ringback tone.
+  if(typeof softphoneStopRingback === 'function') softphoneStopRingback();
   // Persist disposition on the lead.
   try{
     await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:action,lastDispositionAt:new Date().toISOString()})});
