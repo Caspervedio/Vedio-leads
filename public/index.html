@@ -324,10 +324,14 @@ tr.chk td{background:var(--bluebg)}
 
 /* ─── EMBEDDED SOFTPHONE (CloudTalk Phone iframe) ──────────────────────
    Fixed bottom-right dock + collapsed pill. Sits above all SPA content
-   but below the login overlay. .expanded gives more room for the SMS
-   detail view which gets clipped at the default 600px height. */
+   but below the login overlay. Default size 460x720 was tuned so
+   CloudTalk's SMS detail view (which has header + tabs + recipient
+   field + message body + send button stacked) fits without overflow or
+   button-clipping. Smaller sizes caused the SMS UI to silently break.
+   .expanded goes to 600x840 for power users who want chat-history side
+   visible too. */
 #softphone-dock{
-  position:fixed;bottom:18px;right:18px;width:380px;height:600px;z-index:900;
+  position:fixed;bottom:18px;right:18px;width:460px;height:720px;z-index:900;
   background:#14111f;border:1px solid rgba(124,58,237,0.35);border-radius:14px;
   box-shadow:0 24px 64px rgba(0,0,0,0.55),0 0 32px rgba(124,58,237,0.18);
   overflow:hidden;display:flex;flex-direction:column;
@@ -335,8 +339,8 @@ tr.chk td{background:var(--bluebg)}
   transition:width 0.18s cubic-bezier(0.22,1,0.36,1),height 0.18s cubic-bezier(0.22,1,0.36,1)
 }
 #softphone-dock.expanded{
-  width:min(600px,calc(100vw - 40px));
-  height:min(840px,calc(100vh - 40px))
+  width:min(640px,calc(100vw - 40px));
+  height:min(860px,calc(100vh - 40px))
 }
 @keyframes softphoneFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 #softphone-header{
@@ -364,7 +368,7 @@ tr.chk td{background:var(--bluebg)}
 #softphone-pill:hover{transform:translateY(-1px);box-shadow:0 16px 36px rgba(124,58,237,0.55)}
 #softphone-pill.calling{animation:pulse-dot 1.2s ease-in-out infinite}
 @media (max-width:1280px){
-  #softphone-dock{width:340px;height:560px;bottom:14px;right:14px}
+  #softphone-dock{width:420px;height:680px;bottom:14px;right:14px}
 }
 
 /* LOGIN OVERLAY */
@@ -795,9 +799,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <span style="font-size:12px;font-weight:700;color:#fff;letter-spacing:0.3px">📞 Softphone</span>
       <span id="softphone-substatus" style="font-size:10px;color:rgba(255,255,255,0.55);font-weight:500"></span>
     </div>
+    <button id="softphone-sms" onclick="softphoneOpenSmsInPopout()" title="Åbn SMS i eget vindue — anbefalet hvis softphone-SMS hænger" style="background:rgba(167,139,250,0.18);border:1px solid rgba(167,139,250,0.35);color:#c4b5fd;cursor:pointer;padding:3px 9px;font-size:11px;font-weight:700;line-height:1.4;border-radius:7px;font-family:'Outfit',sans-serif;margin-right:2px">💬 SMS</button>
     <button id="softphone-expand" onclick="softphoneExpand()" title="Udvid (større visning til SMS m.v.)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">⤢</button>
     <button id="softphone-popout" onclick="softphoneOpenWindow()" title="Åbn softphone i eget vindue (anbefalet — fuld mikrofon/højttaler-adgang)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:13px;line-height:1">⧉</button>
-    <button id="softphone-reload" onclick="softphoneReload()" title="Genindlæs softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">↻</button>
+    <button id="softphone-reload" onclick="softphoneReload()" title="Genindlæs softphone (destroy + recreate)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">↻</button>
     <button id="softphone-collapse" onclick="softphoneToggle()" title="Skjul softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 8px;font-size:16px;line-height:1;font-weight:700">−</button>
   </div>
   <!-- Mic-permission helper banner — shown if calls can't fire from the
@@ -1606,12 +1611,41 @@ function softphoneExpand(){
   if(btn) btn.title = wasExpanded ? 'Udvid (større visning til SMS m.v.)' : 'Skift til kompakt størrelse';
 }
 
+// Hard reload — destroys and recreates the iframe DOM node entirely.
+// Simply setting iframe.src can leave a stuck CloudTalk JS context
+// behind (especially after the SMS detail view glitches): the iframe
+// reports load=ok but the React tree inside is in a broken state.
+// Recreating the element gives a guaranteed-clean slate, which is what
+// the SDR needs when SMS sends get stuck. The session cookie survives
+// (same-origin to CloudTalk), so the SDR doesn't have to log back in.
 function softphoneReload(){
-  const iframe=document.getElementById('softphone-iframe');
-  if(!iframe)return;
+  const oldIframe = document.getElementById('softphone-iframe');
+  if(!oldIframe) return;
+  const parent = oldIframe.parentNode;
+  if(!parent) return;
   softphoneSetStatus('loading','genindlæser…');
-  // Re-set src to force a clean reload of the CloudTalk Phone session.
-  iframe.src = SOFTPHONE_URL + '?_t=' + Date.now();
+  // Build the replacement with the exact same id + attrs as the original
+  // template, so the layout + permissions are preserved.
+  const fresh = document.createElement('iframe');
+  fresh.id = 'softphone-iframe';
+  fresh.setAttribute('allow', 'microphone *; camera *; autoplay; speaker-selection *; clipboard-read; clipboard-write; web-share *; display-capture *; notifications *; encrypted-media *');
+  fresh.setAttribute('referrerpolicy', 'strict-origin');
+  fresh.setAttribute('title', 'CloudTalk Phone');
+  fresh.src = SOFTPHONE_URL + '?_t=' + Date.now();
+  fresh.addEventListener('load', () => { softphoneSetStatus('ready', 'klar'); }, { once: true });
+  // Watchdog — if the iframe hasn't fired 'load' within 12s, retry once.
+  // CloudTalk normally finishes the first paint in 2-4s. 12s strongly
+  // implies a network or auth glitch where recovery is worth attempting.
+  const watchdog = setTimeout(() => {
+    if(document.getElementById('softphone-iframe') === fresh){
+      console.warn('[softphone] reload watchdog tripped — retrying with cache-bust');
+      try { fresh.src = SOFTPHONE_URL + '?_t=' + Date.now() + '&retry=1'; } catch {}
+    }
+  }, 12000);
+  fresh.addEventListener('load', () => clearTimeout(watchdog), { once: true });
+  // Swap atomically. Removing the old node tears down its JS context.
+  parent.replaceChild(fresh, oldIframe);
+  showToast('🔄 Softphone genindlæst — log evt. ind på ny hvis SMS stadig hænger');
 }
 // Open CloudTalk Phone in its OWN browser window. A first-class window
 // gets normal microphone/speaker permissions (no cross-origin iframe
@@ -1620,6 +1654,33 @@ function softphoneReload(){
 // session because CloudTalk routes the call to the agent's logged-in
 // device — iframe or window, whichever is active. We reuse a named
 // window so repeated clicks focus the existing one instead of stacking.
+// Open CloudTalk in a popout window optimized for SMS. The popout uses
+// the same base URL as the regular softphone window — but at a larger
+// SMS-friendly size (520x780) and with a clear toast hint that the SDR
+// should click the SMS tab. CloudTalk's URL routing inside the SPA is
+// undocumented, so we don't try to deep-link to /sms (risk of 404);
+// instead we rely on the SDR's one-click navigation to the SMS tab,
+// which is right there in CloudTalk's left nav. This is the bulletproof
+// path when the in-dock SMS view glitches.
+let _softphoneSmsWin = null;
+function softphoneOpenSmsInPopout(){
+  const feats = 'width=520,height=780,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
+  try{
+    if(_softphoneSmsWin && !_softphoneSmsWin.closed){
+      _softphoneSmsWin.focus();
+      showToast('💬 SMS-vindue allerede åbent — klik på det');
+      return;
+    }
+    _softphoneSmsWin = window.open(SOFTPHONE_URL, 'vedio_softphone_sms', feats);
+    if(_softphoneSmsWin){
+      _softphoneSmsWin.focus();
+      showToast('💬 SMS-vindue åbnet — klik på SMS-fanen i CloudTalk');
+    } else {
+      showToast('Popup blokeret — tillad popups for dette site og prøv igen');
+    }
+  }catch(e){ showToast('Kunne ikke åbne SMS-vindue: '+e.message); }
+}
+
 let _softphoneWin = null;
 function softphoneOpenWindow(){
   const feats = 'width=400,height=680,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
