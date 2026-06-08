@@ -7537,6 +7537,12 @@ async function runLinkedinLookup(){
     const c = d.contact || {};
     const co = d.company || {};
     const phones = d.phones || [];
+    const sources = d.sources || ['apollo'];
+    const stillStub = !!d.stillStub;
+    // Source-attribution chip — explains where the data came from
+    const srcChip = sources.length > 1
+      ? `<span style="background:rgba(124,58,237,0.18);color:#c4b5fd;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo + LinkedIn-scrape</span>`
+      : `<span style="background:rgba(255,255,255,0.06);color:var(--w55);padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo</span>`;
     const phonesHtml = phones.length
       ? phones.map(ph => {
           const isDirect = ph.type === 'mobile' || ph.type === 'direct' || ph.type === 'work_direct';
@@ -7545,11 +7551,16 @@ async function runLinkedinLookup(){
             : `<span style="color:var(--w35);font-size:10px;margin-left:4px">${e(ph.typeLabel)}</span>`;
           return `<div><a href="tel:${e(ph.number)}" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:13px">📞 ${e(ph.number)}</a>${badge}</div>`;
         }).join('')
-      : '<div style="color:var(--w55)">Apollo har personen men ingen telefon afsløret. Prøv Google/SERP-research.</div>';
+      : (stillStub
+          ? '<div style="color:#fdba74;font-size:11.5px">⚠ Hverken Apollo eller LinkedIn-scrape afslørede et nummer. Brug Google-research-knappen i cockpittet.</div>'
+          : '<div style="color:var(--w55)">Ingen telefon i Apollo. Prøv Google/SERP-research.</div>');
     if (resultEl) resultEl.innerHTML = `
       <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:12px 14px">
-        <div style="font-size:13.5px;font-weight:800;color:#fff;margin-bottom:2px">${e(c.name || '—')}</div>
-        <div style="font-size:11.5px;color:var(--w80);margin-bottom:8px">${e(c.title || '')} ${co.name ? '· ' + e(co.name) : ''}</div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:2px">
+          <span style="font-size:13.5px;font-weight:800;color:#fff">${e(c.name || '—')}</span>
+          ${srcChip}
+        </div>
+        <div style="font-size:11.5px;color:var(--w80);margin-bottom:8px">${e(c.title || c.headline || '')} ${co.name ? '· ' + e(co.name) : ''}</div>
         ${phonesHtml}
         ${c.email ? `<div style="margin-top:6px"><a href="mailto:${e(c.email)}" style="color:#c4b5fd;text-decoration:none;font-size:12px">✉ ${e(c.email)}</a></div>` : ''}
         ${c.linkedin ? `<div style="margin-top:4px"><a href="${e(c.linkedin)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none;font-size:11.5px">🔗 LinkedIn ↗</a></div>` : ''}

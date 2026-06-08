@@ -5818,16 +5818,53 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
     // Apollo billed us — increment the daily counter
     incrementApolloSpend(1);
     const contact = mapApolloPersonToContact(person);
-    // Resolve organisation info too — useful for the SDR to see context
     const company = person.organization ? mapApolloOrganization(person.organization) : null;
+
+    // Fallback: if Apollo's match returns a stub (no name + no title),
+    // scrape the LinkedIn public profile via Apify to fill the gap.
+    // Apollo's DK SMB coverage is patchy — many profiles come back with
+    // just an id+linkedin_url. Apify's LinkedIn scraper gives us the
+    // basics directly from the public profile (~$0.01 per scrape).
+    const dataSources = ["apollo"];
+    const isStub = (!contact.name || contact.name === "—") && !contact.title;
+    if (isStub) {
+      try {
+        const scrape = await apifyLinkedinScrape(url);
+        if (scrape) {
+          // Merge — Apify fills the fields Apollo left blank
+          if ((!contact.name || contact.name === "—") && scrape.name) contact.name = scrape.name;
+          if (!contact.title && scrape.title) contact.title = scrape.title;
+          if (!contact.headline && scrape.headline) contact.headline = scrape.headline;
+          if (!contact.photoUrl && scrape.photoUrl) contact.photoUrl = scrape.photoUrl;
+          if (!contact.location && scrape.location) contact.location = scrape.location;
+          // Some scrapers expose phone if listed publicly — very rare,
+          // but free upside when it happens.
+          if (scrape.phone && !contact.phones.find((p) => p.number === scrape.phone)) {
+            contact.phones.push({ number: scrape.phone, type: "mobile", typeLabel: "Mobil (LinkedIn)", status: "scraped", position: 99 });
+            if (!contact.phone) { contact.phone = scrape.phone; contact.phoneType = "mobile"; contact.phoneTypeLabel = "Mobil (LinkedIn)"; }
+          }
+          // Company name from scrape if Apollo didn't have one
+          if (!company && scrape.currentCompany) {
+            // Light synthetic company so the modal has something to show
+            const syntheticCompany = { name: scrape.currentCompany, source: "linkedin-scrape" };
+            res.locals = res.locals || {}; res.locals.scrapedCompany = syntheticCompany;
+          }
+          dataSources.push("apify-linkedin");
+        }
+      } catch (e) {
+        console.warn("[apollo/lookup-linkedin] apify fallback failed:", e.message);
+      }
+    }
+
     res.json({
       ok: true,
       found: true,
       contact,
-      company,
-      // Convenience aggregations
+      company: company || res.locals?.scrapedCompany || null,
       phones: contact?.phones || [],
       directDial: contact?.phones?.find((p) => p.type === "mobile" || p.type === "direct" || p.type === "work_direct")?.number || null,
+      sources: dataSources,                        // ["apollo"] or ["apollo","apify-linkedin"]
+      stillStub: (!contact.name || contact.name === "—") && !contact.title,
       spendAfter: getApolloSpendToday(),
     });
   } catch (e) {
@@ -5835,6 +5872,80 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Apify LinkedIn Profile Scraper helper — invoked as a fallback when
+// Apollo returns a stub for /people/match. Returns the contact's basic
+// public-profile data: name, headline, current company, photo, location.
+// Cost: ~$0.005-0.02 per scrape, paid via the Apify subscription
+// (already provisioned for the gsearch + fb-ads scrapers).
+//
+// Actor is configurable via env var so we can swap if dev_fusion's
+// scraper goes down — LinkedIn aggressively blocks scrapers and actors
+// rotate every few months. Fallback default is a well-maintained
+// community actor as of June 2026.
+const LINKEDIN_SCRAPER_ACTOR = process.env.APIFY_LINKEDIN_ACTOR || "dev_fusion~linkedin-profile-scraper";
+async function apifyLinkedinScrape(profileUrl) {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) return null;
+  try {
+    // Start the actor run. Most LinkedIn-scraper actors accept this
+    // basic input shape; some want { profileUrls: [...] }. We pass
+    // both to maximise compatibility across actor variants.
+    const input = {
+      profileUrls: [profileUrl],
+      urls: [profileUrl],
+      proxy: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"] },
+    };
+    const startResp = await fetch(
+      `https://api.apify.com/v2/acts/${LINKEDIN_SCRAPER_ACTOR}/runs?token=${token}&memory=512&timeout=120`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+    );
+    if (!startResp.ok) {
+      console.warn("[apify-linkedin] start", startResp.status);
+      return null;
+    }
+    const { data: run } = await startResp.json();
+    // Poll up to 90s for completion
+    const t0 = Date.now();
+    let status = run.status;
+    let runData = run;
+    while (status === "READY" || status === "RUNNING") {
+      if (Date.now() - t0 > 90000) {
+        console.warn("[apify-linkedin] timeout");
+        return null;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+      const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+      if (!poll.ok) continue;
+      runData = (await poll.json()).data;
+      status = runData.status;
+    }
+    if (status !== "SUCCEEDED") {
+      console.warn("[apify-linkedin] run ended", status);
+      return null;
+    }
+    const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`);
+    if (!itemsResp.ok) return null;
+    const items = await itemsResp.json();
+    const profile = items?.[0] || null;
+    if (!profile) return null;
+    // Normalise — different actor variants use different field names.
+    // We try the common ones (dev_fusion + voyager + curious_coder).
+    return {
+      name: profile.fullName || profile.name || `${profile.firstName || ""} ${profile.lastName || ""}`.trim() || "",
+      title: profile.headline || profile.position?.title || profile.currentJobTitle || profile.title || "",
+      headline: profile.headline || profile.about || profile.summary || "",
+      currentCompany: profile.company || profile.currentCompany || profile.position?.companyName || profile.experience?.[0]?.company || "",
+      photoUrl: profile.profilePicture || profile.photoUrl || profile.profilePicHighQuality || profile.profile_picture_url || "",
+      location: profile.location || profile.addressWithCountry || profile.country || "",
+      phone: profile.phone || profile.phoneNumber || profile.contactInfo?.phone || "",
+      raw: profile,
+    };
+  } catch (e) {
+    console.warn("[apify-linkedin] error:", e.message);
+    return null;
+  }
+}
 
 app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
   if (!isApolloConfigured()) {
