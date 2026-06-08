@@ -889,6 +889,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3h10v3H3zM3 7h10v3H3zM3 11h10v3H3z"/><circle cx="5" cy="4.5" r="0.5" fill="currentColor"/><circle cx="5" cy="8.5" r="0.5" fill="currentColor"/><circle cx="5" cy="12.5" r="0.5" fill="currentColor"/></svg>
         Liste-builder
       </a>
+      <a id="nv-li" onclick="openLinkedinLookupModal()" title="Paste en LinkedIn URL → Apollo afslører direct dial">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6.5"/><path d="M5 7v4M5 5v0.5M8 8v3M8 8c0-1 1-1.5 1.8-1.5 1 0 1.7 0.7 1.7 1.7v2.8"/></svg>
+        LinkedIn-opslag
+      </a>
     </div>
     <!-- Min liste retired from the sidebar — the Autodialer cockpit is now
          the canonical "calling list" surface. The underlying leads page
@@ -1297,7 +1301,6 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <!-- Manual call / SMS -->
     <button class="btn btn-sm" onclick="cockpitOpenManualCall()" title="Indtast et nummer og ring manuelt" style="padding:8px 12px">📞 Manuelt opkald</button>
     <button class="btn btn-sm" onclick="cockpitOpenManualSms()" title="Indtast et nummer og send SMS manuelt" style="padding:8px 12px">💬 Manuel SMS</button>
-    <button class="btn btn-sm" onclick="openLinkedinLookupModal()" title="Paste en LinkedIn URL → Apollo afslører direct dial (1 credit)" style="padding:8px 12px">🔎 LinkedIn-opslag</button>
     <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog">📋 Aktivitet</button>
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
     <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
