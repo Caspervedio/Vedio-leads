@@ -5022,6 +5022,10 @@ const OSM_OVERPASS_URL = "https://overpass-api.de/api/interpreter";
 
 // Category id → OSM tag pairs. Each category may map to multiple tags
 // (e.g. "frisør" covers both shop=hairdresser and shop=beauty).
+// IMPORTANT: every category referenced in GMAPS_DISCOVER_QUERIES MUST
+// have an entry here, otherwise buildOsmQuery returns null and the
+// Overpass endpoint returns 400 (body=data=null). Was the root cause
+// of the silent gmaps-discover failure observed on 2026-06-08.
 const OSM_CATEGORY_TAGS = {
   restaurant: [["amenity","restaurant"],["amenity","fast_food"]],
   cafe:       [["amenity","cafe"]],
@@ -5035,6 +5039,17 @@ const OSM_CATEGORY_TAGS = {
   tomrer:     [["craft","carpenter"]],
   el:         [["craft","electrician"]],
   vvs:        [["craft","plumber"]],
+  // 2026-06-08 — added for the wider gmaps category rotation in
+  // GMAPS_DISCOVER_QUERIES. Each maps to the standard OSM tag for
+  // that DK business type (verified against OSM Wiki).
+  "skønhedsklinik": [["shop","beauty"],["shop","cosmetics"],["healthcare","clinic"]],
+  "fysioterapi":    [["healthcare","physiotherapist"]],
+  "optiker":        [["shop","optician"],["healthcare","optometrist"]],
+  "juveler":        [["shop","jewelry"]],
+  "ejendomsmægler": [["office","estate_agent"]],
+  "arkitekt":       [["office","architect"]],
+  "vinforhandler":  [["shop","wine"],["shop","alcohol"]],
+  "blomster":       [["shop","florist"]],
 };
 
 function buildOsmQuery({ category, city, cities, q, limit = 100 }) {
