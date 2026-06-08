@@ -1600,6 +1600,16 @@ function softphoneInit(){
   const pillWrap=document.getElementById('softphone-pill-wrap');
   const iframe=document.getElementById('softphone-iframe');
   if(!dock||!pillWrap||!iframe)return;
+  // 2026-06-08 — CloudTalk removed from primary workflow. Calls now
+  // route via tel: links to the SDR's iPhone (Continuity routes audio
+  // through Mac speaker/headset if signed in). Native carrier audio,
+  // no iframe quirks. Hide both dock and pill so the cockpit is the
+  // only thing on screen.
+  dock.style.display = 'none';
+  pillWrap.style.display = 'none';
+  return;
+  // ── Legacy CloudTalk softphone code below — unreachable but kept
+  //    for fast revert if we ever want the embedded dialer back. ──
   const mode = getSoftphoneMode();
   const pillLabel = document.getElementById('softphone-pill-label');
   if(mode === 'popup'){
@@ -6154,37 +6164,43 @@ function toggleSwitchboard(){
 // pointing to the softphone instead of failing silently.
 async function ringNow(phone, cvr, leadName){
   if(!phone){ showToast('Intet nummer på leadet'); return; }
-  // HARD GUARD — we only call DK numbers. CloudTalk Essential covers
-  // DK-domestic only; international calls burn credits per-minute fast.
-  // Apollo sometimes returns foreign HQ phones (+1 US, +49 DE, +46 SE)
-  // for DK companies — we block those at the source rather than asking
-  // the SDR to make the call every time.
+  // HARD GUARD — we only call DK numbers. Apollo sometimes returns
+  // foreign HQ phones (+1 US, +49 DE, +46 SE) for DK companies — block
+  // those at the source rather than letting them dial out by mistake.
   const digits = String(phone).replace(/[^0-9+]/g,'');
   const isDk = digits.startsWith('+45') || (digits.startsWith('45') && digits.length === 10)
               || /^\d{8}$/.test(digits);
   if(!isDk){
     showToast(`⛔ ${phone} er ikke DK — kun +45 numre tillades. Ret nummeret eller arkivér leadet.`);
-    // Also log to console so we have a record if it's happening often
     console.warn('[ringNow] blocked non-DK dial:', phone, 'on lead', cvr, leadName);
     return;
   }
-  try{
-    softphoneOnCallStart(leadName||phone);
-  }catch{}
-  try{
-    const r=await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone, cvr: cvr||''})});
-    const d=await r.json().catch(()=>({}));
-    if(r.ok){ showToast(`📞 CloudTalk ringer ${leadName?(' '+leadName):''}…`.trim()); return; }
-    if(r.status===503){
-      // Make the offline message highly visible (banner, not just a toast)
-      // — it's the most common cause of "click-to-call doesn't work".
-      showCloudTalkOfflineBanner(d.error||'Log ind i softphonen og sæt status til Online.');
-      return;
-    }
-    showToast('CloudTalk fejl: '+(d.error||'kunne ikke ringe'));
-  }catch(ex){
-    showToast('Netværksfejl: '+ex.message);
+  // Normalise the dial-string: ensure +45 prefix so iPhone's Phone app
+  // recognises it as a DK call (not local-format ambiguity on Mac).
+  let dial = phone;
+  if(/^\d{8}$/.test(dial)) dial = '+45' + dial;
+  else if(dial.startsWith('45') && dial.length === 10) dial = '+' + dial;
+  // Stamp lastCallAt locally so the lead's "Sidste opkald" updates
+  // immediately — Nicolas marks the actual disposition manually after
+  // the call ends (1/2/3/4/5 in cockpit, same as today).
+  if(cvr){
+    try{
+      fetch(`/api/leads/${cvr}`, {
+        method:'PATCH', headers:{...ah(),'Content-Type':'application/json'},
+        body: JSON.stringify({ lastCallAt: new Date().toISOString(), lastCallDirection:'outbound' }),
+      });
+    }catch{}
+    const lead = (leads||[]).find(l => l.cvr === cvr);
+    if(lead){ lead.lastCallAt = new Date().toISOString(); lead.lastCallDirection = 'outbound'; }
   }
+  // Open the device's native dialer via tel: URL.
+  //   iPhone Safari        → opens Phone app
+  //   Mac with Continuity  → "Use iPhone to call?" prompt, audio
+  //                          routes through Mac mic/speaker/headset
+  //   Other (Windows etc.) → asks which app to handle (Skype/etc.)
+  // Single click = one extra confirmation tap on iPhone, then dials.
+  showToast(`📞 Ringer ${leadName||''}${leadName?' · ':''}${dial} — bekræft på din iPhone`);
+  window.location.href = 'tel:' + dial;
 }
 // Big yellow banner that points the SDR to the softphone when CloudTalk
 // rejects click-to-call. Auto-dismisses after 8s or on click.
@@ -7393,33 +7409,23 @@ async function cockpitSendSmsConfirm(cvr){
   const text=document.getElementById('sms-text')?.value.trim()||'';
   if(!phone){showToast('Indtast nummer');return;}
   if(!text){showToast('Skriv en besked');return;}
-  // Try CloudTalk first. Falls back to device's native sms: link if
-  // CloudTalk isn't configured/ready.
-  try{
-    const r=await fetch('/api/cloudtalk/sms',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr, phone, message:text})});
-    const d=await r.json();
-    if(r.ok){
-      document.getElementById('sms-modal')?.remove();
-      showToast('✓ SMS sendt via CloudTalk');
-      return;
-    }
-    if(r.status===503){
-      // Fallback to device SMS
-      const url=`sms:${phone}${navigator.userAgent.match(/iPhone|iPad|iPod|Mac/)?'&':'?'}body=${encodeURIComponent(text)}`;
-      window.location.href=url;
-      if(cvr){try{await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({last_sms_at:new Date().toISOString()})});}catch{}}
-      document.getElementById('sms-modal')?.remove();
-      showToast('SMS åbnet på din enhed — CloudTalk SMS kræver SMS-tillæg på kontoen');
-      return;
-    }
-    showToast('SMS fejlede: '+(d.error||'ukendt'));
-  }catch(ex){
-    // Network error → fallback
-    const url=`sms:${phone}${navigator.userAgent.match(/iPhone|iPad|iPod|Mac/)?'&':'?'}body=${encodeURIComponent(text)}`;
-    window.location.href=url;
-    document.getElementById('sms-modal')?.remove();
-    showToast('Fallback til enheds-SMS ('+ex.message+')');
+  // Open the device's native SMS composer via sms: URL.
+  // iOS uses & as the parameter separator (not standard URI ?); macOS
+  // Messages and Android use ?. Detect to maximise compatibility.
+  const sep = navigator.userAgent.match(/iPhone|iPad|iPod|Mac/) ? '&' : '?';
+  const url = `sms:${phone}${sep}body=${encodeURIComponent(text)}`;
+  // Stamp the SMS-sent timestamp locally so stats + Sidste SMS update
+  // even though we can't confirm the actual send (device-side).
+  if(cvr){
+    try{
+      await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({last_sms_at:new Date().toISOString()})});
+    }catch{}
+    const lead = (leads||[]).find(l => l.cvr === cvr);
+    if(lead) lead.last_sms_at = new Date().toISOString();
   }
+  document.getElementById('sms-modal')?.remove();
+  showToast('💬 SMS åbnet i iMessage/Messages — bekræft og send');
+  window.location.href = url;
 }
 
 // ─── Manual call/SMS — toolbar buttons ──────────────────────────────────
