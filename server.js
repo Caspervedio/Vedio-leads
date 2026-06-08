@@ -5943,18 +5943,23 @@ const APOLLO_DISCOVER_KEYWORDS = [
 // Vedio's ICP (tightened 2026-06-02 to premium SMB / founder-led segment):
 //   * 1-15 employees: owner-led companies where the founder/CEO takes
 //     the call, no procurement layer, single-decision-maker outbound.
-//   * 2-15M DKK revenue (≈ $280k-2.15M USD): cash-positive enough to
+//   * 1.5-25M DKK revenue (≈ $215k-3.6M USD): cash-positive enough to
 //     afford 10-50k DKK/video, not so big they have an in-house team.
 // Loose-end behaviour mirrors employee handling: companies with NO
 // revenue data in Apollo are KEPT (not filtered) — most small DK brands
 // aren't in Apollo's revenue index. Filter only rejects KNOWN-and-out-of-range.
-const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["1,5", "6,10", "11,15"];
+//
+// 2026-06-08 — widened from 1-15 emp / 2-15M DKK → 1-25 emp / 1.5-25M DKK.
+// The 1-15 cap excluded most DK DTC brands (lean teams of 15-25 are very
+// common), capping daily yield at 15-25 fresh. New range targets 50-60/day
+// with same DTC profile (still well below "enterprise" tier).
+const APOLLO_DISCOVER_EMPLOYEE_RANGES = ["1,5", "6,10", "11,15", "16,25"];
 const APOLLO_DISCOVER_MIN_EMPLOYEES = 1;
-const APOLLO_DISCOVER_MAX_EMPLOYEES = 15;
+const APOLLO_DISCOVER_MAX_EMPLOYEES = 25;
 // Apollo returns annualRevenue in USD typically. Convert from DKK at
-// ~7.0 DKK/USD: 2M DKK → $285k, 15M DKK → $2.15M.
-const APOLLO_DISCOVER_MIN_REVENUE_USD = 285000;
-const APOLLO_DISCOVER_MAX_REVENUE_USD = 2150000;
+// ~7.0 DKK/USD: 1.5M DKK → $215k, 25M DKK → $3.6M.
+const APOLLO_DISCOVER_MIN_REVENUE_USD = 215000;
+const APOLLO_DISCOVER_MAX_REVENUE_USD = 3600000;
 
 // Returns true if a lead PASSES the ICP gate (DK + emp range + revenue range).
 // All three checks treat null/unknown as "no info — include". Strict reject
