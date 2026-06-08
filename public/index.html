@@ -822,8 +822,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
      for SMS reliability + first-class mic/audio permissions. -->
 <div id="softphone-pill-wrap" style="position:fixed;bottom:18px;right:18px;z-index:900;display:none;align-items:center;gap:6px">
   <button id="softphone-pill" onclick="softphoneToggle()" title="Åbn CloudTalk i eget vindue">
-    <span style="font-size:16px">📞</span>
-    <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px">Open CloudTalk App</span>
+    <span style="font-size:16px;pointer-events:none">📞</span>
+    <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px;pointer-events:none">Open CloudTalk App</span>
   </button>
   <button id="softphone-mode-toggle" onclick="softphoneSwitchMode()" title="Skift tilstand: pop-up ↔ indlejret CloudTalk" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;width:30px;height:30px;border-radius:50%;font-size:13px;line-height:1;font-family:'Outfit',sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:background 0.12s,transform 0.12s" onmouseover="this.style.background='rgba(255,255,255,0.22)';this.style.transform='scale(1.08)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='scale(1)'">⚙</button>
 </div>
@@ -5475,12 +5475,22 @@ function renderAutodialerPage(){
   if(_adState.stackFilter){
     filtered=filtered.filter(l=>Array.isArray(l.techStack)&&l.techStack.includes(_adState.stackFilter));
   }
-  // Sort — priority (ICP-klar first, then ads count, then added date) is
-  // the default smart sort. Manual sorts: source, ads, added, name.
+  // Sort — priority (info-rich first, then ICP-klar, then ads count) is
+  // the default smart sort. The order operator asked for is:
+  //   1. Has phone + has contacts        (most actionable — call NOW)
+  //   2. Has phone only                  (callable, no decision-maker yet)
+  //   3. No phone (phone_missing)        (research workflow needed)
+  // Within each tier we layer ICP signals: meta_advertiser > icpFit > ad count.
   const priority = (l) => {
     let p = 0;
-    if(l.meta_advertiser) p += 5000;  // Apollo-confirmed Meta advertiser — top ICP signal
-    if(l.icpFit) p += 1000;
+    const hasPhone = !!((l.phone || l.ph || '').toString().trim());
+    const hasContacts = Array.isArray(l.contacts) && l.contacts.length > 0;
+    // Big stratification bands so no ICP weight can leapfrog a tier.
+    if(hasPhone && hasContacts) p += 100000;   // tier 1 — top
+    else if(hasPhone)           p += 50000;    // tier 2 — middle
+    // (tier 3 — phone_missing — gets no bonus)
+    if(l.meta_advertiser) p += 5000;
+    if(l.icpFit)          p += 1000;
     p += Math.min(l.adsMatched||0, 100);
     return p;
   };
@@ -5683,7 +5693,7 @@ function renderAutodialerPage(){
       ${_adState.stackFilter?`<button onclick="_adState.stackFilter='';renderAutodialerPage()" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(124,58,237,0.5);background:rgba(124,58,237,0.18);color:#fff;font-size:11px;font-weight:700;cursor:pointer">Tech: ${e(_adState.stackFilter)} ✕</button>`:''}
       <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase">Sortér</span>
       <select id="ad-sort" onchange="_adState.sort=this.value;renderAutodialerPage()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;color:#fff;padding:5px 10px;font-family:'Outfit',sans-serif;font-size:11.5px;outline:none;cursor:pointer">
-        <option value="priority" ${_adState.sort==='priority'?'selected':''}>Prioritet (ICP først)</option>
+        <option value="priority" ${_adState.sort==='priority'?'selected':''}>Prioritet (info først)</option>
         <option value="ads" ${_adState.sort==='ads'?'selected':''}>Flest ads</option>
         <option value="added" ${_adState.sort==='added'?'selected':''}>Senest tilføjet</option>
         <option value="name" ${_adState.sort==='name'?'selected':''}>Navn (A-Å)</option>
