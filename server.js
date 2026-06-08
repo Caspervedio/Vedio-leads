@@ -5762,13 +5762,56 @@ app.get("/api/apollo/status", authMiddleware, (req, res) => {
   res.json({ configured: isApolloConfigured(), provider: "apollo.io" });
 });
 
+// Persistent 30-day cache for LinkedIn URL → lookup result. Same URL
+// looked up twice within 30 days serves from cache — no Apollo bill,
+// no Apify scrape. Important because the SDR will often re-research
+// a lead and we don't want every cockpit click to burn a credit.
+const LINKEDIN_LOOKUP_CACHE_FILE = path.join(DATA_DIR, "discovery", "linkedin_lookup_cache.json");
+const LINKEDIN_LOOKUP_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+function _loadLinkedinLookupCache() {
+  try {
+    if (fs.existsSync(LINKEDIN_LOOKUP_CACHE_FILE)) {
+      return JSON.parse(fs.readFileSync(LINKEDIN_LOOKUP_CACHE_FILE, "utf8")) || {};
+    }
+  } catch {}
+  return {};
+}
+function _saveLinkedinLookupCache(cache) {
+  try {
+    fs.mkdirSync(path.dirname(LINKEDIN_LOOKUP_CACHE_FILE), { recursive: true });
+    // GC entries older than TTL while we're saving
+    const now = Date.now();
+    for (const [k, v] of Object.entries(cache)) {
+      if (!v?.cachedAt || (now - new Date(v.cachedAt).getTime()) > LINKEDIN_LOOKUP_CACHE_TTL_MS) {
+        delete cache[k];
+      }
+    }
+    fs.writeFileSync(LINKEDIN_LOOKUP_CACHE_FILE, JSON.stringify(cache, null, 2));
+  } catch (e) { console.warn("[linkedin-cache] save:", e.message); }
+}
+function _normaliseLinkedinUrl(u) {
+  // Strip trailing slash, query string, and protocol so http/https variants
+  // hit the same cache key.
+  return String(u || "").trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/$/, "")
+    .replace(/\?.*$/, "")
+    .toLowerCase();
+}
+
 // POST /api/apollo/lookup-linkedin — SalesQL-style "paste a LinkedIn URL,
 // get the contact's direct dial" lookup. The bookmarklet in /public/
 // triggers this with the current LinkedIn profile URL pre-filled.
 //
-// Apollo's /people/match accepts linkedin_url as a match key — same
-// 1-credit cost as our other person-match calls. Respects the daily
-// 100-credit cap.
+// Cost model:
+//   - 30-day cache HIT  →  free (returns stored result)
+//   - Apollo match      →  1 credit per fresh lookup
+//   - Apify fallback    →  ~$0.01 per scrape, ONLY when phone is missing
+//
+// Apify-fallback trigger was changed 2026-06-08 from "Apollo returned
+// a stub (no name/title)" to "Apollo returned no phone" — the user's
+// actionable field is the phone, not the name.
 app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo ikke konfigureret", configured: false });
@@ -5779,6 +5822,16 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
   // and we'd rather error early than burn a credit on a malformed lookup.
   if (!/^https?:\/\/([a-z]+\.)?linkedin\.com\/in\//i.test(url)) {
     return res.status(400).json({ error: "Indtast et LinkedIn /in/ profil-URL (f.eks. https://www.linkedin.com/in/john-doe-12345)" });
+  }
+  // 30-day cache check — same URL within window = free, no Apollo bill
+  const cacheKey = _normaliseLinkedinUrl(url);
+  const force = String(req.query.force || "") === "1";
+  if (!force) {
+    const cache = _loadLinkedinLookupCache();
+    const hit = cache[cacheKey];
+    if (hit && hit.cachedAt && (Date.now() - new Date(hit.cachedAt).getTime()) < LINKEDIN_LOOKUP_CACHE_TTL_MS) {
+      return res.json({ ...hit.result, cached: true, cachedAt: hit.cachedAt });
+    }
   }
   // Daily cap pre-flight — same as everywhere else
   const spendNow = getApolloSpendToday();
@@ -5820,34 +5873,31 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
     const contact = mapApolloPersonToContact(person);
     const company = person.organization ? mapApolloOrganization(person.organization) : null;
 
-    // Fallback: if Apollo's match returns a stub (no name + no title),
-    // scrape the LinkedIn public profile via Apify to fill the gap.
-    // Apollo's DK SMB coverage is patchy — many profiles come back with
-    // just an id+linkedin_url. Apify's LinkedIn scraper gives us the
-    // basics directly from the public profile (~$0.01 per scrape).
+    // Fallback: if Apollo returned no phone (the field the SDR actually
+    // cares about), scrape the LinkedIn public profile via Apify. Apify
+    // sometimes finds phones publicly listed on profiles. Apollo's DK
+    // SMB phone coverage is sparse, so this fallback fires often.
+    // Cost: ~$0.01 per scrape.
     const dataSources = ["apollo"];
-    const isStub = (!contact.name || contact.name === "—") && !contact.title;
-    if (isStub) {
+    let scrapedCompany = null;
+    const hasNoPhone = (contact.phones || []).length === 0;
+    if (hasNoPhone) {
       try {
         const scrape = await apifyLinkedinScrape(url);
         if (scrape) {
-          // Merge — Apify fills the fields Apollo left blank
+          // Merge — Apify fills any blank fields
           if ((!contact.name || contact.name === "—") && scrape.name) contact.name = scrape.name;
           if (!contact.title && scrape.title) contact.title = scrape.title;
           if (!contact.headline && scrape.headline) contact.headline = scrape.headline;
           if (!contact.photoUrl && scrape.photoUrl) contact.photoUrl = scrape.photoUrl;
           if (!contact.location && scrape.location) contact.location = scrape.location;
-          // Some scrapers expose phone if listed publicly — very rare,
-          // but free upside when it happens.
+          // Phone — the prize. If LinkedIn profile has one listed, surface it.
           if (scrape.phone && !contact.phones.find((p) => p.number === scrape.phone)) {
             contact.phones.push({ number: scrape.phone, type: "mobile", typeLabel: "Mobil (LinkedIn)", status: "scraped", position: 99 });
             if (!contact.phone) { contact.phone = scrape.phone; contact.phoneType = "mobile"; contact.phoneTypeLabel = "Mobil (LinkedIn)"; }
           }
-          // Company name from scrape if Apollo didn't have one
           if (!company && scrape.currentCompany) {
-            // Light synthetic company so the modal has something to show
-            const syntheticCompany = { name: scrape.currentCompany, source: "linkedin-scrape" };
-            res.locals = res.locals || {}; res.locals.scrapedCompany = syntheticCompany;
+            scrapedCompany = { name: scrape.currentCompany, source: "linkedin-scrape" };
           }
           dataSources.push("apify-linkedin");
         }
@@ -5856,17 +5906,24 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
       }
     }
 
-    res.json({
+    const result = {
       ok: true,
       found: true,
       contact,
-      company: company || res.locals?.scrapedCompany || null,
+      company: company || scrapedCompany || null,
       phones: contact?.phones || [],
       directDial: contact?.phones?.find((p) => p.type === "mobile" || p.type === "direct" || p.type === "work_direct")?.number || null,
-      sources: dataSources,                        // ["apollo"] or ["apollo","apify-linkedin"]
-      stillStub: (!contact.name || contact.name === "—") && !contact.title,
+      sources: dataSources,
+      stillNoPhone: (contact.phones || []).length === 0,
       spendAfter: getApolloSpendToday(),
-    });
+    };
+    // Persist to the 30-day cache so re-lookups don't double-bill
+    try {
+      const cache = _loadLinkedinLookupCache();
+      cache[cacheKey] = { result, cachedAt: new Date().toISOString() };
+      _saveLinkedinLookupCache(cache);
+    } catch {}
+    res.json(result);
   } catch (e) {
     console.error("[apollo/lookup-linkedin]", e.message);
     res.status(500).json({ error: e.message });
