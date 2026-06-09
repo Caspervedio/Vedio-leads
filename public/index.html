@@ -3187,12 +3187,16 @@ async function renderPipelineStatusWidget(){
       </div>
     </div>
     <div style="flex:1;min-width:140px">
-      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Friske leads i dag</div>
-      <div style="font-size:18px;font-weight:800;color:#fff">${data.totalLeadsToday}</div>
+      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Friske leads i dag ${data.totalLeadsToday>0?'<span style="color:var(--purple-light);font-size:9px;letter-spacing:0">↗</span>':''}</div>
+      ${data.totalLeadsToday > 0
+        ? `<button onclick="openFreshLeadsDrilldown('today')" style="all:unset;cursor:pointer;font-size:18px;font-weight:800;color:#fff;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Klik for at se de ${data.totalLeadsToday} friske leads">${data.totalLeadsToday}</button>`
+        : `<div style="font-size:18px;font-weight:800;color:#fff">${data.totalLeadsToday}</div>`}
     </div>
     <div style="flex:1;min-width:140px">
-      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Telefoner fundet i dag</div>
-      <div style="font-size:18px;font-weight:800;color:#fff">${data.phonesRecoveredToday}</div>
+      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Telefoner fundet i dag ${data.phonesRecoveredToday>0?'<span style="color:var(--purple-light);font-size:9px;letter-spacing:0">↗</span>':''}</div>
+      ${data.phonesRecoveredToday > 0
+        ? `<button onclick="openFreshLeadsDrilldown('phones-today')" style="all:unset;cursor:pointer;font-size:18px;font-weight:800;color:#fff;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Klik for at se de ${data.phonesRecoveredToday} leads">${data.phonesRecoveredToday}</button>`
+        : `<div style="font-size:18px;font-weight:800;color:#fff">${data.phonesRecoveredToday}</div>`}
     </div>
   </div>`;
 
@@ -5723,20 +5727,31 @@ function renderAutodialerPage(){
     return `om ${Math.round(diffMin/1440)} dage`;
   })() : '—';
 
-  const tile=(label,value,sub,accent)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
-    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
-    <div style="font-size:22px;font-weight:900;color:${accent||'#fff'};letter-spacing:-0.5px">${value}</div>
-    ${sub?`<div style="font-size:11px;color:var(--w55);margin-top:2px">${sub}</div>`:''}
-  </div>`;
+  const tile=(label,value,sub,accent,onClick)=>{
+    // Tiles with a click handler get a subtle hover state + cursor:pointer
+    // so the SDR knows they're drillable. The onClick fires openActivity
+    // Drilldown(metricId, scope) — same modal as the activity-table cells.
+    const clickAttrs = onClick ? `onclick="${onClick}" style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.4)';this.style.background='var(--w04)'" onmouseout="this.style.borderColor='var(--w08)';this.style.background='var(--dark2)'" title="Klik for at se de ${value} leads"` : `style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px"`;
+    return `<div ${clickAttrs}>
+      <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}${onClick?' <span style="color:var(--purple-light);font-size:9px;letter-spacing:0">↗</span>':''}</div>
+      <div style="font-size:22px;font-weight:900;color:${accent||'#fff'};letter-spacing:-0.5px">${value}</div>
+      ${sub?`<div style="font-size:11px;color:var(--w55);margin-top:2px">${sub}</div>`:''}
+    </div>`;
+  };
   // Color the conversion tile by performance: ≥30% green, 10-30% amber, <10% red.
   const convColor = convPct>=30?'#6ee7b7' : convPct>=10?'#fdba74' : convPct>0?'#fca5a5' : 'var(--w55)';
   statsEl.innerHTML=[
     tile('Klar i kø', filtered.length.toLocaleString('da-DK'),
       aList==='all'?'alle leads':`liste: ${lists.find(l=>l.id===aList)?.name||aList}`, 'var(--purple-light)'),
+    // Ringet → click opens drilldown with all leads called today
     tile('Ringet i dag', dayStats.dialed.toLocaleString('da-DK'),
-      weekStats.dialed>0?`${weekStats.dialed} denne uge`:''),
+      weekStats.dialed>0?`${weekStats.dialed} denne uge`:'',
+      null,
+      dayStats.dialed>0 ? `openActivityDrilldown('dialed','today')` : null),
+    // Interesseret → click opens drilldown with today's "interested" leads
     tile('Interesseret i dag', dayStats.interested.toLocaleString('da-DK'),
-      dayStats.interested>0?`${weekStats.interested} denne uge`:'klik 1 i cockpit', '#6ee7b7'),
+      dayStats.interested>0?`${weekStats.interested} denne uge`:'klik 1 i cockpit', '#6ee7b7',
+      dayStats.interested>0 ? `openActivityDrilldown('interested','today')` : null),
     tile('Konvertering i dag', convPct>0?`${convPct}%`:'—',
       dayStats.dialed>0?`${dayStats.interested} af ${dayStats.dialed} dialed`:'', convColor),
     tile('Næste callback', callbackText,
@@ -6084,6 +6099,115 @@ function openActivityDrilldown(metricId, scope){
           }).join('')}
         </tbody>
       </table>`}
+    </div>
+  </div>`;
+  bg.onclick = (ev) => { if(ev.target === bg) bg.remove(); };
+  document.body.appendChild(bg);
+}
+
+// Drilldown for the Discovery Pipeline widget — shows the leads behind
+// "Friske leads i dag" (or "Telefoner fundet i dag"). Groups by source
+// so the SDR sees at a glance which sources contributed.
+function openFreshLeadsDrilldown(mode){
+  // mode = 'today'        → leads with discovered_at today
+  // mode = 'phones-today' → leads with phone_recovered_at / phone_research_at today
+  const isPhonesMode = mode === 'phones-today';
+  const now = Date.now();
+  const startOfTodayLocal = new Date(); startOfTodayLocal.setHours(0,0,0,0);
+  const TODAY_CUTOFF_MS = startOfTodayLocal.getTime();
+
+  const matched = (leads||[]).filter(l => {
+    if(isPhonesMode){
+      const ts = l.phone_recovered_at || l.phone_research_at;
+      return ts && new Date(ts).getTime() >= TODAY_CUTOFF_MS;
+    }
+    const ts = l.discovered_at || l.addedAt;
+    return ts && new Date(ts).getTime() >= TODAY_CUTOFF_MS;
+  });
+
+  // Group by source for the header summary
+  const bySource = {};
+  for(const l of matched){
+    const srcRaw = String(l.source || 'unknown');
+    // Collapse branche-walk-561010 → branche-walk for grouping
+    const srcGroup = srcRaw.startsWith('branche-walk') ? 'branche-walk'
+                   : srcRaw.startsWith('tech-discover') ? 'tech-discover'
+                   : srcRaw;
+    bySource[srcGroup] = (bySource[srcGroup]||0) + 1;
+  }
+
+  // Sort newest first
+  const tsKey = isPhonesMode ? (l) => l.phone_recovered_at || l.phone_research_at : (l) => l.discovered_at || l.addedAt;
+  matched.sort((a,b) => String(tsKey(b)||'').localeCompare(String(tsKey(a)||'')));
+
+  const title = isPhonesMode
+    ? `📞 Telefoner fundet i dag · ${matched.length} leads`
+    : `⚡ Friske leads i dag · ${matched.length} leads`;
+
+  document.getElementById('fresh-leads-drill-modal')?.remove();
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg'; bg.id = 'fresh-leads-drill-modal';
+
+  const fmtTime = (iso) => {
+    if(!iso) return '—';
+    try{
+      const d = new Date(iso);
+      return d.toLocaleTimeString('da-DK', { hour:'2-digit', minute:'2-digit' });
+    }catch{ return iso; }
+  };
+  const sourceLabel = (src) => {
+    if(src === 'meta-ads-discover') return '📣 Meta Ads';
+    if(src === 'tech-discover') return '🛠 Tech-discover';
+    if(src === 'branche-walk') return '🇩🇰 Branche-walk';
+    if(src === 'gmaps-discover') return '📍 Google Maps';
+    if(src === 'linkedin-ads-discover') return '💼 LinkedIn Ads';
+    if(src === 'csv-import') return '📥 CSV';
+    return src;
+  };
+  const sourceChip = (src) => {
+    if(!src) return '';
+    const grp = src.startsWith('branche-walk') ? 'branche-walk'
+              : src.startsWith('tech-discover') ? 'tech-discover'
+              : src;
+    return `<span style="font-size:10px;padding:2px 6px;border-radius:5px;background:rgba(124,58,237,0.15);color:#c4b5fd;font-weight:700">${e(sourceLabel(grp))}</span>`;
+  };
+
+  const sourceSummaryHtml = Object.entries(bySource)
+    .sort(([,a],[,b]) => b - a)
+    .map(([src,n]) => `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);border-radius:7px;font-size:11.5px;color:#c4b5fd;font-weight:700">${e(sourceLabel(src))} <span style="color:#fff;font-weight:800">${n}</span></span>`)
+    .join(' ');
+
+  bg.innerHTML = `<div class="modal" style="width:760px;max-height:82vh;display:flex;flex-direction:column;padding:20px 22px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0;font-size:15px;color:#fff;letter-spacing:-0.2px">${e(title)}</h3>
+      <button onclick="document.getElementById('fresh-leads-drill-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:5px 11px;color:var(--w80);font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
+    </div>
+    ${matched.length>0 && !isPhonesMode ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${sourceSummaryHtml}</div>` : ''}
+    <div style="overflow:auto;flex:1">
+      ${matched.length === 0
+        ? `<div style="padding:30px;text-align:center;color:var(--w55);font-size:13px">Ingen leads endnu i dag.</div>`
+        : `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
+            <thead>
+              <tr style="text-align:left;color:var(--w35);font-size:10px;text-transform:uppercase;letter-spacing:0.8px;font-weight:700">
+                <th style="padding:8px 10px;border-bottom:1px solid var(--w08)">Tid</th>
+                <th style="padding:8px 10px;border-bottom:1px solid var(--w08)">Virksomhed</th>
+                <th style="padding:8px 10px;border-bottom:1px solid var(--w08)">Kilde</th>
+                <th style="padding:8px 10px;border-bottom:1px solid var(--w08)">Tlf</th>
+                <th style="padding:8px 10px;border-bottom:1px solid var(--w08)">Branche</th>
+                <th style="padding:8px 10px;border-bottom:1px solid var(--w08)">Emp</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${matched.map(l => `<tr style="border-bottom:1px solid var(--w04)">
+                <td style="padding:8px 10px;color:var(--w55);font-family:monospace;font-size:11.5px;white-space:nowrap">${e(fmtTime(tsKey(l)))}</td>
+                <td style="padding:8px 10px;color:#fff;font-weight:600"><button onclick="document.getElementById('fresh-leads-drill-modal').remove();sv('autodialer');setTimeout(()=>{openCockpit();setTimeout(()=>{const qi=(_cockpit.queue||[]).findIndex(x=>x.cvr==='${e(l.cvr||'')}');if(qi>=0)cockpitJump(qi);},120);},60);" style="all:unset;cursor:pointer;color:#fff;font-weight:600;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Åbn i cockpit">${e(l.name||'—')}</button></td>
+                <td style="padding:8px 10px">${sourceChip(l.source||'')}</td>
+                <td style="padding:8px 10px;color:${(l.phone||l.ph)?'#6ee7b7':'var(--w35)'};font-family:monospace;font-size:11.5px">${e(l.phone||l.ph||'—')}</td>
+                <td style="padding:8px 10px;color:var(--w55);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(l.ind||l.industry||'—')}</td>
+                <td style="padding:8px 10px;color:var(--w55);font-variant-numeric:tabular-nums">${e(l.emp||'—')}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>`}
     </div>
   </div>`;
   bg.onclick = (ev) => { if(ev.target === bg) bg.remove(); };
