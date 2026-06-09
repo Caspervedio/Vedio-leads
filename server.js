@@ -113,7 +113,71 @@ function routeToCallerId(reqUserId) {
 }
 
 // ── User auth ─────────────────────────────────────────────────────────────────
+// Session tokens are kept in-memory for fast lookup AND mirrored to disk so
+// they survive Cloud Run deploys/restarts. Without persistence, every deploy
+// (~30+ today during the build sprint) wiped the Map and forced every active
+// SDR to re-login — they'd see "Ikke logget ind" on every protected
+// endpoint. File format: { token: { userId, createdAt, lastSeenAt } }.
+// TTL: 30 days. Pruned on load.
 const sessions = new Map(); // token -> userId
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function _loadSessionsFromDisk() {
+  try {
+    if (!fs.existsSync(SESSIONS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8")) || {};
+    const now = Date.now();
+    let loaded = 0, pruned = 0;
+    for (const [token, entry] of Object.entries(raw)) {
+      const userId = typeof entry === "string" ? entry : entry?.userId;
+      const lastSeen = typeof entry === "object" ? (entry.lastSeenAt || entry.createdAt) : null;
+      if (!userId) continue;
+      if (lastSeen && (now - new Date(lastSeen).getTime()) > SESSION_TTL_MS) { pruned++; continue; }
+      sessions.set(token, userId);
+      loaded++;
+    }
+    if (loaded || pruned) console.log(`[sessions] loaded ${loaded} sessions from disk, pruned ${pruned} expired`);
+  } catch (e) { console.warn("[sessions] load failed:", e.message); }
+}
+
+// Debounced disk writes — avoid I/O thrash if many sessions change in
+// rapid succession (e.g. boot or multi-user flow). 1-second debounce
+// is fine for session data.
+let _sessionsSaveTimer = null;
+function _saveSessionsToDisk() {
+  if (_sessionsSaveTimer) return;
+  _sessionsSaveTimer = setTimeout(() => {
+    _sessionsSaveTimer = null;
+    try {
+      const out = {};
+      const now = new Date().toISOString();
+      for (const [token, userId] of sessions.entries()) {
+        out[token] = { userId, lastSeenAt: now };
+      }
+      fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true });
+      fs.writeFileSync(SESSIONS_FILE, JSON.stringify(out));
+    } catch (e) { console.warn("[sessions] save failed:", e.message); }
+  }, 1000);
+}
+
+// Wrap the Map's set/delete so disk mirror happens automatically.
+const _origSessionsSet = sessions.set.bind(sessions);
+const _origSessionsDelete = sessions.delete.bind(sessions);
+sessions.set = function(token, userId) {
+  const r = _origSessionsSet(token, userId);
+  _saveSessionsToDisk();
+  return r;
+};
+sessions.delete = function(token) {
+  const r = _origSessionsDelete(token);
+  _saveSessionsToDisk();
+  return r;
+};
+
+// Load existing sessions at boot — must happen before authMiddleware
+// starts serving requests.
+_loadSessionsFromDisk();
 
 function loadUsers() {
   return loadJsonFile(USERS_FILE, []);
