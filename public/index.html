@@ -7199,24 +7199,31 @@ async function cockpitDisposition(action){
   // Marking a disposition implies the call is over (either it finished
   // or the SDR is moving past it) — kill any active ringback tone.
   if(typeof softphoneStopRingback === 'function') softphoneStopRingback();
-  // Auto-stamp lastCallAt if it's not already set.
+  // ALWAYS overwrite lastCallAt to the moment the disposition fires.
   //
   // Why: SDR dials manually on his iPhone (cockpit shows the number,
-  // he types it on the phone). Without this auto-stamp, lastCallAt
-  // would stay null → "Ringet i dag" stat shows 0 even though 80
-  // calls happened. The disposition IS the proof a call took place.
+  // he types it on the phone). The disposition press IS the proof a
+  // call just happened, so lastCallAt should reflect the MOST RECENT
+  // call timestamp — not the first-ever one.
   //
-  // Only stamps when missing — so an actual "Ring"-button click that
-  // already stamped a timestamp (when CloudTalk was in the loop, or
-  // when Continuity ever gets wired) keeps that earlier value.
+  // Previous logic (#60) only stamped when lastCallAt was null —
+  // which meant any lead Nicolas had ever called before kept the OLD
+  // timestamp. Re-dials today were invisible to "Ringet i dag", under-
+  // counting actual call volume by ~50%.
+  //
+  // First-ever-called is preserved in firstCallAt (new field, only set
+  // if missing) for historical analytics. lastCallAt = MOST RECENT.
   const nowIso = new Date().toISOString();
-  const patch = { lastAction: action, lastDispositionAt: nowIso };
-  if (!c.lastCallAt) {
-    patch.lastCallAt = nowIso;
-    patch.lastCallDirection = 'outbound';
-    c.lastCallAt = nowIso;
-    c.lastCallDirection = 'outbound';
-  }
+  const patch = {
+    lastAction: action,
+    lastDispositionAt: nowIso,
+    lastCallAt: nowIso,
+    lastCallDirection: 'outbound',
+  };
+  if (!c.firstCallAt) patch.firstCallAt = c.lastCallAt || nowIso;
+  c.lastCallAt = nowIso;
+  c.lastCallDirection = 'outbound';
+  if (!c.firstCallAt) c.firstCallAt = nowIso;
   // Persist disposition on the lead.
   try{
     await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify(patch)});
