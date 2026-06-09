@@ -6014,6 +6014,218 @@ app.get("/api/lusha/credit-status", authMiddleware, (req, res) => {
   res.json({ ok: true, configured: isLushaConfigured(), ...getLushaSpendToday() });
 });
 
+// POST /api/cron/lusha-morning-reveal — fires every weekday at 07:30 CPH
+// (30 min before Nicolas starts calling). Walks the dialer queue, picks
+// the top 50 leads by priority, and reveals direct dials for any that
+// have a LinkedIn URL but no DK direct dial yet. By 08:00 the queue is
+// pre-loaded with decision-maker phones so Nicolas bypasses gatekeepers
+// without lifting a finger.
+//
+// Cost: ~$0.08/lead × ~30-50 leads/day = ~$2-4/day = ~$40-80/month
+// Easily fits inside Lusha Pro ($39/mo, 480 credits = 22/day) or
+// Premium ($79/mo, 960 credits = 44/day).
+//
+// Idempotent — leads with a recently-attempted Lusha lookup (last 30 days)
+// are skipped to prevent double-spend.
+app.post("/api/cron/lusha-morning-reveal", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isLushaConfigured()) return res.status(503).json({ error: "Lusha not configured" });
+
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const limit = Math.max(5, Math.min(80, Number(req.query.limit) || 50));
+  const ud = loadUserData(TARGET_USER);
+  const stats = {
+    leadsConsidered: 0,
+    skippedHasDirect: 0,
+    skippedNoLinkedIn: 0,
+    skippedRecentlyTried: 0,
+    lushaAttempted: 0,
+    lushaMatched: 0,
+    phonesRevealed: 0,
+    capReached: false,
+    errors: 0,
+  };
+
+  // Score leads same way the cockpit "Prioritet" sort does — info-rich
+  // first, then ICP signals. We process from the top.
+  const RECENT_LUSHA_MS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const priority = (l) => {
+    let p = 0;
+    if (l.phone || l.ph) p += 50000;
+    if (l.meta_advertiser) p += 5000;
+    if (l.icpFit) p += 1000;
+    p += Math.min(l.adsMatched || 0, 100);
+    return p;
+  };
+  const candidates = (ud.leads || [])
+    .filter((l) => !l.lastAction || ["follow-up"].includes(l.lastAction)) // not already dispositioned
+    .sort((a, b) => priority(b) - priority(a))
+    .slice(0, limit);
+
+  for (const lead of candidates) {
+    stats.leadsConsidered++;
+    // Skip if lead already has a direct DK mobile/direct dial
+    const phones = (lead.contacts || []).flatMap((c) => c.phones || []);
+    const hasDirect = phones.some((p) => {
+      const t = String(p.type || "").toLowerCase();
+      return (t === "mobile" || t === "direct" || t === "work_direct") && filterDkPhones([p]).length > 0;
+    });
+    if (hasDirect) { stats.skippedHasDirect++; continue; }
+    // Find LinkedIn URL on any contact
+    const contactWithLi = (lead.contacts || []).find((c) => c.linkedin || c.linkedinUrl);
+    const liUrl = contactWithLi?.linkedin || contactWithLi?.linkedinUrl;
+    if (!liUrl) { stats.skippedNoLinkedIn++; continue; }
+    // Skip if Lusha already tried recently
+    if (contactWithLi.lastLushaAttemptAt && (now - new Date(contactWithLi.lastLushaAttemptAt).getTime()) < RECENT_LUSHA_MS) {
+      stats.skippedRecentlyTried++;
+      continue;
+    }
+    stats.lushaAttempted++;
+    try {
+      const lusha = await lushaLookupPerson({ linkedinUrl: liUrl });
+      // Always stamp the attempt timestamp so we don't retry too soon
+      contactWithLi.lastLushaAttemptAt = new Date().toISOString();
+      if (!lusha) continue;
+      stats.lushaMatched++;
+      const dkPhones = filterDkPhones(lusha.phones || []);
+      if (dkPhones.length === 0) continue;
+      // Add the direct dial to the contact's phones[] (in front, so it
+      // ranks highest in the cockpit display).
+      contactWithLi.phones = contactWithLi.phones || [];
+      const existingNumbers = new Set(contactWithLi.phones.map((p) => p.number));
+      for (const ph of dkPhones) {
+        if (existingNumbers.has(ph.number)) continue;
+        contactWithLi.phones.unshift(ph);
+        existingNumbers.add(ph.number);
+      }
+      // If this is the lead's best phone, also promote to lead.phone
+      if (!lead.phone || lead.phone === lead.ph) {
+        lead.phone = dkPhones[0].number;
+        lead.phone_missing = false;
+      }
+      stats.phonesRevealed++;
+      logActivity(
+        "phone-revealed",
+        `📱 Lusha: ${lusha.name || contactWithLi.name || lead.name} → ${dkPhones[0].number}`,
+        { cvr: lead.cvr, source: "lusha-morning-reveal", userId: TARGET_USER },
+      );
+    } catch (e) {
+      if (e.code === "LUSHA_CAP_REACHED") {
+        stats.capReached = true;
+        break;
+      }
+      stats.errors++;
+      console.warn("[lusha-morning-reveal]", lead.cvr, e.message);
+    }
+    // Respect rate limits — small breather between calls
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  saveUserData(TARGET_USER, ud);
+  console.log("[lusha-morning-reveal] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, spend: getLushaSpendToday() });
+});
+
+// POST /api/contact/reveal-direct-dial/:cvr — unified Lusha-first
+// reveal for the cockpit "Find beslutningstager" button. Tries Lusha
+// using the lead's LinkedIn URL, falls back to Apollo if Lusha doesn't
+// find a DK direct dial.
+app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res) => {
+  const cvr = req.params.cvr;
+  const ud = loadUserData(req.userId);
+  const lead = (ud.leads || []).find((l) => l.cvr === cvr);
+  if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+
+  const contactWithLi = (lead.contacts || []).find((c) => c.linkedin || c.linkedinUrl);
+  const liUrl = contactWithLi?.linkedin || contactWithLi?.linkedinUrl;
+
+  // Try Lusha first if we have a LinkedIn URL + Lusha is configured
+  if (isLushaConfigured() && liUrl) {
+    try {
+      const lusha = await lushaLookupPerson({ linkedinUrl: liUrl });
+      const dkPhones = lusha ? filterDkPhones(lusha.phones || []) : [];
+      if (dkPhones.length > 0) {
+        // Stamp on the contact + lead
+        contactWithLi.phones = contactWithLi.phones || [];
+        const existing = new Set(contactWithLi.phones.map((p) => p.number));
+        for (const ph of dkPhones) {
+          if (!existing.has(ph.number)) {
+            contactWithLi.phones.unshift(ph);
+            existing.add(ph.number);
+          }
+        }
+        contactWithLi.lastLushaAttemptAt = new Date().toISOString();
+        if (!lead.phone || lead.phone === lead.ph) {
+          lead.phone = dkPhones[0].number;
+          lead.phone_missing = false;
+        }
+        saveUserData(req.userId, ud);
+        // Shape matches what cockpit's enrichLeadWithKaspr expects:
+        // d.contacts is an array of contact objects.
+        const contactsForUI = [{
+          name: lusha.name,
+          title: lusha.title || lusha.headline || "",
+          phone: dkPhones[0]?.number || "",
+          phones: dkPhones,
+          email: lusha.email || "",
+          linkedin: lusha.linkedinUrl || liUrl,
+          source: "lusha",
+        }];
+        return res.json({
+          ok: true,
+          source: "lusha",
+          contacts: contactsForUI,
+          phones: dkPhones,
+          contact: lusha,
+          spendAfter: getLushaSpendToday(),
+        });
+      }
+    } catch (e) {
+      if (e.code === "LUSHA_CAP_REACHED") {
+        // Surface the cap message but still try Apollo fallback below
+        console.warn("[contact/reveal-direct-dial] Lusha cap reached, falling through to Apollo");
+      } else {
+        console.warn("[contact/reveal-direct-dial] Lusha err:", e.message);
+      }
+    }
+  }
+
+  // Fall back to existing Apollo enrich path
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Hverken Lusha eller Apollo gav et nummer." });
+  }
+  try {
+    const { contacts: apolloContacts, company } = await enrichWithApollo({
+      name: lead.name,
+      domain: lead.web || lead.website,
+    });
+    lead.contacts = apolloContacts;
+    lead.apollo_company = company || lead.apollo_company;
+    lead.apollo_enriched_at = new Date().toISOString();
+    const directDial = (apolloContacts.find((c) => c.phone) || {}).phone || "";
+    if (directDial) {
+      lead.phone = directDial;
+      lead.phone_missing = false;
+    }
+    saveUserData(req.userId, ud);
+    return res.json({
+      ok: true,
+      source: "apollo",
+      contacts: apolloContacts,
+      company,
+      phone: directDial || null,
+    });
+  } catch (e) {
+    if (e && e.code === "APOLLO_CAP_REACHED") {
+      return res.status(429).json({ error: "Apollo dagsbudget brugt op", code: "APOLLO_CAP_REACHED", spent: e.spent, cap: e.cap });
+    }
+    return res.status(502).json({ error: e.message });
+  }
+});
+
 app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo ikke konfigureret", configured: false });
@@ -7264,6 +7476,28 @@ async function tryRecoverPhoneForLead(lead) {
     const serpResult = await tryGoogleSerpForPhone(name);
     if (serpResult && serpResult.phone) return serpResult;
   } catch (_) { /* SERP failed */ }
+
+  // PATH 4 — Lusha lookup if we have a contact LinkedIn URL on the lead.
+  // EU-native B2B DB with much better DK SMB direct-dial coverage than
+  // Apollo. Costs 1 Lusha credit (~$0.08). Only fires when other paths
+  // returned no phone AND we have a LinkedIn URL to look up.
+  if (isLushaConfigured()) {
+    const contactWithLi = (lead.contacts || []).find((c) => c.linkedin || c.linkedinUrl);
+    const liUrl = contactWithLi?.linkedin || contactWithLi?.linkedinUrl;
+    if (liUrl) {
+      try {
+        const lusha = await lushaLookupPerson({ linkedinUrl: liUrl });
+        if (lusha && lusha.phones && lusha.phones.length > 0) {
+          const dkPhones = filterDkPhones(lusha.phones);
+          if (dkPhones.length > 0) {
+            return { phone: dkPhones[0].number, source: "lusha-linkedin", lushaContact: lusha };
+          }
+        }
+      } catch (e) {
+        if (e.code !== "LUSHA_CAP_REACHED") console.warn("[recover-phones/lusha]", e.message);
+      }
+    }
+  }
 
   return null;
 }

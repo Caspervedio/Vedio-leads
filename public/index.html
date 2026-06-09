@@ -7276,9 +7276,12 @@ function cockpitAdvanceAfterDisposition(){
 // existing button onclick handlers — under the hood it now calls Apollo.
 async function enrichLeadWithKaspr(cvr, context){
   if(!cvr){showToast('Mangler CVR');return;}
-  showToast('🔍 Apollo søger beslutningstagere…');
+  showToast('🔍 Lusha + Apollo finder beslutningstager…');
   try{
-    const r=await fetch(`/api/apollo/enrich/${cvr}`,{method:'POST',headers:ah()});
+    // Use the unified Lusha-first reveal endpoint. Tries Lusha by
+    // LinkedIn URL first (cheap + accurate DK), falls back to Apollo
+    // automatically when Lusha doesn't find a DK direct dial.
+    const r=await fetch(`/api/contact/reveal-direct-dial/${cvr}`,{method:'POST',headers:ah()});
     const d=await r.json();
     if(r.status===503){
       showToast('Apollo ikke konfigureret endnu — venter på API-nøgle i Secret Manager');
