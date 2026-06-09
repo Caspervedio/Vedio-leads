@@ -5812,6 +5812,208 @@ function _normaliseLinkedinUrl(u) {
 // Apify-fallback trigger was changed 2026-06-08 from "Apollo returned
 // a stub (no name/title)" to "Apollo returned no phone" — the user's
 // actionable field is the phone, not the name.
+// ─── Lusha — primary phone-reveal source ────────────────────────────────
+// Apollo's DK SMB phone DB is patchy — for Danish contacts it frequently
+// returns US/foreign numbers. Lusha is EU-native and has much better
+// DK SMB direct dial coverage (verified by user test 2026-06-08).
+//
+// We use Lusha for PHONE REVEALS specifically. Apollo stays for:
+//   - Discovery pipeline (12 daily crons)
+//   - Org enrichment / ICP gating
+//   - Decision-maker name search
+//   - Cached email + phone data (free, returned with /people/match)
+//
+// Cost model: ~1 credit per successful person lookup (returns all
+// phones + emails). Premium plan $79/mo gets ~960 credits. Self-imposed
+// daily cap protects against runaway burn.
+
+const LUSHA_API_BASE = "https://api.lusha.com";
+const LUSHA_DAILY_CAP = 60;
+const LUSHA_SPEND_FILE = path.join(DATA_DIR, "discovery", "lusha_spend.json");
+
+function isLushaConfigured() {
+  return !!process.env.LUSHA_API_KEY;
+}
+
+function loadLushaSpend() {
+  const today = _cphDateStr();
+  try {
+    if (fs.existsSync(LUSHA_SPEND_FILE)) {
+      const s = JSON.parse(fs.readFileSync(LUSHA_SPEND_FILE, "utf8"));
+      if (s.date === today) return { date: today, spent: s.spent || 0, history: s.history || {} };
+      const history = s.history || {};
+      if (s.date) history[s.date] = s.spent || 0;
+      const days = Object.keys(history).sort();
+      while (days.length > 60) delete history[days.shift()];
+      return { date: today, spent: 0, history };
+    }
+  } catch (e) { console.warn("[lusha-spend] load:", e.message); }
+  return { date: today, spent: 0, history: {} };
+}
+function saveLushaSpend(state) {
+  try {
+    fs.mkdirSync(path.dirname(LUSHA_SPEND_FILE), { recursive: true });
+    fs.writeFileSync(LUSHA_SPEND_FILE, JSON.stringify(state, null, 2));
+  } catch (e) { console.warn("[lusha-spend] save:", e.message); }
+}
+function getLushaSpendToday() {
+  const s = loadLushaSpend();
+  return { date: s.date, spent: s.spent, cap: LUSHA_DAILY_CAP, remaining: Math.max(0, LUSHA_DAILY_CAP - s.spent), history: s.history };
+}
+function incrementLushaSpend(n = 1) {
+  const s = loadLushaSpend();
+  s.spent = (s.spent || 0) + n;
+  saveLushaSpend(s);
+  return s.spent;
+}
+
+// Filter phone array to DK-only (+45). Drops US/foreign HQ numbers
+// that Apollo + Lusha both occasionally surface for DK contacts.
+// Apollo's stats showed ~60-70% of DK reveals returned non-DK noise.
+function filterDkPhones(phones) {
+  if (!Array.isArray(phones)) return [];
+  return phones.filter((ph) => {
+    const num = String(ph.number || "").replace(/[^0-9+]/g, "");
+    if (!num) return false;
+    // Accept: +45XXXXXXXX, 45XXXXXXXX (10 digits, no +), or bare 8-digit DK
+    return num.startsWith("+45") || (num.startsWith("45") && num.length === 10) || /^\d{8}$/.test(num);
+  });
+}
+
+// Core Lusha person lookup. Accepts {linkedinUrl} OR {firstName, lastName,
+// companyName} OR {email}. Returns normalised contact object on success.
+async function lushaLookupPerson(input) {
+  if (!isLushaConfigured()) throw new Error("Lusha not configured");
+  // Cap check pre-flight
+  const spend = loadLushaSpend();
+  if (spend.spent >= LUSHA_DAILY_CAP) {
+    const err = new Error(`Lusha daily cap reached: ${spend.spent}/${LUSHA_DAILY_CAP}`);
+    err.code = "LUSHA_CAP_REACHED";
+    err.spent = spend.spent;
+    err.cap = LUSHA_DAILY_CAP;
+    throw err;
+  }
+
+  // Build the request body — Lusha v2 person lookup. Multiple match keys
+  // supported; we pass whatever we have, Lusha picks the best.
+  const body = {};
+  if (input.linkedinUrl) body.linkedinUrl = input.linkedinUrl;
+  if (input.email)       body.email       = input.email;
+  if (input.firstName)   body.firstName   = input.firstName;
+  if (input.lastName)    body.lastName    = input.lastName;
+  if (input.companyName) body.companies   = [input.companyName];
+  if (input.companyDomain) body.companyDomain = input.companyDomain;
+
+  if (Object.keys(body).length === 0) throw new Error("Lusha: need at least linkedinUrl, email, or name+company");
+
+  const r = await fetch(`${LUSHA_API_BASE}/v2/person`, {
+    method: "POST",
+    headers: {
+      "api_key": process.env.LUSHA_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    if (r.status === 401) throw new Error("Lusha: invalid API key (check LUSHA_API_KEY secret)");
+    if (r.status === 402 || r.status === 403) throw new Error("Lusha: out of credits or plan limit");
+    if (r.status === 404) return null; // person not found — that's OK
+    throw new Error(`Lusha ${r.status}: ${txt.slice(0, 200)}`);
+  }
+
+  const data = await r.json().catch(() => ({}));
+  const person = data?.data || data?.person || data || null;
+  if (!person || !person.fullName && !person.firstName) return null;
+
+  incrementLushaSpend(1);
+
+  // Normalise to our contact shape
+  const rawPhones = person.phoneNumbers || person.phones || [];
+  const phones = rawPhones.map((ph) => {
+    const num = ph.internationalNumber || ph.number || ph.phone || "";
+    const type = String(ph.phoneType || ph.type || "").toLowerCase();
+    return {
+      number: num,
+      type: type === "mobile" ? "mobile" : (type === "direct" ? "direct" : type === "company" ? "main" : type || "mobile"),
+      typeLabel: type === "mobile" ? "Mobil (Lusha)" : (type === "direct" ? "Direct dial (Lusha)" : "Lusha"),
+      status: "verified",
+      source: "lusha",
+    };
+  });
+
+  const emails = (person.emailAddresses || person.emails || []).map((em) => ({
+    address: em.email || em.address || "",
+    type: em.emailType || em.type || "work",
+  })).filter((e) => e.address);
+
+  return {
+    name: person.fullName || `${person.firstName || ""} ${person.lastName || ""}`.trim(),
+    firstName: person.firstName || "",
+    lastName: person.lastName || "",
+    title: person.title || person.position || "",
+    headline: person.headline || person.title || "",
+    photoUrl: person.profilePicture || person.photo || "",
+    linkedinUrl: person.linkedinUrl || input.linkedinUrl || "",
+    location: person.location || person.country || "",
+    phones,
+    email: emails[0]?.address || "",
+    emails: emails.map((e) => e.address),
+    companyName: person.company?.name || person.companyName || "",
+    companyDomain: person.company?.domain || person.companyDomain || "",
+    companyIndustry: person.company?.industry || "",
+    raw: person,
+  };
+}
+
+// POST /api/lusha/lookup — frontend wrapper. Accepts { url } or
+// { firstName, lastName, companyName, email }.
+app.post("/api/lusha/lookup", authMiddleware, async (req, res) => {
+  if (!isLushaConfigured()) {
+    return res.status(503).json({ error: "Lusha ikke konfigureret — tilføj LUSHA_API_KEY i Secret Manager", configured: false });
+  }
+  const body = req.body || {};
+  try {
+    const result = await lushaLookupPerson({
+      linkedinUrl: body.url || body.linkedinUrl,
+      email: body.email,
+      firstName: body.firstName,
+      lastName: body.lastName,
+      companyName: body.companyName,
+      companyDomain: body.companyDomain,
+    });
+    if (!result) return res.json({ ok: true, found: false, source: "lusha" });
+    // DK-only filter on Lusha phones too — defensive, even though Lusha
+    // is generally clean on DK contacts.
+    const dkPhones = filterDkPhones(result.phones);
+    const droppedNonDk = result.phones.length - dkPhones.length;
+    return res.json({
+      ok: true,
+      found: true,
+      source: "lusha",
+      contact: { ...result, phones: dkPhones },
+      droppedNonDkPhones: droppedNonDk,
+      spendAfter: getLushaSpendToday(),
+    });
+  } catch (e) {
+    if (e.code === "LUSHA_CAP_REACHED") {
+      return res.status(429).json({
+        error: `Lusha dagsbudget brugt op (${e.spent}/${e.cap}). Prøv igen i morgen.`,
+        code: "LUSHA_CAP_REACHED",
+        spent: e.spent, cap: e.cap,
+      });
+    }
+    console.error("[lusha/lookup]", e.message);
+    return res.status(502).json({ error: e.message });
+  }
+});
+
+// GET /api/lusha/credit-status — admin visibility for the SDR + dashboard
+app.get("/api/lusha/credit-status", authMiddleware, (req, res) => {
+  res.json({ ok: true, configured: isLushaConfigured(), ...getLushaSpendToday() });
+});
+
 app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo ikke konfigureret", configured: false });

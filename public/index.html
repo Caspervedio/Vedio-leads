@@ -7659,15 +7659,42 @@ async function runLinkedinLookup(){
   const resultEl = document.getElementById('li-lookup-result');
   const goBtn = document.getElementById('li-lookup-go');
   if (!url) { showToast('Indtast LinkedIn URL'); return; }
-  if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Slår op i Apollo…';
+  if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Slår op i Lusha (bedre DK-dækning)…';
   if (goBtn) { goBtn.disabled = true; goBtn.style.opacity = '0.6'; }
+  // Try Lusha FIRST — much better DK SMB direct dial coverage and
+  // verified DK numbers (Apollo's DK phone DB returned ~60-70% non-DK
+  // noise in user testing). Falls through to Apollo if Lusha:
+  //   - isn't configured (no LUSHA_API_KEY)
+  //   - hits its daily cap
+  //   - doesn't find the person
+  //   - finds the person but no DK phones (Apollo may have email/name)
   try {
+    const lushaResp = await fetch('/api/lusha/lookup', {
+      method: 'POST',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const lushaData = await lushaResp.json();
+    // Configured + found + has DK phone → done, return immediately
+    if (lushaResp.ok && lushaData.found && (lushaData.contact?.phones?.length > 0)) {
+      _renderLinkedinLookupResult(lushaData, 'lusha');
+      if (goBtn) { goBtn.disabled = false; goBtn.style.opacity = ''; }
+      return;
+    }
+    // Lusha didn't find the person OR found them without DK phones —
+    // try Apollo as second source (might have email/name + cached info)
+    if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Lusha mangler — prøver Apollo…';
     const r = await fetch('/api/apollo/lookup-linkedin', {
       method: 'POST',
       headers: { ...ah(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
     });
     const d = await r.json();
+    // Merge: if Lusha gave us SOMETHING (e.g. name but no DK phone),
+    // include those scraps in the Apollo result so the SDR sees both.
+    if (lushaResp.ok && lushaData.found && lushaData.contact) {
+      d._lushaPartial = lushaData.contact;
+    }
     if (r.status === 429) {
       if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">⏸️ ${e(d.error || 'Daily cap reached')}</span>`;
       return;
@@ -7676,66 +7703,88 @@ async function runLinkedinLookup(){
       if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">${e(d.error || 'Fejl ved opslag')}</span>`;
       return;
     }
-    if (!d.found) {
-      if (resultEl) resultEl.innerHTML = `<span style="color:var(--w55)">Apollo har ikke denne person i deres database. Prøv hovednummeret eller Google-research.</span>`;
+    if (!d.found && !d._lushaPartial) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--w55)">Hverken Lusha eller Apollo havde denne person. Prøv hovednummeret eller Google-research.</span>`;
       return;
     }
-    const c = d.contact || {};
-    const co = d.company || {};
-    const phones = d.phones || [];
-    const sources = d.sources || ['apollo'];
-    const stillNoPhone = !!d.stillNoPhone;
-    const fromCache = !!d.cached;
-    // Source chip — explains where data came from (and whether cached)
-    const srcChip = fromCache
-      ? `<span style="background:rgba(34,197,94,0.18);color:#6ee7b7;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Cached · 0 credit</span>`
-      : sources.length > 1
-        ? `<span style="background:rgba(124,58,237,0.18);color:#c4b5fd;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo + LinkedIn-scrape</span>`
-        : `<span style="background:rgba(255,255,255,0.06);color:var(--w55);padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo</span>`;
-    const phonesHtml = phones.length
-      ? phones.map(ph => {
-          const isDirect = ph.type === 'mobile' || ph.type === 'direct' || ph.type === 'work_direct';
-          const badge = isDirect
-            ? `<span style="background:rgba(52,211,153,0.18);color:#6ee7b7;border:1px solid rgba(52,211,153,0.35);padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;margin-left:4px">✓ ${e(ph.typeLabel)}</span>`
-            : `<span style="color:var(--w35);font-size:10px;margin-left:4px">${e(ph.typeLabel)}</span>`;
-          return `<div><a href="tel:${e(ph.number)}" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:13px">📞 ${e(ph.number)}</a>${badge}</div>`;
-        }).join('')
-      : '';
-    // When both sources failed to find a phone — surface the actual
-    // research helpers right here so the SDR doesn't need to bounce
-    // back to the cockpit. Pre-fills the standard "+45 mobil direkte"
-    // Google query with name + company.
-    const noPhoneCta = stillNoPhone
-      ? (() => {
-          const company = co.name || '';
-          const name = c.name && c.name !== '—' ? c.name : '';
-          const googleQ = encodeURIComponent(`"${name||''}" ${company?'"'+company+'" ':''}+45 mobil direkte`);
-          return `
-        <div style="margin-top:10px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);border-radius:9px;padding:10px 12px">
-          <div style="font-size:11.5px;color:#fdba74;font-weight:700;margin-bottom:6px">⚠ Ingen telefon fundet</div>
-          <div style="font-size:11px;color:var(--w80);margin-bottom:8px;line-height:1.4">Hverken Apollo eller LinkedIn-scrape havde et nummer. Prøv Google direkte:</div>
-          <a href="https://www.google.com/search?q=${googleQ}" target="_blank" rel="noopener" style="display:inline-block;padding:5px 11px;background:rgba(124,58,237,0.18);border:1px solid rgba(124,58,237,0.35);border-radius:7px;color:#c4b5fd;font-size:11px;font-weight:700;text-decoration:none">🔎 Søg Google</a>
-        </div>`;
-        })()
-      : '';
-    if (resultEl) resultEl.innerHTML = `
-      <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:12px 14px">
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:2px">
-          <span style="font-size:13.5px;font-weight:800;color:#fff">${e(c.name || '—')}</span>
-          ${srcChip}
-        </div>
-        <div style="font-size:11.5px;color:var(--w80);margin-bottom:8px">${e(c.title || c.headline || '')} ${co.name ? '· ' + e(co.name) : ''}</div>
-        ${phonesHtml}
-        ${noPhoneCta}
-        ${c.email ? `<div style="margin-top:6px"><a href="mailto:${e(c.email)}" style="color:#c4b5fd;text-decoration:none;font-size:12px">✉ ${e(c.email)}</a></div>` : ''}
-        ${c.linkedin ? `<div style="margin-top:4px"><a href="${e(c.linkedin)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none;font-size:11.5px">🔗 LinkedIn ↗</a></div>` : ''}
-        <div style="margin-top:10px;font-size:10.5px;color:var(--w35)">${fromCache ? `<span style="color:#6ee7b7">✓ Fra cache (gratis · slået op ${new Date(d.cachedAt).toLocaleDateString('da-DK')})</span>` : `Apollo credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '100'}`}</div>
-      </div>`;
+    _renderLinkedinLookupResult(d, 'apollo');
   } catch (ex) {
     if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">Netværksfejl: ${e(ex.message)}</span>`;
   } finally {
     if (goBtn) { goBtn.disabled = false; goBtn.style.opacity = ''; }
   }
+}
+
+// Render the lookup result panel — handles both Lusha and Apollo response
+// shapes. Lusha returns a flatter shape (contact has phones[] directly);
+// Apollo returns contact+company+phones at the top level.
+function _renderLinkedinLookupResult(d, source){
+  const resultEl = document.getElementById('li-lookup-result');
+  if (!resultEl) return;
+  // Determine source from shape
+  const isLusha = source === 'lusha' || d.source === 'lusha';
+  const c = d.contact || {};
+  const co = isLusha ? { name: c.companyName || '', industry: c.companyIndustry || '' } : (d.company || {});
+  const phones = (isLusha ? c.phones : d.phones) || [];
+  const sources = d.sources || (isLusha ? ['lusha'] : ['apollo']);
+  const fromCache = !!d.cached;
+  const stillNoPhone = !phones.length && !isLusha && !!d.stillNoPhone;
+  // Merge in Lusha-partial data if Apollo fallback included it
+  const lushaPartial = d._lushaPartial;
+  const displayName = c.name && c.name !== '—' ? c.name : (lushaPartial?.name || '—');
+  const displayTitle = c.title || c.headline || lushaPartial?.title || '';
+  const displayCompany = co.name || lushaPartial?.companyName || '';
+  const displayEmail = c.email || lushaPartial?.email || '';
+  const displayLi = c.linkedin || c.linkedinUrl || lushaPartial?.linkedinUrl || '';
+
+  // Source chip
+  let srcChip;
+  if (fromCache) srcChip = `<span style="background:rgba(34,197,94,0.18);color:#6ee7b7;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Cached · 0 credit</span>`;
+  else if (isLusha) srcChip = `<span style="background:rgba(34,197,94,0.18);color:#6ee7b7;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Lusha · ${phones.length} DK ${phones.length===1?'nummer':'numre'}</span>`;
+  else if (sources.length > 1) srcChip = `<span style="background:rgba(124,58,237,0.18);color:#c4b5fd;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo + LinkedIn-scrape</span>`;
+  else srcChip = `<span style="background:rgba(255,255,255,0.06);color:var(--w55);padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo</span>`;
+
+  const phonesHtml = phones.length
+    ? phones.map(ph => {
+        const isDirect = ph.type === 'mobile' || ph.type === 'direct' || ph.type === 'work_direct';
+        const badge = isDirect
+          ? `<span style="background:rgba(52,211,153,0.18);color:#6ee7b7;border:1px solid rgba(52,211,153,0.35);padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;margin-left:4px">✓ ${e(ph.typeLabel)}</span>`
+          : `<span style="color:var(--w35);font-size:10px;margin-left:4px">${e(ph.typeLabel)}</span>`;
+        return `<div><a href="tel:${e(ph.number)}" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:13px">📞 ${e(ph.number)}</a>${badge}</div>`;
+      }).join('')
+    : '';
+
+  const noPhoneCta = phones.length === 0
+    ? (() => {
+        const googleQ = encodeURIComponent(`"${displayName||''}" ${displayCompany?'"'+displayCompany+'" ':''}+45 mobil direkte`);
+        return `
+      <div style="margin-top:10px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);border-radius:9px;padding:10px 12px">
+        <div style="font-size:11.5px;color:#fdba74;font-weight:700;margin-bottom:6px">⚠ Ingen DK-telefon fundet</div>
+        <div style="font-size:11px;color:var(--w80);margin-bottom:8px;line-height:1.4">Personen blev ${isLusha?'fundet i Lusha':'fundet'} men ingen DK-telefon. Prøv Google:</div>
+        <a href="https://www.google.com/search?q=${googleQ}" target="_blank" rel="noopener" style="display:inline-block;padding:5px 11px;background:rgba(124,58,237,0.18);border:1px solid rgba(124,58,237,0.35);border-radius:7px;color:#c4b5fd;font-size:11px;font-weight:700;text-decoration:none">🔎 Søg Google</a>
+      </div>`;
+      })()
+    : '';
+
+  const spendFooter = fromCache
+    ? `<span style="color:#6ee7b7">✓ Fra cache (gratis · slået op ${new Date(d.cachedAt).toLocaleDateString('da-DK')})</span>`
+    : isLusha
+      ? `Lusha credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '60'}`
+      : `Apollo credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '100'}`;
+
+  resultEl.innerHTML = `
+    <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:12px 14px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:2px">
+        <span style="font-size:13.5px;font-weight:800;color:#fff">${e(displayName)}</span>
+        ${srcChip}
+      </div>
+      <div style="font-size:11.5px;color:var(--w80);margin-bottom:8px">${e(displayTitle)} ${displayCompany ? '· ' + e(displayCompany) : ''}</div>
+      ${phonesHtml}
+      ${noPhoneCta}
+      ${displayEmail ? `<div style="margin-top:6px"><a href="mailto:${e(displayEmail)}" style="color:#c4b5fd;text-decoration:none;font-size:12px">✉ ${e(displayEmail)}</a></div>` : ''}
+      ${displayLi ? `<div style="margin-top:4px"><a href="${e(displayLi)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none;font-size:11.5px">🔗 LinkedIn ↗</a></div>` : ''}
+      <div style="margin-top:10px;font-size:10.5px;color:var(--w35)">${spendFooter}</div>
+    </div>`;
 }
 
 // Bookmarklet handler — if the URL has ?lookup-linkedin=<encoded-url>,
