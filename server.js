@@ -5880,8 +5880,13 @@ function filterDkPhones(phones) {
   });
 }
 
-// Core Lusha person lookup. Accepts {linkedinUrl} OR {firstName, lastName,
-// companyName} OR {email}. Returns normalised contact object on success.
+// Core Lusha person lookup. Lusha's v2 /person endpoint accepts:
+//   - email (sufficient on its own)
+//   - firstName + lastName + (companies OR companyDomain)
+// LinkedIn URL is NOT a valid lookup key on v2/person — Lusha only
+// surfaces LinkedIn-URL lookups through their Chrome extension or v1
+// enrichment API. So when a caller passes linkedinUrl, we split the
+// upstream contact's name and use first/last/company as the lookup.
 async function lushaLookupPerson(input) {
   if (!isLushaConfigured()) throw new Error("Lusha not configured");
   // Cap check pre-flight
@@ -5894,17 +5899,30 @@ async function lushaLookupPerson(input) {
     throw err;
   }
 
-  // Build the request body — Lusha v2 person lookup. Multiple match keys
-  // supported; we pass whatever we have, Lusha picks the best.
+  // Build the request body — strict Lusha v2 /person schema.
   const body = {};
-  if (input.linkedinUrl) body.linkedinUrl = input.linkedinUrl;
-  if (input.email)       body.email       = input.email;
-  if (input.firstName)   body.firstName   = input.firstName;
-  if (input.lastName)    body.lastName    = input.lastName;
-  if (input.companyName) body.companies   = [input.companyName];
-  if (input.companyDomain) body.companyDomain = input.companyDomain;
+  if (input.email) {
+    // Email-only lookup is sufficient
+    body.email = input.email;
+  } else {
+    // Need firstName + lastName + (companies OR companyDomain)
+    let first = input.firstName || "";
+    let last  = input.lastName || "";
+    // If caller passed a single fullName, split it
+    if (!first && !last && input.fullName) {
+      const parts = String(input.fullName).trim().split(/\s+/);
+      first = parts[0] || "";
+      last  = parts.slice(1).join(" ") || "";
+    }
+    if (!first || !last) return null; // not enough info
+    body.firstName = first;
+    body.lastName  = last;
+    if (input.companyName) body.companies = [input.companyName];
+    else if (input.companyDomain) body.companyDomain = input.companyDomain;
+    else return null; // company required for name-based lookup
+  }
 
-  if (Object.keys(body).length === 0) throw new Error("Lusha: need at least linkedinUrl, email, or name+company");
+  if (Object.keys(body).length === 0) return null;
 
   const r = await fetch(`${LUSHA_API_BASE}/v2/person`, {
     method: "POST",
@@ -5967,19 +5985,44 @@ async function lushaLookupPerson(input) {
   };
 }
 
-// POST /api/lusha/lookup — frontend wrapper. Accepts { url } or
-// { firstName, lastName, companyName, email }.
+// POST /api/lusha/lookup — frontend wrapper. Accepts:
+//   { url: <linkedin> }  → we'll try to extract name from the URL slug
+//                           (linkedin.com/in/john-doe-12345 → "John Doe")
+//   { firstName, lastName, companyName, companyDomain }
+//   { email }
+//
+// Lusha v2 /person doesn't accept LinkedIn URLs directly — we must
+// pass firstName+lastName+company. When all we have is a URL, we
+// best-effort parse the slug; for SDR research this is usually enough
+// because Nicolas already has the LinkedIn page open and could paste
+// the company name into the modal if the slug-parse misses.
 app.post("/api/lusha/lookup", authMiddleware, async (req, res) => {
   if (!isLushaConfigured()) {
     return res.status(503).json({ error: "Lusha ikke konfigureret — tilføj LUSHA_API_KEY i Secret Manager", configured: false });
   }
   const body = req.body || {};
+  // If a LinkedIn URL was passed, parse the slug for a name hint
+  let parsedFirst = "", parsedLast = "";
+  const url = String(body.url || body.linkedinUrl || "");
+  if (url && !body.firstName && !body.email) {
+    // Strip linkedin.com/in/ and trailing slash, then drop the trailing
+    // numeric hash that LinkedIn appends.
+    const slug = url
+      .replace(/^https?:\/\/([a-z]+\.)?linkedin\.com\/in\//i, "")
+      .replace(/\/.*$/, "")
+      .replace(/-+\d+$/, "")
+      .trim();
+    if (slug) {
+      const parts = slug.split(/[-_]/).filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+      parsedFirst = parts[0] || "";
+      parsedLast  = parts.slice(1).join(" ") || "";
+    }
+  }
   try {
     const result = await lushaLookupPerson({
-      linkedinUrl: body.url || body.linkedinUrl,
       email: body.email,
-      firstName: body.firstName,
-      lastName: body.lastName,
+      firstName: body.firstName || parsedFirst,
+      lastName:  body.lastName  || parsedLast,
       companyName: body.companyName,
       companyDomain: body.companyDomain,
     });
@@ -6085,7 +6128,17 @@ app.post("/api/cron/lusha-morning-reveal", async (req, res) => {
     }
     stats.lushaAttempted++;
     try {
-      const lusha = await lushaLookupPerson({ linkedinUrl: liUrl });
+      // Lusha v2 /person needs firstName + lastName + company. Pass the
+      // contact's name (split if it's a single field) + the lead's
+      // company name as the lookup keys.
+      const lusha = await lushaLookupPerson({
+        firstName: contactWithLi.firstName || (contactWithLi.name || "").split(/\s+/)[0],
+        lastName:  contactWithLi.lastName  || (contactWithLi.name || "").split(/\s+/).slice(1).join(" "),
+        fullName:  contactWithLi.name,
+        email:     contactWithLi.email,
+        companyName: lead.name,
+        companyDomain: (lead.web || lead.website || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, ""),
+      });
       // Always stamp the attempt timestamp so we don't retry too soon
       contactWithLi.lastLushaAttemptAt = new Date().toISOString();
       if (!lusha) continue;
@@ -6142,10 +6195,18 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
   const contactWithLi = (lead.contacts || []).find((c) => c.linkedin || c.linkedinUrl);
   const liUrl = contactWithLi?.linkedin || contactWithLi?.linkedinUrl;
 
-  // Try Lusha first if we have a LinkedIn URL + Lusha is configured
-  if (isLushaConfigured() && liUrl) {
+  // Try Lusha first if we have enough info + Lusha is configured.
+  // Lusha v2 /person needs name + company. LinkedIn URL alone won't work.
+  if (isLushaConfigured() && contactWithLi && (contactWithLi.name || contactWithLi.email)) {
     try {
-      const lusha = await lushaLookupPerson({ linkedinUrl: liUrl });
+      const lusha = await lushaLookupPerson({
+        firstName: contactWithLi.firstName || (contactWithLi.name || "").split(/\s+/)[0],
+        lastName:  contactWithLi.lastName  || (contactWithLi.name || "").split(/\s+/).slice(1).join(" "),
+        fullName:  contactWithLi.name,
+        email:     contactWithLi.email,
+        companyName: lead.name,
+        companyDomain: (lead.web || lead.website || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, ""),
+      });
       const dkPhones = lusha ? filterDkPhones(lusha.phones || []) : [];
       if (dkPhones.length > 0) {
         // Stamp on the contact + lead
@@ -7477,20 +7538,25 @@ async function tryRecoverPhoneForLead(lead) {
     if (serpResult && serpResult.phone) return serpResult;
   } catch (_) { /* SERP failed */ }
 
-  // PATH 4 — Lusha lookup if we have a contact LinkedIn URL on the lead.
-  // EU-native B2B DB with much better DK SMB direct-dial coverage than
-  // Apollo. Costs 1 Lusha credit (~$0.08). Only fires when other paths
-  // returned no phone AND we have a LinkedIn URL to look up.
+  // PATH 4 — Lusha lookup using contact name + lead company. EU-native
+  // B2B DB with much better DK SMB direct-dial coverage than Apollo.
+  // Costs 1 Lusha credit (~$0.08).
   if (isLushaConfigured()) {
-    const contactWithLi = (lead.contacts || []).find((c) => c.linkedin || c.linkedinUrl);
-    const liUrl = contactWithLi?.linkedin || contactWithLi?.linkedinUrl;
-    if (liUrl) {
+    const contactName = (lead.contacts || []).find((c) => c.name && c.name !== "—");
+    if (contactName && lead.name) {
       try {
-        const lusha = await lushaLookupPerson({ linkedinUrl: liUrl });
+        const lusha = await lushaLookupPerson({
+          firstName: contactName.firstName || (contactName.name || "").split(/\s+/)[0],
+          lastName:  contactName.lastName  || (contactName.name || "").split(/\s+/).slice(1).join(" "),
+          fullName:  contactName.name,
+          email:     contactName.email,
+          companyName: lead.name,
+          companyDomain: (lead.web || lead.website || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, ""),
+        });
         if (lusha && lusha.phones && lusha.phones.length > 0) {
           const dkPhones = filterDkPhones(lusha.phones);
           if (dkPhones.length > 0) {
-            return { phone: dkPhones[0].number, source: "lusha-linkedin", lushaContact: lusha };
+            return { phone: dkPhones[0].number, source: "lusha-name-company", lushaContact: lusha };
           }
         }
       } catch (e) {
