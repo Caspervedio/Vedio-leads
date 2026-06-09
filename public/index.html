@@ -5983,11 +5983,17 @@ function renderAutodialerPage(){
             fbUrl ? `<a href="${e(fbUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook-side" style="font-size:13px;text-decoration:none;color:#60a5fa;margin-left:6px;opacity:0.85" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">📘</a>` : '',
             adsCount > 0 ? `<a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
           ].join('');
-          return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.7':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
+          // Archive view: replace the action chip with the WHY ("Konkurrent",
+          // "For lille", etc) so the ledger is auditable at a glance.
+          const archiveReasonChip = (l.archived_reason && String(l.archived_reason).trim())
+            ? `<span title="Arkiveringsgrund" style="display:inline-block;font-size:10.5px;padding:3px 9px;border-radius:6px;background:rgba(248,113,113,0.12);color:#fca5a5;font-weight:700;border:1px solid rgba(248,113,113,0.28);letter-spacing:0.2px">${e(String(l.archived_reason).slice(0,60))}</span>`
+            : `<span style="font-size:10.5px;color:var(--w35);font-style:italic">ingen grund noteret</span>`;
+          const dispCell = showArchive ? archiveReasonChip : lastActionChip(l.lastAction);
+          return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.78':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}" ${showArchive?'':`onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='${l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             <td style="padding:10px 8px 10px 16px;font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${showArchive?'':'<span style="color:var(--w35);cursor:grab;margin-right:4px" title="Træk for at omarrangere">⠿</span>'}${i+1}</td>
             <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${adBadge?' '+adBadge:''}${socialIcons}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
-            <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
+            <td style="padding:10px 14px">${dispCell}</td>
             <td style="padding:10px 14px;text-align:right">${lastCell}</td>
             <td style="padding:10px 16px 10px 6px;text-align:right">${startCell}</td>
           </tr>`;
@@ -6726,10 +6732,15 @@ function openCockpit(forceCvr){
   cockpitUpdateToolbarButtons();
   // Keyboard shortcuts only active while cockpit is open
   document.addEventListener('keydown',cockpitKeyHandler);
+  // Poll every 60s for newly-due callbacks — injects them after current
+  // position so long call sessions don't miss scheduled follow-ups.
+  if (_cockpit.callbackPollId) clearInterval(_cockpit.callbackPollId);
+  _cockpit.callbackPollId = setInterval(_cockpitCheckDueCallbacks, 60_000);
 }
 
 function closeCockpit(){
   _cockpit.open=false;
+  if (_cockpit.callbackPollId) { clearInterval(_cockpit.callbackPollId); _cockpit.callbackPollId = null; }
   document.getElementById('cockpit').style.display='none';
   document.body.style.overflow='';
   document.removeEventListener('keydown',cockpitKeyHandler);
@@ -6862,6 +6873,127 @@ function _showMandatoryDispositionBanner() {
   // Auto-dismiss after 6 seconds so it doesn't stay forever
   setTimeout(() => el.remove(), 6000);
 }
+
+// ─── Archive-reason modal ───────────────────────────────────────────────
+// Fires when SDR picks "4 Ikke relevant" — captures WHY before archiving,
+// so the archive ledger is auditable and SDRs can't bury leads silently.
+// Cancelling leaves the lead untouched (no disposition recorded).
+const _ARCHIVE_REASONS = [
+  { id: 'konkurrent',         label: '🏢 Konkurrent' },
+  { id: 'forkert-branche',    label: '📦 Forkert branche' },
+  { id: 'for-lille',          label: '🪙 For lille (under ICP)' },
+  { id: 'for-stor',           label: '🏭 For stor (over ICP)' },
+  { id: 'har-leverandoer',    label: '🤝 Har allerede leverandør' },
+  { id: 'forkert-nummer',     label: '📵 Forkert / dødt nummer' },
+  { id: 'oensker-ikke',       label: '🚫 Ønsker ikke kontakt' },
+  { id: 'ikke-besluttager',   label: '👤 Ikke beslutningstager + ej tilgængelig' },
+];
+function _showArchiveReasonModal(lead) {
+  document.getElementById('archive-reason-overlay')?.remove();
+  _cockpit._pendingArchiveLead = lead;
+  const bg = document.createElement('div');
+  bg.id = 'archive-reason-overlay';
+  bg.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:"Outfit",sans-serif;animation:softphoneFadeIn 0.18s';
+  bg.innerHTML = `
+    <div style="background:#14111f;border:1px solid rgba(248,113,113,0.4);border-radius:18px;padding:26px 30px;min-width:480px;max-width:92vw;box-shadow:0 30px 80px rgba(0,0,0,0.7),0 0 60px rgba(248,113,113,0.12)">
+      <div style="font-size:34px;text-align:center;margin-bottom:2px">✕</div>
+      <div style="font-size:19px;font-weight:900;color:#fff;text-align:center;margin-bottom:4px">Hvorfor ikke relevant?</div>
+      <div style="font-size:12.5px;color:var(--w55);text-align:center;margin-bottom:18px"><strong style="color:var(--w80)">${e(lead.name || '—')}</strong> · grunden gemmes så Casper kan se hvorfor</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+        ${_ARCHIVE_REASONS.map(r => `<button onclick="_archiveReasonPick('${r.id}','${r.label.replace(/'/g, "\\'")}')" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:11px 13px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer;text-align:left;transition:all 0.1s" onmouseover="this.style.background='rgba(248,113,113,0.12)';this.style.borderColor='rgba(248,113,113,0.35)'" onmouseout="this.style.background='var(--w04)';this.style.borderColor='var(--w08)'">${r.label}</button>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <input id="archive-reason-other" placeholder="…eller skriv en grund (Enter for at gemme)" style="flex:1;background:var(--dark);border:1px solid var(--w08);border-radius:8px;padding:10px 12px;color:#fff;font-size:12.5px;outline:none;font-family:'Outfit',sans-serif" onkeydown="if(event.key==='Enter'){_archiveReasonPick('andet',this.value||'Andet');event.preventDefault();}">
+        <button onclick="const v=document.getElementById('archive-reason-other').value.trim();_archiveReasonPick('andet',v||'Andet')" style="background:linear-gradient(135deg,#dc2626,#ef4444);border:none;border-radius:8px;padding:10px 18px;color:#fff;font-weight:800;font-size:12px;cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px">Gem</button>
+      </div>
+      <div style="text-align:center">
+        <button onclick="_archiveReasonCancel()" style="background:transparent;border:0;color:var(--w55);font-size:11.5px;cursor:pointer;text-decoration:underline">Fortryd — leadet er ikke arkiveret endnu</button>
+      </div>
+    </div>
+  `;
+  bg.onclick = (ev) => { if (ev.target === bg) _archiveReasonCancel(); };
+  document.body.appendChild(bg);
+  setTimeout(() => document.getElementById('archive-reason-other')?.focus(), 80);
+  const keyHandler = (ev) => {
+    if (!document.getElementById('archive-reason-overlay')) {
+      window.removeEventListener('keydown', keyHandler);
+      return;
+    }
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      _archiveReasonCancel();
+      window.removeEventListener('keydown', keyHandler);
+    }
+  };
+  window.addEventListener('keydown', keyHandler);
+}
+function _archiveReasonCancel() {
+  _cockpit._pendingArchiveLead = null;
+  document.getElementById('archive-reason-overlay')?.remove();
+  showToast('Fortrudt — vælg en anden disposition');
+}
+async function _archiveReasonPick(reasonId, reasonLabel) {
+  const lead = _cockpit._pendingArchiveLead;
+  if (!lead) { document.getElementById('archive-reason-overlay')?.remove(); return; }
+  _cockpit._pendingArchiveLead = null;
+  document.getElementById('archive-reason-overlay')?.remove();
+  const nowIso = new Date().toISOString();
+  const reason = String(reasonLabel || reasonId || 'Andet').trim().slice(0, 200);
+  const patch = {
+    lastAction: 'not-relevant',
+    lastDispositionAt: nowIso,
+    lastCallAt: nowIso,
+    lastCallDirection: 'outbound',
+    archived_reason: reason,
+  };
+  if (!lead.firstCallAt) patch.firstCallAt = nowIso;
+  try {
+    await fetch(`/api/leads/${lead.cvr}`, {
+      method: 'PATCH',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    Object.assign(lead, patch);
+  } catch (ex) {
+    showToast('Fejl ved arkivering: ' + ex.message);
+    return;
+  }
+  showToast(`✕ Arkiveret — ${reason}`);
+  _cockpit.dialerState = 'pending';
+  renderCockpit();
+  cockpitUpdateToolbarButtons();
+  // Auto-advance to next lead (matches the old not-relevant behaviour).
+  setTimeout(() => cockpitAdvanceAfterDisposition(), 400);
+}
+
+// ─── Due-callback poller ────────────────────────────────────────────────
+// Cockpit builds its queue once on openCockpit(). If the SDR stays in
+// cockpit for hours, callbacks scheduled for later TODAY won't appear
+// until he closes+reopens. This 60s poll injects newly-due callbacks
+// just after the current position so the next "Næste" lands on them.
+function _cockpitCheckDueCallbacks() {
+  if (!_cockpit.open || !Array.isArray(_cockpit.queue)) return;
+  const now = Date.now();
+  const queueCvrs = new Set(_cockpit.queue.map(l => l.cvr));
+  const due = (typeof leads !== 'undefined' ? leads : []).filter(l =>
+    l.callback_at &&
+    new Date(l.callback_at).getTime() <= now &&
+    l.lastAction !== 'not-relevant' &&
+    l.phone_missing !== true &&
+    l.apollo_enrichment_pending !== true &&
+    !queueCvrs.has(l.cvr)
+  );
+  if (!due.length) return;
+  // Oldest-due first, injected right after current idx so the very next
+  // "Næste" (→) lands on them.
+  due.sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+  const insertAt = Math.min(_cockpit.idx + 1, _cockpit.queue.length);
+  _cockpit.queue.splice(insertAt, 0, ...due);
+  const names = due.map(l => l.name || '—').slice(0, 3).join(', ') + (due.length > 3 ? ` (+${due.length - 3} flere)` : '');
+  showToast(`📅 ${due.length} callback klar — næste lead: ${names}`);
+  if (typeof renderCockpit === 'function') renderCockpit();
+}
+
 function cockpitPrev(){
   if(_cockpit.idx>0){
     _cockpit.idx--;
@@ -7300,6 +7432,14 @@ async function cockpitDisposition(action){
   // Marking a disposition implies the call is over (either it finished
   // or the SDR is moving past it) — kill any active ringback tone.
   if(typeof softphoneStopRingback === 'function') softphoneStopRingback();
+  // "Ikke relevant" is special: we want a REASON captured before archiving,
+  // so the archive ledger is auditable ("Konkurrent", "For lille", etc.)
+  // and so SDRs can't silently bury leads. The modal patches + advances
+  // when a reason is picked; cancelling leaves the lead untouched.
+  if(action==='not-relevant'){
+    _showArchiveReasonModal(c);
+    return;
+  }
   // ALWAYS overwrite lastCallAt to the moment the disposition fires.
   //
   // Why: SDR dials manually on his iPhone (cockpit shows the number,
@@ -7353,8 +7493,6 @@ async function cockpitDisposition(action){
     // silently skipped — today's audit showed 0 demos pushed despite
     // ~1 booked per day. The push needs to be unmissable.
     _showInterestedTwentyPrompt(c);
-  } else if(action==='not-relevant'){
-    showToast('— Arkiveret');
   }
 
   // Transition: pending → dialing-of-next (only after disposition is set)
@@ -7369,14 +7507,8 @@ async function cockpitDisposition(action){
   //    then advances manually (or fires another disposition).
   //  - 'no-answer'  → callback picker handles the next step. Auto-advance
   //    once the picker closes (handled in cockpitSetCallback).
-  //  - 'not-relevant' → safe to auto-advance immediately.
-  if(action==='not-relevant'){
-    setTimeout(()=>{
-      if(_cockpit.dialerState!=='paused' && _cockpit.dialerState!=='idle'){
-        cockpitAdvanceAfterDisposition();
-      }
-    },600);
-  }
+  //  - 'not-relevant' → handled by _showArchiveReasonModal (returns early
+  //    above). Modal patches + advances when a reason is captured.
 }
 
 function cockpitAdvanceAfterDisposition(){
