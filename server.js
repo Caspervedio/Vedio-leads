@@ -5921,8 +5921,10 @@ async function lushaLookupPerson(input) {
   const contact = { contactId: "1" };
   if (fullName) contact.fullName = fullName;
   if (hasEmail) contact.email = input.email;
-  if (input.companyName) contact.companies = [{ name: input.companyName }];
-  if (input.companyDomain && !input.companyName) contact.companies = [{ domain: input.companyDomain }];
+  // Lusha requires isCurrent: true to mark the contact's CURRENT
+  // employer (the one we want phone for, not historical jobs).
+  if (input.companyName) contact.companies = [{ name: input.companyName, isCurrent: true }];
+  if (input.companyDomain && !input.companyName) contact.companies = [{ domain: input.companyDomain, isCurrent: true }];
 
   const body = { contacts: [contact] };
 
