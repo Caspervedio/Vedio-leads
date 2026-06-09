@@ -7053,10 +7053,28 @@ async function cockpitDisposition(action){
   // Marking a disposition implies the call is over (either it finished
   // or the SDR is moving past it) — kill any active ringback tone.
   if(typeof softphoneStopRingback === 'function') softphoneStopRingback();
+  // Auto-stamp lastCallAt if it's not already set.
+  //
+  // Why: SDR dials manually on his iPhone (cockpit shows the number,
+  // he types it on the phone). Without this auto-stamp, lastCallAt
+  // would stay null → "Ringet i dag" stat shows 0 even though 80
+  // calls happened. The disposition IS the proof a call took place.
+  //
+  // Only stamps when missing — so an actual "Ring"-button click that
+  // already stamped a timestamp (when CloudTalk was in the loop, or
+  // when Continuity ever gets wired) keeps that earlier value.
+  const nowIso = new Date().toISOString();
+  const patch = { lastAction: action, lastDispositionAt: nowIso };
+  if (!c.lastCallAt) {
+    patch.lastCallAt = nowIso;
+    patch.lastCallDirection = 'outbound';
+    c.lastCallAt = nowIso;
+    c.lastCallDirection = 'outbound';
+  }
   // Persist disposition on the lead.
   try{
-    await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:action,lastDispositionAt:new Date().toISOString()})});
-    c.lastAction=action;c.lastDispositionAt=new Date().toISOString();
+    await fetch(`/api/leads/${c.cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify(patch)});
+    c.lastAction=action;c.lastDispositionAt=nowIso;
   }catch(_){}
 
   // Disposition-specific side effects.
