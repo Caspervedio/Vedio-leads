@@ -6204,7 +6204,7 @@ function openFreshLeadsDrilldown(mode){
             <tbody>
               ${matched.map(l => `<tr style="border-bottom:1px solid var(--w04)">
                 <td style="padding:8px 10px;color:var(--w55);font-family:monospace;font-size:11.5px;white-space:nowrap">${e(fmtTime(tsKey(l)))}</td>
-                <td style="padding:8px 10px;color:#fff;font-weight:600"><button onclick="document.getElementById('fresh-leads-drill-modal').remove();sv('autodialer');setTimeout(()=>{openCockpit();setTimeout(()=>{const qi=(_cockpit.queue||[]).findIndex(x=>x.cvr==='${e(l.cvr||'')}');if(qi>=0)cockpitJump(qi);},120);},60);" style="all:unset;cursor:pointer;color:#fff;font-weight:600;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Åbn i cockpit">${e(l.name||'—')}</button></td>
+                <td style="padding:8px 10px;color:#fff;font-weight:600"><button onclick="document.getElementById('fresh-leads-drill-modal').remove();sv('autodialer');setTimeout(()=>adOpenLead('${e(l.cvr||'')}'), 100);" style="all:unset;cursor:pointer;color:#fff;font-weight:600;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Åbn i cockpit">${e(l.name||'—')}</button></td>
                 <td style="padding:8px 10px">${sourceChip(l.source||'')}</td>
                 <td style="padding:8px 10px;color:${(l.phone||l.ph)?'#6ee7b7':'var(--w35)'};font-family:monospace;font-size:11.5px">${e(l.phone||l.ph||'—')}</td>
                 <td style="padding:8px 10px;color:var(--w55);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(l.ind||l.industry||'—')}</td>
@@ -6635,8 +6635,12 @@ async function adRestoreLead(cvr){
 }
 // Open the cockpit and jump to a specific lead by CVR. Optionally start
 // the dialer immediately (the row's "▶ Start opkald" button).
+//
+// Force-include: even if the lead is in phone_missing / pending-enrichment
+// state (normally filtered out), we still let the SDR land on it so they
+// can inspect contacts, notes, history, etc.
 function adOpenLead(cvr, autostart){
-  openCockpit();
+  openCockpit(cvr);
   if(!_cockpit.open) return;            // queue was empty
   const qi=(_cockpit.queue||[]).findIndex(l=>l.cvr===cvr);
   if(qi>=0){ _cockpit.idx=qi; renderCockpit(); cockpitUpdateToolbarButtons(); }
@@ -6657,7 +6661,7 @@ function adJumpToLead(idx){
 
 const _cockpit={open:false,queue:[],idx:0,history:[]};
 
-function openCockpit(){
+function openCockpit(forceCvr){
   // Build queue from the leads currently visible in the user's selected list.
   let base=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
   // Hide leads scheduled for a future callback — they're not actionable
@@ -6667,14 +6671,28 @@ function openCockpit(){
   //   - currently-enriching leads — live in ⏳ Beriges nu
   // So the cockpit's call rotation only ever sees leads that are
   // fully enriched, have a phone, and aren't archived.
+  //
+  // forceCvr override: when the SDR explicitly asks to inspect a
+  // SPECIFIC lead (e.g. clicking from the Discovery pipeline drilldown
+  // or activity log), bypass these filters for that one lead so the
+  // cockpit can land on it. The lead just isn't dialable yet — but the
+  // SDR can still see the info card, contacts, history, etc.
   const now=Date.now();
   base=base.filter(l=>{
+    if(forceCvr && l.cvr === forceCvr) return true; // always include the requested lead
     if(l.lastAction==='not-relevant') return false;
     if(l.phone_missing===true) return false;
     if(l.apollo_enrichment_pending===true) return false;
     if(!l.callback_at) return true;
     return new Date(l.callback_at).getTime() <= now;
   });
+  // Defensive: if forceCvr was passed but the lead doesn't exist in `leads`
+  // at all (e.g. archived list or stale UI cache), still ensure we don't
+  // open an empty cockpit — fall through to the normal queue.
+  if (forceCvr && !base.some(l => l.cvr === forceCvr)) {
+    const forced = leads.find(l => l.cvr === forceCvr);
+    if (forced) base.unshift(forced);
+  }
   // Sort: callbacks-due-now first (time-sensitive), then ICP-klar, then
   // ad-count, then insertion order. Matches the priority sort on the
   // Autodialer landing page.
