@@ -1553,9 +1553,13 @@ function showApp(){
   // Boot the embedded softphone — first reveal lazily loads the iframe
   // so the page-load cost is paid only after login.
   softphoneInit();
-  // Start polling for inbound/outbound calls so the company screen-pops
-  // automatically (even with the softphone dock closed).
-  startCallPolling();
+  // CloudTalk subscription cancelled 2026-06-08 — the active-call
+  // polling would just hit a 503 every 3s. Disabled by default.
+  // To re-enable (if CloudTalk ever comes back), uncomment below or
+  // set localStorage.cloudtalk_polling = '1' in DevTools.
+  if (localStorage.getItem('cloudtalk_polling') === '1') {
+    startCallPolling();
+  }
 }
 
 // ─── Softphone — popup-default, iframe-dock opt-in ────────────────────
