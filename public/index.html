@@ -6716,6 +6716,7 @@ function openCockpit(forceCvr){
   const lastCvr=_cockpit.history[_cockpit.history.length-1];
   const resumeIdx=lastCvr?_cockpit.queue.findIndex(l=>l.cvr===lastCvr):-1;
   _cockpit.idx=resumeIdx>=0?resumeIdx:0;
+  _cockpit.leadEnteredAt = Date.now();        // start view-timer for first lead
   _cockpit.open=true;
   _cockpit.dialerState='idle'; // every reopen starts fresh
   const el=document.getElementById('cockpit');
@@ -6751,26 +6752,122 @@ function cockpitKeyHandler(ev){
 
 function cockpitCurrent(){return _cockpit.queue[_cockpit.idx]||null;}
 function cockpitNext(){
-  // Guard: when we're mid-call ('dialing') or waiting for disposition
-  // ('pending') after a call, block next-lead navigation until the SDR
-  // selects a disposition. This enforces "an action needs to be taken
-  // from 'Efter kald — vælg disposition' before continuing".
-  const c=cockpitCurrent();
-  if(c && (_cockpit.dialerState==='dialing' || _cockpit.dialerState==='pending') && !c.lastAction){
+  // Two-tier disposition guard.
+  //
+  // Tier 1 (existing): block when dialerState is dialing/pending and no
+  // lastAction yet — covers the "Start opkald" workflow.
+  //
+  // Tier 2 (manual-dial): if SDR has been on the lead >30 seconds
+  // without pressing a disposition, assume they've made a call (or are
+  // about to) and require disposition before advance. This catches the
+  // "I called but forgot to press a key" case that was undercounting
+  // calls by ~50% before today's fix.
+  const c = cockpitCurrent();
+  if (c && (_cockpit.dialerState === 'dialing' || _cockpit.dialerState === 'pending') && !c.lastAction) {
     showToast('Vælg en disposition før du går videre');
     return;
   }
-  if(_cockpit.idx<_cockpit.queue.length-1){
+  if (c && _cockpit.leadEnteredAt) {
+    const onLeadMs = Date.now() - _cockpit.leadEnteredAt;
+    const lastDispMs = c.lastDispositionAt ? new Date(c.lastDispositionAt).getTime() : 0;
+    const dispositionedDuringThisView = lastDispMs >= _cockpit.leadEnteredAt;
+    if (onLeadMs > 30 * 1000 && !dispositionedDuringThisView) {
+      _showMandatoryDispositionBanner();
+      return;
+    }
+  }
+  if (_cockpit.idx < _cockpit.queue.length - 1) {
     _cockpit.idx++;
-    if(_cockpit.dialerState==='dialing' || _cockpit.dialerState==='pending'){
-      _cockpit.dialerState='dialing';
+    _cockpit.leadEnteredAt = Date.now();         // reset view-timer for next lead
+    if (_cockpit.dialerState === 'dialing' || _cockpit.dialerState === 'pending') {
+      _cockpit.dialerState = 'dialing';
     }
     renderCockpit();
     cockpitUpdateToolbarButtons();
-  }else{showToast('Sidste lead i køen');}
+  } else { showToast('Sidste lead i køen'); }
+}
+
+// Big overlay after "1 Interesseret" — forces the SDR to decide on
+// the Twenty push immediately instead of advancing without it.
+// Press P to push, Escape or Senere to dismiss. Already-pushed leads
+// (twenty_opportunity_id set) get a different modal saying "allerede
+// pushet" so we don't accidentally double-push.
+function _showInterestedTwentyPrompt(lead) {
+  document.getElementById('twenty-prompt-overlay')?.remove();
+  if (lead.twenty_opportunity_id) {
+    // Already pushed — just show a brief toast, no modal
+    showToast(`✓ Interesseret · allerede i Twenty (${lead.twenty_opportunity_id.slice(0,8)})`);
+    return;
+  }
+  const bg = document.createElement('div');
+  bg.id = 'twenty-prompt-overlay';
+  bg.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:"Outfit",sans-serif;animation:softphoneFadeIn 0.18s';
+  bg.innerHTML = `
+    <div style="background:#14111f;border:1px solid rgba(96,165,250,0.45);border-radius:18px;padding:32px 36px;min-width:440px;max-width:90vw;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,0.7),0 0 60px rgba(96,165,250,0.18)">
+      <div style="font-size:48px;margin-bottom:8px">🎉</div>
+      <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.4px;margin-bottom:6px">Interesseret!</div>
+      <div style="font-size:13.5px;color:var(--w80);margin-bottom:6px"><strong style="color:#fff">${e(lead.name || '—')}</strong></div>
+      <div style="font-size:12.5px;color:var(--w55);margin-bottom:22px;line-height:1.5">Skub leadet til Twenty CRM nu, så demo-bookingen ikke ryger i glemmebogen.</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="twenty-prompt-push" onclick="_twentyPromptPush()" style="background:linear-gradient(135deg,#60a5fa,#3b82f6);border:none;border-radius:10px;padding:13px 24px;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:0.2px;box-shadow:0 8px 20px rgba(96,165,250,0.35)">→ Push til Twenty <span style="opacity:0.7;font-weight:600;margin-left:6px">[P]</span></button>
+        <button onclick="document.getElementById('twenty-prompt-overlay').remove();showToast('OK — husk at pushe manuelt før du går videre')" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:13px 22px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Senere</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--w35);margin-top:14px;letter-spacing:0.4px">Tryk <strong style="color:var(--w80)">P</strong> for push · <strong style="color:var(--w80)">Esc</strong> for senere</div>
+    </div>
+  `;
+  bg.onclick = (ev) => { if (ev.target === bg) bg.remove(); };
+  document.body.appendChild(bg);
+  // Keyboard shortcut: P to push, Escape to dismiss
+  const keyHandler = (ev) => {
+    if (!document.getElementById('twenty-prompt-overlay')) {
+      window.removeEventListener('keydown', keyHandler);
+      return;
+    }
+    if (ev.key === 'p' || ev.key === 'P') {
+      ev.preventDefault();
+      _twentyPromptPush();
+      window.removeEventListener('keydown', keyHandler);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      document.getElementById('twenty-prompt-overlay')?.remove();
+      showToast('OK — husk at pushe manuelt før du går videre');
+      window.removeEventListener('keydown', keyHandler);
+    }
+  };
+  window.addEventListener('keydown', keyHandler);
+}
+async function _twentyPromptPush() {
+  const btn = document.getElementById('twenty-prompt-push');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = 'Pusher…'; }
+  await cockpitPushToTwenty();
+  document.getElementById('twenty-prompt-overlay')?.remove();
+}
+
+// Big banner overlay when SDR tries to skip without disposition.
+// Pressing 1/2/3/4/5 clears it (regular disposition flow takes over).
+function _showMandatoryDispositionBanner() {
+  if (document.getElementById('mandatory-disp-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'mandatory-disp-banner';
+  el.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:1300;background:#1e1410;border:1px solid rgba(251,146,60,0.55);border-radius:12px;padding:14px 22px;color:#fdba74;font-size:13.5px;font-weight:700;max-width:540px;box-shadow:0 18px 48px rgba(0,0,0,0.6),0 0 24px rgba(251,146,60,0.3);font-family:"Outfit",sans-serif;display:flex;align-items:center;gap:14px;animation:softphoneFadeIn 0.2s';
+  el.innerHTML = `
+    <span style="font-size:22px">⚠</span>
+    <div style="flex:1">
+      <div style="font-size:14px;font-weight:800;color:#fb923c;margin-bottom:2px">Mark dispositionen først</div>
+      <div style="font-size:12px;color:var(--w80);font-weight:500;line-height:1.4">Du har været på leadet i 30+ sekunder. Tryk 1/2/3/4/5 for at registrere udfaldet — så tæller opkaldet i statistikken.</div>
+    </div>
+    <button onclick="this.parentNode.remove()" style="background:transparent;border:1px solid rgba(251,146,60,0.4);color:#fdba74;padding:5px 12px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
+  `;
+  document.body.appendChild(el);
+  // Auto-dismiss after 6 seconds so it doesn't stay forever
+  setTimeout(() => el.remove(), 6000);
 }
 function cockpitPrev(){
-  if(_cockpit.idx>0){_cockpit.idx--;renderCockpit();}
+  if(_cockpit.idx>0){
+    _cockpit.idx--;
+    _cockpit.leadEnteredAt = Date.now();     // reset view-timer
+    renderCockpit();
+  }
 }
 // Skip — abandon the current lead's call without a disposition and move on.
 // Resets the dialer to idle so the next lead starts clean. Does NOT mark
@@ -6788,7 +6885,11 @@ function cockpitSkip(){
     showToast('Sidste lead i køen');
   }
 }
-function cockpitJump(idx){_cockpit.idx=Math.max(0,Math.min(_cockpit.queue.length-1,idx));renderCockpit();}
+function cockpitJump(idx){
+  _cockpit.idx=Math.max(0,Math.min(_cockpit.queue.length-1,idx));
+  _cockpit.leadEnteredAt = Date.now();        // reset view-timer for the new lead
+  renderCockpit();
+}
 
 function renderCockpit(){
   const c=cockpitCurrent();if(!c)return;
@@ -7248,7 +7349,10 @@ async function cockpitDisposition(action){
     // history reflect a real conversation, not a no-answer.
     cockpitOpenCallbackPicker(c);
   } else if(action==='interested'){
-    showToast(`✓ Markeret som interesseret — klik "Push til Twenty" når du er klar (push'er ikke automatisk)`);
+    // Big modal so SDR can't miss the Twenty push step. Was getting
+    // silently skipped — today's audit showed 0 demos pushed despite
+    // ~1 booked per day. The push needs to be unmissable.
+    _showInterestedTwentyPrompt(c);
   } else if(action==='not-relevant'){
     showToast('— Arkiveret');
   }
