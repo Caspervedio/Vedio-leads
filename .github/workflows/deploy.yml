@@ -52,7 +52,7 @@ jobs:
             --subnet=leads-egress \
             --vpc-egress=all-traffic \
             --set-env-vars "DATA_DIR=/data,NODE_ENV=production,CVR_PROVIDER=datafordeler,CLOUDTALK_FROM_NUMBER=+4591309102,CLOUDTALK_AGENT_ID=560787" \
-            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,DATAFORDELER_KEY=datafordeler-key:latest,APOLLO_API_KEY=apollo-api-key:latest,LUSHA_API_KEY=LUSHA_API_KEY:latest,CLOUDTALK_API_KEY_ID=cloudtalk-api-key-id:latest,CLOUDTALK_API_KEY_SECRET=cloudtalk-api-key-secret:latest,CRON_SECRET=CRON_SECRET:latest,TWENTY_API_TOKEN=TWENTY_API_TOKEN:latest,TWENTY_WORKSPACE_URL=twenty-workspace-url:latest,TWENTY_OPP_STAGE=twenty-opp-stage:latest,APIFY_API_TOKEN=apify-api-token:latest"
+            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,DATAFORDELER_KEY=datafordeler-key:latest,APOLLO_API_KEY=apollo-api-key:latest,CLOUDTALK_API_KEY_ID=cloudtalk-api-key-id:latest,CLOUDTALK_API_KEY_SECRET=cloudtalk-api-key-secret:latest,CRON_SECRET=CRON_SECRET:latest,TWENTY_API_TOKEN=TWENTY_API_TOKEN:latest,TWENTY_WORKSPACE_URL=twenty-workspace-url:latest,TWENTY_OPP_STAGE=twenty-opp-stage:latest,APIFY_API_TOKEN=apify-api-token:latest"
 
       - name: Show service URL
         run: gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)'
