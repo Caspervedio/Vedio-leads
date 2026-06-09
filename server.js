@@ -5899,30 +5899,32 @@ async function lushaLookupPerson(input) {
     throw err;
   }
 
-  // Build the request body — strict Lusha v2 /person schema.
-  const body = {};
-  if (input.email) {
-    // Email-only lookup is sufficient
-    body.email = input.email;
-  } else {
-    // Need firstName + lastName + (companies OR companyDomain)
-    let first = input.firstName || "";
-    let last  = input.lastName || "";
-    // If caller passed a single fullName, split it
-    if (!first && !last && input.fullName) {
-      const parts = String(input.fullName).trim().split(/\s+/);
-      first = parts[0] || "";
-      last  = parts.slice(1).join(" ") || "";
-    }
-    if (!first || !last) return null; // not enough info
-    body.firstName = first;
-    body.lastName  = last;
-    if (input.companyName) body.companies = [input.companyName];
-    else if (input.companyDomain) body.companyDomain = input.companyDomain;
-    else return null; // company required for name-based lookup
-  }
+  // Build the request body — Lusha v2 /person is a BULK endpoint.
+  // Schema (from Lusha docs):
+  //   {
+  //     "contacts": [
+  //       {
+  //         "contactId": "<our-unique-id>",
+  //         "fullName": "First Last",
+  //         "email": "...",                    (optional)
+  //         "companies": [{ "name": "..." }]   (optional)
+  //       }
+  //     ]
+  //   }
+  // We always send exactly 1 contact in the array.
+  let fullName = "";
+  if (input.fullName) fullName = String(input.fullName).trim();
+  else if (input.firstName || input.lastName) fullName = `${input.firstName||""} ${input.lastName||""}`.trim();
+  const hasEmail = !!input.email;
+  if (!fullName && !hasEmail) return null;
 
-  if (Object.keys(body).length === 0) return null;
+  const contact = { contactId: "1" };
+  if (fullName) contact.fullName = fullName;
+  if (hasEmail) contact.email = input.email;
+  if (input.companyName) contact.companies = [{ name: input.companyName }];
+  if (input.companyDomain && !input.companyName) contact.companies = [{ domain: input.companyDomain }];
+
+  const body = { contacts: [contact] };
 
   const r = await fetch(`${LUSHA_API_BASE}/v2/person`, {
     method: "POST",
@@ -5937,13 +5939,26 @@ async function lushaLookupPerson(input) {
     const txt = await r.text().catch(() => "");
     if (r.status === 401) throw new Error("Lusha: invalid API key (check LUSHA_API_KEY secret)");
     if (r.status === 402 || r.status === 403) throw new Error("Lusha: out of credits or plan limit");
-    if (r.status === 404) return null; // person not found — that's OK
+    if (r.status === 404) return null;
     throw new Error(`Lusha ${r.status}: ${txt.slice(0, 200)}`);
   }
 
   const data = await r.json().catch(() => ({}));
-  const person = data?.data || data?.person || data || null;
-  if (!person || !person.fullName && !person.firstName) return null;
+  // Bulk response shape: { contacts: { "1": { data: {...} } } }  OR
+  //                       { contacts: [{ contactId, data: {...} }] }
+  let person = null;
+  if (data?.contacts) {
+    if (Array.isArray(data.contacts)) {
+      person = data.contacts[0]?.data || data.contacts[0] || null;
+    } else if (typeof data.contacts === "object") {
+      // Object map keyed by contactId
+      const firstKey = Object.keys(data.contacts)[0];
+      person = data.contacts[firstKey]?.data || data.contacts[firstKey] || null;
+    }
+  }
+  // Some versions return the person directly
+  if (!person) person = data?.data || data?.person || null;
+  if (!person || (!person.fullName && !person.firstName && !person.name)) return null;
 
   incrementLushaSpend(1);
 
