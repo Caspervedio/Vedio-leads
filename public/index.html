@@ -2141,10 +2141,21 @@ async function loadUserState(){
     if(status.ok && sd && sd.status){
       isServerMode=true;
       apiProvider=sd.provider||'cvrapi';
-      // Try stored token
+      // Try stored token. Cloud Run with min-instances=0 has cold-starts
+      // (5-10s while sessions.json loads from GCS Fuse). A 401 on the
+      // FIRST request might just mean the instance is still booting, not
+      // that the session is dead. Retry once after a short delay before
+      // wiping the localStorage token — otherwise every cold-start would
+      // force the SDR to re-login.
       const storedToken=localStorage.getItem('vl_token');
       if(storedToken){
-        const me=await fetch('/api/auth/me',{headers:{'Authorization':'Bearer '+storedToken}});
+        const tryMe = async () => fetch('/api/auth/me',{headers:{'Authorization':'Bearer '+storedToken}});
+        let me = await tryMe();
+        if(!me.ok && (me.status === 401 || me.status === 503 || me.status === 502)){
+          // Cold-start / transient — wait 1.5s and retry once
+          await new Promise(r => setTimeout(r, 1500));
+          me = await tryMe();
+        }
         if(me.ok){
           authToken=storedToken;
           currentUser=await me.json();
@@ -2156,9 +2167,11 @@ async function loadUserState(){
           },80);
           checkLinkedinLookupParam();
           return;
-        } else {
+        } else if (me.status === 401) {
+          // Genuinely invalid token after retry — clear it.
           localStorage.removeItem('vl_token');
         }
+        // Other errors: keep the token in case server recovers; show login
       }
       // Server token didn't work, fall through to local check
     }

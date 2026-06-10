@@ -141,37 +141,64 @@ function _loadSessionsFromDisk() {
   } catch (e) { console.warn("[sessions] load failed:", e.message); }
 }
 
-// Debounced disk writes — avoid I/O thrash if many sessions change in
-// rapid succession (e.g. boot or multi-user flow). 1-second debounce
-// is fine for session data.
+// Disk write with explicit fsync. GCS Fuse buffers writes in memory and
+// flushes lazily to Cloud Storage — without fsync, the buffer can sit in
+// the dying Cloud Run instance and never reach GCS. Result: every deploy
+// silently loses any session created in the last few seconds, and the
+// SDR sees "Ikke logget ind" on next refresh.
+//
+// fsync forces the Fuse layer to push the buffer to GCS before returning.
+// Slightly slower (50-200ms) but the durability is what we actually need.
+function _writeSessionsSync() {
+  try {
+    const out = {};
+    const now = new Date().toISOString();
+    for (const [token, userId] of sessions.entries()) {
+      out[token] = { userId, lastSeenAt: now };
+    }
+    fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true });
+    const fd = fs.openSync(SESSIONS_FILE, "w");
+    try {
+      fs.writeSync(fd, JSON.stringify(out));
+      try { fs.fsyncSync(fd); } catch (_) { /* fsync unsupported on some FSes — best-effort */ }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (e) { console.warn("[sessions] save failed:", e.message); }
+}
+
+// Debounce wrapper for high-frequency updates (e.g. lastSeenAt bumps on
+// repeated /api/auth/me calls). NEW sessions skip the debounce entirely
+// and write synchronously — see the sessions.set wrapper below.
 let _sessionsSaveTimer = null;
 function _saveSessionsToDisk() {
   if (_sessionsSaveTimer) return;
   _sessionsSaveTimer = setTimeout(() => {
     _sessionsSaveTimer = null;
-    try {
-      const out = {};
-      const now = new Date().toISOString();
-      for (const [token, userId] of sessions.entries()) {
-        out[token] = { userId, lastSeenAt: now };
-      }
-      fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true });
-      fs.writeFileSync(SESSIONS_FILE, JSON.stringify(out));
-    } catch (e) { console.warn("[sessions] save failed:", e.message); }
-  }, 1000);
+    _writeSessionsSync();
+  }, 250); // tight throttle — we want sessions durable fast
 }
 
 // Wrap the Map's set/delete so disk mirror happens automatically.
+// New sessions (login flows) write SYNCHRONOUSLY with fsync — we never
+// want to lose a fresh login to a Cloud Run cold-restart that happens
+// within the debounce window.
 const _origSessionsSet = sessions.set.bind(sessions);
 const _origSessionsDelete = sessions.delete.bind(sessions);
+const _origSessionsHas = sessions.has.bind(sessions);
 sessions.set = function(token, userId) {
+  const isNew = !_origSessionsHas(token);
   const r = _origSessionsSet(token, userId);
-  _saveSessionsToDisk();
+  if (isNew) {
+    _writeSessionsSync(); // durable immediately
+  } else {
+    _saveSessionsToDisk(); // debounced (just refreshing lastSeenAt)
+  }
   return r;
 };
 sessions.delete = function(token) {
   const r = _origSessionsDelete(token);
-  _saveSessionsToDisk();
+  _writeSessionsSync(); // explicit logout — durable immediately
   return r;
 };
 
