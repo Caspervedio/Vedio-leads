@@ -6435,20 +6435,17 @@ async function adEditPhone(cvr){
   }catch(e){ showToast('Fejl: '+e.message); }
 }
 
-// Quick archive — used by the ✕ button on research cards when the SDR
-// decides a phone-missing lead isn't worth researching. Marks lastAction=
-// not-relevant so it permanently disappears from the dialer.
+// Archive — used by the ✕ button on research cards when the SDR
+// decides a phone-missing lead isn't worth researching. Opens the
+// archive-reason modal (shared with cockpit) so the WHY is captured
+// alongside the lead in the archived ledger.
 async function adArchiveLead(cvr){
-  if(!confirm('Arkiver dette lead permanent?')) return;
-  try{
-    const r=await fetch('/api/leads/'+encodeURIComponent(cvr),{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:'not-relevant',archived_reason:'sdr-skip-research'})});
-    if(r.ok){
-      const lead=(leads||[]).find(l=>l.cvr===cvr);
-      if(lead){ lead.lastAction='not-relevant'; lead.archived_reason='sdr-skip-research'; }
-      showToast('Arkiveret');
-      renderAutodialerPage();
-    } else { showToast('Kunne ikke arkivere'); }
-  }catch(e){ showToast('Fejl: '+e.message); }
+  const lead = (leads || []).find(l => l.cvr === cvr);
+  if (!lead) { showToast('Lead ikke fundet'); return; }
+  _showArchiveReasonModal(lead, {
+    context: 'autodialer',
+    onComplete: () => renderAutodialerPage(),
+  });
 }
 
 // Save phone from the research-card input (no prompt — inline form).
@@ -6979,9 +6976,21 @@ const _ARCHIVE_REASONS = [
   { id: 'oensker-ikke',       label: '🚫 Ønsker ikke kontakt' },
   { id: 'ikke-besluttager',   label: '👤 Ikke beslutningstager + ej tilgængelig' },
 ];
-function _showArchiveReasonModal(lead) {
+// Pending-archive state shared between cockpit + autodialer entry points.
+// `context` decides whether we stamp call timestamps (cockpit = SDR
+// actually called) and what we do after the reason is captured.
+let _pendingArchive = null;
+function _showArchiveReasonModal(lead, opts) {
   document.getElementById('archive-reason-overlay')?.remove();
-  _cockpit._pendingArchiveLead = lead;
+  const o = opts || {};
+  _pendingArchive = {
+    lead,
+    context: o.context || 'cockpit',
+    onComplete: o.onComplete || null,
+  };
+  // Keep the legacy cockpit pointer so any in-flight cockpit code that
+  // still references _cockpit._pendingArchiveLead doesn't break.
+  if (_pendingArchive.context === 'cockpit') _cockpit._pendingArchiveLead = lead;
   const bg = document.createElement('div');
   bg.id = 'archive-reason-overlay';
   bg.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:"Outfit",sans-serif;animation:softphoneFadeIn 0.18s';
@@ -7019,13 +7028,17 @@ function _showArchiveReasonModal(lead) {
   window.addEventListener('keydown', keyHandler);
 }
 function _archiveReasonCancel() {
+  const ctx = _pendingArchive?.context || 'cockpit';
+  _pendingArchive = null;
   _cockpit._pendingArchiveLead = null;
   document.getElementById('archive-reason-overlay')?.remove();
-  showToast('Fortrudt — vælg en anden disposition');
+  showToast(ctx === 'cockpit' ? 'Fortrudt — vælg en anden disposition' : 'Annulleret');
 }
 async function _archiveReasonPick(reasonId, reasonLabel) {
-  const lead = _cockpit._pendingArchiveLead;
-  if (!lead) { document.getElementById('archive-reason-overlay')?.remove(); return; }
+  const state = _pendingArchive;
+  if (!state || !state.lead) { document.getElementById('archive-reason-overlay')?.remove(); return; }
+  const { lead, context, onComplete } = state;
+  _pendingArchive = null;
   _cockpit._pendingArchiveLead = null;
   document.getElementById('archive-reason-overlay')?.remove();
   const nowIso = new Date().toISOString();
@@ -7033,11 +7046,19 @@ async function _archiveReasonPick(reasonId, reasonLabel) {
   const patch = {
     lastAction: 'not-relevant',
     lastDispositionAt: nowIso,
-    lastCallAt: nowIso,
-    lastCallDirection: 'outbound',
     archived_reason: reason,
   };
-  if (!lead.firstCallAt) patch.firstCallAt = nowIso;
+  // Only the cockpit path stamps call timestamps — that's the SDR
+  // explicitly saying "I called this lead and they were not relevant."
+  // Autodialer-side archive (e.g. the ✕ on a research card) is a
+  // pre-call drop: SDR decided it wasn't worth researching the phone.
+  // We don't want to inflate the call-counter with leads that weren't
+  // actually dialed.
+  if (context === 'cockpit') {
+    patch.lastCallAt = nowIso;
+    patch.lastCallDirection = 'outbound';
+    if (!lead.firstCallAt) patch.firstCallAt = nowIso;
+  }
   try {
     await fetch(`/api/leads/${lead.cvr}`, {
       method: 'PATCH',
@@ -7050,10 +7071,14 @@ async function _archiveReasonPick(reasonId, reasonLabel) {
     return;
   }
   showToast(`✕ Arkiveret — ${reason}`);
+  if (typeof onComplete === 'function') {
+    try { onComplete(); } catch (_) { /* never block on caller */ }
+    return;
+  }
+  // Default: cockpit advance flow
   _cockpit.dialerState = 'pending';
   renderCockpit();
   cockpitUpdateToolbarButtons();
-  // Auto-advance to next lead (matches the old not-relevant behaviour).
   setTimeout(() => cockpitAdvanceAfterDisposition(), 400);
 }
 
