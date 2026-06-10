@@ -3212,7 +3212,18 @@ async function renderPipelineStatusWidget(){
       <a href="https://app.apollo.io/#/settings/plans/upgrade" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#dc2626,#ef4444);border:0;border-radius:8px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer;text-decoration:none;white-space:nowrap;letter-spacing:0.2px;box-shadow:0 4px 12px rgba(220,38,38,0.4)">→ Gå til Apollo</a>
     </div>`;
   })() : '';
-  // Hero row — total fresh leads today + Apollo credit hint
+  // Hero row — split into THREE metrics so SDR/admin can see the funnel
+  // step-by-step instead of being confused by "183 leads" that mostly
+  // didn't survive the drain's ICP gate.
+  //
+  //   Råleads analyseret = raw discovery output (incl. auto-archived)
+  //   I autodialer       = passed ICP gate, callable RIGHT NOW
+  //   Telefoner fundet   = phones recovered via phone-recovery cron
+  //
+  // The "I autodialer" count is what actually matters for daily output.
+  const icpKlar = Number(data.icpKlarToday || 0);
+  const rawTotal = Number(data.totalLeadsToday || 0);
+  const ratio = rawTotal > 0 ? Math.round((icpKlar / rawTotal) * 100) : null;
   const hero=`<div style="background:linear-gradient(135deg,rgba(124,58,237,0.18),rgba(124,58,237,0.04));border:1px solid rgba(124,58,237,0.3);border-radius:14px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
     <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
       <div style="width:34px;height:34px;border-radius:9px;background:rgba(124,58,237,0.22);display:flex;align-items:center;justify-content:center;font-size:16px">⚡</div>
@@ -3221,17 +3232,25 @@ async function renderPipelineStatusWidget(){
         <div style="font-size:10.5px;color:var(--w55);margin-top:1px">7 kilder · Mon-Fri</div>
       </div>
     </div>
-    <div style="flex:1;min-width:140px">
-      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Friske leads i dag ${data.totalLeadsToday>0?'<span style="color:var(--purple-light);font-size:9px;letter-spacing:0">↗</span>':''}</div>
-      ${data.totalLeadsToday > 0
-        ? `<button onclick="openFreshLeadsDrilldown('today')" style="all:unset;cursor:pointer;font-size:18px;font-weight:800;color:#fff;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Klik for at se de ${data.totalLeadsToday} friske leads">${data.totalLeadsToday}</button>`
-        : `<div style="font-size:18px;font-weight:800;color:#fff">${data.totalLeadsToday}</div>`}
+    <div style="flex:1;min-width:130px">
+      <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Råleads analyseret</div>
+      ${rawTotal > 0
+        ? `<button onclick="openFreshLeadsDrilldown('today')" style="all:unset;cursor:pointer;font-size:18px;font-weight:800;color:var(--w80);border-bottom:1px dashed rgba(124,58,237,0.4)" title="Klik for at se de ${rawTotal} råleads (incl. auto-arkiverede)">${rawTotal}</button>`
+        : `<div style="font-size:18px;font-weight:800;color:var(--w80)">${rawTotal}</div>`}
+      <div style="font-size:9.5px;color:var(--w35);margin-top:1px;letter-spacing:0.3px">incl. auto-arkiverede</div>
     </div>
-    <div style="flex:1;min-width:140px">
+    <div style="flex:1;min-width:130px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:6px 10px;margin:-6px -4px -6px -4px">
+      <div style="font-size:10px;color:#34d399;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">I autodialer ${icpKlar>0?'<span style="color:#34d399;font-size:9px;letter-spacing:0">●</span>':''}</div>
+      ${icpKlar > 0
+        ? `<button onclick="openFreshLeadsDrilldown('today')" style="all:unset;cursor:pointer;font-size:20px;font-weight:900;color:#fff;border-bottom:1px dashed rgba(52,211,153,0.4)" title="Klik for at se de ${icpKlar} ICP-klar leads fra i dag">${icpKlar}</button>`
+        : `<div style="font-size:20px;font-weight:900;color:#fff">${icpKlar}</div>`}
+      <div style="font-size:9.5px;color:#6ee7b7;margin-top:1px;letter-spacing:0.3px">${ratio !== null ? `${ratio}% pass-rate` : 'klar til opkald'}</div>
+    </div>
+    <div style="flex:1;min-width:130px">
       <div style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Telefoner fundet i dag ${data.phonesRecoveredToday>0?'<span style="color:var(--purple-light);font-size:9px;letter-spacing:0">↗</span>':''}</div>
       ${data.phonesRecoveredToday > 0
-        ? `<button onclick="openFreshLeadsDrilldown('phones-today')" style="all:unset;cursor:pointer;font-size:18px;font-weight:800;color:#fff;border-bottom:1px dashed rgba(124,58,237,0.4)" title="Klik for at se de ${data.phonesRecoveredToday} leads">${data.phonesRecoveredToday}</button>`
-        : `<div style="font-size:18px;font-weight:800;color:#fff">${data.phonesRecoveredToday}</div>`}
+        ? `<button onclick="openFreshLeadsDrilldown('phones-today')" style="all:unset;cursor:pointer;font-size:18px;font-weight:800;color:var(--w80);border-bottom:1px dashed rgba(124,58,237,0.4)" title="Klik for at se de ${data.phonesRecoveredToday} leads">${data.phonesRecoveredToday}</button>`
+        : `<div style="font-size:18px;font-weight:800;color:var(--w80)">${data.phonesRecoveredToday}</div>`}
     </div>
   </div>`;
 

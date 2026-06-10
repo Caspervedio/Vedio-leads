@@ -1789,32 +1789,25 @@ app.get("/api/discovery/pipeline-status", authMiddleware, (req, res) => {
     } catch { return null; }
   }
 
-  // Walk every user's leads, count by source prefix where
-  // discovered_at >= startOfCphDayUtc.
+  // Walk every user's leads ONCE, computing all three today-metrics in
+  // a single pass: leadsTodayBySource (raw scrapes), phonesRecoveredToday
+  // (phone-recovery cron hits), and icpKlarToday (passed the drain ICP
+  // gate AND callable in the autodialer queue). Single pass keeps the
+  // dashboard render fast even with 1500+ leads in the file.
   const leadsTodayBySource = {};
-  try {
-    if (fs.existsSync(DATA_DIR)) {
-      for (const f of fs.readdirSync(DATA_DIR)) {
-        if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
-        try {
-          const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
-          for (const l of (ud.leads || [])) {
-            const ts = l.discovered_at || l.addedAt;
-            if (!ts) continue;
-            const t = new Date(ts).getTime();
-            if (isNaN(t) || t < startOfCphDayUtc) continue;
-            const src = String(l.source || "");
-            if (!src) continue;
-            leadsTodayBySource[src] = (leadsTodayBySource[src] || 0) + 1;
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-
-  // Phone-recovery doesn't add leads — count phones recovered today via
-  // a marker field on leads (set by /api/cron/recover-phones).
   let phonesRecoveredToday = 0;
+  let icpKlarToday = 0; // PR1: leads discovered today that survived to be callable
+
+  // The cockpit/autodialer queue filter — keep in sync with
+  // renderAutodialerPage() in index.html. If a lead matches this, it's
+  // sitting in the SDR's active queue right now.
+  const isCallable = (l) =>
+    l.lastAction !== "not-relevant" &&
+    l.phone_missing !== true &&
+    l.apollo_enrichment_pending !== true &&
+    l.meta_verified_active !== false &&
+    l.icpFit === true;
+
   try {
     if (fs.existsSync(DATA_DIR)) {
       for (const f of fs.readdirSync(DATA_DIR)) {
@@ -1822,11 +1815,22 @@ app.get("/api/discovery/pipeline-status", authMiddleware, (req, res) => {
         try {
           const ud = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), "utf8"));
           for (const l of (ud.leads || [])) {
-            const ts = l.phone_research_at || l.phone_recovered_at;
-            if (!ts) continue;
-            const t = new Date(ts).getTime();
-            if (isNaN(t) || t < startOfCphDayUtc) continue;
-            phonesRecoveredToday++;
+            // discovered today → count by source + check ICP-klar
+            const disc = l.discovered_at || l.addedAt;
+            if (disc) {
+              const t = new Date(disc).getTime();
+              if (!isNaN(t) && t >= startOfCphDayUtc) {
+                const src = String(l.source || "");
+                if (src) leadsTodayBySource[src] = (leadsTodayBySource[src] || 0) + 1;
+                if (isCallable(l)) icpKlarToday++;
+              }
+            }
+            // Phone recovery happens INDEPENDENTLY of discovery date
+            const recTs = l.phone_research_at || l.phone_recovered_at;
+            if (recTs) {
+              const t = new Date(recTs).getTime();
+              if (!isNaN(t) && t >= startOfCphDayUtc) phonesRecoveredToday++;
+            }
           }
         } catch {}
       }
@@ -1865,7 +1869,8 @@ app.get("/api/discovery/pipeline-status", authMiddleware, (req, res) => {
   res.json({
     ok: true,
     today: cphDateStr,
-    totalLeadsToday: totalToday,
+    totalLeadsToday: totalToday,    // raw scrapes today (incl. archived)
+    icpKlarToday,                   // PR1: actually callable in autodialer
     phonesRecoveredToday,
     sources,
     apolloStatus,
@@ -8935,7 +8940,13 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   }
   stats.dfCandidatesRaw = enhedsIds.size;
   if (enhedsIds.size === 0) {
-    console.log("[branche-walk] no DF candidates for", codeEntry.code);
+    // PR1: save state BEFORE returning. Otherwise the codeCursor advance
+    // we did at the top of the handler stays in memory only and never
+    // hits disk — next run loads the old cursor and tries the SAME
+    // empty branche forever. Today we burned three cron fires looping
+    // on code 961040 with "no DF candidates" for exactly this reason.
+    saveBrancheWalkState(state);
+    console.log("[branche-walk] no DF candidates for", codeEntry.code, "— cursor advanced to next branche");
     return res.json({ ok: true, stats, note: "no DF candidates" });
   }
 
