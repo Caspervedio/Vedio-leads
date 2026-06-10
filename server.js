@@ -2295,6 +2295,97 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
           } catch (_) { /* registry miss */ }
         }
 
+        // STEP 0.5 (PR2) — ICP GATE. Discovery endpoints save raw leads
+        // with icpFit unset; drain verifies them HERE before the lead
+        // becomes callable. Three outcomes:
+        //   • Apollo doesn't find the company → archive ("ikke fundet")
+        //   • Found but fails 1-15 emp / 2-15M DKK rev / DK gate → archive
+        //   • Pass → set icpFit=true + populate org data, continue to STEP 1
+        // Cost: 1-2 credits per raw lead (find + enrich). Skipped when
+        // force=true (SDR clicked "Find beslutningstager" — they want
+        // contacts regardless of ICP).
+        const needsIcpVerify = lead.icpFit !== true;
+        if (needsIcpVerify && !force) {
+          let domain = String(lead.web || lead.website || "")
+            .replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
+          if (!domain && lead.name) {
+            const found = await apolloFindCompany({ name: lead.name });
+            if (found && found.domain) {
+              domain = found.domain;
+              // Stash on lead so future drains skip this lookup.
+              const udd = loadUserData(userId);
+              const ldd = (udd.leads || []).find((l) => l.cvr === cvr);
+              if (ldd) { ldd.web = domain; ldd.apollo_company_id = found.id; saveUserData(userId, udd); }
+            }
+          }
+          if (!domain) {
+            // Apollo doesn't have this advertiser. Likely not a registered
+            // DK company we can target. Archive with a clear audit trail.
+            const udx = loadUserData(userId);
+            const lx = (udx.leads || []).find((l) => l.cvr === cvr);
+            if (lx) {
+              lx.lastAction = "not-relevant";
+              lx.lastDispositionAt = new Date().toISOString();
+              lx.archived_reason = "Apollo: ikke fundet i database";
+              lx.apollo_enrichment_pending = false;
+              saveUserData(userId, udx);
+              logActivity("icp-fail", `✕ Auto-arkiveret (ej i Apollo): ${lx.name}`, { cvr, userId });
+            }
+            continue;
+          }
+          const orgEnrich = await apolloOrgEnrich(domain);
+          if (!orgEnrich) {
+            const udx = loadUserData(userId);
+            const lx = (udx.leads || []).find((l) => l.cvr === cvr);
+            if (lx) {
+              lx.lastAction = "not-relevant";
+              lx.lastDispositionAt = new Date().toISOString();
+              lx.archived_reason = "Apollo: ingen org-data tilgængelig";
+              lx.apollo_enrichment_pending = false;
+              saveUserData(userId, udx);
+            }
+            continue;
+          }
+          if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees || lead.emp)) {
+            const empN = orgEnrich.estimatedEmployees || lead.emp || "?";
+            const revM = orgEnrich.annualRevenue
+              ? Math.round((orgEnrich.annualRevenue / 1e6) * 10) / 10 + "M"
+              : "?";
+            const reason = orgEnrich.country && orgEnrich.country !== "Denmark"
+              ? `Apollo ICP: udenfor DK (${orgEnrich.country})`
+              : `Apollo ICP: ${empN} emp, ${revM} DKK rev`;
+            const udx = loadUserData(userId);
+            const lx = (udx.leads || []).find((l) => l.cvr === cvr);
+            if (lx) {
+              lx.lastAction = "not-relevant";
+              lx.lastDispositionAt = new Date().toISOString();
+              lx.archived_reason = reason;
+              lx.apollo_company = orgEnrich;
+              lx.apollo_enriched_at = new Date().toISOString();
+              lx.apollo_enrichment_pending = false;
+              saveUserData(userId, udx);
+              logActivity("icp-fail", `✕ Auto-arkiveret (ICP-fail): ${lx.name} — ${reason}`, { cvr, userId });
+            }
+            continue;
+          }
+          // ICP-pass — promote to icpFit + populate org data. Lead now
+          // eligible for the cockpit queue. Falls through to STEP 1/2.
+          const udx = loadUserData(userId);
+          const lx = (udx.leads || []).find((l) => l.cvr === cvr);
+          if (lx) {
+            lx.icpFit = true;
+            lx.apollo_company = orgEnrich;
+            if (!lx.web) lx.web = domain;
+            if (!lx.ind) lx.ind = orgEnrich.industry || "";
+            if (!lx.emp && orgEnrich.estimatedEmployees) lx.emp = String(orgEnrich.estimatedEmployees);
+            if (!lx.emps) lx.emps = orgEnrich.estimatedEmployees || null;
+            if (!lx.omsaetning) lx.omsaetning = orgEnrich.annualRevenue || 0;
+            if (orgEnrich.metaAdvertiser) lx.meta_advertiser = true;
+            saveUserData(userId, udx);
+            Object.assign(lead, lx);
+          }
+        }
+
         // STEP 1 (frugal skip) — if we already have a phone (Datafordeler
         // either now or from earlier scrape) AND this is the auto-drain
         // path (not user-forced), DON'T burn Apollo credits. Mark the
@@ -5430,7 +5521,15 @@ const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 //   - apolloMatchPerson() — throws CAP_REACHED before the API call
 //   - drain-enrichment cron — bails the worker loop when cap is hit
 //   - /api/apollo/enrich/:cvr — returns 429 to the cockpit button
-const APOLLO_DAILY_CAP = 100;
+// PR2 (2026-06-10): bumped 100 → 300. After moving the ICP gate into
+// drain-enrichment, the drain processes EVERY raw discovery lead: 1
+// credit (apolloFindCompany) + 1 (apolloOrgEnrich) + 1 (apolloMatchPerson)
+// per ICP-pass lead, 2 credits per ICP-fail lead. Meta-ads alone drops
+// ~150 raw leads/day so the old 100/day cap created a backlog faster
+// than drain could clear it. 300/day × 22 weekdays = 6,600/month —
+// well inside Apollo Pro's 10k allowance with headroom for cockpit
+// "Find beslutningstager" reveals.
+const APOLLO_DAILY_CAP = 300;
 const APOLLO_SPEND_FILE = path.join(DATA_DIR, "discovery", "apollo_spend.json");
 
 function _cphDateStr(d = new Date()) {
@@ -5585,6 +5684,14 @@ function normaliseCompanyName(name) {
 async function apolloFindCompany({ name }) {
   const cleanName = normaliseCompanyName(name);
   if (!cleanName) return null;
+  // PR2: pre-flight cap check. Without this, drain could keep calling
+  // Apollo all day without ever tripping the cap (which was only
+  // incremented by apolloMatchPerson before). Throws the typed sentinel
+  // so callers break out of their loop cleanly.
+  const spendState = loadApolloSpend();
+  if (spendState.spent >= APOLLO_DAILY_CAP) {
+    throw new ApolloCapReachedError(spendState.spent, APOLLO_DAILY_CAP);
+  }
   const r = await fetch(`${APOLLO_API_BASE}/mixed_companies/search`, {
     method: "POST",
     headers: {
@@ -5607,6 +5714,8 @@ async function apolloFindCompany({ name }) {
     throw new Error(`Apollo company search ${r.status}: ${text.slice(0, 200)}`);
   }
   clearApolloExhausted();
+  // Apollo counts this against the monthly allowance — bump our counter.
+  incrementApolloSpend(1);
   const d = await r.json();
   const orgs = d.organizations || d.accounts || [];
   // Prefer DK orgs with a website
@@ -5858,6 +5967,11 @@ function mapApolloOrganization(org) {
 async function apolloOrgEnrich(domain) {
   const d = String(domain || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
   if (!d) return null;
+  // PR2: pre-flight cap check (same rationale as apolloFindCompany).
+  const spendState = loadApolloSpend();
+  if (spendState.spent >= APOLLO_DAILY_CAP) {
+    throw new ApolloCapReachedError(spendState.spent, APOLLO_DAILY_CAP);
+  }
   const r = await fetch(`https://api.apollo.io/v1/organizations/enrich?domain=${encodeURIComponent(d)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Api-Key": process.env.APOLLO_API_KEY },
@@ -5875,6 +5989,8 @@ async function apolloOrgEnrich(domain) {
     return null;
   }
   clearApolloExhausted();
+  // Apollo counts this against the monthly allowance — bump our counter.
+  incrementApolloSpend(1);
   const j = await r.json().catch(() => ({}));
   return j.organization ? mapApolloOrganization(j.organization) : null;
 }
@@ -8065,95 +8181,51 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
   stats.alreadyScanned = stats.uniqueAdvertisers - fresh.length;
   stats.fresh = fresh.length;
 
-  // 3. For each fresh advertiser: resolve to Apollo + ICP filter
+  // 3. (PR2: lazy-enrich) Save each LinkedIn advertiser as a RAW lead.
+  //    No Apollo at discovery — drain-enrichment runs ICP gate + contacts
+  //    fetch later, capped at 300/day. LinkedIn ads source by construction
+  //    means linkedin_advertiser=true (they're paying for LinkedIn ads,
+  //    a strong B2B intent signal that survives the lazy-enrich pivot).
+  const checkedAt = new Date().toISOString();
   for (const adv of fresh) {
-    let apolloOrg = null;
-    let orgEnrich = null;
-    try {
-      apolloOrg = await apolloFindCompany({ name: adv.name });
-      await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[linkedin-ads-discover] Apollo credits exhausted — breaking loop");
-        stats.apolloExhausted = true;
-        break;
-      }
-      stats.errors++; continue;
-    }
-    if (!apolloOrg || !apolloOrg.domain) { stats.apolloMisses++; continue; }
-
-    try {
-      orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
-      await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[linkedin-ads-discover] Apollo credits exhausted — breaking loop");
-        stats.apolloExhausted = true;
-        break;
-      }
-      stats.errors++; continue;
-    }
-    if (!orgEnrich) { stats.apolloMisses++; continue; }
-    stats.apolloResolved++;
-
-    // ICP gate — DK + 1-15 emp + 2-15M DKK revenue. Unknown fields = include.
-    if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees)) {
-      if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk++;
-      else stats.skippedSize++;
-      continue;
-    }
-    const emp = orgEnrich.estimatedEmployees;
-
-    // Append directly — LinkedIn ad presence already proves they're actively
-    // marketing. Different platform from Meta, no need to cross-verify on
-    // Meta Ad Library (would push them to Måske-relevant incorrectly).
     try {
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
-      const syntheticCvr = `linkedin-${apolloOrg.id}`;
-      const dupes = ud.leads.some((l) =>
-        l.cvr === syntheticCvr ||
-        l.cvr === `apollo-${apolloOrg.id}` ||
-        l.cvr === `tech-${apolloOrg.id}` ||
-        l.cvr === `gmaps-${apolloOrg.id}` ||
-        (apolloOrg.domain && (l.web || "").toLowerCase() === apolloOrg.domain.toLowerCase())
+      // Synthetic CVR from hash of name (LinkedIn doesn't give us a stable ID)
+      const hashSeed = adv.name.toLowerCase().trim();
+      let hash = 0;
+      for (let i = 0; i < hashSeed.length; i++) hash = ((hash << 5) - hash + hashSeed.charCodeAt(i)) | 0;
+      const syntheticCvr = `linkedin-${Math.abs(hash).toString(36)}`;
+      const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
+      const dupByName = ud.leads.some(
+        (l) => (l.name || "").toLowerCase().trim() === adv.name.toLowerCase().trim(),
       );
-      if (dupes) continue;
-
-      const phone = orgEnrich.phone || "";
-      const hasPhone = !!phone.toString().trim();
-      const now = new Date().toISOString();
+      if (dupByCvr || dupByName) continue;
       ud.leads.push({
         cvr: syntheticCvr,
         name: adv.name,
-        addr: "", zip: "", city: orgEnrich.city || "",
-        ph: phone, em: "", web: apolloOrg.domain, ind: orgEnrich.industry || "",
-        ic: "",
-        emp: typeof emp === "number" ? String(emp) : "",
-        emps: emp, st: "aktiv", yr: "", form: "",
+        addr: "", zip: "", city: "", ph: "", em: "", web: "", ind: "", ic: "",
+        emp: "", emps: null, st: "aktiv", yr: "", form: "",
         eq: 0, res: 0, omsaetning: 0,
         source: "linkedin-ads-discover",
-        icpFit: true,
+        icpFit: false, // drain-enrichment sets to true on ICP-pass
         meta_advertiser: false,
         linkedin_advertiser: true,
         ad_signals: ["LinkedIn Ad Library (live)"],
-        // null = not Meta-verified (different platform). Autodialer
-        // filter allows leads with meta_verified_active!==false through;
-        // LinkedIn-sourced leads are dialable without Meta check.
         meta_verified_active: null,
         meta_verified_at: null,
         meta_live_ad_count: null,
-        linkedin_url: adv.linkedinUrl || orgEnrich.linkedinUrl || "",
-        apollo_company: orgEnrich,
-        apollo_enrichment_pending: isApolloConfigured(),
+        linkedin_url: adv.linkedinUrl || "",
+        apollo_company: null,
+        apollo_enrichment_pending: true, // drain picks this up
         apollo_enriched_at: null,
-        phone_missing: !hasPhone,
-        discovered_at: now,
+        phone_missing: true,
+        discovered_at: checkedAt,
         pushed_to_cloudtalk_at: null,
         twenty_opportunity_id: null,
       });
       saveUserData(TARGET_USER, ud);
-      stats.leadsAppended++;
+      stats.rawAppended = (stats.rawAppended || 0) + 1;
     } catch (e) { stats.errors++; }
   }
 
@@ -8161,7 +8233,7 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
   saveLinkedInDiscoverState(state);
   logActivity(
     "discovery",
-    `LinkedIn-discover (${query.label}): ${stats.adsScraped} ads · ${stats.fresh} nye · ${stats.apolloResolved} apollo · ${stats.leadsAppended} tilføjet`,
+    `LinkedIn-discover (${query.label}): ${stats.adsScraped} ads · ${stats.fresh} nye · ${stats.rawAppended || 0} råleads gemt (afventer ICP-check via drain)`,
     { stats, userId: TARGET_USER },
   );
   console.log("[linkedin-ads-discover] done:", JSON.stringify(stats));
@@ -8298,142 +8370,63 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
     return res.status(502).json({ error: `OSM scrape failed: ${e.message}` });
   }
 
-  // 2. For each OSM business: resolve to Apollo by name (DK location), then ICP-filter
-  const candidatesPassed = [];
+  // 2. (PR2: lazy-enrich) Save each OSM business as a RAW lead. No Apollo
+  //    at discovery time. The drain-enrichment cron (every 5 min, 300/day
+  //    cap) will run apolloFindCompany + apolloOrgEnrich + ICP gate. ICP-
+  //    fail (incl. non-DK, oversized, undersized) leads auto-archive
+  //    there. We also lose the inline Apify Meta Ad verify — drain's
+  //    Apollo enrich exposes the `metaAdvertiser` flag instead.
+  const checkedAt = new Date().toISOString();
   for (const p of parsed) {
     const key = `${(p.name || "").toLowerCase()}|${(p.city || "").toLowerCase()}`;
     if (state.scannedNames[key]) { stats.skippedDuplicates++; continue; }
-    state.scannedNames[key] = new Date().toISOString();
-
-    let apolloOrg = null;
-    let orgEnrich = null;
-    try {
-      apolloOrg = await apolloFindCompany({ name: p.name });
-      await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[gmaps-discover] Apollo credits exhausted — breaking loop");
-        stats.apolloExhausted = true;
-        break;
-      }
-      stats.errors++; continue;
-    }
-    if (!apolloOrg || !apolloOrg.domain) { stats.apolloMisses++; continue; }
-
-    try {
-      orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
-      await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[gmaps-discover] Apollo credits exhausted — breaking loop");
-        stats.apolloExhausted = true;
-        break;
-      }
-      stats.errors++; continue;
-    }
-    if (!orgEnrich) { stats.apolloMisses++; continue; }
-    stats.apolloResolved++;
-
-    // ICP gate — DK + 1-15 emp + 2-15M DKK revenue. Unknown fields = include.
-    if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees)) {
-      if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk++;
-      else stats.skippedSize++;
-      continue;
-    }
-    const emp = orgEnrich.estimatedEmployees;
-
-    candidatesPassed.push({
-      cand: {
-        id: apolloOrg.id,
-        name: p.name,
-        domain: apolloOrg.domain,
-        phone: p.phone || orgEnrich.phone || "",
-        employees: emp,
-        industry: orgEnrich.industry || query.category,
-        city: p.city || orgEnrich.city || "",
-      },
-      orgEnrich,
-    });
-  }
-
-  // 3. Batch live-Meta verify
-  const verifyMap = new Map();
-  if (candidatesPassed.length > 0) {
-    try {
-      const startUrls = candidatesPassed.map(({ cand }) => ({
-        url: buildAdsLibraryUrl(brandForMetaAdsSearch(cand.name)),
-        _domain: cand.domain.toLowerCase(),
-      }));
-      const items = await apifyVerifyMetaAds(startUrls);
-      const urlToDomain = new Map(startUrls.map((s) => [s.url, s._domain]));
-      const byUrl = new Map();
-      for (const it of items) {
-        const u = it.inputUrl;
-        if (!byUrl.has(u)) byUrl.set(u, []);
-        byUrl.get(u).push(it);
-      }
-      const checkedAt = new Date().toISOString();
-      for (const [url, group] of byUrl) {
-        const domain = urlToDomain.get(url);
-        if (!domain) continue;
-        const c = classifyAdActivity(group);
-        verifyMap.set(domain, { active: c.recent90d > 0, activeNow: c.activeNow, recent90d: c.recent90d, totalCount: c.total, checkedAt });
-      }
-      stats.verifiedActive = [...verifyMap.values()].filter((v) => v.active).length;
-      stats.verifiedInactive = [...verifyMap.values()].filter((v) => !v.active).length;
-    } catch (e) {
-      console.warn("[gmaps-discover] verify failed:", e.message);
-      stats.errors++;
-    }
-  }
-
-  // 4. Append verified-active leads
-  for (const { cand, orgEnrich } of candidatesPassed) {
-    const verify = verifyMap.get((cand.domain || "").toLowerCase());
-    if (!verify || !verify.active) continue;
+    state.scannedNames[key] = checkedAt;
     try {
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
-      const syntheticCvr = `gmaps-${cand.id}`;
-      const dupes = ud.leads.some((l) =>
-        l.cvr === syntheticCvr ||
-        l.cvr === `apollo-${cand.id}` ||
-        l.cvr === `tech-${cand.id}` ||
-        (cand.domain && (l.web || "").toLowerCase() === cand.domain.toLowerCase())
+      // Synthetic CVR uses a hash of name+city to keep it stable across
+      // runs (OSM doesn't give us a persistent business ID).
+      const hashSeed = `${p.name}|${p.city || ""}`.toLowerCase();
+      let hash = 0;
+      for (let i = 0; i < hashSeed.length; i++) hash = ((hash << 5) - hash + hashSeed.charCodeAt(i)) | 0;
+      const syntheticCvr = `gmaps-${Math.abs(hash).toString(36)}`;
+      const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
+      const dupByName = ud.leads.some(
+        (l) => (l.name || "").toLowerCase().trim() === p.name.toLowerCase().trim(),
       );
-      if (dupes) continue;
-      const hasPhone = !!(cand.phone || "").toString().trim();
+      if (dupByCvr || dupByName) { stats.skippedDuplicates++; continue; }
+      const hasPhone = !!(p.phone || "").toString().trim();
       ud.leads.push({
         cvr: syntheticCvr,
-        name: cand.name,
-        addr: "", zip: "", city: cand.city, ph: cand.phone || "", em: "",
-        web: cand.domain, ind: cand.industry, ic: "",
-        emp: typeof cand.employees === "number" ? String(cand.employees) : "",
-        emps: cand.employees, st: "aktiv", yr: "", form: "",
+        name: p.name,
+        addr: "", zip: "", city: p.city || "", ph: p.phone || "", em: "",
+        web: "", ind: query.category, ic: "",
+        emp: "", emps: null, st: "aktiv", yr: "", form: "",
         eq: 0, res: 0, omsaetning: 0,
         source: "gmaps-discover",
-        icpFit: true, meta_advertiser: true,
-        ad_signals: [`Google Maps: ${query.category}`, "Meta Ad Library (live)"],
-        meta_verified_active: true,
-        meta_verified_at: verify.checkedAt,
-        meta_live_ad_count: verify.totalCount,
-        apollo_company: orgEnrich,
-        apollo_enrichment_pending: isApolloConfigured(),
+        icpFit: false, // drain-enrichment sets to true on ICP-pass
+        meta_advertiser: false, // drain may set true via Apollo enrich
+        ad_signals: [`Google Maps: ${query.category}`],
+        meta_verified_active: null, // unknown until Apollo enrich runs
+        meta_verified_at: null,
+        meta_live_ad_count: null,
+        apollo_company: null,
+        apollo_enrichment_pending: true, // drain picks this up
         apollo_enriched_at: null,
         phone_missing: !hasPhone,
-        discovered_at: verify.checkedAt,
+        discovered_at: checkedAt,
         pushed_to_cloudtalk_at: null, twenty_opportunity_id: null,
       });
       saveUserData(TARGET_USER, ud);
-      stats.leadsAppended++;
+      stats.rawAppended = (stats.rawAppended || 0) + 1;
     } catch (e) { stats.errors++; }
   }
 
-  state.lastRunAt = new Date().toISOString();
+  state.lastRunAt = checkedAt;
   saveGmapsDiscoverState(state);
   logActivity(
     "discovery",
-    `Gmaps-discover (${stats.query}): ${stats.osmRaw} OSM · ${stats.apolloResolved} apollo · ${stats.verifiedActive} live · ${stats.leadsAppended} tilføjet`,
+    `Gmaps-discover (${stats.query}): ${stats.osmRaw} OSM · ${stats.rawAppended || 0} råleads gemt (afventer ICP-check via drain)`,
     { stats, userId: TARGET_USER },
   );
   console.log("[gmaps-discover] done:", JSON.stringify(stats));
@@ -8954,43 +8947,22 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
     if (candidatesForApollo.length >= MAX_CANDIDATES_TO_APOLLO) break;
   }
 
-  // ─── STEP 4 — For each candidate: Apollo org-enrich + marketing-tech + ICP
+  // ─── STEP 4 (PR2: lazy-enrich) — Save each Datafordeler candidate as
+  // a RAW lead with Datafordeler-only ICP signals (employees from CVR
+  // registry, already filtered upstream). No Apollo at discovery — the
+  // drain-enrichment cron runs the full ICP gate (DK + 1-15 emp + 2-15M
+  // DKK rev) via Apollo later, and ICP-fail leads auto-archive there.
+  // The "marketing-tech" filter is dropped — Datafordeler doesn't carry
+  // that signal, so lead quality drops slightly. Drain's metaAdvertiser
+  // check (from Apollo enrich) recovers it for the ones Apollo knows.
   for (const cand of candidatesForApollo) {
     if (!cand.name) continue;
-    stats.apolloLookups++;
     state.scannedCvrs[cand.cvr] = checkedAt;
     try {
-      // Apollo lookup by name (returns id + domain if found)
-      const found = await apolloFindCompany({ name: cand.name });
-      if (!found || !found.domain) {
-        stats.apolloMatchMissed++;
-        continue;
-      }
-      stats.apolloMatched++;
-      // FREE org-enrich for tech stack + revenue + employee count
-      const orgEnrich = await apolloOrgEnrich(found.domain);
-      if (!orgEnrich) {
-        stats.apolloMatchMissed++;
-        continue;
-      }
-      // Gate 4: marketing-tech check
-      const techNames = Array.isArray(orgEnrich.technologyNames) ? orgEnrich.technologyNames : [];
-      const hasMarketingTech = techNames.some((t) => MARKETING_TECH_RE.test(String(t)));
-      if (!hasMarketingTech) {
-        stats.skippedNoMarketingTech++;
-        continue;
-      }
-      // Gate 5: standard ICP gate (DK + emp + revenue)
-      if (!passesIcpGate(orgEnrich, cand.employees)) {
-        stats.skippedIcpFail++;
-        continue;
-      }
-      // ─── Append the lead ───────────────────────────────────────────
       const ud = loadUserData(TARGET_USER);
       const dupByCvr = (ud.leads || []).some((l) => String(l.cvr) === cand.cvr);
       if (dupByCvr) { stats.skippedAlreadyInDialer++; continue; }
-      const phone = cand.phone || orgEnrich.phone || "";
-      const matchedTech = techNames.find((t) => MARKETING_TECH_RE.test(String(t))) || "";
+      const phone = cand.phone || "";
       ud.leads.push({
         cvr: cand.cvr,
         name: cand.name,
@@ -8999,27 +8971,26 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         city: cand.city,
         ph: phone,
         em: "",
-        web: found.domain,
-        ind: orgEnrich.industry || "",
+        web: "",
+        ind: codeEntry.label, // Datafordeler branche-label as a working industry value
         ic: codeEntry.code,
-        emp: typeof cand.employees === "number" ? String(cand.employees) : (orgEnrich.estimatedEmployees ? String(orgEnrich.estimatedEmployees) : ""),
-        emps: cand.employees || orgEnrich.estimatedEmployees || null,
+        emp: typeof cand.employees === "number" ? String(cand.employees) : "",
+        emps: cand.employees || null,
         st: "aktiv",
         yr: "",
         form: "",
         eq: 0,
         res: 0,
-        omsaetning: orgEnrich.annualRevenue || 0,
+        omsaetning: 0,
         source: `branche-walk-${codeEntry.code}`,
         source_label: codeEntry.label,
-        icpFit: true,
-        // Marketing-tech proxy for the "is this a marketing buyer" signal
-        meta_advertiser: !!orgEnrich.metaAdvertiser,
-        ad_signals: orgEnrich.metaAdSignals || [matchedTech].filter(Boolean),
-        marketing_tech_match: matchedTech,
-        apollo_company: orgEnrich,
-        apollo_enrichment_pending: !phone, // only drain to Apollo /match if no phone
-        apollo_enrichment_deferred: !!phone, // signal: contacts unfetched, click button to load
+        icpFit: false, // drain-enrichment promotes to true on ICP-pass
+        meta_advertiser: false, // drain may set true via Apollo enrich
+        ad_signals: [],
+        marketing_tech_match: "",
+        apollo_company: null,
+        apollo_enrichment_pending: true, // drain picks this up
+        apollo_enrichment_deferred: false,
         apollo_enriched_at: null,
         phone_missing: !phone,
         discovered_at: checkedAt,
@@ -9027,20 +8998,8 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         twenty_opportunity_id: null,
       });
       saveUserData(TARGET_USER, ud);
-      stats.leadsAppended++;
-      logActivity(
-        "discovery",
-        `🟢 Branche-walk (${codeEntry.label}): ${cand.name} — ${matchedTech}`,
-        { cvr: cand.cvr, source: `branche-walk-${codeEntry.code}`, userId: TARGET_USER },
-      );
-      // Small breather between Apollo calls — respect rate limits
-      await new Promise((r) => setTimeout(r, 250));
+      stats.rawAppended = (stats.rawAppended || 0) + 1;
     } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[branche-walk] Apollo credits exhausted — breaking loop");
-        stats.apolloExhausted = true;
-        break;
-      }
       stats.errors++;
       console.warn("[branche-walk] candidate failed:", cand.name, e.message);
     }
@@ -9056,7 +9015,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
 
   logActivity(
     "discovery",
-    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.apolloMatched}/${stats.apolloLookups} Apollo · ${stats.leadsAppended} tilføjet`,
+    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.rawAppended || 0} råleads gemt (afventer ICP-check via drain)`,
     { stats, userId: TARGET_USER },
   );
   console.log("[branche-walk] done:", JSON.stringify(stats));
@@ -9307,105 +9266,39 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   stats.alreadyScanned = stats.uniqueAdvertisers - fresh.length;
   stats.fresh = fresh.length;
 
-  // 3. For each fresh advertiser: resolve to Apollo by name, then apply
-  //    ICP filter (DK + 5-50 emp). Apollo's free endpoints absorb the
-  //    cost — only people-match later (async drain-enrichment) charges.
+  // 3. For each fresh advertiser: SAVE AS RAW LEAD (PR2: lazy-enrich).
+  //    Discovery is now Apollo-free — leads land with apollo_enrichment_
+  //    pending=true and icpFit=false. The drain-enrichment cron (every 5
+  //    min, 300/day cap) runs the ICP gate + contact fetch later. ICP-
+  //    fail leads auto-archive there with a clear reason. This drops
+  //    Apollo burn from ~21k/mo to ~6k/mo while preserving the spec:
+  //    fresh lead + currently advertising (Meta Ad Library guarantees it).
   const checkedAt = new Date().toISOString();
-  let apolloExhausted = false;
   for (const adv of fresh) {
     state.scannedPageIds[adv.pageId] = checkedAt;
-    if (!adv.pageName) { stats.apolloMisses++; continue; }
-    let apolloOrg = null;
-    let orgEnrich = null;
+    if (!adv.pageName) continue;
     try {
-      apolloOrg = await apolloFindCompany({ name: adv.pageName });
-      // Brief throttle so we don't slam Apollo's search endpoint
-      await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[meta-ads-discover] Apollo credits exhausted — breaking loop");
-        apolloExhausted = true;
-        break;
-      }
-      stats.errors++;
-      continue;
-    }
-    if (!apolloOrg || !apolloOrg.domain) {
-      stats.apolloMisses++;
-      continue;
-    }
-    try {
-      orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
-      await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
-        console.error("[meta-ads-discover] Apollo credits exhausted — breaking loop");
-        apolloExhausted = true;
-        break;
-      }
-      stats.errors++;
-      continue;
-    }
-    if (!orgEnrich) { stats.apolloMisses++; continue; }
-    stats.apolloResolved++;
-
-    // ICP filter — three gates from the user's spec:
-    //  (1) Currently running ads: guaranteed (came from Meta Ad Library)
-    //  (2) DANISH: Apollo's enrich country field
-    //  (3) Premium SMB ICP: 1-15 employees + 2-15M DKK revenue (≈$285k-$2.15M USD)
-    if (!passesIcpGate(orgEnrich, orgEnrich.estimatedEmployees)) {
-      if (orgEnrich.country && orgEnrich.country !== "Denmark") stats.skippedNotDk++;
-      else stats.skippedSize++;
-      continue;
-    }
-    const emp = orgEnrich.estimatedEmployees;
-    if (false) { // legacy guard, kept for diff readability
-      stats.skippedSize++;
-      continue;
-    }
-    // ICP-fit → append lead with meta_verified_active=true baked in.
-    // No need for the Apify verify pass — we sourced this lead FROM the
-    // Meta Ad Library, so by construction it has an active ad RIGHT NOW.
-    try {
-      const merged = {
-        id: apolloOrg.id,
-        name: adv.pageName || apolloOrg.name,
-        domain: apolloOrg.domain,
-        phone: orgEnrich.phone || "",
-        employees: emp,
-        industry: orgEnrich.industry || "",
-        city: orgEnrich.city || "",
-      };
-      const verifyResult = {
-        active: true,
-        totalCount: null, // we don't have the count from the bulk query
-        checkedAt,
-      };
-      // Reuse appendApolloLeadToUser but tag source distinctly so the
-      // dashboard can split ads-first vs Apollo-first volume.
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
       const syntheticCvr = `meta-${adv.pageId}`;
       const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
-      const dupByDomain = apolloOrg.domain && ud.leads.some((l) => (l.web || "").toLowerCase() === apolloOrg.domain.toLowerCase());
-      // Also dedupe against the apollo-* synthetic id we used in the
-      // older Apollo-first path so we don't get the same brand twice.
-      const dupByApolloId = apolloOrg.id && ud.leads.some((l) => l.cvr === `apollo-${apolloOrg.id}`);
-      if (dupByCvr || dupByDomain || dupByApolloId) { stats.apolloMisses++; continue; }
-      const hasPhone = !!(merged.phone || "").toString().trim();
+      const dupByName = ud.leads.some(
+        (l) => (l.name || "").toLowerCase().trim() === adv.pageName.toLowerCase().trim(),
+      );
+      if (dupByCvr || dupByName) { stats.skippedDuplicates = (stats.skippedDuplicates || 0) + 1; continue; }
       ud.leads.push({
         cvr: syntheticCvr,
-        name: merged.name,
+        name: adv.pageName,
         addr: "",
         zip: "",
-        city: merged.city,
-        ph: merged.phone || "",
+        city: "",
+        ph: "",
         em: "",
-        web: merged.domain,
-        ind: merged.industry,
+        web: "",
+        ind: "",
         ic: "",
-        emp: typeof emp === "number" ? String(emp) : "",
-        emps: emp,
+        emp: "",
+        emps: null,
         st: "aktiv",
         yr: "",
         form: "",
@@ -9413,31 +9306,25 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
         res: 0,
         omsaetning: 0,
         source: "meta-ads-discover",
-        icpFit: true,
+        icpFit: false, // drain-enrichment sets to true on ICP-pass
         meta_advertiser: true,
         ad_signals: ["Meta Ad Library (live)"],
         meta_verified_active: true,
         meta_verified_at: checkedAt,
         meta_live_ad_count: null,
-        apollo_company: orgEnrich,
-        apollo_enrichment_pending: isApolloConfigured(),
+        apollo_company: null,
+        apollo_enrichment_pending: true, // drain picks this up
         apollo_enriched_at: null,
-        phone_missing: !hasPhone,
+        phone_missing: true,
         discovered_at: checkedAt,
         pushed_to_cloudtalk_at: null,
         twenty_opportunity_id: null,
-        // Meta-discovery breadcrumbs for the SDR
         meta_page_id: adv.pageId,
         meta_page_name: adv.pageName,
         meta_ad_sample_archive: adv.adArchiveId,
       });
       saveUserData(TARGET_USER, ud);
-      stats.icpFitAppended++;
-      logActivity(
-        "advertiser",
-        `🟢 Verified live: ${adv.pageName} (${emp} emp, ${orgEnrich.industry || "—"})`,
-        { domain: apolloOrg.domain, userId: TARGET_USER, source: "meta-ads-discover", pageId: adv.pageId },
-      );
+      stats.rawAppended = (stats.rawAppended || 0) + 1;
     } catch (e) {
       stats.errors++;
       console.warn("[meta-ads-discover] append failed:", adv.pageName, e.message);
@@ -9446,10 +9333,9 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
 
   state.lastRunAt = checkedAt;
   saveMetaAdsDiscoverState(state);
-  if (apolloExhausted) stats.apolloExhausted = true;
   logActivity(
     "discovery",
-    `Meta-ads-discover: ${stats.adsScraped} ads → ${stats.fresh} nye annoncører · ${stats.icpFitAppended} ICP-fit tilføjet · ${stats.skippedNotDk} ikke-DK · ${stats.skippedSize} udenfor 5-50 emp${apolloExhausted ? " · ⚠ Apollo credits brugt op" : ""}`,
+    `Meta-ads-discover: ${stats.adsScraped} ads → ${stats.fresh} nye annoncører · ${stats.rawAppended || 0} råleads gemt (afventer ICP-check via drain)`,
     { stats, userId: TARGET_USER },
   );
   console.log("[meta-ads-discover] done:", JSON.stringify(stats));
