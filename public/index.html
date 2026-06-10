@@ -3181,6 +3181,24 @@ async function renderPipelineStatusWidget(){
     return`om ${Math.round(hours/24)} dage`;
   };
   const now=Date.now();
+  // Apollo credit-exhaustion banner — pops up the moment ANY discovery
+  // endpoint hits a 422 'insufficient credits'. Replaces the misleading
+  // "0 leads i dag" silent zero with a loud red action banner. Disappears
+  // automatically on the next successful Apollo call (so when Casper tops
+  // up, the next cron fire clears it within minutes).
+  const aps = data.apolloStatus || {};
+  const apolloBanner = aps.exhausted ? (() => {
+    const since = aps.since ? new Date(aps.since) : null;
+    const sinceStr = since ? since.toLocaleString('da-DK',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    return `<div style="background:linear-gradient(135deg,rgba(220,38,38,0.18),rgba(220,38,38,0.04));border:1px solid rgba(248,113,113,0.5);border-radius:14px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:0 0 24px rgba(220,38,38,0.15)">
+      <div style="font-size:26px;flex-shrink:0">⚠</div>
+      <div style="flex:1;min-width:240px">
+        <div style="font-size:13.5px;font-weight:900;color:#fca5a5;margin-bottom:2px">Apollo credits brugt op</div>
+        <div style="font-size:11.5px;color:var(--w80);line-height:1.5">Alle 6 discovery-kilder fejler indtil din månedlige Apollo-allowance er fyldt op. Detected ${sinceStr ? `${e(sinceStr)}` : 'lige nu'}. <strong style="color:#fff">Top up nu</strong>, så fyrer pipelinen automatisk igen ved næste cron-tick.</div>
+      </div>
+      <a href="https://app.apollo.io/#/settings/plans/upgrade" target="_blank" rel="noopener" style="background:linear-gradient(135deg,#dc2626,#ef4444);border:0;border-radius:8px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer;text-decoration:none;white-space:nowrap;letter-spacing:0.2px;box-shadow:0 4px 12px rgba(220,38,38,0.4)">→ Gå til Apollo</a>
+    </div>`;
+  })() : '';
   // Hero row — total fresh leads today + Apollo credit hint
   const hero=`<div style="background:linear-gradient(135deg,rgba(124,58,237,0.18),rgba(124,58,237,0.04));border:1px solid rgba(124,58,237,0.3);border-radius:14px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
     <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -3231,7 +3249,7 @@ async function renderPipelineStatusWidget(){
       </div>
     </div>`;
   }).join('');
-  el.innerHTML=hero+`<div style="display:grid;gap:8px">${rows}</div>`;
+  el.innerHTML=apolloBanner+hero+`<div style="display:grid;gap:8px">${rows}</div>`;
 }
 
 function renderDiscoveryFilterBar(){

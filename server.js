@@ -1830,12 +1830,18 @@ app.get("/api/discovery/pipeline-status", authMiddleware, (req, res) => {
     };
   });
 
+  // Apollo credit-exhaustion banner — set by any discovery endpoint that
+  // hits Apollo's 422 "insufficient credits". Frontend reads this to swap
+  // the "0 leads i dag" silent zero for a red "⚠ Apollo brugt op" banner
+  // with a link to app.apollo.io/upgrade.
+  const apolloStatus = loadApolloStatus();
   res.json({
     ok: true,
     today: cphDateStr,
     totalLeadsToday: totalToday,
     phonesRecoveredToday,
     sources,
+    apolloStatus,
   });
 });
 
@@ -2341,6 +2347,14 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
           capReached = true;
           console.warn(`[apollo/promote-enrich] daily cap reached at ${e.spent}/${e.cap} — stopping batch (${queue.length} CVRs deferred to tomorrow)`);
           // Re-queue this CVR for tomorrow
+          queue.unshift(cvr);
+          return;
+        }
+        if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+          // Account-level credit exhaustion. Same break-out behaviour as
+          // the daily cap, but stays exhausted until Casper tops up.
+          capReached = true;
+          console.error(`[apollo/promote-enrich] Apollo credits exhausted — stopping batch (${queue.length} CVRs deferred until refill)`);
           queue.unshift(cvr);
           return;
         }
@@ -5481,6 +5495,77 @@ class ApolloCapReachedError extends Error {
   }
 }
 
+// Sentinel thrown when Apollo itself returns "insufficient credits" (422).
+// This is Apollo's account-level credit allowance running out, NOT our
+// internal daily cap. Different from ApolloCapReachedError because the
+// fix is "top up Apollo subscription," not "wait for tomorrow's reset."
+//
+// Callers MUST catch this specifically: break the loop immediately (every
+// subsequent call would also 422), log at ERROR severity so it surfaces
+// in Cloud Logging alerts, and persist the exhausted state so the
+// Discovery widget can show a red "Apollo brugt op" banner instead of
+// the misleading "0 leads i dag" silent zero.
+class ApolloCreditExhaustedError extends Error {
+  constructor(detail) {
+    super(`Apollo credits exhausted: ${detail || "insufficient credits"}`);
+    this.code = "APOLLO_CREDITS_EXHAUSTED";
+    this.detail = detail;
+  }
+}
+
+// Returns true if Apollo's HTTP response indicates the account's monthly
+// credit allowance has run out. Apollo returns 422 with a body containing
+// "insufficient credits" (sometimes with HTML upgrade link) — match the
+// English phrase, not the upgrade link which can change.
+function isApolloCreditExhaustedResponse(status, text) {
+  if (status !== 422) return false;
+  return /insufficient\s+credits/i.test(String(text || ""));
+}
+
+// Persistent flag the Discovery widget reads to show the "Apollo blokeret"
+// banner. Lives next to apollo_spend.json. Set by any of the 6 discovery
+// endpoints when they hit a 422; cleared on the next successful Apollo
+// call. So the banner appears within seconds of credit exhaustion and
+// disappears within seconds of Casper topping up the subscription.
+const APOLLO_STATUS_FILE = path.join(DATA_DIR, "discovery", "apollo_status.json");
+function loadApolloStatus() {
+  try {
+    if (fs.existsSync(APOLLO_STATUS_FILE)) {
+      return JSON.parse(fs.readFileSync(APOLLO_STATUS_FILE, "utf8"));
+    }
+  } catch (_) { /* fall through */ }
+  return { exhausted: false, since: null, detail: null, lastChecked: null };
+}
+function setApolloExhausted(detail) {
+  try {
+    fs.mkdirSync(path.dirname(APOLLO_STATUS_FILE), { recursive: true });
+    const prev = loadApolloStatus();
+    const next = {
+      exhausted: true,
+      since: prev.exhausted && prev.since ? prev.since : new Date().toISOString(),
+      detail: detail || "Apollo returned 422 'insufficient credits'",
+      lastChecked: new Date().toISOString(),
+    };
+    fs.writeFileSync(APOLLO_STATUS_FILE, JSON.stringify(next, null, 2));
+    if (!prev.exhausted) {
+      // Log loudly the FIRST time we detect exhaustion — subsequent hits
+      // within the same outage just bump lastChecked and stay silent.
+      console.error(`[apollo-status] CREDITS EXHAUSTED — Casper must top up at app.apollo.io. Detail: ${detail || ""}`);
+    }
+  } catch (e) { console.warn("[apollo-status] save failed:", e.message); }
+}
+function clearApolloExhausted() {
+  try {
+    const prev = loadApolloStatus();
+    if (!prev.exhausted) return; // nothing to clear
+    fs.mkdirSync(path.dirname(APOLLO_STATUS_FILE), { recursive: true });
+    fs.writeFileSync(APOLLO_STATUS_FILE, JSON.stringify({
+      exhausted: false, since: null, detail: null, lastChecked: new Date().toISOString(),
+    }, null, 2));
+    console.log("[apollo-status] credits restored — banner cleared");
+  } catch (_) { /* logging is never fatal */ }
+}
+
 // Strip Danish legal suffixes + simple-strip Danish characters for
 // Apollo's name matching. Apollo stores names without legal forms
 // ("FDM TRAVEL" not "FDM TRAVEL A/S") and its search is ASCII-leaning:
@@ -5515,8 +5600,13 @@ async function apolloFindCompany({ name }) {
   });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
+    if (isApolloCreditExhaustedResponse(r.status, text)) {
+      setApolloExhausted(text.slice(0, 200));
+      throw new ApolloCreditExhaustedError(text.slice(0, 200));
+    }
     throw new Error(`Apollo company search ${r.status}: ${text.slice(0, 200)}`);
   }
+  clearApolloExhausted();
   const d = await r.json();
   const orgs = d.organizations || d.accounts || [];
   // Prefer DK orgs with a website
@@ -5553,8 +5643,13 @@ async function apolloSearchPeople({ name, domain, organizationId }) {
   });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
+    if (isApolloCreditExhaustedResponse(r.status, text)) {
+      setApolloExhausted(text.slice(0, 200));
+      throw new ApolloCreditExhaustedError(text.slice(0, 200));
+    }
     throw new Error(`Apollo people search ${r.status}: ${text.slice(0, 200)}`);
   }
+  clearApolloExhausted();
   const d = await r.json();
   return d.people || [];
 }
@@ -5590,8 +5685,13 @@ async function apolloMatchPerson(personId) {
   });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
+    if (isApolloCreditExhaustedResponse(r.status, text)) {
+      setApolloExhausted(text.slice(0, 200));
+      throw new ApolloCreditExhaustedError(text.slice(0, 200));
+    }
     throw new Error(`Apollo match ${r.status}: ${text.slice(0, 200)}`);
   }
+  clearApolloExhausted();
   const d = await r.json();
   // Increment AFTER a successful response — failed calls don't count
   // against the budget (Apollo doesn't bill on errors either).
@@ -5762,7 +5862,19 @@ async function apolloOrgEnrich(domain) {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Api-Key": process.env.APOLLO_API_KEY },
   });
-  if (!r.ok) return null;
+  if (!r.ok) {
+    // 422 'insufficient credits' = Apollo account is exhausted. Throw the
+    // typed sentinel so discovery loops break out instantly instead of
+    // silently returning null 150 more times. Other non-OKs (network blips,
+    // domain-not-found, etc) still return null — those are normal misses.
+    const text = await r.text().catch(() => "");
+    if (isApolloCreditExhaustedResponse(r.status, text)) {
+      setApolloExhausted(text.slice(0, 200));
+      throw new ApolloCreditExhaustedError(text.slice(0, 200));
+    }
+    return null;
+  }
+  clearApolloExhausted();
   const j = await r.json().catch(() => ({}));
   return j.organization ? mapApolloOrganization(j.organization) : null;
 }
@@ -7283,6 +7395,11 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
         stats.enrichmentChecked++;
         await new Promise((r) => setTimeout(r, 200)); // gentle on Apollo
       } catch (e) {
+        if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+          console.error("[apollo-discover] Apollo credits exhausted — breaking loop");
+          stats.apolloExhausted = true;
+          break;
+        }
         console.warn("[apollo-discover] org-enrich failed:", cand.domain, e.message);
         stats.errors++;
         continue;
@@ -7955,13 +8072,27 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
     try {
       apolloOrg = await apolloFindCompany({ name: adv.name });
       await new Promise((r) => setTimeout(r, 200));
-    } catch (_) { stats.errors++; continue; }
+    } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[linkedin-ads-discover] Apollo credits exhausted — breaking loop");
+        stats.apolloExhausted = true;
+        break;
+      }
+      stats.errors++; continue;
+    }
     if (!apolloOrg || !apolloOrg.domain) { stats.apolloMisses++; continue; }
 
     try {
       orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
       await new Promise((r) => setTimeout(r, 200));
-    } catch (_) { stats.errors++; continue; }
+    } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[linkedin-ads-discover] Apollo credits exhausted — breaking loop");
+        stats.apolloExhausted = true;
+        break;
+      }
+      stats.errors++; continue;
+    }
     if (!orgEnrich) { stats.apolloMisses++; continue; }
     stats.apolloResolved++;
 
@@ -8179,13 +8310,27 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
     try {
       apolloOrg = await apolloFindCompany({ name: p.name });
       await new Promise((r) => setTimeout(r, 200));
-    } catch (_) { stats.errors++; continue; }
+    } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[gmaps-discover] Apollo credits exhausted — breaking loop");
+        stats.apolloExhausted = true;
+        break;
+      }
+      stats.errors++; continue;
+    }
     if (!apolloOrg || !apolloOrg.domain) { stats.apolloMisses++; continue; }
 
     try {
       orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
       await new Promise((r) => setTimeout(r, 200));
-    } catch (_) { stats.errors++; continue; }
+    } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[gmaps-discover] Apollo credits exhausted — breaking loop");
+        stats.apolloExhausted = true;
+        break;
+      }
+      stats.errors++; continue;
+    }
     if (!orgEnrich) { stats.apolloMisses++; continue; }
     stats.apolloResolved++;
 
@@ -8376,8 +8521,13 @@ async function apolloSearchByTech({ techUid, page = 1, perPage = 25 }) {
   });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
+    if (isApolloCreditExhaustedResponse(r.status, text)) {
+      setApolloExhausted(text.slice(0, 200));
+      throw new ApolloCreditExhaustedError(text.slice(0, 200));
+    }
     throw new Error(`Apollo tech-search ${r.status}: ${text.slice(0, 200)}`);
   }
+  clearApolloExhausted();
   const d = await r.json();
   const orgs = d.organizations || d.accounts || [];
   return orgs.map((o) => ({
@@ -8425,12 +8575,19 @@ app.post("/api/cron/tech-discover", async (req, res) => {
 
   // 1. Scan Apollo by tech — collect candidates, then batch-verify with Apify
   const candidatesPassed = [];
+  let apolloExhaustedOuter = false;
   for (let p = 1; p <= PAGES_PER_RUN; p++) {
     let candidates = [];
     try {
       candidates = await apolloSearchByTech({ techUid: tech, page: p, perPage: 25 });
       stats.pagesScanned++;
     } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[tech-discover] Apollo credits exhausted on search — breaking outer loop");
+        stats.apolloExhausted = true;
+        apolloExhaustedOuter = true;
+        break;
+      }
       console.warn(`[tech-discover] search ${tech}#${p} failed:`, e.message);
       stats.errors++;
       continue;
@@ -8455,6 +8612,11 @@ app.post("/api/cron/tech-discover", async (req, res) => {
         stats.enrichmentChecked++;
         await new Promise((r) => setTimeout(r, 200));
       } catch (e) {
+        if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+          console.error("[tech-discover] Apollo credits exhausted — breaking inner loop");
+          stats.apolloExhausted = true;
+          break;
+        }
         stats.errors++;
         continue;
       }
@@ -8481,6 +8643,9 @@ app.post("/api/cron/tech-discover", async (req, res) => {
         orgEnrich,
       });
     }
+    // If the inner loop set apolloExhausted (via apolloOrgEnrich 422),
+    // bail the outer page loop too — every following page would also 422.
+    if (stats.apolloExhausted) { apolloExhaustedOuter = true; break; }
   }
 
   // 2. Batch live-Meta verify the passed candidates — the same step that
@@ -8871,6 +9036,11 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
       // Small breather between Apollo calls — respect rate limits
       await new Promise((r) => setTimeout(r, 250));
     } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[branche-walk] Apollo credits exhausted — breaking loop");
+        stats.apolloExhausted = true;
+        break;
+      }
       stats.errors++;
       console.warn("[branche-walk] candidate failed:", cand.name, e.message);
     }
@@ -9141,6 +9311,7 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   //    ICP filter (DK + 5-50 emp). Apollo's free endpoints absorb the
   //    cost — only people-match later (async drain-enrichment) charges.
   const checkedAt = new Date().toISOString();
+  let apolloExhausted = false;
   for (const adv of fresh) {
     state.scannedPageIds[adv.pageId] = checkedAt;
     if (!adv.pageName) { stats.apolloMisses++; continue; }
@@ -9151,6 +9322,11 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
       // Brief throttle so we don't slam Apollo's search endpoint
       await new Promise((r) => setTimeout(r, 200));
     } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[meta-ads-discover] Apollo credits exhausted — breaking loop");
+        apolloExhausted = true;
+        break;
+      }
       stats.errors++;
       continue;
     }
@@ -9162,6 +9338,11 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
       orgEnrich = await apolloOrgEnrich(apolloOrg.domain);
       await new Promise((r) => setTimeout(r, 200));
     } catch (e) {
+      if (e && e.code === "APOLLO_CREDITS_EXHAUSTED") {
+        console.error("[meta-ads-discover] Apollo credits exhausted — breaking loop");
+        apolloExhausted = true;
+        break;
+      }
       stats.errors++;
       continue;
     }
@@ -9265,9 +9446,10 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
 
   state.lastRunAt = checkedAt;
   saveMetaAdsDiscoverState(state);
+  if (apolloExhausted) stats.apolloExhausted = true;
   logActivity(
     "discovery",
-    `Meta-ads-discover: ${stats.adsScraped} ads → ${stats.fresh} nye annoncører · ${stats.icpFitAppended} ICP-fit tilføjet · ${stats.skippedNotDk} ikke-DK · ${stats.skippedSize} udenfor 5-50 emp`,
+    `Meta-ads-discover: ${stats.adsScraped} ads → ${stats.fresh} nye annoncører · ${stats.icpFitAppended} ICP-fit tilføjet · ${stats.skippedNotDk} ikke-DK · ${stats.skippedSize} udenfor 5-50 emp${apolloExhausted ? " · ⚠ Apollo credits brugt op" : ""}`,
     { stats, userId: TARGET_USER },
   );
   console.log("[meta-ads-discover] done:", JSON.stringify(stats));
