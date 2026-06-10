@@ -5631,20 +5631,30 @@ function renderAutodialerPage(){
   const showEnriching = _adState.sourceFilter==='enriching';
   const showAdvertiser = _adState.sourceFilter==='advertiser';
   const showMaybeRelevant = _adState.sourceFilter==='maybe_relevant';
+  const showTwentyPushed = _adState.sourceFilter==='twenty_pushed'; // PR2: backlog of leads handed off to AE
   const isEnriching = (l) => l.apollo_enrichment_pending===true;
+  const isTwentyPushed = (l) => !!l.twenty_opportunity_id;
   if(showArchive){
     filtered=filtered.filter(l=>l.lastAction==='not-relevant');
+  } else if(showTwentyPushed){
+    // Backlog: leads SDR has pushed to Twenty. They're AE's responsibility
+    // now — visible here so we can audit the handoff but never appear in
+    // the active dial queue.
+    filtered=filtered.filter(l=>isTwentyPushed(l));
   } else if(showPhoneMissing){
-    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true);
+    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true && !isTwentyPushed(l));
   } else if(showEnriching){
-    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && isEnriching(l));
+    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && isEnriching(l) && !isTwentyPushed(l));
   } else if(showMaybeRelevant){
     // "Måske relevant" view — Apollo flagged metaAdvertiser=true but live
     // Meta Ad Library found zero current DK ads. Pulled out of the dialer
     // queue automatically; available here for manual review/overflow dialing.
-    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false);
+    filtered=filtered.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false && !isTwentyPushed(l));
   } else {
     filtered=filtered.filter(l=>l.lastAction!=='not-relevant');
+    // PR2: Hide leads already pushed to Twenty — they're done from
+    // SDR's perspective. Visible in "🎯 Pushet til Twenty" backlog view.
+    filtered=filtered.filter(l=>!isTwentyPushed(l));
     // Hide leads still being enriched — they appear in "⏳ Beriges nu".
     filtered=filtered.filter(l=>!isEnriching(l));
     // Hide leads with no phone — they appear in "⚠ Mangler nummer".
@@ -5830,15 +5840,18 @@ function renderAutodialerPage(){
   // phone_missing AND currently-enriching leads (those live in dedicated
   // chips at the end of the chip row).
   const srcCounts={};
+  // PR2: Twenty-pushed leads = SDR handed off to AE. Hidden from active
+  // queue, visible in "🎯 Pushet til Twenty" backlog view.
+  const twentyPushedCount=leads.filter(l=>!!l.twenty_opportunity_id).length;
   const archivedCount=leads.filter(l=>l.lastAction==='not-relevant').length;
-  const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true).length;
-  const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true).length;
+  const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true && !l.twenty_opportunity_id).length;
+  const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true && !l.twenty_opportunity_id).length;
   // "Måske relevant" — Apollo flagged metaAdvertiser=true (pixel installed)
   // but a live Meta Ad Library check found 0 currently-running ads in DK.
   // These are filtered out of the dialer queue but kept accessible here
   // so the SDR can sanity-check or dial overflow as needed.
-  const maybeRelevantCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false).length;
-  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true && l.meta_verified_active!==false);
+  const maybeRelevantCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false && !l.twenty_opportunity_id).length;
+  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true && l.meta_verified_active!==false && !l.twenty_opportunity_id);
   const advertiserCount=activeLeads.filter(l=>l.meta_advertiser===true).length;
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
@@ -5866,6 +5879,10 @@ function renderAutodialerPage(){
     // of the dialer queue automatically; available here for the SDR
     // who wants to dial overflow when ICP-klar runs lean.
     ['maybe_relevant','🟡 Måske relevant',maybeRelevantCount],
+    // PR2: backlog of leads SDR has pushed to Twenty. Hidden from active
+    // queue (AE owns them now), kept here so we can audit + click through
+    // to the Twenty Opportunity URL.
+    ['twenty_pushed','🎯 Pushet til Twenty',twentyPushedCount],
     // Archive lives at the end as a separate concept — clicking it
     // swaps the queue to "only arkiverede leads" for review/restore.
     ['archived','✕ Arkiveret',archivedCount],
@@ -5987,14 +6004,17 @@ function renderAutodialerPage(){
     return; // research view replaces the normal table
   }
 
+  const headerLabel = showTwentyPushed ? 'Twenty-backlog (AE ejer)' : (showArchive ? 'Arkiv' : 'Liste');
   queueEl.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
     <div style="padding:12px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
-      <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">${showArchive?'Arkiv':'Liste'} · ${preview.length === filtered.length ? `${filtered.length} leads` : `viser ${preview.length} af ${filtered.length}`}</div>
+      <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">${headerLabel} · ${preview.length === filtered.length ? `${filtered.length} leads` : `viser ${preview.length} af ${filtered.length}`}</div>
       ${showArchive
         ? `<div style="display:flex;align-items:center;gap:10px">
              <span style="font-size:11px;color:var(--w55);font-style:italic">eller bulk-genopret hele listen</span>
              <button onclick="adRestoreAllArchived()" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:0;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:800;cursor:pointer;letter-spacing:0.2px;box-shadow:0 2px 8px rgba(34,197,94,0.3)">↻ Genopret alle synlige (${filtered.length})</button>
            </div>`
+        : showTwentyPushed
+        ? `<span style="font-size:11px;color:var(--w55);font-style:italic">Klik en række for at åbne i Twenty CRM</span>`
         : `<button class="btn btn-primary btn-sm" onclick="openCockpit()" style="padding:6px 14px;font-size:11.5px">▶ Start opkald</button>`}
     </div>
     <div style="max-height:72vh;overflow-y:auto">
@@ -6014,18 +6034,30 @@ function renderAutodialerPage(){
           const phoneDisplay = l.phone
             ? `<button onclick="event.stopPropagation();ringNow('${e(l.phone)}','${e(l.cvr||'')}','${e(l.name||'')}')" title="Ring via CloudTalk" style="all:unset;cursor:pointer;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd;letter-spacing:0.3px">${e(l.phone)}</button>`
             : `<span style="font-size:11px;color:#fca5a5">ingen tlf</span>`;
+          // Per-view "last cell" — the right-aligned action column:
+          //   • archive view  → ↻ Genopret button
+          //   • twenty view   → stage chip + "→ Åbn" button (opens twenty_url)
+          //   • normal view   → phone number + ✎ edit
+          const twentyStageChip = l.twenty_stage
+            ? `<span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);letter-spacing:0.3px">${e(l.twenty_stage)}</span>`
+            : '';
           const lastCell = showArchive
             ? `<button onclick="event.stopPropagation();adRestoreLead('${e(l.cvr)}')" style="background:rgba(52,211,153,0.15);border:1px solid rgba(52,211,153,0.3);color:#6ee7b7;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;padding:5px 11px;border-radius:7px;cursor:pointer">↻ Genopret</button>`
+            : showTwentyPushed
+            ? `<div style="display:inline-flex;align-items:center;gap:8px;justify-content:flex-end">${twentyStageChip}${l.twenty_url ? `<a href="${e(l.twenty_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="background:linear-gradient(135deg,#60a5fa,#3b82f6);border:0;border-radius:7px;padding:5px 11px;color:#fff;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap;box-shadow:0 2px 6px rgba(96,165,250,0.3)">→ Åbn i Twenty</a>` : `<span style="font-size:10.5px;color:var(--w35);font-style:italic">pushet</span>`}</div>`
             : `<div style="display:inline-flex;align-items:center;gap:7px;justify-content:flex-end">${phoneDisplay}<button onclick="event.stopPropagation();adEditPhone('${e(l.cvr)}')" title="Ret nummeret autodialeren ringer til" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button></div>`;
           // "▶ Start opkald" — opens the cockpit at THIS lead and starts the
-          // dialer from here. Green to match the calling action.
-          const startCell = showArchive ? '' :
+          // dialer from here. Hidden in archive + twenty-pushed views (those
+          // leads are done from SDR's perspective).
+          const startCell = (showArchive || showTwentyPushed) ? '' :
             `<button onclick="event.stopPropagation();adOpenLead('${e(l.cvr)}',true)" title="Start opkald fra dette lead" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:6px 12px;color:#fff;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:800;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(34,197,94,0.3)">▶ Start opkald</button>`;
           const rowAction = showArchive
             ? `onclick="event.stopPropagation()"` // archive rows shouldn't jump into cockpit
+            : showTwentyPushed
+            ? (l.twenty_url ? `onclick="window.open('${e(l.twenty_url)}','_blank','noopener')"` : `onclick="event.stopPropagation()"`)
             : `onclick="adOpenLead('${e(l.cvr)}')"`;
-          // Drag-to-reorder (only in the active queue, not archive).
-          const dragAttrs = showArchive ? '' :
+          // Drag-to-reorder (only in the active queue, not archive or twenty).
+          const dragAttrs = (showArchive || showTwentyPushed) ? '' :
             `draggable="true" ondragstart="adDragStart(event,'${e(l.cvr)}')" ondragover="adDragOver(event)" ondrop="adDrop(event,'${e(l.cvr)}')" ondragend="adDragEnd(event)"`;
           // Compact social/ads icons — small, inline next to the company name.
           // FB icon links to the Apollo-discovered Facebook page if we have one.
@@ -6769,6 +6801,7 @@ function openCockpit(forceCvr){
   base=base.filter(l=>{
     if(forceCvr && l.cvr === forceCvr) return true; // always include the requested lead
     if(l.lastAction==='not-relevant') return false;
+    if(l.twenty_opportunity_id) return false;       // PR2: pushed to AE — done from SDR's view
     if(l.phone_missing===true) return false;
     if(l.apollo_enrichment_pending===true) return false;
     if(!l.callback_at) return true;
@@ -7730,7 +7763,21 @@ async function cockpitPushToTwenty(){
     if(r.ok){
       c.twenty_opportunity_id=d.opportunity?.id;
       c.twenty_url=d.opportunity?.url;
+      c.twenty_stage=d.opportunity?.stage;
       showToast(`✓ Pushet til Twenty — ${c.name}`);
+      // PR2: lead is now AE's — remove from cockpit queue + advance to
+      // next. The queue rebuilds without the just-pushed lead since the
+      // openCockpit filter excludes twenty_opportunity_id leads.
+      const removedIdx = _cockpit.queue.findIndex(l => l.cvr === c.cvr);
+      if (removedIdx >= 0) {
+        _cockpit.queue.splice(removedIdx, 1);
+        // Keep idx pointing at what was the NEXT lead (which is now at the same index)
+        if (_cockpit.idx >= _cockpit.queue.length) _cockpit.idx = Math.max(0, _cockpit.queue.length - 1);
+      }
+      _cockpit.dialerState = 'idle';
+      renderCockpit();
+      cockpitUpdateToolbarButtons();
+      return;
     } else if(r.status===503&&d.queued){
       c.twenty_queued_at=new Date().toISOString();
       showToast('✓ Køet til Twenty — auto-push når Phase D er live');
