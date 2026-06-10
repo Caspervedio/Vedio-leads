@@ -10734,11 +10734,16 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     }
     const description = descLines.join("\n");
 
+    // Twenty's standard Opportunity object does NOT have a `description`
+    // field — sending one returns 400 "Object opportunity doesn't have
+    // any 'description' field". The clean alternative is Twenty's Notes
+    // object: create a Note with the rich SDR context, then link it to
+    // the Opportunity via noteTarget. That's the same UX as if a user
+    // had added a note inside Twenty manually.
     const payload = {
       name: oppName,
       stage,
       amount: { amountMicros: 0, currencyCode: "DKK" },
-      description,
       // Twenty's source enum: UNKNOWN / LINKEDIN / FACEBOOK / LEMLIST /
       // WEBSITE. "UNKNOWN" is the right neutral default for Vedio Leads —
       // our leads come from META scrape / Apollo / CSV / Datafordeler.
@@ -10763,14 +10768,60 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     const opp = j.data?.createOpportunity || j.data?.opportunity || j.data || {};
     const opportunityId = opp.id;
     const url = opportunityId ? `${baseUrl}/objects/opportunities/${opportunityId}` : null;
+
+    // Attach the SDR-context as a Note linked to the Opportunity. Best-
+    // effort: if either the Note or the noteTarget call fails, we log
+    // and continue — the Opportunity creation is the primary success
+    // criterion. Twenty's standard schema has both objects.
+    let noteAttached = false;
+    if (opportunityId && description && description.trim()) {
+      try {
+        const noteResp = await fetch(`${baseUrl}/rest/notes`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}`,
+          },
+          body: JSON.stringify({
+            title: `SDR-noter · ${oppName}`,
+            body: description,
+          }),
+        });
+        const noteJson = await noteResp.json().catch(() => ({}));
+        if (noteResp.ok) {
+          const noteData = noteJson.data?.createNote || noteJson.data?.note || noteJson.data || {};
+          const noteId = noteData.id;
+          if (noteId) {
+            const linkResp = await fetch(`${baseUrl}/rest/noteTargets`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}`,
+              },
+              body: JSON.stringify({ noteId, opportunityId }),
+            });
+            if (linkResp.ok) {
+              noteAttached = true;
+            } else {
+              const linkJson = await linkResp.json().catch(() => ({}));
+              console.warn("[twenty/note-link]", linkResp.status, JSON.stringify(linkJson).slice(0, 200));
+            }
+          }
+        } else {
+          console.warn("[twenty/note]", noteResp.status, JSON.stringify(noteJson).slice(0, 200));
+        }
+      } catch (e) { console.warn("[twenty/note] failed:", e.message); }
+    }
+
     lead.twenty_opportunity_id = opportunityId;
     lead.twenty_pushed_at = new Date().toISOString();
     lead.twenty_url = url;
     lead.twenty_stage = stage;
+    lead.twenty_note_attached = noteAttached;
     if (notes) lead.twenty_pushed_notes = notes;
     saveUserData(req.userId, d);
-    logActivity("twenty-push", `🎯 ${lead.name} pushet til Twenty (stage: ${stage})`, { cvr, userId: req.userId, opportunityId });
-    res.json({ ok: true, opportunity: { id: opportunityId, url, stage } });
+    logActivity("twenty-push", `🎯 ${lead.name} pushet til Twenty (stage: ${stage}${noteAttached ? " + note" : ""})`, { cvr, userId: req.userId, opportunityId });
+    res.json({ ok: true, opportunity: { id: opportunityId, url, stage, noteAttached } });
   } catch (e) {
     console.error("[twenty/push]", e.message);
     res.status(500).json({ error: e.message });
