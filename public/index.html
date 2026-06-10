@@ -5958,7 +5958,12 @@ function renderAutodialerPage(){
   queueEl.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
     <div style="padding:12px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
       <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">${showArchive?'Arkiv':'Liste'} · ${preview.length === filtered.length ? `${filtered.length} leads` : `viser ${preview.length} af ${filtered.length}`}</div>
-      ${showArchive?`<span style="font-size:11px;color:var(--w55);font-style:italic">Klik "↻ Genopret" for at trække et lead tilbage i køen</span>`:`<button class="btn btn-primary btn-sm" onclick="openCockpit()" style="padding:6px 14px;font-size:11.5px">▶ Start opkald</button>`}
+      ${showArchive
+        ? `<div style="display:flex;align-items:center;gap:10px">
+             <span style="font-size:11px;color:var(--w55);font-style:italic">eller bulk-genopret hele listen</span>
+             <button onclick="adRestoreAllArchived()" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:0;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:800;cursor:pointer;letter-spacing:0.2px;box-shadow:0 2px 8px rgba(34,197,94,0.3)">↻ Genopret alle synlige (${filtered.length})</button>
+           </div>`
+        : `<button class="btn btn-primary btn-sm" onclick="openCockpit()" style="padding:6px 14px;font-size:11.5px">▶ Start opkald</button>`}
     </div>
     <div style="max-height:72vh;overflow-y:auto">
     <table style="width:100%;border-collapse:collapse">
@@ -6650,12 +6655,42 @@ async function renderAdLeadEconomics(){
 async function adRestoreLead(cvr){
   if(!confirm('Genopret dette lead i den aktive kø?'))return;
   try{
-    await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:null,lastDispositionAt:null})});
+    await fetch(`/api/leads/${cvr}`,{method:'PATCH',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({lastAction:null,lastDispositionAt:null,archived_reason:null})});
     const l=leads.find(x=>x.cvr===cvr);
-    if(l){delete l.lastAction;delete l.lastDispositionAt;}
+    if(l){delete l.lastAction;delete l.lastDispositionAt;delete l.archived_reason;}
     showToast('✓ Lead genoprettet i køen');
     renderAutodialerPage();
   }catch(ex){showToast('Fejl: '+ex.message);}
+}
+// Bulk restore — clear lastAction on every lead currently visible in
+// the archive view. Honors the current source/stack/tech filters, so SDR
+// can narrow first (e.g. only "Ikke marketing-aktiv" reasons) and then
+// hit Genopret to bulk-restore just that slice.
+async function adRestoreAllArchived(){
+  // Re-compute the visible archive set using the same filter pipeline
+  // renderAutodialerPage() runs. Match the showArchive branch exactly.
+  let filtered = (aList && aList !== 'all') ? leads.filter(l => l.listId === aList) : leads.slice();
+  filtered = filtered.filter(l => l.lastAction === 'not-relevant');
+  if (_adState.stackFilter) {
+    filtered = filtered.filter(l => Array.isArray(l.techStack) && l.techStack.includes(_adState.stackFilter));
+  }
+  if (filtered.length === 0) { showToast('Ingen leads at genoprette'); return; }
+  if (!confirm(`Genopret ${filtered.length} arkiverede leads tilbage i køen?\n\nDette fjerner deres "Ikke relevant" markering og deres arkivgrund — de bliver klar til opkald igen.`)) return;
+  let restored = 0, failed = 0;
+  // Sequential to avoid overwhelming the API; backend PATCH is cheap.
+  for (const l of filtered) {
+    try {
+      await fetch(`/api/leads/${l.cvr}`, {
+        method: 'PATCH',
+        headers: { ...ah(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lastAction: null, lastDispositionAt: null, archived_reason: null }),
+      });
+      delete l.lastAction; delete l.lastDispositionAt; delete l.archived_reason;
+      restored++;
+    } catch (_) { failed++; }
+  }
+  showToast(`✓ ${restored} genoprettet${failed ? ` · ${failed} fejlede` : ''}`);
+  renderAutodialerPage();
 }
 // Open the cockpit and jump to a specific lead by CVR. Optionally start
 // the dialer immediately (the row's "▶ Start opkald" button).
@@ -6828,45 +6863,83 @@ function _showInterestedTwentyPrompt(lead) {
     showToast(`✓ Interesseret · allerede i Twenty (${lead.twenty_opportunity_id.slice(0,8)})`);
     return;
   }
+  // Pre-build a contact preview from lead.contacts[0] so SDR can confirm
+  // the right decision-maker is being linked. If multiple contacts, the
+  // primary (highest-ranked email/phone) is auto-selected.
+  const contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+  const primaryContact = contacts.find((c) => c.phone || c.email) || contacts[0] || null;
+  const contactLine = primaryContact
+    ? `<div style="font-size:12px;color:var(--w80);margin-bottom:3px">👤 <strong style="color:#fff">${e(primaryContact.name || '—')}</strong>${primaryContact.title ? ' · ' + e(primaryContact.title) : ''}</div>
+       ${primaryContact.phone ? `<div style="font-size:11.5px;color:var(--w55);margin-bottom:2px">📞 ${e(primaryContact.phone)}</div>` : ''}
+       ${primaryContact.email ? `<div style="font-size:11.5px;color:var(--w55);margin-bottom:2px">✉ ${e(primaryContact.email)}</div>` : ''}
+       ${primaryContact.linkedin_url ? `<div style="font-size:11.5px;color:var(--w55)">💼 ${e(primaryContact.linkedin_url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 50))}</div>` : ''}`
+    : `<div style="font-size:11.5px;color:var(--w35);font-style:italic">Ingen beslutningstager fundet endnu</div>`;
+  const phoneStr = lead.phone || lead.ph || '';
+  const phoneLine = phoneStr ? `<div style="font-size:12px;color:var(--w80);margin-bottom:3px">📞 <strong style="color:#fff">${e(phoneStr)}</strong></div>` : '';
   const bg = document.createElement('div');
   bg.id = 'twenty-prompt-overlay';
-  bg.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:"Outfit",sans-serif;animation:softphoneFadeIn 0.18s';
+  bg.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;font-family:"Outfit",sans-serif;animation:softphoneFadeIn 0.18s;padding:20px';
   bg.innerHTML = `
-    <div style="background:#14111f;border:1px solid rgba(96,165,250,0.45);border-radius:18px;padding:32px 36px;min-width:440px;max-width:90vw;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,0.7),0 0 60px rgba(96,165,250,0.18)">
-      <div style="font-size:48px;margin-bottom:8px">🎉</div>
-      <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.4px;margin-bottom:6px">Interesseret!</div>
-      <div style="font-size:13.5px;color:var(--w80);margin-bottom:6px"><strong style="color:#fff">${e(lead.name || '—')}</strong></div>
-      <div style="font-size:12.5px;color:var(--w55);margin-bottom:22px;line-height:1.5">Skub leadet til Twenty CRM nu, så demo-bookingen ikke ryger i glemmebogen.</div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button id="twenty-prompt-push" onclick="_twentyPromptPush()" style="background:linear-gradient(135deg,#60a5fa,#3b82f6);border:none;border-radius:10px;padding:13px 24px;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:0.2px;box-shadow:0 8px 20px rgba(96,165,250,0.35)">→ Push til Twenty <span style="opacity:0.7;font-weight:600;margin-left:6px">[P]</span></button>
-        <button onclick="document.getElementById('twenty-prompt-overlay').remove();showToast('OK — husk at pushe manuelt før du går videre')" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:13px 22px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Senere</button>
+    <div style="background:#14111f;border:1px solid rgba(96,165,250,0.45);border-radius:18px;padding:26px 30px;width:520px;max-width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 30px 80px rgba(0,0,0,0.7),0 0 60px rgba(96,165,250,0.18)">
+      <div style="text-align:center;margin-bottom:18px">
+        <div style="font-size:42px;margin-bottom:4px">🎉</div>
+        <div style="font-size:20px;font-weight:900;color:#fff;letter-spacing:-0.3px">Interesseret — push til Twenty</div>
       </div>
-      <div style="font-size:10.5px;color:var(--w35);margin-top:14px;letter-spacing:0.4px">Tryk <strong style="color:var(--w80)">P</strong> for push · <strong style="color:var(--w80)">Esc</strong> for senere</div>
+      <div style="background:rgba(96,165,250,0.06);border:1px solid rgba(96,165,250,0.2);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:6px">${e(lead.name || '—')}</div>
+        ${phoneLine}
+        ${contactLine}
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:11px;font-weight:800;color:var(--w55);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px">Demo-noter <span style="color:var(--w35);font-weight:500;text-transform:none;letter-spacing:0">(valgfri — hjælper AE'en før mødet)</span></label>
+        <textarea id="twenty-prompt-notes" placeholder="F.eks. demo bekræftet onsdag 14:30 · interesse i Klaviyo-flows og Meta-ads · bruger Shopify · vil have case fra deres branche..." style="width:100%;min-height:110px;background:var(--dark);border:1px solid var(--w08);border-radius:10px;padding:12px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;line-height:1.5;outline:none;resize:vertical;box-sizing:border-box">${e(lead.notes || '')}</textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center">
+        <button onclick="_twentyPromptCancel()" style="background:transparent;border:1px solid var(--w08);border-radius:10px;padding:11px 18px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Senere</button>
+        <button id="twenty-prompt-push" onclick="_twentyPromptPush()" style="background:linear-gradient(135deg,#60a5fa,#3b82f6);border:none;border-radius:10px;padding:12px 22px;color:#fff;font-family:'Outfit',sans-serif;font-size:13.5px;font-weight:800;cursor:pointer;letter-spacing:0.2px;box-shadow:0 8px 20px rgba(96,165,250,0.35)">→ Push til Twenty <span style="opacity:0.7;font-weight:600;margin-left:4px">[Cmd+Enter]</span></button>
+      </div>
+      <div style="font-size:10.5px;color:var(--w35);margin-top:12px;text-align:center;letter-spacing:0.3px">Esc for at lukke uden push</div>
     </div>
   `;
-  bg.onclick = (ev) => { if (ev.target === bg) bg.remove(); };
+  bg.onclick = (ev) => { if (ev.target === bg) _twentyPromptCancel(); };
   document.body.appendChild(bg);
-  // Keyboard shortcut: P to push, Escape to dismiss
+  // Focus the notes textarea so SDR can start typing immediately
+  setTimeout(() => document.getElementById('twenty-prompt-notes')?.focus(), 80);
+  // Keyboard shortcuts: Cmd/Ctrl+Enter pushes, Escape dismisses
   const keyHandler = (ev) => {
     if (!document.getElementById('twenty-prompt-overlay')) {
       window.removeEventListener('keydown', keyHandler);
       return;
     }
-    if (ev.key === 'p' || ev.key === 'P') {
+    if ((ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey))) {
       ev.preventDefault();
       _twentyPromptPush();
       window.removeEventListener('keydown', keyHandler);
     } else if (ev.key === 'Escape') {
       ev.preventDefault();
-      document.getElementById('twenty-prompt-overlay')?.remove();
-      showToast('OK — husk at pushe manuelt før du går videre');
+      _twentyPromptCancel();
       window.removeEventListener('keydown', keyHandler);
     }
   };
   window.addEventListener('keydown', keyHandler);
 }
+function _twentyPromptCancel() {
+  document.getElementById('twenty-prompt-overlay')?.remove();
+  showToast('OK — husk at pushe manuelt før du går videre');
+}
 async function _twentyPromptPush() {
   const btn = document.getElementById('twenty-prompt-push');
+  const ta = document.getElementById('twenty-prompt-notes');
+  const notes = (ta?.value || '').trim();
+  // Persist notes to the lead first so they survive in the cockpit + the
+  // backend uses them to build the Twenty Opportunity description.
+  const c = cockpitCurrent();
+  if (c && notes) {
+    c.notes = notes;
+    try {
+      await fetch(`/api/leads/${c.cvr}`, { method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) });
+    } catch (_) { /* non-fatal */ }
+  }
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = 'Pusher…'; }
   await cockpitPushToTwenty();
   document.getElementById('twenty-prompt-overlay')?.remove();

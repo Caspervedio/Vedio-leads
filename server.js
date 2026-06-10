@@ -10668,10 +10668,50 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     const baseUrl = String(process.env.TWENTY_WORKSPACE_URL || "").replace(/\/+$/, "");
     const stage = process.env.TWENTY_OPP_STAGE || "NEW";
     const oppName = lead.name || `Vedio-lead ${cvr}`;
+
+    // ─── Build a rich description so the AE doesn't open a bare Twenty
+    // card. Includes: SDR's typed notes, primary contact, phone, LinkedIn,
+    // Meta-advertiser signal, and which source the lead came from. The
+    // description is the FIRST thing AE sees on the opportunity — make it
+    // count.
+    const contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+    const primaryContact = contacts.find((c) => c.phone || c.email) || contacts[0] || null;
+    const phone = lead.phone || lead.ph || "";
+    const sdrNotes = (notes || lead.notes || "").trim();
+    const adSignals = Array.isArray(lead.ad_signals) ? lead.ad_signals.filter(Boolean) : [];
+    const linkedinUrl = (primaryContact && primaryContact.linkedin_url) || lead.linkedin_url || "";
+
+    const descLines = [];
+    descLines.push(`🎯 INTERESSERET — pushet ${new Date().toLocaleString("da-DK", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`);
+    descLines.push("");
+    descLines.push(`🏢 ${lead.name || "—"}${lead.city ? " · " + lead.city : ""}${lead.ind ? " · " + lead.ind : ""}`);
+    if (phone) descLines.push(`📞 ${phone}`);
+    if (lead.web) descLines.push(`🌐 ${lead.web}`);
+    descLines.push("");
+    if (primaryContact) {
+      descLines.push(`👤 ${primaryContact.name || "—"}${primaryContact.title ? " · " + primaryContact.title : ""}`);
+      if (primaryContact.phone) descLines.push(`   📞 ${primaryContact.phone}`);
+      if (primaryContact.email) descLines.push(`   ✉ ${primaryContact.email}`);
+      if (primaryContact.linkedin_url) descLines.push(`   💼 ${primaryContact.linkedin_url}`);
+      if (contacts.length > 1) descLines.push(`   + ${contacts.length - 1} flere kontakter på leadet`);
+    } else if (linkedinUrl) {
+      descLines.push(`💼 ${linkedinUrl}`);
+    }
+    descLines.push("");
+    if (lead.meta_advertiser) descLines.push(`🎯 Annoncerer på Meta · ${adSignals.length ? adSignals.join(", ") : "Apollo-bekræftet"}`);
+    if (lead.source) descLines.push(`📡 Kilde: ${lead.source}`);
+    if (sdrNotes) {
+      descLines.push("");
+      descLines.push("─── SDR-noter ───");
+      descLines.push(sdrNotes);
+    }
+    const description = descLines.join("\n");
+
     const payload = {
       name: oppName,
       stage,
       amount: { amountMicros: 0, currencyCode: "DKK" },
+      description,
       // Twenty's source enum: UNKNOWN / LINKEDIN / FACEBOOK / LEMLIST /
       // WEBSITE. "UNKNOWN" is the right neutral default for Vedio Leads —
       // our leads come from META scrape / Apollo / CSV / Datafordeler.
