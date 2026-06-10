@@ -2368,6 +2368,37 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
             }
             continue;
           }
+          // PR2.1: MARKETING-ACTIVE GATE. The 1-15 emp + 2-15M DKK rev
+          // filter is a SIZE check, not a "are they a marketing buyer"
+          // check. PR2 (lazy enrich) dropped the supplementary quality
+          // filters from branche-walk (marketing-tech) and gmaps (live
+          // Meta ad verify), so we recover that signal here using
+          // Apollo's `metaAdvertiser` flag (computed from their tech
+          // stack — Meta Pixel, FB Ads, Klaviyo, Shopify, etc.). FREE,
+          // already in the enrich response.
+          //
+          // Exempt: meta-ads and linkedin-ads sources — those came from
+          // ad libraries, advertising is guaranteed by construction.
+          // Applied only to branche-walk + gmaps where we need the
+          // proxy.
+          const sourceStr = String(lead.source || "");
+          const needsMarketingCheck =
+            sourceStr.startsWith("branche-walk") || sourceStr === "gmaps-discover";
+          if (needsMarketingCheck && !orgEnrich.metaAdvertiser) {
+            const udx = loadUserData(userId);
+            const lx = (udx.leads || []).find((l) => l.cvr === cvr);
+            if (lx) {
+              lx.lastAction = "not-relevant";
+              lx.lastDispositionAt = new Date().toISOString();
+              lx.archived_reason = "Ikke marketing-aktiv (ingen Meta/marketing-tech)";
+              lx.apollo_company = orgEnrich;
+              lx.apollo_enriched_at = new Date().toISOString();
+              lx.apollo_enrichment_pending = false;
+              saveUserData(userId, udx);
+              logActivity("icp-fail", `✕ Auto-arkiveret (ej marketing-aktiv): ${lx.name}`, { cvr, userId });
+            }
+            continue;
+          }
           // ICP-pass — promote to icpFit + populate org data. Lead now
           // eligible for the cockpit queue. Falls through to STEP 1/2.
           const udx = loadUserData(userId);
