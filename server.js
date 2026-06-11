@@ -2351,11 +2351,40 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
             }
           }
           if (!domain) {
-            // Apollo doesn't have this advertiser. Likely not a registered
-            // DK company we can target. Archive with a clear audit trail.
+            // Apollo doesn't have this advertiser. THREE outcomes:
+            //
+            // 1. Verified-advertising source (meta_verified_active OR
+            //    linkedin_advertiser): RECOVER. These leads ARE advertising
+            //    by source guarantee — Apollo's name index just doesn't
+            //    have them. Route to "Mangler nummer" research bucket so
+            //    the nightly recover-phones cron can try Datafordeler
+            //    name search + Apify SERP + Lusha. Many will flip back to
+            //    callable within 24h. Casper called this "spill" — leads
+            //    we lose because we didn't try hard enough to find them.
+            //
+            // 2. Branche-walk leads: shouldn't hit this code path anymore
+            //    (Datafordeler-direct, skips drain). But keep the
+            //    handling defensive.
+            //
+            // 3. Other (gmaps without ad signals, etc.): archive — low
+            //    value to keep researching.
             const udx = loadUserData(userId);
             const lx = (udx.leads || []).find((l) => l.cvr === cvr);
-            if (lx) {
+            if (!lx) { continue; }
+            const verifiedAdvertising =
+              lx.meta_verified_active === true ||
+              lx.linkedin_advertiser === true;
+            if (verifiedAdvertising) {
+              // SPILL RECOVERY: keep the lead, mark for phone research.
+              // Recover-phones cron (12:00 CPH daily) will try to find a
+              // real CVR + phone via free sources.
+              lx.apollo_enrichment_pending = false;
+              lx.apollo_enrichment_deferred = true;
+              lx.phone_missing = true;
+              lx.needs_research = true; // breadcrumb for the bucket UI
+              saveUserData(userId, udx);
+              logActivity("research-queued", `🔍 Sat til research (ej i Apollo): ${lx.name}`, { cvr, userId, source: lx.source });
+            } else {
               lx.lastAction = "not-relevant";
               lx.lastDispositionAt = new Date().toISOString();
               lx.archived_reason = "Apollo: ikke fundet i database";
