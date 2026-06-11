@@ -10119,6 +10119,98 @@ async function runStripNonDkPhones(req, res) {
 app.post("/api/admin/strip-non-dk-phones", authMiddleware, runStripNonDkPhones);
 app.post("/api/cron/strip-non-dk-phones", runStripNonDkPhones);
 
+// ── CVR BACKFILL via Datafordeler name search ───────────────────────
+// Older leads (meta-*, gmaps-*, linkedin-*, tech-*, apollo-*) were
+// saved with SYNTHETIC CVRs because their source didn't provide a real
+// Danish CVR number. Resolve them retroactively by name-searching
+// Datafordeler. ~70% should match a real DK company. FREE — no Apollo
+// credits used; Datafordeler is gratis with a key.
+async function runCvrBackfill(req, res) {
+  const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
+  const LIMIT = Math.max(5, Math.min(300, Number(req.query.limit) || 50));
+  const SYNTHETIC_PREFIX_RE = /^(meta-|gmaps-|linkedin-|tech-|apollo-|csv-)/i;
+  const REAL_CVR_RE = /^\d{8}$/;
+  const stats = { scanned: 0, matched: 0, notMatched: 0, alreadyReal: 0, errors: 0 };
+
+  const ud = loadUserData(TARGET_USER);
+  const candidates = (ud.leads || []).filter((l) =>
+    l.lastAction !== "not-relevant" &&
+    !REAL_CVR_RE.test(String(l.cvr || "")) &&
+    SYNTHETIC_PREFIX_RE.test(String(l.cvr || "")) &&
+    (l.name || "").trim().length >= 3
+  ).slice(0, LIMIT);
+  stats.scanned = candidates.length;
+  if (candidates.length === 0) {
+    return res.json({ ok: true, stats, note: "no synthetic-CVR leads to backfill" });
+  }
+
+  // Helper: normalize name for comparison (strip legal forms, lowercase)
+  const norm = (s) => String(s || "").toLowerCase()
+    .replace(/\b(a\/s|aps|ivs|i\/s|p\/s|k\/s)\b/gi, "")
+    .replace(/[æÆ]/g, "a").replace(/[øØ]/g, "o").replace(/[åÅ]/g, "a")
+    .replace(/\s+/g, " ").trim();
+
+  for (const lead of candidates) {
+    try {
+      const target = norm(lead.name);
+      if (target.length < 3) { stats.notMatched++; continue; }
+      // Datafordeler name search via the existing helper. Filter by city
+      // when we have one — drops false-positives from same-name companies
+      // in other DK regions.
+      const filters = { _from: 0, _size: 10 };
+      if (lead.city) filters.city = lead.city;
+      const results = await searchDatafordeler(lead.name, filters);
+      const rows = (results && (results.companies || results.results || results.rows)) || [];
+      if (rows.length === 0) { stats.notMatched++; continue; }
+      // Require a CONFIDENT match: exact normalized name OR (sufficiently
+      // long substring AND a single DK match in the city). We err on the
+      // side of skipping — overwriting a synthetic CVR with the WRONG
+      // real CVR would route the lead to the wrong company permanently.
+      let best = rows.find((c) => norm(c.name) === target);
+      if (!best && target.length >= 5) {
+        const subMatches = rows.filter((c) => norm(c.name).includes(target));
+        if (subMatches.length === 1) best = subMatches[0];
+      }
+      if (!best || !REAL_CVR_RE.test(String(best.cvr || ""))) {
+        stats.notMatched++;
+        continue;
+      }
+      // Re-load + patch (other crons could have shifted state mid-loop).
+      const ud2 = loadUserData(TARGET_USER);
+      const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
+      if (!l2) { stats.errors++; continue; }
+      // Guard: don't overwrite if the real CVR is already in the dialer
+      // attached to ANOTHER lead — that would create a dupe.
+      const dup = (ud2.leads || []).some((x) => x.cvr === best.cvr && x !== l2);
+      if (dup) { stats.notMatched++; continue; }
+      l2.cvr_synthetic = l2.cvr; // breadcrumb for audit
+      l2.cvr = String(best.cvr);
+      l2.cvr_backfilled_at = new Date().toISOString();
+      l2.cvr_backfill_source = "datafordeler-name-search";
+      // Opportunistically fill phone if we don't have one and Datafordeler does
+      if (!l2.phone && !l2.ph && best.phone) {
+        l2.phone = best.phone;
+        l2.ph = best.phone;
+        l2.phone_missing = false;
+      }
+      saveUserData(TARGET_USER, ud2);
+      stats.matched++;
+    } catch (e) {
+      stats.errors++;
+      console.warn("[cvr-backfill]", lead.cvr, e.message);
+    }
+  }
+  console.log("[cvr-backfill] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+}
+app.post("/api/admin/backfill-cvr", authMiddleware, runCvrBackfill);
+app.post("/api/cron/backfill-cvr", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  return runCvrBackfill(req, res);
+});
+
 app.post("/api/cloudtalk/call", authMiddleware, async (req, res) => {
   // HARD GUARD — only DK-domestic calls allowed. CloudTalk Essential
   // doesn't cover international and each int'l call burns credits.
