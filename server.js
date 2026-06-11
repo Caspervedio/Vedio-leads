@@ -9082,14 +9082,111 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
     if (candidatesForApollo.length >= MAX_CANDIDATES_TO_APOLLO) break;
   }
 
-  // ─── STEP 4 (PR2: lazy-enrich) — Save each Datafordeler candidate as
-  // a RAW lead with Datafordeler-only ICP signals (employees from CVR
-  // registry, already filtered upstream). No Apollo at discovery — the
-  // drain-enrichment cron runs the full ICP gate (DK + 1-15 emp + 2-15M
-  // DKK rev) via Apollo later, and ICP-fail leads auto-archive there.
-  // The "marketing-tech" filter is dropped — Datafordeler doesn't carry
-  // that signal, so lead quality drops slightly. Drain's metaAdvertiser
-  // check (from Apollo enrich) recovers it for the ones Apollo knows.
+  // ─── STEP 3.5 (PR5: Option B) — Apify Meta Ad Library verify ────────
+  // Branche-walk's biggest weakness was "ICP on paper but no ad proof".
+  // Casper called it out: 'low quality ones - missing quality check on
+  // META ads - no relevant persons connected - no prove that these are
+  // ICPs'. Fix: batch-verify each Datafordeler candidate against Meta
+  // Ad Library. Keep ONLY ones with name-matched ads in the last 90
+  // days. Same quality bar as meta-ads-discover.
+  //
+  // Cost: ~$0.025/candidate × ~40 candidates/run = ~$1/run × 4 runs/day
+  //       = ~$4/day = ~$88/month Apify on top of existing spend.
+  //
+  // Pre-verify count is captured in stats so we can see verify hit-rate.
+  stats.preVerifyCount = candidatesForApollo.length;
+  stats.metaVerifyAttempted = 0;
+  stats.metaVerified = 0;
+  stats.metaVerifyNoAds = 0;
+  stats.metaVerifyNameMismatch = 0;
+  if (candidatesForApollo.length > 0 && process.env.APIFY_API_TOKEN) {
+    const verifyStartUrls = candidatesForApollo.map((cand) => ({
+      url: buildAdsLibraryUrl(brandForMetaAdsSearch(cand.name)),
+      _cvr: cand.cvr,
+      _name: cand.name,
+    }));
+    stats.metaVerifyAttempted = verifyStartUrls.length;
+    let verifyItems = null;
+    try {
+      const token = process.env.APIFY_API_TOKEN;
+      const input = {
+        startUrls: verifyStartUrls.map((s) => ({ url: s.url })),
+        onlyTotal: false,
+        resultsLimit: 5, // need pageNames + dates for name match + 90d check
+      };
+      const startResp = await fetch(
+        `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/runs?token=${token}&memory=2048&timeout=3600`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+      );
+      if (!startResp.ok) throw new Error(`Apify start ${startResp.status}: ${(await startResp.text()).slice(0, 300)}`);
+      const { data: run } = await startResp.json();
+      const t0 = Date.now();
+      let status = run.status;
+      let runData = run;
+      while (status === "READY" || status === "RUNNING") {
+        if (Date.now() - t0 > 20 * 60 * 1000) throw new Error("Apify verify timeout");
+        await new Promise((r) => setTimeout(r, 5000));
+        const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+        if (!poll.ok) continue;
+        runData = (await poll.json()).data;
+        status = runData.status;
+      }
+      if (status !== "SUCCEEDED") throw new Error(`Apify ended ${status}`);
+      const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`);
+      if (!itemsResp.ok) throw new Error(`Apify items fetch ${itemsResp.status}`);
+      verifyItems = await itemsResp.json();
+    } catch (e) {
+      console.warn("[branche-walk] Meta verify failed — proceeding without filter:", e.message);
+      stats.metaVerifyError = e.message;
+      // Conservative fallback: when verify fails, SKIP saving this run
+      // entirely. Casper picked Option B explicitly because he doesn't
+      // want unverified leads polluting the queue. Better 0 leads now
+      // than a flood of dentists.
+      verifyItems = null;
+      candidatesForApollo.length = 0;
+    }
+    if (verifyItems) {
+      // Group items by inputUrl → list, then match per candidate.
+      const urlToMeta = new Map(verifyStartUrls.map((s) => [s.url, s]));
+      const itemsByCvr = new Map();
+      for (const item of verifyItems) {
+        const meta = urlToMeta.get(item.inputUrl);
+        if (!meta) continue;
+        if (!itemsByCvr.has(meta._cvr)) itemsByCvr.set(meta._cvr, []);
+        itemsByCvr.get(meta._cvr).push(item);
+      }
+      const verified = [];
+      for (const cand of candidatesForApollo) {
+        const items = itemsByCvr.get(cand.cvr) || [];
+        if (items.length === 0) { stats.metaVerifyNoAds++; continue; }
+        // Filter to ads whose pageName matches the COMPANY (strict — same
+        // logic as verify-leads. Defends against Meta keyword hits in
+        // unrelated ads' copy.)
+        const matched = items.filter((it) => {
+          const pn = it.pageName || it.snapshot?.pageName || "";
+          return advertiserMatchesCompany(pn, cand.name);
+        });
+        if (matched.length === 0) { stats.metaVerifyNameMismatch++; continue; }
+        const activity = classifyAdActivity(matched);
+        if (activity.recent90d === 0) { stats.metaVerifyNoAds++; continue; }
+        verified.push({
+          ...cand,
+          meta_ads_active_now: activity.activeNow,
+          meta_ads_recent90d: activity.recent90d,
+          meta_ads_total: activity.total,
+          meta_verified_at: new Date().toISOString(),
+        });
+      }
+      candidatesForApollo.length = 0;
+      candidatesForApollo.push(...verified);
+      stats.metaVerified = verified.length;
+    }
+  }
+
+  // ─── STEP 4 (PR2 + PR5) — Save Meta-verified Datafordeler candidates.
+  // After STEP 3.5 these all have meta_ads_recent90d > 0 + name-matched
+  // pageName. Real ICP: size + industry + DK + currently advertising.
+  // Contacts still fetched on cockpit-open via auto-reveal (Lusha/Apollo).
   // PR3 (2026-06-10): Branche-walk goes Datafordeler-DIRECT.
   // Why: today we got 14 callable / 183 discovered = 8% pass rate
   // because most leads couldn't be ICP-verified against Apollo (76% of
@@ -9143,10 +9240,21 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         omsaetning: 0,
         source: `branche-walk-${codeEntry.code}`,
         source_label: codeEntry.label,
-        // Datafordeler-direct: already ICP-fit by industry + employees.
+        // PR5: Datafordeler-direct AND Meta-verified. Real ICP — size +
+        // industry + DK + currently advertising on Meta. Same quality
+        // bar as meta-ads-discover leads.
         icpFit: true,
-        meta_advertiser: false, // unknown — cockpit shows them below meta-ads leads
-        ad_signals: [],
+        meta_advertiser: true,
+        meta_verified_active: cand.meta_ads_active_now > 0,
+        meta_verified_at: cand.meta_verified_at,
+        meta_ads_active_now: cand.meta_ads_active_now || 0,
+        meta_ads_recent90d: cand.meta_ads_recent90d || 0,
+        meta_ads_total_in_library: cand.meta_ads_total || 0,
+        ad_signals: [
+          cand.meta_ads_active_now > 0
+            ? `${cand.meta_ads_active_now} aktive ad${cand.meta_ads_active_now === 1 ? "" : "s"} på Meta`
+            : `${cand.meta_ads_recent90d} ad${cand.meta_ads_recent90d === 1 ? "" : "s"} sidste 90 dage`,
+        ],
         marketing_tech_match: "",
         apollo_company: null,
         // Skip drain — no apollo_enrichment_pending. SDR fetches contacts
@@ -9177,7 +9285,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
 
   logActivity(
     "discovery",
-    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.rawAppended || 0} ICP-klar leads tilføjet direkte til autodialer`,
+    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.metaVerifyAttempted || 0} Meta-verify'd · ${stats.metaVerified || 0} bestod · ${stats.rawAppended || 0} ICP-klar leads tilføjet`,
     { stats, userId: TARGET_USER },
   );
   console.log("[branche-walk] done:", JSON.stringify(stats));
