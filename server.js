@@ -8175,6 +8175,7 @@ function extractLinkedInAdvertiser(item) {
     (item.advertiserInfo && (item.advertiserInfo.name || item.advertiserInfo.companyName)) ||
     (item.snapshot && item.snapshot.advertiserName) ||
     null;
+  // Company-page URL on LinkedIn (advertiser profile)
   const linkedinUrl =
     item.advertiserUrl ||
     item.advertiserLinkedInUrl ||
@@ -8183,7 +8184,20 @@ function extractLinkedInAdvertiser(item) {
     item.advertiser_url ||
     (item.advertiserInfo && item.advertiserInfo.url) ||
     null;
-  return { name, linkedinUrl };
+  // PR4: the specific AD's URL in LinkedIn Ad Library. SDR can click
+  // through and review the actual creative before dialing — same value
+  // as the Meta Ad Library badge for Meta leads.
+  const adUrl =
+    item.url ||
+    item.adUrl ||
+    item.detailsUrl ||
+    item.libraryUrl ||
+    item.adLink ||
+    (item.adArchiveID ? `https://www.linkedin.com/ad-library/detail/${item.adArchiveID}` : null) ||
+    (item.adId ? `https://www.linkedin.com/ad-library/detail/${item.adId}` : null) ||
+    null;
+  const adId = item.adArchiveID || item.adId || item.id || null;
+  return { name, linkedinUrl, adUrl, adId };
 }
 
 async function apifyLinkedInAdsScrape({ startUrl, resultsLimit }) {
@@ -8307,6 +8321,8 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
         meta_verified_at: null,
         meta_live_ad_count: null,
         linkedin_url: adv.linkedinUrl || "",
+        linkedin_ad_url: adv.adUrl || "", // PR4: deep-link to the LinkedIn ad
+        linkedin_ad_id: adv.adId || "",
         apollo_company: null,
         apollo_enrichment_pending: true, // drain picks this up
         apollo_enriched_at: null,
@@ -9311,20 +9327,44 @@ async function apifyDiscoverDkMetaAds({ resultsLimit = 200, keyword }) {
 // pageIds. We also drop advertisers we've already processed (state file)
 // so each run produces FRESH discoveries.
 function adsToUniqueAdvertisers(items, scannedPageIds) {
-  const seen = new Set();
-  const fresh = [];
+  // Group raw scraper items by advertiser pageId so we can classify
+  // EACH advertiser's ad activity. Apify's facebook-ads-scraper returns
+  // one item per ad — a single advertiser shows up N times if they have
+  // N ads in the library. Previously we just deduped by pageId and
+  // kept the first item, which meant "advertiser appears in library
+  // for any reason" → save as lead. Too loose.
+  //
+  // PR4: TIGHTEN to "recent advertising activity". For each advertiser,
+  // group their items, call classifyAdActivity, and DROP advertisers
+  // where recent90d === 0 (no active ad, no ad ended within 90 days).
+  // The 90-day window is what META_RECENT_WINDOW_DAYS controls. Result:
+  // we only save companies that ARE running ads now or paused recently.
+  const byPage = new Map();
   for (const it of items) {
     const pid = String(it.pageID || it.pageId || it.snapshot?.pageId || "");
     if (!pid) continue;
-    if (seen.has(pid)) continue;
-    if (scannedPageIds[pid]) continue;
-    seen.add(pid);
+    if (scannedPageIds[pid]) continue; // already processed in a past run
+    if (!byPage.has(pid)) byPage.set(pid, []);
+    byPage.get(pid).push(it);
+  }
+  const fresh = [];
+  for (const [pid, group] of byPage) {
+    const activity = classifyAdActivity(group);
+    // Hard gate: NO recent ads in 90 days → skip the advertiser. Without
+    // this filter the queue fills with companies whose only ad ran 6+
+    // months ago — not what an SDR wants to call.
+    if (activity.recent90d === 0) continue;
+    const it = group[0]; // pick the first ad as the breadcrumb sample
     fresh.push({
       pageId: pid,
       pageName: it.pageName || it.snapshot?.pageName || "",
       pageProfileUri: it.snapshot?.pageProfileUri || "",
       adArchiveId: String(it.adArchiveID || it.adArchiveId || ""),
       pageProfilePictureUrl: it.snapshot?.pageProfilePictureUrl || "",
+      // Carry ad-activity stats so the lead can show them in UI + sort
+      ads_active_now: activity.activeNow,
+      ads_recent90d: activity.recent90d,
+      ads_total_in_library: activity.total,
     });
   }
   return fresh;
@@ -9444,10 +9484,19 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
         source: "meta-ads-discover",
         icpFit: false, // drain-enrichment sets to true on ICP-pass
         meta_advertiser: true,
-        ad_signals: ["Meta Ad Library (live)"],
-        meta_verified_active: true,
+        // PR4: ad_signals now reflects actual activity instead of a static
+        // "live" tag. SDR sees "2 aktive · 5 sidste 90 dage" on the card.
+        ad_signals: [
+          adv.ads_active_now > 0
+            ? `${adv.ads_active_now} aktive ad${adv.ads_active_now === 1 ? "" : "s"} på Meta`
+            : `${adv.ads_recent90d} ad${adv.ads_recent90d === 1 ? "" : "s"} sidste 90 dage`,
+        ],
+        meta_verified_active: adv.ads_active_now > 0, // strict: currently-running only
         meta_verified_at: checkedAt,
-        meta_live_ad_count: null,
+        meta_live_ad_count: adv.ads_active_now,
+        meta_ads_active_now: adv.ads_active_now,
+        meta_ads_recent90d: adv.ads_recent90d,
+        meta_ads_total_in_library: adv.ads_total_in_library,
         apollo_company: null,
         apollo_enrichment_pending: true, // drain picks this up
         apollo_enriched_at: null,
