@@ -8867,7 +8867,10 @@ const BRANCHE_WALK_CODES = [
   { code: "960220", label: "Skønhedsklinik"    },
   { code: "961040", label: "Wellness"          },
   // Fitness + health
-  { code: "931200", label: "Fitness"           },
+  // Was 931200 (Sports clubs) but that's amateur+pro mixed → 75% landed
+  // as "BOLDKLUB / IDRÆTSKLUB / FODBOLDFORENING" non-commercial orgs.
+  // 931300 narrows to commercial fitness centres (gyms).
+  { code: "931300", label: "Fitnesscenter"     },
   { code: "862100", label: "Tandlæger"         },
   { code: "869090", label: "Fysioterapi"       },
   // Retail (consumer-facing)
@@ -8892,6 +8895,15 @@ const BRANCHE_WALK_CODES = [
 // generous here — even basic GA + FB Pixel signals a company that
 // invests in funnel measurement, which is our buyer profile.
 const MARKETING_TECH_RE = /\b(facebook pixel|meta pixel|meta ads|facebook ads|google ads|google analytics|google tag manager|klaviyo|mailchimp|active.?campaign|hubspot|omnisend|shopify|woocommerce|magento|bigcommerce|stripe|klarna|tiktok pixel|tiktok ads|linkedin insight|hotjar|segment|attentive|gorgias|yotpo)\b/i;
+
+// Non-commercial name patterns. CVR data includes amateur sports clubs,
+// church councils, schools, foundations, municipalities — entities that
+// have CVR numbers but aren't marketing-buyer companies. Drop them at
+// the branche-walk save step so the autodialer queue stays commercial.
+// Tested against today's branche-walk run: catches 60 of 80 noise leads
+// (BOLDKLUB, FODBOLDFORENING, GOLF UNION, F.F., F.K., etc.) without
+// false-positiving on legit company names.
+const NON_COMMERCIAL_NAME_RE = /\b(klub|forening|union|stiftelse|fond|menighedsråd|menighed|kirke|kirkeråd|sogn|provsti|skole|skoler|aftenskole|gymnasium|børnehave|vuggestue|sfo|kommune|region|amt|forsamlingshus|idræt|idrætscenter|i\.?f\.|f\.?k\.|b\.?k\.|f\.?f\.|i\.?k\.|b\.?i\.?f\.|elite a\/s)\b/i;
 
 function loadBrancheWalkState() {
   try {
@@ -9072,6 +9084,13 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   for (const cand of candidatesForApollo) {
     if (!cand.name) continue;
     state.scannedCvrs[cand.cvr] = checkedAt;
+    // Quality gate: drop non-commercial entities (sports clubs, churches,
+    // schools, foundations etc.) that have CVR numbers but aren't real
+    // marketing buyers. Catches the noise that broad DB07 codes pull in.
+    if (NON_COMMERCIAL_NAME_RE.test(cand.name)) {
+      stats.skippedNonCommercial = (stats.skippedNonCommercial || 0) + 1;
+      continue;
+    }
     try {
       const ud = loadUserData(TARGET_USER);
       const dupByCvr = (ud.leads || []).some((l) => String(l.cvr) === cand.cvr);
