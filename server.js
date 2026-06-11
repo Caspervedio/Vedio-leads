@@ -10150,48 +10150,82 @@ async function runCvrBackfill(req, res) {
     .replace(/[æÆ]/g, "a").replace(/[øØ]/g, "o").replace(/[åÅ]/g, "a")
     .replace(/\s+/g, " ").trim();
 
+  // Direct CVR_Navn name lookup. Tries the original name + common DK
+  // legal-form variants. Datafordeler indexes BOTH legal names ("Senzone
+  // ApS") AND trade names ("Senzone") under CVR_Navn, so this hits both
+  // cases. Returns { cvr, enhedsId } or null.
+  const lookupCvrByName = async (rawName) => {
+    const variants = new Set();
+    const base = String(rawName || "").trim();
+    if (!base) return null;
+    variants.add(base);
+    // Add legal-form suffix variants
+    for (const suffix of [" ApS", " A/S", " IVS", " I/S", " P/S", " K/S"]) {
+      if (!base.toLowerCase().endsWith(suffix.toLowerCase())) variants.add(base + suffix);
+    }
+    // Add stripped-suffix variant
+    const stripped = base.replace(/\s+(A\/S|ApS|IVS|I\/S|P\/S|K\/S)\s*$/i, "").trim();
+    if (stripped && stripped !== base) variants.add(stripped);
+    // Add uppercase (Datafordeler often stores uppercase legal names)
+    variants.add(base.toUpperCase());
+    for (const variant of variants) {
+      const escaped = variant.replace(/"/g, '\\"');
+      try {
+        const r = await dfGqlFetch(
+          `{ CVR_Navn(first: 5, where: { vaerdi: { eq: "${escaped}" } }) { edges { node { CVREnhedsId vaerdi } } } }`
+        );
+        const edges = r?.CVR_Navn?.edges || [];
+        if (edges.length === 0) continue;
+        // For each match, verify it's an active company and fetch its CVRNummer
+        for (const edge of edges) {
+          const eid = edge.node.CVREnhedsId;
+          if (!eid) continue;
+          const v = await dfGqlFetch(
+            `{ CVR_Virksomhed(first: 1, where: { id: { eq: "${eid}" } }) { edges { node { id CVRNummer status } } } }`
+          );
+          const virk = v?.CVR_Virksomhed?.edges?.[0]?.node;
+          if (virk?.CVRNummer && virk?.status === "aktiv") {
+            return { cvr: String(virk.CVRNummer), enhedsId: eid };
+          }
+        }
+      } catch (_) { /* try next variant */ }
+    }
+    return null;
+  };
+
   for (const lead of candidates) {
     try {
-      const target = norm(lead.name);
-      if (target.length < 3) { stats.notMatched++; continue; }
-      // Datafordeler name search via the existing helper. Filter by city
-      // when we have one — drops false-positives from same-name companies
-      // in other DK regions.
-      const filters = { _from: 0, _size: 10 };
-      if (lead.city) filters.city = lead.city;
-      const results = await searchDatafordeler(lead.name, filters);
-      const rows = (results && (results.companies || results.results || results.rows)) || [];
-      if (rows.length === 0) { stats.notMatched++; continue; }
-      // Require a CONFIDENT match: exact normalized name OR (sufficiently
-      // long substring AND a single DK match in the city). We err on the
-      // side of skipping — overwriting a synthetic CVR with the WRONG
-      // real CVR would route the lead to the wrong company permanently.
-      let best = rows.find((c) => norm(c.name) === target);
-      if (!best && target.length >= 5) {
-        const subMatches = rows.filter((c) => norm(c.name).includes(target));
-        if (subMatches.length === 1) best = subMatches[0];
-      }
-      if (!best || !REAL_CVR_RE.test(String(best.cvr || ""))) {
+      const hit = await lookupCvrByName(lead.name);
+      if (!hit || !REAL_CVR_RE.test(hit.cvr)) {
         stats.notMatched++;
         continue;
       }
-      // Re-load + patch (other crons could have shifted state mid-loop).
+      // Re-load + patch
       const ud2 = loadUserData(TARGET_USER);
       const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
       if (!l2) { stats.errors++; continue; }
-      // Guard: don't overwrite if the real CVR is already in the dialer
-      // attached to ANOTHER lead — that would create a dupe.
-      const dup = (ud2.leads || []).some((x) => x.cvr === best.cvr && x !== l2);
+      // Guard: don't overwrite if the real CVR already attached to ANOTHER lead
+      const dup = (ud2.leads || []).some((x) => x.cvr === hit.cvr && x !== l2);
       if (dup) { stats.notMatched++; continue; }
-      l2.cvr_synthetic = l2.cvr; // breadcrumb for audit
-      l2.cvr = String(best.cvr);
+      l2.cvr_synthetic = l2.cvr;
+      l2.cvr = hit.cvr;
       l2.cvr_backfilled_at = new Date().toISOString();
-      l2.cvr_backfill_source = "datafordeler-name-search";
-      // Opportunistically fill phone if we don't have one and Datafordeler does
-      if (!l2.phone && !l2.ph && best.phone) {
-        l2.phone = best.phone;
-        l2.ph = best.phone;
-        l2.phone_missing = false;
+      l2.cvr_backfill_source = "datafordeler-cvr-navn";
+      // Bonus: also try to grab Datafordeler phone via the enhedsId
+      if (!l2.phone && !l2.ph) {
+        try {
+          const phResp = await dfGqlFetch(
+            `{ CVR_Telefonnummer(first: 1, where: { CVREnhedsId: { eq: "${hit.enhedsId}" } }) { edges { node { vaerdi } } } }`
+          );
+          const ph = phResp?.CVR_Telefonnummer?.edges?.[0]?.node?.vaerdi;
+          if (ph) {
+            l2.phone = ph;
+            l2.ph = ph;
+            l2.phone_missing = false;
+            l2.phone_recovered_at = new Date().toISOString();
+            l2.phone_recovered_source = "datafordeler-cvr-backfill";
+          }
+        } catch (_) { /* phone is bonus; not fatal */ }
       }
       saveUserData(TARGET_USER, ud2);
       stats.matched++;
