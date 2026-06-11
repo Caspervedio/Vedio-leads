@@ -2400,22 +2400,23 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
             }
             continue;
           }
-          // PR2.1: MARKETING-ACTIVE GATE. The 1-15 emp + 2-15M DKK rev
-          // filter is a SIZE check, not a "are they a marketing buyer"
-          // check. PR2 (lazy enrich) dropped the supplementary quality
-          // filters from branche-walk (marketing-tech) and gmaps (live
-          // Meta ad verify), so we recover that signal here using
-          // Apollo's `metaAdvertiser` flag (computed from their tech
-          // stack — Meta Pixel, FB Ads, Klaviyo, Shopify, etc.). FREE,
-          // already in the enrich response.
+          // PR3 (2026-06-10): Marketing-active gate now only fires for
+          // a narrow case. After branche-walk went Datafordeler-direct
+          // (skips drain entirely), and after we saw gmaps leads get
+          // killed too aggressively (locale DK SMBs that don't have
+          // Apollo metaAdvertiser=true even though they may well
+          // advertise), this gate became counterproductive — we lost
+          // ~70% of gmaps leads to it.
           //
-          // Exempt: meta-ads and linkedin-ads sources — those came from
-          // ad libraries, advertising is guaranteed by construction.
-          // Applied only to branche-walk + gmaps where we need the
-          // proxy.
+          // Currently NO source needs the gate, because:
+          //   - meta-ads + linkedin-ads: verified advertising by source
+          //   - gmaps: relaxed (was too aggressive)
+          //   - branche-walk: skips drain entirely (Datafordeler-direct)
+          //
+          // Keep the structure so we can re-introduce per-source rules
+          // later if quality slips.
           const sourceStr = String(lead.source || "");
-          const needsMarketingCheck =
-            sourceStr.startsWith("branche-walk") || sourceStr === "gmaps-discover";
+          const needsMarketingCheck = false; // disabled (was: branche-walk + gmaps)
           if (needsMarketingCheck && !orgEnrich.metaAdvertiser) {
             const udx = loadUserData(userId);
             const lx = (udx.leads || []).find((l) => l.cvr === cvr);
@@ -5584,15 +5585,13 @@ const APOLLO_MATCH_DELAY_MS = 300; // throttle between /match calls
 //   - apolloMatchPerson() — throws CAP_REACHED before the API call
 //   - drain-enrichment cron — bails the worker loop when cap is hit
 //   - /api/apollo/enrich/:cvr — returns 429 to the cockpit button
-// PR2 (2026-06-10): bumped 100 → 300. After moving the ICP gate into
-// drain-enrichment, the drain processes EVERY raw discovery lead: 1
-// credit (apolloFindCompany) + 1 (apolloOrgEnrich) + 1 (apolloMatchPerson)
-// per ICP-pass lead, 2 credits per ICP-fail lead. Meta-ads alone drops
-// ~150 raw leads/day so the old 100/day cap created a backlog faster
-// than drain could clear it. 300/day × 22 weekdays = 6,600/month —
-// well inside Apollo Pro's 10k allowance with headroom for cockpit
-// "Find beslutningstager" reveals.
-const APOLLO_DAILY_CAP = 300;
+// PR3 (2026-06-10): bumped 300 → 400. Now that branche-walk goes
+// Datafordeler-direct (no Apollo at discovery), the drain has more
+// budget headroom for meta-ads/gmaps/linkedin volume. 400/day × 22 =
+// 8,800/month — inside Apollo Pro's 10k allowance with ~1,200/mo left
+// for cockpit "Find beslutningstager" people-match reveals (~55/day).
+// Was 300 (PR2) which left ~14 callable/day from meta-ads — too tight.
+const APOLLO_DAILY_CAP = 400;
 const APOLLO_SPEND_FILE = path.join(DATA_DIR, "discovery", "apollo_spend.json");
 
 function _cphDateStr(d = new Date()) {
@@ -9024,6 +9023,23 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   // The "marketing-tech" filter is dropped — Datafordeler doesn't carry
   // that signal, so lead quality drops slightly. Drain's metaAdvertiser
   // check (from Apollo enrich) recovers it for the ones Apollo knows.
+  // PR3 (2026-06-10): Branche-walk goes Datafordeler-DIRECT.
+  // Why: today we got 14 callable / 183 discovered = 8% pass rate
+  // because most leads couldn't be ICP-verified against Apollo (76% of
+  // archives = "Apollo: ikke fundet"). Branche-walk leads already have
+  // CVR + employees + phone from Datafordeler — they're DK SMBs in
+  // pre-curated industries by definition. We don't need Apollo's blessing
+  // to consider them ICP-fit. Mark icpFit=true at discovery time, skip
+  // the drain pipeline entirely. Contacts can be fetched on-demand in
+  // the cockpit via "Find beslutningstager" when the SDR actually opens
+  // the lead.
+  //
+  // Cost: every branche-walk lead now lands callable immediately.
+  // Saves: 1-2 Apollo credits per branche-walk lead × ~120 leads/day =
+  // 120-240 credits/day freed up for meta-ads/gmaps/linkedin drain work.
+  // Trade-off: branche-walk leads lack the "currently advertising"
+  // signal. The cockpit priority sort handles this — meta_advertiser=true
+  // leads float to top; branche-walk leads come second.
   for (const cand of candidatesForApollo) {
     if (!cand.name) continue;
     state.scannedCvrs[cand.cvr] = checkedAt;
@@ -9041,7 +9057,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         ph: phone,
         em: "",
         web: "",
-        ind: codeEntry.label, // Datafordeler branche-label as a working industry value
+        ind: codeEntry.label,
         ic: codeEntry.code,
         emp: typeof cand.employees === "number" ? String(cand.employees) : "",
         emps: cand.employees || null,
@@ -9053,13 +9069,16 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         omsaetning: 0,
         source: `branche-walk-${codeEntry.code}`,
         source_label: codeEntry.label,
-        icpFit: false, // drain-enrichment promotes to true on ICP-pass
-        meta_advertiser: false, // drain may set true via Apollo enrich
+        // Datafordeler-direct: already ICP-fit by industry + employees.
+        icpFit: true,
+        meta_advertiser: false, // unknown — cockpit shows them below meta-ads leads
         ad_signals: [],
         marketing_tech_match: "",
         apollo_company: null,
-        apollo_enrichment_pending: true, // drain picks this up
-        apollo_enrichment_deferred: false,
+        // Skip drain — no apollo_enrichment_pending. SDR fetches contacts
+        // on-demand in cockpit via "Find beslutningstager".
+        apollo_enrichment_pending: false,
+        apollo_enrichment_deferred: true,
         apollo_enriched_at: null,
         phone_missing: !phone,
         discovered_at: checkedAt,
@@ -9084,7 +9103,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
 
   logActivity(
     "discovery",
-    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.rawAppended || 0} råleads gemt (afventer ICP-check via drain)`,
+    `Branche-walk (${codeEntry.label}): ${stats.dfCandidatesActive} aktive · ${stats.rawAppended || 0} ICP-klar leads tilføjet direkte til autodialer`,
     { stats, userId: TARGET_USER },
   );
   console.log("[branche-walk] done:", JSON.stringify(stats));
