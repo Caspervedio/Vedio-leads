@@ -2082,14 +2082,31 @@ async function doLogin(){
   setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
 }
 
-// Soft refresh — reload the page WITHOUT clearing localStorage. The
-// vl_token survives, so the boot flow's /api/auth/me check finds it
-// and the SDR walks straight back into the app without re-typing
-// credentials. Use this when the data on screen feels stale.
-function softRefresh() {
-  showToast('🔄 Genindlæser...');
-  // Tiny delay so the toast paints before the page tears down.
-  setTimeout(() => location.reload(), 120);
+// Soft refresh — re-fetch lead data + discovery widget state IN-PLACE
+// without tearing down the page or the session. Previously this did
+// location.reload() but Cloud Run cold-starts could 401 the first
+// /api/auth/me call (the cold-start retry handles it eventually, but
+// the user saw a flash of "logged out" in between).
+//
+// This version stays inside the SPA: re-fetch the data we care about,
+// re-render the views, done. authToken + localStorage stay untouched.
+async function softRefresh() {
+  showToast('🔄 Opdaterer data...');
+  try {
+    await loadUserState(); // re-fetch /api/leads + per-user meta
+  } catch (_) { /* loadUserState already swallows fetch errors */ }
+  // Re-render whatever view is currently open
+  try {
+    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+  } catch (_) {}
+  try {
+    if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
+  } catch (_) {}
+  try {
+    if (typeof rSB === 'function') rSB();
+    if (typeof applyF === 'function') applyF();
+  } catch (_) {}
+  showToast('✓ Data opdateret');
 }
 
 async function logout(){
