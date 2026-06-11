@@ -9632,6 +9632,15 @@ async function runVerifyLeadsBatch(req, res) {
   // ?archive=1 → permanently archive failures (lastAction='not-relevant').
   // Operator asked for "once and for all get rid of those not running ads".
   const ARCHIVE = req.query.archive === "1";
+  // ?exclude_sources=branche-walk,csv → skip leads whose source starts
+  // with any of those prefixes. Branche-walk leads are intentionally
+  // saved without an advertising promise (Datafordeler-direct, size+
+  // industry only), so verifying them against Meta Ad Library and
+  // archiving the failures would nuke the whole pool. Use exclude to
+  // protect them while still cleaning up meta-ads/linkedin/gmaps/tech
+  // leads that DID promise to be advertising.
+  const EXCLUDE_PREFIXES = String(req.query.exclude_sources || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
   const STALE_MS = 7 * 24 * 60 * 60 * 1000;
   const stats = {
     scanned: 0,
@@ -9648,8 +9657,15 @@ async function runVerifyLeadsBatch(req, res) {
   // Pick candidates from ALL sources. Skip archived; skip leads with no
   // usable name; skip leads we verified recently (unless force=1).
   const todo = [];
+  stats.skippedExcludedSource = 0;
   for (const l of ud.leads || []) {
     if (l.lastAction === "not-relevant") continue;
+    // Skip excluded source prefixes (e.g. branche-walk-*) — those leads
+    // weren't claimed to be Meta advertisers in the first place.
+    if (EXCLUDE_PREFIXES.length && EXCLUDE_PREFIXES.some((p) => (l.source || "").startsWith(p))) {
+      stats.skippedExcludedSource++;
+      continue;
+    }
     const brand = brandForMetaAdsSearch(l.name);
     if (!brand || brand.length < 3) { stats.skippedNoName++; continue; }
     if (!FORCE && l.meta_verified_at) {
