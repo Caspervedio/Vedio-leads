@@ -5679,17 +5679,23 @@ function renderAutodialerPage(){
   //   2. Has phone only                  (callable, no decision-maker yet)
   //   3. No phone (phone_missing)        (research workflow needed)
   // Within each tier we layer ICP signals: meta_advertiser > icpFit > ad count.
+  // Priority bands designed to put VERIFIED-ADVERTISING leads at the
+  // top regardless of contact availability — branche-walk leads (no
+  // advertising signal) used to dominate the queue just because they
+  // had Datafordeler phones. Now meta-ads / linkedin-ads leads float
+  // above them even when contacts haven't been drained yet.
   const priority = (l) => {
     let p = 0;
     const hasPhone = !!((l.phone || l.ph || '').toString().trim());
     const hasContacts = Array.isArray(l.contacts) && l.contacts.length > 0;
-    // Big stratification bands so no ICP weight can leapfrog a tier.
-    if(hasPhone && hasContacts) p += 100000;   // tier 1 — top
-    else if(hasPhone)           p += 50000;    // tier 2 — middle
-    // (tier 3 — phone_missing — gets no bonus)
-    if(l.meta_advertiser) p += 5000;
-    if(l.icpFit)          p += 1000;
-    p += Math.min(l.adsMatched||0, 100);
+    const isAdvertiser = l.meta_advertiser === true || l.linkedin_advertiser === true;
+    if (hasPhone && hasContacts && isAdvertiser) p += 200000;  // tier 1 — full + verified advertising
+    else if (hasPhone && isAdvertiser)           p += 150000;  // tier 2 — advertiser, contacts pending
+    else if (hasPhone && hasContacts)            p += 100000;  // tier 3 — full data, no ad signal
+    else if (hasPhone)                           p += 50000;   // tier 4 — phone only (branche-walk)
+    // (tier 5 — phone_missing — gets no bonus)
+    if (l.icpFit) p += 1000;
+    p += Math.min(l.adsMatched || 0, 100);
     return p;
   };
   // Load saved manual order (drag-and-drop) lazily, per user.
@@ -7204,6 +7210,10 @@ function cockpitJump(idx){
   renderCockpit();
 }
 
+// In-session cache of which CVRs we already auto-revealed so navigating
+// back and forth doesn't re-fire the reveal. Resets on page reload.
+const _autoRevealAttempted = new Set();
+
 function renderCockpit(){
   const c=cockpitCurrent();if(!c)return;
   // Track viewed history so reopen resumes at the same lead.
@@ -7211,6 +7221,56 @@ function renderCockpit(){
   document.getElementById('cockpit-progress').textContent=`${_cockpit.idx+1} / ${_cockpit.queue.length} leads`;
   renderCockpitQueue();
   renderCockpitDetail(c);
+  // AUTO-REVEAL: when SDR lands on a lead with no contacts (typical for
+  // branche-walk Datafordeler-direct leads + meta-ads research-bucket
+  // leads), automatically fire the Lusha-first reveal. Saves the SDR a
+  // click per lead. Cost: 1 Lusha credit (~$0.08) or 1 Apollo credit
+  // (~$0.05) per lead actually opened. Daily Apollo cap still protects.
+  if (c && !_autoRevealAttempted.has(c.cvr)) {
+    const contactsCount = Array.isArray(c.contacts) ? c.contacts.length : 0;
+    const needsReveal = contactsCount === 0 && (c.apollo_enrichment_deferred === true || c.needs_research === true);
+    if (needsReveal) {
+      _autoRevealAttempted.add(c.cvr);
+      _cockpitAutoReveal(c.cvr);
+    }
+  }
+}
+
+async function _cockpitAutoReveal(cvr) {
+  showToast('🔍 Finder beslutningstager...');
+  try {
+    const r = await fetch(`/api/contact/reveal-direct-dial/${encodeURIComponent(cvr)}`, {
+      method: 'POST',
+      headers: ah(),
+    });
+    if (!r.ok) return; // silent — SDR can still click "Find beslutningstager" manually
+    const d = await r.json();
+    const contacts = d.contacts || [];
+    if (contacts.length === 0) {
+      showToast('Ingen kontakter fundet — prøv LinkedIn-lookup');
+      return;
+    }
+    // Update the in-memory lead so the cockpit renders the new contacts.
+    const lead = leads.find((l) => l.cvr === cvr);
+    if (lead) {
+      lead.contacts = contacts;
+      lead.apollo_enriched_at = new Date().toISOString();
+      lead.apollo_enrichment_deferred = false;
+      lead.needs_research = false;
+      // If we got a direct dial from one of the contacts and the lead
+      // had no phone, lift it onto the lead.
+      const directDial = (contacts.find((p) => p.phone) || {}).phone;
+      if (directDial && !lead.phone && !lead.ph) {
+        lead.phone = directDial;
+        lead.ph = directDial;
+        lead.phone_missing = false;
+      }
+    }
+    // If we're still on the same lead, re-render to show the contacts.
+    const cur = cockpitCurrent();
+    if (cur && cur.cvr === cvr) renderCockpit();
+    showToast(`✓ ${contacts.length} kontakt${contacts.length === 1 ? '' : 'er'} fundet`);
+  } catch (_) { /* silent fallback to manual button */ }
 }
 
 function renderCockpitQueue(){
@@ -7297,8 +7357,19 @@ function renderCockpitDetail(c){
           <div style="flex:1">
             <div style="font-size:11px;color:var(--purple-light);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px">Lead ${_cockpit.idx+1} of ${_cockpit.queue.length}</div>
             <h2 style="margin:0;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.6px;line-height:1.15">${e(c.name)}</h2>
+            ${(()=>{
+              // CVR row — prominent for real 8-digit Danish CVRs, hidden
+              // for synthetic IDs (meta-{pageId}, gmaps-{hash}, linkedin-
+              // {hash}, apollo-{id}). Synthetic IDs are internal — showing
+              // them to the SDR is confusing ("CVR meta-199859813218463").
+              const cvrStr = String(c.cvr || '');
+              const isRealCvr = /^\d{8}$/.test(cvrStr);
+              if (isRealCvr) {
+                return `<div style="display:flex;align-items:center;gap:6px;margin-top:6px;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd"><span style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;font-family:'Outfit',sans-serif">CVR</span>${e(cvrStr)} <a href="https://datacvr.virk.dk/enhed/virksomhed/${e(cvrStr)}" target="_blank" rel="noopener" title="Slå op på CVR.dk" style="color:var(--w55);text-decoration:none;font-size:11px;margin-left:4px">↗</a></div>`;
+              }
+              return `<div style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--w35);font-style:italic">CVR endnu ikke fundet · intern ID <span style="font-family:monospace;opacity:0.6">${e(cvrStr)}</span></div>`;
+            })()}
             <div style="display:flex;gap:14px;font-size:12px;color:var(--w55);margin-top:8px;flex-wrap:wrap">
-              <span><span style="color:var(--w35)">CVR</span> <span style="font-family:monospace">${c.cvr||'—'}</span></span>
               ${(c.emps||aco.estimatedEmployees)?`<span><span style="color:var(--w35)">Ansatte</span> ${c.emps||aco.estimatedEmployees}</span>`:''}
               ${c.city?`<span><span style="color:var(--w35)">By</span> ${e(c.city)}</span>`:''}
               ${aco.industry?`<span><span style="color:var(--w35)">Branche</span> ${e(aco.industry)}</span>`:c.ind?`<span><span style="color:var(--w35)">Branche</span> ${e(trunc(c.ind,30))}</span>`:''}
