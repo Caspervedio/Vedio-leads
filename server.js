@@ -8872,37 +8872,44 @@ app.post("/api/cron/tech-discover", async (req, res) => {
 // Rotation: 1 DB07 code per cron run, advancing cursor by 1. 21 codes ×
 // 2 cycles/day Mon-Fri = each code hit ~2× per month. Fresh slices.
 const BRANCHE_WALK_STATE_FILE = path.join(DATA_DIR, "discovery", "branche_walk_discover.json");
+// PR5 (2026-06-11): Tightened to known marketing-buyer industries only.
+// Casper saw 155/276 daily leads come from Tandlæger (dentists) — none
+// of which run Meta ads. Removed all healthcare + single-person
+// service industries that historically don't invest in marketing:
+//   - 862100 Tandlæger  (dentists — family practice, low Meta spend)
+//   - 869090 Fysioterapi (physiotherapy — small clinics)
+//   - 960210 Frisør     (hairdressers — single-chair shops)
+//   - 961040 Wellness   (broad/variable, mostly small)
+// Result: queue drops from ~155 branche-walk noise → ~50 quality leads
+// per day, all from industries that demonstrably advertise.
 const BRANCHE_WALK_CODES = [
-  // Food + hospitality
+  // Food + hospitality (high Meta-ad activity, especially restaurants
+  // with delivery + cafes/hotels with seasonal campaigns)
   { code: "561010", label: "Restauranter"      },
   { code: "563000", label: "Cafeer"            },
   { code: "472100", label: "Bagerier"          },
   { code: "551110", label: "Hoteller"          },
-  // Beauty + body
-  { code: "960210", label: "Frisør"            },
+  // Beauty (commercial-scale clinics only; skipped Frisør + Wellness
+  // which skew tiny). Skønhedsklinikker advertise aesthetic treatments.
   { code: "960220", label: "Skønhedsklinik"    },
-  { code: "961040", label: "Wellness"          },
-  // Fitness + health
-  // Was 931200 (Sports clubs) but that's amateur+pro mixed → 75% landed
-  // as "BOLDKLUB / IDRÆTSKLUB / FODBOLDFORENING" non-commercial orgs.
-  // 931300 narrows to commercial fitness centres (gyms).
+  // Fitness (commercial gym chains, NOT amateur sports clubs)
   { code: "931300", label: "Fitnesscenter"     },
-  { code: "862100", label: "Tandlæger"         },
-  { code: "869090", label: "Fysioterapi"       },
-  // Retail (consumer-facing)
+  // Retail (consumer-facing — heavy paid social)
   { code: "477110", label: "Tøjbutik"          },
   { code: "477210", label: "Skobutik"          },
   { code: "475100", label: "Møbler"            },
   { code: "477820", label: "Interiør"          },
-  // E-commerce (DB07 47.91.* = internet retail — THE high-yield code)
+  // E-commerce — strongest signal in the rotation. Internet retail by
+  // definition needs paid acquisition.
   { code: "479110", label: "Detailhandel internet" },
   { code: "478990", label: "Anden detailhandel"    },
-  // Pro services (high marketing intent)
+  // Pro services with high marketing intent. Marketing-bureau is our
+  // own ICP — they sell the service we sell.
   { code: "731000", label: "Marketing-bureau"  },
   { code: "741010", label: "Design/web"        },
   { code: "683210", label: "Ejendomsmægler"    },
   { code: "791100", label: "Rejsebureau"       },
-  // Optics, jewellery
+  // Optics — chain stores advertise heavily
   { code: "477800", label: "Optikere"          },
 ];
 
@@ -10183,6 +10190,59 @@ async function runStripNonDkPhones(req, res) {
 // Two routes pointing at the same handler — admin-session OR cron-secret.
 app.post("/api/admin/strip-non-dk-phones", authMiddleware, runStripNonDkPhones);
 app.post("/api/cron/strip-non-dk-phones", runStripNonDkPhones);
+
+// ── BULK ARCHIVE by source prefix ──────────────────────────────────
+// Hard-archives every active lead whose source starts with the given
+// prefix. Used when a discovery cron produced obvious noise (e.g. a
+// branche-walk code that turned out to be all dentists/non-ICP) and we
+// want a one-click "clean this up" before tomorrow's runs land on top.
+//
+// Required query params:
+//   source_prefix=branche-walk-862100   (or any prefix substring)
+//   reason=...                          (archive_reason set on each lead)
+//
+// Optional:
+//   limit=N                              (cap, default 1000, max 5000)
+//   dry=1                                (count what WOULD archive, no writes)
+//   userId=u1                            (defaults to req.userId for admin auth)
+async function runArchiveBySource(req, res) {
+  const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
+  const PREFIX = String(req.query.source_prefix || "").trim();
+  const REASON = String(req.query.reason || "").trim();
+  const LIMIT = Math.max(1, Math.min(5000, Number(req.query.limit) || 1000));
+  const DRY = req.query.dry === "1";
+  if (!PREFIX) return res.status(400).json({ error: "source_prefix required" });
+  if (!REASON && !DRY) return res.status(400).json({ error: "reason required (or pass dry=1 to preview)" });
+  const stats = { matched: 0, archived: 0, alreadyArchived: 0 };
+  const ud = loadUserData(TARGET_USER);
+  const nowIso = new Date().toISOString();
+  for (const l of ud.leads || []) {
+    const src = String(l.source || "");
+    if (!src.startsWith(PREFIX)) continue;
+    stats.matched++;
+    if (l.lastAction === "not-relevant") { stats.alreadyArchived++; continue; }
+    if (DRY) continue;
+    if (stats.archived >= LIMIT) break;
+    l.lastAction = "not-relevant";
+    l.lastDispositionAt = nowIso;
+    l.archived_reason = REASON;
+    l.archived_at = nowIso;
+    stats.archived++;
+  }
+  if (!DRY && stats.archived > 0) {
+    saveUserData(TARGET_USER, ud);
+    logActivity("bulk-archive", `🧹 Bulk-arkiveret ${stats.archived} leads med kilde-prefix "${PREFIX}" — ${REASON}`, { stats, userId: TARGET_USER });
+  }
+  console.log("[archive-by-source]", JSON.stringify({ prefix: PREFIX, reason: REASON, dry: DRY, ...stats }));
+  res.json({ ok: true, stats, dry: DRY });
+}
+app.post("/api/admin/archive-by-source", authMiddleware, runArchiveBySource);
+app.post("/api/cron/archive-by-source", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  return runArchiveBySource(req, res);
+});
 
 // ── CVR BACKFILL via Datafordeler name search ───────────────────────
 // Older leads (meta-*, gmaps-*, linkedin-*, tech-*, apollo-*) were
