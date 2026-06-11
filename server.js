@@ -8898,7 +8898,10 @@ const BRANCHE_WALK_CODES = [
   { code: "477110", label: "Tøjbutik"          },
   { code: "477210", label: "Skobutik"          },
   { code: "475100", label: "Møbler"            },
-  { code: "477820", label: "Interiør"          },
+  // Removed 477820 (mis-labeled "Interiør"; DB07 477820 is actually
+  // "Detailhandel med fotografisk udstyr" → photo studios + film shops.
+  // 100 of 101 leads from this code today were small photo studios
+  // that don't run Meta ads. Use 4759* if we want real interior shops.)
   // E-commerce — strongest signal in the rotation. Internet retail by
   // definition needs paid acquisition.
   { code: "479110", label: "Detailhandel internet" },
