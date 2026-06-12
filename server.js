@@ -4,6 +4,7 @@ const fetch = require("node-fetch");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -113,13 +114,54 @@ function routeToCallerId(reqUserId) {
 }
 
 // ── User auth ─────────────────────────────────────────────────────────────────
-// Session tokens are kept in-memory for fast lookup AND mirrored to disk so
-// they survive Cloud Run deploys/restarts. Without persistence, every deploy
-// (~30+ today during the build sprint) wiped the Map and forced every active
-// SDR to re-login — they'd see "Ikke logget ind" on every protected
-// endpoint. File format: { token: { userId, createdAt, lastSeenAt } }.
-// TTL: 30 days. Pruned on load.
-const sessions = new Map(); // token -> userId
+// PR7 (2026-06-11): Switched to STATELESS SIGNED TOKENS. Each token is
+// `v1.<base64url-payload>.<base64url-hmac-sha256>` — server verifies the
+// HMAC against SESSION_SECRET, no lookup required. Survives:
+//   · Cloud Run cold-start (no need to load sessions.json from GCS Fuse)
+//   · Mid-deploy session-issuance race (no in-flight write to lose)
+//   · Multi-instance scaling
+//
+// Casper kept hitting "logged out on refresh" because the previous Map-
+// based approach lost sessions when Cloud Run instances died before the
+// fsync'd disk write committed. Signed tokens make the server stateless
+// for auth — same approach JWT uses minus the spec overhead.
+//
+// Token lifetime: 30 days from issuance. Token doesn't slide on activity
+// to keep it simple; user re-logs in once a month worst case.
+//
+// Legacy Map still loads from disk so tokens issued BEFORE this commit
+// keep working until they expire naturally. New logins issue signed.
+const SESSION_SECRET = process.env.SESSION_SECRET || process.env.CRON_SECRET || "dev-only-rotate-in-prod";
+const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
+function signSessionToken(userId) {
+  const payload = JSON.stringify({ u: userId, iat: Date.now() });
+  const payloadB64 = Buffer.from(payload, "utf8").toString("base64url");
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(payloadB64).digest("base64url");
+  return `v1.${payloadB64}.${sig}`;
+}
+
+function verifySessionToken(token) {
+  if (!token || typeof token !== "string" || !token.startsWith("v1.")) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const payloadB64 = parts[1];
+  const sig = parts[2];
+  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(payloadB64).digest("base64url");
+  // Constant-time compare to defeat timing attacks
+  if (sig.length !== expected.length) return null;
+  let bad = 0;
+  for (let i = 0; i < sig.length; i++) bad |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+  if (bad !== 0) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    if (!payload.u || !payload.iat) return null;
+    if (Date.now() - payload.iat > SESSION_LIFETIME_MS) return null;
+    return payload.u;
+  } catch { return null; }
+}
+
+const sessions = new Map(); // token -> userId  (legacy — kept for in-flight old tokens)
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -255,9 +297,20 @@ function saveUserData(userId, d) {
 
 function authMiddleware(req, res, next) {
   const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
-  if (!token || !sessions.has(token)) return res.status(401).json({ error: "Ikke logget ind" });
-  req.userId = sessions.get(token);
-  next();
+  if (!token) return res.status(401).json({ error: "Ikke logget ind" });
+  // PR7: try signed-token format first (stateless, survives deploys).
+  const signedUserId = verifySessionToken(token);
+  if (signedUserId) {
+    req.userId = signedUserId;
+    return next();
+  }
+  // Fall back to legacy session Map for tokens issued before this commit.
+  // Those will work until they expire naturally — new logins issue signed.
+  if (sessions.has(token)) {
+    req.userId = sessions.get(token);
+    return next();
+  }
+  return res.status(401).json({ error: "Ikke logget ind" });
 }
 
 // ── In-memory cache ──────────────────────────────────────────────────────────
@@ -843,8 +896,10 @@ app.post("/api/auth/login", (req, res) => {
   const users = loadUsers();
   const user = users.find((u) => (u.email === email || u.id === email) && u.password === password);
   if (!user) return res.status(401).json({ error: "Forkert email eller adgangskode" });
-  const token = Math.random().toString(36).substr(2, 12) + Date.now().toString(36);
-  sessions.set(token, user.id);
+  // PR7: issue stateless signed token. No Map lookup needed on subsequent
+  // requests — every Cloud Run instance can verify the HMAC independently.
+  // Token expires 30 days from now (inactive-timeout behavior).
+  const token = signSessionToken(user.id);
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, color: user.color, avatar: user.avatar || null } });
 });
 
@@ -907,8 +962,8 @@ app.get("/api/auth/google/callback", async (req, res) => {
       fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
     }
 
-    const token = Math.random().toString(36).substr(2, 12) + Date.now().toString(36);
-    sessions.set(token, user.id);
+    // PR7: signed token (stateless, survives deploys)
+    const token = signSessionToken(user.id);
     res.redirect(`/?token=${token}`);
   } catch (err) {
     console.error("Google auth callback error:", err.message);
