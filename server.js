@@ -7375,6 +7375,102 @@ function buildAdsLibraryUrl(brand) {
   return `https://www.facebook.com/ads/library/?${params.toString()}`;
 }
 
+// Reusable Meta Ad Library verify for any list of candidates with a
+// `name` field. Returns the candidates ENRICHED with ad-activity counts,
+// dropping ones that have no name-matched ads with recent90d>0 activity.
+// Used by branche-walk (PR5), gmaps-discover, and linkedin-ads-discover
+// so EVERY new lead in the autodialer has verified Meta-ad proof from
+// the last 90 days. Cost: ~$0.025 per candidate verified.
+//
+// candidates: array of { name, ...extra } objects. Must have `name`.
+// keyField: which field to use as the dedup/match key (default 'cvr').
+// Returns: { verified: [...candidates with meta_ads_* fields], stats: {...} }
+async function verifyCandidatesAgainstMeta(candidates, keyField) {
+  keyField = keyField || "cvr";
+  const stats = { attempted: 0, verified: 0, noAds: 0, nameMismatch: 0 };
+  if (!candidates || candidates.length === 0) return { verified: [], stats };
+  if (!process.env.APIFY_API_TOKEN) {
+    // No token → can't verify. Conservative: drop all (caller decides
+    // whether to fall back). Casper's strict Meta-verify rule means
+    // we'd rather skip than save unverified.
+    stats.apifyDisabled = true;
+    return { verified: [], stats };
+  }
+  const startUrls = candidates
+    .filter((c) => c && c.name && c.name.trim().length >= 3)
+    .map((c) => ({
+      url: buildAdsLibraryUrl(brandForMetaAdsSearch(c.name)),
+      _key: c[keyField] || c.name,
+      _cand: c,
+    }));
+  stats.attempted = startUrls.length;
+  if (startUrls.length === 0) return { verified: [], stats };
+  let items = null;
+  try {
+    const token = process.env.APIFY_API_TOKEN;
+    const input = {
+      startUrls: startUrls.map((s) => ({ url: s.url })),
+      onlyTotal: false,
+      resultsLimit: 5,
+    };
+    const startResp = await fetch(
+      `https://api.apify.com/v2/acts/apify~facebook-ads-scraper/runs?token=${token}&memory=2048&timeout=3600`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+    );
+    if (!startResp.ok) throw new Error(`Apify start ${startResp.status}: ${(await startResp.text()).slice(0, 300)}`);
+    const { data: run } = await startResp.json();
+    const t0 = Date.now();
+    let status = run.status;
+    let runData = run;
+    while (status === "READY" || status === "RUNNING") {
+      if (Date.now() - t0 > 20 * 60 * 1000) throw new Error("Apify verify timeout");
+      await new Promise((r) => setTimeout(r, 5000));
+      const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+      if (!poll.ok) continue;
+      runData = (await poll.json()).data;
+      status = runData.status;
+    }
+    if (status !== "SUCCEEDED") throw new Error(`Apify ended ${status}`);
+    const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${runData.defaultDatasetId}/items?token=${token}&format=json`);
+    if (!itemsResp.ok) throw new Error(`Apify items fetch ${itemsResp.status}`);
+    items = await itemsResp.json();
+  } catch (e) {
+    stats.apifyError = e.message;
+    console.warn("[verifyCandidatesAgainstMeta] Apify failed:", e.message);
+    return { verified: [], stats };
+  }
+  const urlToMeta = new Map(startUrls.map((s) => [s.url, s]));
+  const itemsByKey = new Map();
+  for (const item of items) {
+    const meta = urlToMeta.get(item.inputUrl);
+    if (!meta) continue;
+    if (!itemsByKey.has(meta._key)) itemsByKey.set(meta._key, []);
+    itemsByKey.get(meta._key).push(item);
+  }
+  const checkedAt = new Date().toISOString();
+  const verified = [];
+  for (const s of startUrls) {
+    const its = itemsByKey.get(s._key) || [];
+    if (its.length === 0) { stats.noAds++; continue; }
+    const matched = its.filter((it) => {
+      const pn = it.pageName || it.snapshot?.pageName || "";
+      return advertiserMatchesCompany(pn, s._cand.name);
+    });
+    if (matched.length === 0) { stats.nameMismatch++; continue; }
+    const activity = classifyAdActivity(matched);
+    if (activity.recent90d === 0) { stats.noAds++; continue; }
+    verified.push({
+      ...s._cand,
+      meta_ads_active_now: activity.activeNow,
+      meta_ads_recent90d: activity.recent90d,
+      meta_ads_total: activity.total,
+      meta_verified_at: checkedAt,
+    });
+  }
+  stats.verified = verified.length;
+  return { verified, stats };
+}
+
 // Returns counts for ads: { activeNow, recent90d, total } given the raw
 // Apify response items. "recent90d" includes both currently-active ads
 // AND ads whose endDateFormatted is within the last 90 days. Used by
@@ -8067,12 +8163,23 @@ app.post("/api/cron/recover-phones", async (req, res) => {
   };
 
   const ud = loadUserData(TARGET_USER);
-  // Target: leads that are verified-active Meta advertisers but have no phone
+  // Target: leads with any verified advertising signal that have no phone
   // and aren't archived. These are "high value but uncallable" — solving the
   // phone gap unlocks immediate dial value.
+  //
+  // PR6: widened from meta_verified_active===true ONLY (currently-running
+  // ads) to ALSO include meta_advertiser=true / linkedin_advertiser=true /
+  // meta_ads_recent90d>0. Recently-paused Meta advertisers are still
+  // high-value cold-call targets. The old filter eligible only 11 of
+  // today's 30 phone-missing leads — the other 19 sat ignored.
   const todo = (ud.leads || []).filter((l) =>
     l.lastAction !== "not-relevant" &&
-    l.meta_verified_active === true &&
+    (
+      l.meta_verified_active === true ||
+      l.meta_advertiser === true ||
+      l.linkedin_advertiser === true ||
+      (Number(l.meta_ads_recent90d) || 0) > 0
+    ) &&
     !((l.ph || "").toString().trim()) &&
     !((l.phone || "").toString().trim())
   ).slice(0, LIMIT);
@@ -8477,17 +8584,32 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
     return res.status(502).json({ error: `OSM scrape failed: ${e.message}` });
   }
 
-  // 2. (PR2: lazy-enrich) Save each OSM business as a RAW lead. No Apollo
-  //    at discovery time. The drain-enrichment cron (every 5 min, 300/day
-  //    cap) will run apolloFindCompany + apolloOrgEnrich + ICP gate. ICP-
-  //    fail (incl. non-DK, oversized, undersized) leads auto-archive
-  //    there. We also lose the inline Apify Meta Ad verify — drain's
-  //    Apollo enrich exposes the `metaAdvertiser` flag instead.
+  // 2. (PR6: strict Meta-verify) Filter OSM businesses through Apify
+  //    Meta Ad Library BEFORE saving. Same guarantee as branche-walk +
+  //    meta-ads-discover: every lead landing in the autodialer has
+  //    name-matched ads with recent90d > 0 activity. No Meta presence
+  //    → not saved.
   const checkedAt = new Date().toISOString();
+  // Dedup OSM candidates first so we don't burn Apify on dupes
+  const dedupedParsed = [];
   for (const p of parsed) {
     const key = `${(p.name || "").toLowerCase()}|${(p.city || "").toLowerCase()}`;
     if (state.scannedNames[key]) { stats.skippedDuplicates++; continue; }
     state.scannedNames[key] = checkedAt;
+    if (!p.name || p.name.length < 3) continue;
+    dedupedParsed.push(p);
+  }
+  // Batch-verify against Meta Ad Library
+  stats.metaVerifyAttempted = dedupedParsed.length;
+  const { verified: verifiedParsed, stats: vStats } = await verifyCandidatesAgainstMeta(
+    dedupedParsed.map((p) => ({ ...p, _osmKey: `${p.name.toLowerCase()}|${(p.city || "").toLowerCase()}` })),
+    "_osmKey",
+  );
+  stats.metaVerified = verifiedParsed.length;
+  stats.metaVerifyNoAds = vStats.noAds || 0;
+  stats.metaVerifyNameMismatch = vStats.nameMismatch || 0;
+  if (vStats.apifyError) stats.metaVerifyError = vStats.apifyError;
+  for (const p of verifiedParsed) {
     try {
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
