@@ -2107,7 +2107,66 @@ async function softRefresh() {
     if (typeof applyF === 'function') applyF();
   } catch (_) {}
   showToast('✓ Data opdateret');
+  _dashLastRefreshAt = Date.now();
 }
+
+// ─── Dashboard auto-refresh ──────────────────────────────────────────
+// Keeps the autodialer page (queue + activity table) live without the
+// user having to hit ↻. Re-fetches /api/leads every 45s while:
+//   • the autodialer view is the active page, AND
+//   • the browser tab is visible (Page Visibility API), AND
+//   • no cockpit modal is open (cockpit handles its own polling)
+// Silent — no toast, no spinner. Just numbers updating in place.
+let _dashAutoRefreshTimer = null;
+let _dashLabelTickTimer = null;
+let _dashLastRefreshAt = Date.now();
+let _dashRefreshInFlight = false;
+const DASH_AUTO_REFRESH_MS = 45_000;
+const DASH_LABEL_TICK_MS = 5_000;
+
+function _updateDashFreshnessLabel() {
+  const lbl = document.getElementById('ad-freshness-label');
+  const dot = document.getElementById('ad-freshness-dot');
+  if (!lbl || !dot) return;
+  const ageSec = Math.max(0, Math.round((Date.now() - _dashLastRefreshAt) / 1000));
+  if (ageSec < 10)      { lbl.textContent = 'Live';                dot.style.background = '#4ade80'; }
+  else if (ageSec < 90) { lbl.textContent = `Opdateret ${ageSec}s siden`;   dot.style.background = '#4ade80'; }
+  else                  { lbl.textContent = `Opdateret ${Math.round(ageSec/60)}m siden`; dot.style.background = '#fbbf24'; }
+}
+
+async function _dashAutoRefreshTick() {
+  if (_dashRefreshInFlight) return;
+  if (document.hidden) return;                      // tab not visible — skip
+  if (document.getElementById('cockpit-modal')) return;  // cockpit open — its own loop
+  if (!document.getElementById('autodialer-page') ||
+      document.getElementById('autodialer-page').style.display === 'none') return;
+  _dashRefreshInFlight = true;
+  try {
+    await loadUserState();
+    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+    if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
+    _dashLastRefreshAt = Date.now();
+    _updateDashFreshnessLabel();
+  } catch (_) { /* silent — keep timer alive */ }
+  finally { _dashRefreshInFlight = false; }
+}
+
+function startDashAutoRefresh() {
+  if (_dashAutoRefreshTimer) return;  // idempotent
+  _dashLastRefreshAt = Date.now();
+  _dashAutoRefreshTimer = setInterval(_dashAutoRefreshTick, DASH_AUTO_REFRESH_MS);
+  _dashLabelTickTimer  = setInterval(_updateDashFreshnessLabel, DASH_LABEL_TICK_MS);
+  _updateDashFreshnessLabel();
+}
+function stopDashAutoRefresh() {
+  if (_dashAutoRefreshTimer) { clearInterval(_dashAutoRefreshTimer); _dashAutoRefreshTimer = null; }
+  if (_dashLabelTickTimer)   { clearInterval(_dashLabelTickTimer);   _dashLabelTickTimer = null; }
+}
+// When the tab becomes visible again after being hidden, immediately
+// refresh once so the user doesn't see stale data on focus.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && _dashAutoRefreshTimer) _dashAutoRefreshTick();
+});
 
 async function logout(){
   if(isServerMode){try{await fetch('/api/auth/logout',{method:'POST',headers:ah()});}catch(e){}}
@@ -6638,7 +6697,13 @@ function renderAdActivityTable(today, week, all, perSdr){
   el.innerHTML = `
     <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;overflow:hidden">
       <div style="padding:11px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
-        <div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35)">Aktivitet</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35)">Aktivitet</div>
+          <div id="ad-activity-freshness" style="font-size:10px;color:var(--w35);display:flex;align-items:center;gap:5px" data-tip="Auto-opdaterer hvert 45. sekund">
+            <span id="ad-freshness-dot" style="width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,0.6);display:inline-block"></span>
+            <span id="ad-freshness-label">Live</span>
+          </div>
+        </div>
         <div style="font-size:11px;color:var(--w55)">Konvertering · I dag: <strong style="color:${today.dialed>0?'#fff':'var(--w35)'}">${conv(today.interested, today.dialed)}</strong> · Uge: <strong style="color:${week.dialed>0?'#fff':'var(--w35)'}">${conv(week.interested, week.dialed)}</strong> · All-time: <strong style="color:${all.dialed>0?'#fff':'var(--w35)'}">${conv(all.interested, all.dialed)}</strong></div>
       </div>
       <table style="width:100%;border-collapse:collapse">
@@ -8661,6 +8726,7 @@ function sv(v){
   const lbPage=document.getElementById('list-builder-page');
 
   // Hide everything first
+  if(v!=='autodialer' && typeof stopDashAutoRefresh==='function') stopDashAutoRefresh();
   bw.style.display='none';tb.style.display='none';
   if(sb)sb.style.display='none';if(selb)selb.style.display='none';
   document.getElementById('sb-lists').style.display='none';
@@ -8724,6 +8790,7 @@ function sv(v){
   } else if(v==='autodialer'){
     if(adPage)adPage.style.display='flex';adPage.style.flexDirection='column';
     renderAutodialerPage();
+    if(typeof startDashAutoRefresh==='function') startDashAutoRefresh();
   } else if(v==='list-builder'){
     if(lbPage)lbPage.style.display='flex';lbPage.style.flexDirection='column';
     renderListBuilderPage();
