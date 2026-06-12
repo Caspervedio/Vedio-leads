@@ -5685,8 +5685,18 @@ function renderAutodialerPage(){
     filtered=filtered.filter(l=>!isTwentyPushed(l));
     // Hide leads still being enriched — they appear in "⏳ Beriges nu".
     filtered=filtered.filter(l=>!isEnriching(l));
-    // Hide leads with no phone — they appear in "⚠ Mangler nummer".
-    filtered=filtered.filter(l=>l.phone_missing!==true);
+    // PR6: Verified-advertising leads stay in the main queue EVEN
+    // without a phone yet. They're high-value (currently running ads)
+    // and cockpit-open auto-reveal will fire Lusha/Apollo to find a
+    // phone the moment the SDR opens them. Non-advertising phone-
+    // missing leads still go to "⚠ Mangler nummer" research bucket.
+    filtered=filtered.filter(l=>{
+      if(l.phone_missing!==true) return true; // has phone → keep
+      if(l.meta_advertiser===true) return true;        // verified Meta → keep
+      if(l.linkedin_advertiser===true) return true;    // verified LinkedIn → keep
+      if(l.meta_verified_active===true) return true;   // verified active → keep
+      return false; // no phone + no ad signal → research bucket
+    });
     // Hide Apollo-flagged-but-not-currently-advertising → "🟡 Måske relevant".
     filtered=filtered.filter(l=>l.meta_verified_active!==false);
     // "🎯 Annoncør" view — only Apollo-confirmed Meta advertisers.
@@ -5878,14 +5888,38 @@ function renderAutodialerPage(){
   // queue, visible in "🎯 Pushet til Twenty" backlog view.
   const twentyPushedCount=leads.filter(l=>!!l.twenty_opportunity_id).length;
   const archivedCount=leads.filter(l=>l.lastAction==='not-relevant').length;
-  const phoneMissingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing===true && !l.twenty_opportunity_id).length;
+  // PR6: Mangler-nummer chip now counts only TRULY stuck leads — no
+  // phone AND no advertising signal. Verified-advertising no-phone
+  // leads stay in the main queue (cockpit-open auto-reveal handles
+  // them) so they don't pollute this chip.
+  const phoneMissingCount=leads.filter(l=>
+    l.lastAction!=='not-relevant'
+    && l.phone_missing===true
+    && !l.twenty_opportunity_id
+    && l.meta_advertiser!==true
+    && l.linkedin_advertiser!==true
+    && l.meta_verified_active!==true
+  ).length;
   const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true && !l.twenty_opportunity_id).length;
   // "Måske relevant" — Apollo flagged metaAdvertiser=true (pixel installed)
   // but a live Meta Ad Library check found 0 currently-running ads in DK.
   // These are filtered out of the dialer queue but kept accessible here
   // so the SDR can sanity-check or dial overflow as needed.
   const maybeRelevantCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false && !l.twenty_opportunity_id).length;
-  const activeLeads=leads.filter(l=>l.lastAction!=='not-relevant' && l.phone_missing!==true && l.apollo_enrichment_pending!==true && l.meta_verified_active!==false && !l.twenty_opportunity_id);
+  // activeLeads now ALLOWS phone_missing if it's a verified advertiser —
+  // matches the main queue filter so the source chip counts agree with
+  // what's actually visible.
+  const activeLeads=leads.filter(l=>{
+    if(l.lastAction==='not-relevant') return false;
+    if(l.twenty_opportunity_id) return false;
+    if(l.apollo_enrichment_pending===true) return false;
+    if(l.meta_verified_active===false) return false;
+    if(l.phone_missing===true){
+      const isVerifiedAd = l.meta_advertiser===true || l.linkedin_advertiser===true || l.meta_verified_active===true;
+      if(!isVerifiedAd) return false;
+    }
+    return true;
+  });
   const advertiserCount=activeLeads.filter(l=>l.meta_advertiser===true).length;
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
@@ -6836,7 +6870,13 @@ function openCockpit(forceCvr){
     if(forceCvr && l.cvr === forceCvr) return true; // always include the requested lead
     if(l.lastAction==='not-relevant') return false;
     if(l.twenty_opportunity_id) return false;       // PR2: pushed to AE — done from SDR's view
-    if(l.phone_missing===true) return false;
+    // PR6: same relaxation as the autodialer page — verified-advertising
+    // leads stay callable even without a phone yet. Cockpit-open auto-
+    // reveal fires Lusha/Apollo when SDR lands on them.
+    if(l.phone_missing===true) {
+      const isVerifiedAd = l.meta_advertiser===true || l.linkedin_advertiser===true || l.meta_verified_active===true;
+      if(!isVerifiedAd) return false;
+    }
     if(l.apollo_enrichment_pending===true) return false;
     if(!l.callback_at) return true;
     return new Date(l.callback_at).getTime() <= now;
@@ -7266,7 +7306,17 @@ function renderCockpit(){
   // (~$0.05) per lead actually opened. Daily Apollo cap still protects.
   if (c && !_autoRevealAttempted.has(c.cvr)) {
     const contactsCount = Array.isArray(c.contacts) ? c.contacts.length : 0;
-    const needsReveal = contactsCount === 0 && (c.apollo_enrichment_deferred === true || c.needs_research === true);
+    // PR6: also fire auto-reveal for verified-advertising leads that
+    // simply lack a phone (meta-ads/linkedin-ads fresh out of discovery).
+    // The cockpit shouldn't sit stuck with "ingen tlf" — try Lusha/
+    // Apollo immediately so SDR sees a phone within seconds of opening.
+    const hasPhone = !!((c.phone || c.ph || '').toString().trim());
+    const isVerifiedAd = c.meta_advertiser === true || c.linkedin_advertiser === true || c.meta_verified_active === true;
+    const needsReveal = contactsCount === 0 && (
+      c.apollo_enrichment_deferred === true ||
+      c.needs_research === true ||
+      (!hasPhone && isVerifiedAd)
+    );
     if (needsReveal) {
       _autoRevealAttempted.add(c.cvr);
       _cockpitAutoReveal(c.cvr);
