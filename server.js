@@ -2426,9 +2426,18 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
             const udx = loadUserData(userId);
             const lx = (udx.leads || []).find((l) => l.cvr === cvr);
             if (!lx) { continue; }
+            // PR7: widened to catch recently-paused Meta advertisers too.
+            // After PR4 tightened meta_verified_active to "currently
+            // running RIGHT NOW", recently-paused leads (recent90d > 0
+            // but activeNow = 0) had meta_verified_active=false and
+            // failed this check — 16 of today's 21 archives were such
+            // leads ("Apollo: ikke fundet" + meta_ads_recent90d > 0).
+            // Now they route to spill-recovery research bucket.
             const verifiedAdvertising =
               lx.meta_verified_active === true ||
-              lx.linkedin_advertiser === true;
+              lx.meta_advertiser === true ||
+              lx.linkedin_advertiser === true ||
+              (Number(lx.meta_ads_recent90d) || 0) > 0;
             if (verifiedAdvertising) {
               // SPILL RECOVERY: keep the lead, mark for phone research.
               // Recover-phones cron (12:00 CPH daily) will try to find a
@@ -10530,6 +10539,78 @@ app.post("/api/cron/archive-by-source", (req, res) => {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
   return runArchiveBySource(req, res);
+});
+
+// ── RESTORE wrongly-archived verified-advertising leads ────────────────
+// Drain's STEP 0.5 archives leads as "Apollo: ikke fundet i database"
+// when Apollo's name index doesn't have them. Before PR7 the spill-
+// rescue only kept the lead if meta_verified_active=true (currently
+// running ads RIGHT NOW), which excluded recently-paused advertisers
+// — 16 of today's 21 archives fell in that gap.
+//
+// This endpoint walks archived leads matching:
+//   archived_reason starts with "Apollo: ikke fundet" OR "Apollo ICP"
+//   AND has a verified advertising signal:
+//     meta_advertiser OR linkedin_advertiser OR meta_ads_recent90d > 0
+//
+// Restores by: clearing lastAction, lastDispositionAt, archived_reason
+// + setting needs_research=true so the cockpit-open auto-reveal fires.
+// PR6's filter lets these stay in the main queue while phone-research
+// happens via Lusha/Apollo on-demand.
+async function runRestoreSpillLeads(req, res) {
+  const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
+  const LIMIT = Math.max(1, Math.min(2000, Number(req.query.limit) || 500));
+  const DRY = req.query.dry === "1";
+  // Optional: only restore leads archived in the last N hours
+  const HOURS = Number(req.query.hours);
+  const cutoffMs = HOURS ? Date.now() - HOURS * 3600 * 1000 : 0;
+  const stats = { matched: 0, restored: 0, alreadyActive: 0 };
+  const ud = loadUserData(TARGET_USER);
+  for (const l of ud.leads || []) {
+    if (l.lastAction !== "not-relevant") { stats.alreadyActive++; continue; }
+    const reason = String(l.archived_reason || "");
+    if (!reason.startsWith("Apollo: ikke fundet") && !reason.startsWith("Apollo ICP")) continue;
+    const isVerifiedAd =
+      l.meta_advertiser === true ||
+      l.linkedin_advertiser === true ||
+      l.meta_verified_active === true ||
+      (Number(l.meta_ads_recent90d) || 0) > 0;
+    if (!isVerifiedAd) continue;
+    if (cutoffMs) {
+      const ts = new Date(l.archived_at || l.lastDispositionAt || 0).getTime();
+      if (!ts || ts < cutoffMs) continue;
+    }
+    stats.matched++;
+    // Skip "Apollo ICP" reasons that indicate truly over-size companies
+    // (4500 emp, 360 emp, etc). Heuristic: parse the "X emp" from reason
+    // and bail if it's > 25 (our ICP cap).
+    const empMatch = reason.match(/(\d+)\s*emp/);
+    if (empMatch && Number(empMatch[1]) > 25) continue;
+    if (DRY) continue;
+    if (stats.restored >= LIMIT) break;
+    delete l.lastAction;
+    delete l.lastDispositionAt;
+    delete l.archived_reason;
+    delete l.archived_at;
+    l.needs_research = true;
+    l.phone_missing = true; // ensure they land in research-bucket aware flow
+    l.apollo_enrichment_pending = false; // drain already tried + failed
+    l.apollo_enrichment_deferred = true;  // cockpit-open auto-reveal will retry
+    stats.restored++;
+  }
+  if (!DRY && stats.restored > 0) {
+    saveUserData(TARGET_USER, ud);
+    logActivity("bulk-restore", `↻ Restored ${stats.restored} verified-advertising leads from Apollo-not-found archive`, { stats, userId: TARGET_USER });
+  }
+  console.log("[restore-spill-leads]", JSON.stringify({ dry: DRY, ...stats }));
+  res.json({ ok: true, stats, dry: DRY });
+}
+app.post("/api/admin/restore-spill-leads", authMiddleware, runRestoreSpillLeads);
+app.post("/api/cron/restore-spill-leads", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  return runRestoreSpillLeads(req, res);
 });
 
 // ── CVR BACKFILL via Datafordeler name search ───────────────────────
