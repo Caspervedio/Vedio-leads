@@ -5837,8 +5837,21 @@ function renderAutodialerPage(){
 
   // Same logic as before but parameterised by scope ('today' | 'week' | 'all')
   // and exposes the per-lead match so we can build drilldown lists.
+  // Distinguish SYSTEM auto-archives (drain ICP gate, branche-walk filter,
+  // Apollo-not-found, etc.) from MANUAL "Ikke relevant" dispositions by
+  // the SDR. Both set lastAction='not-relevant' but the SDR's actual work
+  // signal should only count the manual ones — system archives reflect
+  // filter health, not SDR effort.
+  const isSystemArchive = (l) => {
+    const r = String(l.archived_reason || '');
+    return r.startsWith('Apollo:') ||
+           r.startsWith('Apollo ICP') ||
+           r.startsWith('Branche-walk') ||
+           r.startsWith('Auto-archived') ||
+           r.startsWith('Auto-arkiveret');
+  };
   const countOver = (leadsArr, scope) => {
-    const c = { dialed:0, interested:0, no_answer:0, not_relevant:0, sms:0, follow_up:0, twentyPushed:0 };
+    const c = { dialed:0, interested:0, no_answer:0, not_relevant:0, not_relevant_manual:0, not_relevant_auto:0, sms:0, follow_up:0, twentyPushed:0 };
     for(const l of leadsArr){
       const dispTime = l.lastDispositionAt || l.lastCallAt;
       if(scope==='all' ? !!l.lastCallAt : inScope(l.lastCallAt, scope)) c.dialed++;
@@ -5847,7 +5860,11 @@ function renderAutodialerPage(){
         if(l.lastAction==='interested') c.interested++;
         else if(l.lastAction==='follow-up') c.follow_up++;
         else if(l.lastAction==='no-answer') c.no_answer++;
-        else if(l.lastAction==='not-relevant') c.not_relevant++;
+        else if(l.lastAction==='not-relevant') {
+          c.not_relevant++; // keep combined for legacy callers
+          if(isSystemArchive(l)) c.not_relevant_auto++;
+          else c.not_relevant_manual++;
+        }
         else if(l.lastAction==='sms') c.sms++;
       }
       if(l.last_sms_at && (scope==='all' ? true : inScope(l.last_sms_at, scope))) {
@@ -6242,6 +6259,15 @@ function openActivityDrilldown(metricId, scope){
     if(scope==='week')  return (now - t) < WEEK_MS;
     return true; // all
   };
+  // Same classifier the counter uses (manual vs system auto-archive)
+  const isSystemArchive = (l) => {
+    const r = String(l.archived_reason || '');
+    return r.startsWith('Apollo:') ||
+           r.startsWith('Apollo ICP') ||
+           r.startsWith('Branche-walk') ||
+           r.startsWith('Auto-archived') ||
+           r.startsWith('Auto-arkiveret');
+  };
   // Match the metric against each lead
   const matched = (leads||[]).filter(l => {
     if(metricId === 'dialed') {
@@ -6252,7 +6278,9 @@ function openActivityDrilldown(metricId, scope){
     if(metricId === 'interested')    return dispMatch && l.lastAction === 'interested';
     if(metricId === 'follow_up')     return dispMatch && l.lastAction === 'follow-up';
     if(metricId === 'no_answer')     return dispMatch && l.lastAction === 'no-answer';
-    if(metricId === 'not_relevant')  return dispMatch && l.lastAction === 'not-relevant';
+    if(metricId === 'not_relevant')         return dispMatch && l.lastAction === 'not-relevant';
+    if(metricId === 'not_relevant_manual')  return dispMatch && l.lastAction === 'not-relevant' && !isSystemArchive(l);
+    if(metricId === 'not_relevant_auto')    return dispMatch && l.lastAction === 'not-relevant' &&  isSystemArchive(l);
     if(metricId === 'sms') {
       // SMS = either disposition=sms in window OR last_sms_at in window
       const dispIsSms = dispMatch && l.lastAction === 'sms';
@@ -6274,6 +6302,8 @@ function openActivityDrilldown(metricId, scope){
   const metricLabels = {
     dialed:'📞 Ringet', interested:'✓ Interesseret', follow_up:'📅 Follow-up planlagt',
     sms:'💬 SMS sendt', no_answer:'✕ Ingen svar', not_relevant:'– Ikke relevant',
+    not_relevant_manual:'– Ikke relevant (manuel)',
+    not_relevant_auto:'⚙ Auto-arkiveret (system)',
     twentyPushed:'🎯 Pushet til Twenty',
   };
   const scopeLabels = { today:'i dag', week:'denne uge', all:'all-time' };
@@ -6676,13 +6706,14 @@ function renderAdActivityTable(today, week, all, perSdr){
   // Each cell becomes a clickable button that opens the lead list for
   // that (metric, scope) pair, e.g. "4 ringet i dag" → who are they?
   const rows = [
-    { id:'dialed',       lbl:'📞 Ringet',              t:today.dialed,        w:week.dialed,        a:all.dialed,        color:'#fff' },
-    { id:'interested',   lbl:'✓ Interesseret',          t:today.interested,    w:week.interested,    a:all.interested,    color:'#6ee7b7' },
-    { id:'follow_up',    lbl:'📅 Follow-up planlagt',    t:today.follow_up,     w:week.follow_up,     a:all.follow_up,     color:'#c4b5fd' },
-    { id:'sms',          lbl:'💬 SMS sendt',             t:today.sms,           w:week.sms,           a:all.sms,           color:'#a78bfa' },
-    { id:'no_answer',    lbl:'✕ Ingen svar',            t:today.no_answer,     w:week.no_answer,     a:all.no_answer,     color:'#60a5fa' },
-    { id:'not_relevant', lbl:'– Ikke relevant',         t:today.not_relevant,  w:week.not_relevant,  a:all.not_relevant,  color:'var(--w55)' },
-    { id:'twentyPushed', lbl:'🎯 Pushet til Twenty',     t:today.twentyPushed,  w:week.twentyPushed,  a:all.twentyPushed,  color:'#60a5fa' },
+    { id:'dialed',              lbl:'📞 Ringet',                  t:today.dialed,              w:week.dialed,              a:all.dialed,              color:'#fff' },
+    { id:'interested',          lbl:'✓ Interesseret',              t:today.interested,          w:week.interested,          a:all.interested,          color:'#6ee7b7' },
+    { id:'follow_up',           lbl:'📅 Follow-up planlagt',        t:today.follow_up,           w:week.follow_up,           a:all.follow_up,           color:'#c4b5fd' },
+    { id:'sms',                 lbl:'💬 SMS sendt',                 t:today.sms,                 w:week.sms,                 a:all.sms,                 color:'#a78bfa' },
+    { id:'no_answer',           lbl:'✕ Ingen svar',                t:today.no_answer,           w:week.no_answer,           a:all.no_answer,           color:'#60a5fa' },
+    { id:'not_relevant_manual', lbl:'– Ikke relevant (manuel)',     t:today.not_relevant_manual, w:week.not_relevant_manual, a:all.not_relevant_manual, color:'var(--w55)' },
+    { id:'not_relevant_auto',   lbl:'⚙ Auto-arkiveret (system)',     t:today.not_relevant_auto,   w:week.not_relevant_auto,   a:all.not_relevant_auto,   color:'var(--w35)' },
+    { id:'twentyPushed',        lbl:'🎯 Pushet til Twenty',         t:today.twentyPushed,        w:week.twentyPushed,        a:all.twentyPushed,        color:'#60a5fa' },
   ];
   // Build a clickable cell. n=0 → muted, no click. n>0 → underline + onclick
   // opens the drilldown modal. Scope: 'today' | 'week' | 'all'.
@@ -6747,7 +6778,8 @@ function renderAdActivityTable(today, week, all, perSdr){
                 <div style="color:#c4b5fd;font-weight:600">📅 Follow-up</div>${cell(s.day.follow_up,'#c4b5fd')}${cell(s.week.follow_up,'#c4b5fd')}${cell(s.all.follow_up,'#c4b5fd')}
                 <div style="color:#a78bfa;font-weight:600">💬 SMS</div>${cell(s.day.sms,'#a78bfa')}${cell(s.week.sms,'#a78bfa')}${cell(s.all.sms,'#a78bfa')}
                 <div style="color:#60a5fa;font-weight:600">✕ Ingen svar</div>${cell(s.day.no_answer,'#60a5fa')}${cell(s.week.no_answer,'#60a5fa')}${cell(s.all.no_answer,'#60a5fa')}
-                <div style="color:var(--w55);font-weight:600">– Ikke relevant</div>${cell(s.day.not_relevant,'var(--w55)')}${cell(s.week.not_relevant,'var(--w55)')}${cell(s.all.not_relevant,'var(--w55)')}
+                <div style="color:var(--w55);font-weight:600">– Ikke rel. (manuel)</div>${cell(s.day.not_relevant_manual,'var(--w55)')}${cell(s.week.not_relevant_manual,'var(--w55)')}${cell(s.all.not_relevant_manual,'var(--w55)')}
+                <div style="color:var(--w35);font-weight:600">⚙ Auto-arkiveret</div>${cell(s.day.not_relevant_auto,'var(--w35)')}${cell(s.week.not_relevant_auto,'var(--w35)')}${cell(s.all.not_relevant_auto,'var(--w35)')}
                 <div style="color:#60a5fa;font-weight:600">🎯 Pushet</div>${cell(s.day.twentyPushed,'#60a5fa')}${cell(s.week.twentyPushed,'#60a5fa')}${cell(s.all.twentyPushed,'#60a5fa')}
               </div>
               <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--w04);font-size:11px;color:var(--w55)">Konvertering · i dag <strong style="color:${s.day.dialed>0?'#fff':'var(--w35)'}">${c(s.day.interested,s.day.dialed)}</strong> · uge <strong style="color:${s.week.dialed>0?'#fff':'var(--w35)'}">${c(s.week.interested,s.week.dialed)}</strong> · all <strong style="color:${s.all.dialed>0?'#fff':'var(--w35)'}">${c(s.all.interested,s.all.dialed)}</strong></div>
