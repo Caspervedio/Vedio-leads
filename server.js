@@ -8420,10 +8420,8 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
 
   const RESULTS_LIMIT = Math.max(20, Math.min(300, Number(req.query.limit) || 100));
   const TARGET_USER = (req.query.userId || "u1").toString();
-  // PR9: respond 202 immediately, run scrape+DF-verify+save in background
-  // so we don't hit Cloud Run's 300s sync timeout.
-  res.status(202).json({ ok: true, async: true, message: "scrape started in background" });
-  (async () => {
+  // Synchronous flow — Cloud Run timeout bumped to 1200s in deploy.yml
+  // to fit Apify scrape (~3-5min) + N × DF lookups.
   const state = loadLinkedInDiscoverState();
   const query = LINKEDIN_DISCOVER_QUERIES[state.queryCursor % LINKEDIN_DISCOVER_QUERIES.length];
   state.queryCursor = (state.queryCursor + 1) % LINKEDIN_DISCOVER_QUERIES.length;
@@ -8544,10 +8542,7 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
     { stats, userId: TARGET_USER },
   );
   console.log("[linkedin-ads-discover] done:", JSON.stringify(stats));
-  })().catch((err) => {
-    console.error("[linkedin-ads-discover] background task failed:", err.message);
-    logActivity("discovery", `❌ LinkedIn-discover fejlede: ${err.message}`, { error: err.message });
-  });
+  res.json({ ok: true, stats });
 });
 
 // ── GOOGLE MAPS / OSM DAILY DISCOVERY ─────────────────────────────────
@@ -9834,8 +9829,6 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   if (!process.env.APIFY_API_TOKEN) {
     return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
   }
-  // Apollo check kept for backward compat — v2 doesn't need it, but
-  // legacy callers (if any) may expect a 503 when Apollo is down.
   // Per-call cost knobs. Each keyword scrape: resultsLimit × $0.005.
   // Default: 3 keywords × 100 ads = ~$1.50/run. 1 run/day = ~$45/mo.
   // ?keywords= overrides the rotation (comma-sep list); ?limit= sets
@@ -9845,16 +9838,10 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   const TARGET_USER = (req.query.userId || "u1").toString();
   // Caller can pin a specific keyword list via ?keywords=DK,tøj,mode for testing.
   const customKeywords = (req.query.keywords || "").toString().split(",").map((s) => s.trim()).filter(Boolean);
-  // Respond 202 immediately and run the scrape+verify+save in background.
-  // The full pipeline (Apify scrape ~3-5min + N × DF lookups) exceeds the
-  // 300s Cloud Run sync-request timeout. Cloud Scheduler doesn't care
-  // about the response body — just needs a 2xx to mark the job successful.
-  // The background work continues because min-instances=1 keeps the
-  // container alive. PR9.
-  res.status(202).json({ ok: true, async: true, message: "scrape started in background" });
-  // Wrap the rest in an inline async IIFE so any unhandled rejection
-  // logs cleanly without crashing the process.
-  (async () => {
+  // Synchronous flow. Cloud Run timeout bumped to 1200s in deploy.yml
+  // to fit Apify scrape (~3-5min) + N × DF lookups + saves. We can't
+  // background-IIFE this on default Cloud Run because CPU is throttled
+  // once res.send fires.
   const stats = {
     adsScraped: 0,
     uniqueAdvertisers: 0,
@@ -10006,10 +9993,7 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
     { stats, userId: TARGET_USER },
   );
   console.log("[meta-ads-discover] done:", JSON.stringify(stats));
-  })().catch((err) => {
-    console.error("[meta-ads-discover] background task failed:", err.message);
-    logActivity("discovery", `❌ Meta-ads-discover fejlede: ${err.message}`, { error: err.message });
-  });
+  res.json({ ok: true, stats });
 });
 
 // POST /api/cron/purge-outside-icp — one-shot cleanup against the current
