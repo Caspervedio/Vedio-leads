@@ -10706,6 +10706,153 @@ app.post("/api/cron/archive-by-source", (req, res) => {
   return runArchiveBySource(req, res);
 });
 
+// ── BULK ARCHIVE specific CVRs ─────────────────────────────────────────
+// Used to one-shot archive a vetted list of misfit leads (too big, wrong
+// country, etc.) without touching the rest. Takes ?cvrs=A,B,C&reason=text.
+async function runArchiveByCvrs(req, res) {
+  const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
+  const cvrsParam = (req.query.cvrs || "").toString().trim();
+  if (!cvrsParam) return res.status(400).json({ error: "cvrs päkrævet" });
+  const cvrs = new Set(cvrsParam.split(",").map((s) => s.trim()).filter(Boolean));
+  const REASON = (req.query.reason || "ICP-fail (manuel)").toString().slice(0, 200);
+  const DRY = req.query.dry === "1";
+  const nowIso = new Date().toISOString();
+  const stats = { matched: 0, archived: 0, alreadyArchived: 0, notFound: 0 };
+  const ud = loadUserData(TARGET_USER);
+  for (const l of ud.leads || []) {
+    if (!cvrs.has(String(l.cvr))) continue;
+    stats.matched++;
+    if (l.lastAction === "not-relevant") { stats.alreadyArchived++; continue; }
+    if (DRY) continue;
+    l.lastAction = "not-relevant";
+    l.lastDispositionAt = nowIso;
+    l.archived_reason = REASON;
+    l.archived_at = nowIso;
+    stats.archived++;
+  }
+  stats.notFound = cvrs.size - stats.matched;
+  if (!DRY && stats.archived > 0) {
+    saveUserData(TARGET_USER, ud);
+    logActivity("bulk-archive", `🧹 Bulk-arkiveret ${stats.archived} leads (manuel CVR-liste): ${REASON}`, { stats, userId: TARGET_USER });
+  }
+  console.log("[archive-by-cvrs]", JSON.stringify({ count: cvrs.size, reason: REASON, dry: DRY, ...stats }));
+  res.json({ ok: true, stats, dry: DRY });
+}
+app.post("/api/admin/archive-by-cvrs", authMiddleware, runArchiveByCvrs);
+app.post("/api/cron/archive-by-cvrs", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  return runArchiveByCvrs(req, res);
+});
+
+// ── DF-VERIFY RETROACTIVE for unknowns ─────────────────────────────────
+// Walks active leads with no employee data and runs them through
+// tryDfVerifyDkCompany. If found → backfill cvr, phone, address, emp.
+// If not found → archive as "not in Datafordeler". If found but over the
+// 25-emp ICP cap → archive as too-big.
+async function runDfVerifyUnknowns(req, res) {
+  const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
+  const LIMIT = Math.max(1, Math.min(1000, Number(req.query.limit) || 200));
+  const DRY = req.query.dry === "1";
+  const stats = {
+    candidates: 0,
+    dfMatched: 0,
+    backfilled: 0,
+    archivedNotInDf: 0,
+    archivedTooBig: 0,
+    skippedAlreadyHasEmp: 0,
+    errors: 0,
+  };
+  const ud = loadUserData(TARGET_USER);
+  const nowIso = new Date().toISOString();
+  // Target: active leads with no emp data
+  const todo = (ud.leads || []).filter((l) => {
+    if (l.lastAction === "not-relevant") return false;
+    if (l.twenty_opportunity_id || l.twenty_pushed_at) return false;
+    const emp = String(l.emp || l.emps || "").trim();
+    const apolloEmp = (l.apollo_company || {}).estimatedEmployees;
+    if (emp || apolloEmp) return false;
+    return !!(l.name || "").trim();
+  }).slice(0, LIMIT);
+  stats.candidates = todo.length;
+
+  for (const lead of todo) {
+    try {
+      const df = await tryDfVerifyDkCompany(lead.name);
+      if (!df || !df.cvr || !/^\d{8}$/.test(String(df.cvr))) {
+        // Not found in DF — archive (non-DK or unverified)
+        if (!DRY) {
+          // Re-load fresh in case other crons mutated
+          const ud2 = loadUserData(TARGET_USER);
+          const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
+          if (l2 && l2.lastAction !== "not-relevant") {
+            l2.lastAction = "not-relevant";
+            l2.lastDispositionAt = nowIso;
+            l2.archived_reason = "Auto-arkiveret: ikke i Datafordeler (DK-verify failed)";
+            l2.archived_at = nowIso;
+            saveUserData(TARGET_USER, ud2);
+          }
+        }
+        stats.archivedNotInDf++;
+        continue;
+      }
+      stats.dfMatched++;
+      // Has DF data — apply emp-gate
+      if (!dfEmpPassesIcp(df)) {
+        if (!DRY) {
+          const ud2 = loadUserData(TARGET_USER);
+          const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
+          if (l2 && l2.lastAction !== "not-relevant") {
+            l2.lastAction = "not-relevant";
+            l2.lastDispositionAt = nowIso;
+            l2.archived_reason = `Auto-arkiveret: over ICP-cap (DF emp=${df.emp || "?"})`;
+            l2.archived_at = nowIso;
+            l2.apollo_company = { ...(l2.apollo_company || {}), country: df.country || "Denmark", estimatedEmployees: parseInt((df.emp || "0").split("-")[0]) || null };
+            saveUserData(TARGET_USER, ud2);
+          }
+        }
+        stats.archivedTooBig++;
+        continue;
+      }
+      // Pass — backfill DF data on the lead
+      if (!DRY) {
+        const ud2 = loadUserData(TARGET_USER);
+        const l2 = (ud2.leads || []).find((x) => x.cvr === lead.cvr);
+        if (l2 && l2.lastAction !== "not-relevant") {
+          // Overlay DF data without clobbering existing populated fields
+          if (df.phone && !l2.phone) { l2.phone = df.phone; l2.ph = df.phone; l2.phone_missing = false; }
+          if (df.emp && !l2.emp) l2.emp = df.emp;
+          if (df.city && !l2.city) l2.city = df.city;
+          if (df.zip && !l2.zip) l2.zip = df.zip;
+          if (df.addr && !l2.addr) l2.addr = df.addr;
+          // Don't overwrite synthetic cvr with real one (keeps dedup keys stable)
+          l2.df_cvr_match = df.cvr;
+          l2.df_verified_at = nowIso;
+          saveUserData(TARGET_USER, ud2);
+          stats.backfilled++;
+        }
+      } else {
+        stats.backfilled++;
+      }
+    } catch (e) { stats.errors++; }
+    // Be gentle on Datafordeler (it has rate limits)
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  if (!DRY) {
+    logActivity("df-verify", `🔍 Retroaktiv DF-verify: ${stats.dfMatched}/${stats.candidates} matchet · ${stats.backfilled} berigetet · ${stats.archivedNotInDf} ikke-DK · ${stats.archivedTooBig} for store`, { stats, userId: TARGET_USER });
+  }
+  console.log("[df-verify-unknowns]", JSON.stringify({ dry: DRY, ...stats }));
+  res.json({ ok: true, stats, dry: DRY });
+}
+app.post("/api/admin/df-verify-unknowns", authMiddleware, runDfVerifyUnknowns);
+app.post("/api/cron/df-verify-unknowns", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  return runDfVerifyUnknowns(req, res);
+});
+
 // ── RESTORE wrongly-archived verified-advertising leads ────────────────
 // Drain's STEP 0.5 archives leads as "Apollo: ikke fundet i database"
 // when Apollo's name index doesn't have them. Before PR7 the spill-

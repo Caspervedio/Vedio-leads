@@ -7641,7 +7641,14 @@ function renderCockpitDetail(c){
               </div>
             </div>
           </div>
-        `).join(''):`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">${c.apollo_enrichment_deferred?`<div style="margin-bottom:6px;color:var(--w80)">Beslutningstager ikke hentet endnu.</div><div style="margin-bottom:8px;font-size:10.5px;color:var(--w35)">Du kan ringe på hovednummeret med det samme.<br>Klik for at finde direkte kontakt (~1 Apollo credit)</div>`:`Ingen kontakter fundet endnu.<br>`}<button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Find beslutningstager</button></div>`}
+        `).join(''):`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">${c.apollo_enrichment_deferred?`<div style="margin-bottom:6px;color:var(--w80)">Beslutningstager ikke hentet endnu.</div><div style="margin-bottom:8px;font-size:10.5px;color:var(--w35)">Du kan ringe på hovednummeret med det samme.<br>Klik for at finde direkte kontakt (~1 Apollo credit)</div>`:`Ingen kontakter fundet endnu.<br>`}<button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Find beslutningstager</button>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--w08);font-size:10.5px;color:var(--w35);text-align:left">
+            <div style="margin-bottom:6px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase">Eller tilføj selv via LinkedIn URL</div>
+            <div style="display:flex;gap:6px">
+              <input id="cockpit-li-input-${e(c.cvr||'')}" type="url" placeholder="https://linkedin.com/in/..." style="flex:1;background:var(--w04);border:1px solid var(--w08);border-radius:8px;color:#fff;padding:7px 10px;font-size:11.5px;font-family:'Outfit',sans-serif;outline:none">
+              <button onclick="cockpitAddContactFromLinkedin('${e(c.cvr||'')}')" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">+ Tilføj</button>
+            </div>
+          </div></div>`}
         </div>
       </div>
 
@@ -8004,6 +8011,70 @@ async function enrichLeadWithKaspr(cvr, context){
       renderCockpit();
     }
   }catch(ex){showToast('Fejl: '+ex.message);}
+}
+
+// Manually attach a contact from a pasted LinkedIn /in/ URL. Used when
+// the auto-reveal flow can't find a relevant person and the SDR has
+// found one via their own research. Hits the existing
+// /api/apollo/lookup-linkedin endpoint (1 Apollo credit, 30d cache),
+// appends the result to the lead's contacts, and re-renders.
+async function cockpitAddContactFromLinkedin(cvr) {
+  if (!cvr) return;
+  const input = document.getElementById('cockpit-li-input-' + cvr);
+  if (!input) return;
+  const url = (input.value || '').trim();
+  if (!url) { showToast('Indsæt en LinkedIn URL'); return; }
+  if (!/^https?:\/\/([a-z]+\.)?linkedin\.com\/in\//i.test(url)) {
+    showToast('Skal være en LinkedIn /in/ profil-URL'); return;
+  }
+  showToast('🔍 Slår LinkedIn-profilen op…');
+  try {
+    const r = await fetch('/api/apollo/lookup-linkedin', {
+      method: 'POST',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = await r.json();
+    if (r.status === 503) { showToast('Apollo ikke konfigureret'); return; }
+    if (r.status === 429 && d.code === 'APOLLO_CAP_REACHED') {
+      showToast(`⏸ Apollo dagsbudget brugt op (${d.spent}/${d.cap})`); return;
+    }
+    if (!r.ok) { showToast('Fejl: ' + (d.error || 'ukendt')); return; }
+    if (!d.found && !d.person && !d.name) {
+      showToast('Apollo har ikke denne person i deres database');
+      return;
+    }
+    // Normalize the contact shape — endpoint already returns flat fields
+    const contact = {
+      name: d.name || (d.person && d.person.name) || '',
+      title: d.title || (d.person && d.person.title) || '',
+      email: d.email || '',
+      emailStatus: d.emailStatus || '',
+      linkedin: url,
+      linkedinUrl: url,
+      seniority: d.seniority || '',
+      photoUrl: d.photoUrl || '',
+      phones: d.phones || (d.phone ? [{ number: d.phone, typeLabel: 'work' }] : []),
+      phone: d.phone || (d.phones && d.phones[0] && d.phones[0].number) || '',
+      source: 'manual-linkedin-url',
+      addedAt: new Date().toISOString(),
+    };
+    if (!contact.name) { showToast('Apollo returnerede ingen navn — tjek URL'); return; }
+    // Append to lead.contacts locally, then PATCH to persist
+    const lead = leads.find(l => l.cvr === cvr);
+    if (lead) {
+      lead.contacts = [...(lead.contacts || []), contact];
+      await fetch('/api/leads/' + encodeURIComponent(cvr), {
+        method: 'PATCH',
+        headers: { ...ah(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contacts: lead.contacts }),
+      });
+      showToast(`✓ ${contact.name} tilføjet`);
+      renderCockpit();
+    }
+  } catch (ex) {
+    showToast('Fejl: ' + ex.message);
+  }
 }
 
 // Manual Twenty push — replaces the previous auto-push on Interesseret.
