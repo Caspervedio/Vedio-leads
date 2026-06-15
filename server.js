@@ -8057,6 +8057,14 @@ app.post("/api/cron/scrape-website-phones", async (req, res) => {
 // Mangler-nummer bucket. People-match credit reveal could be a later
 // upgrade but that's $$$/lead.
 async function tryRecoverPhoneForLead(lead) {
+  // Skip recovery entirely if the lead isn't a known DK company. Without
+  // this gate, leads like "AT&T" or "Booking.com" (international brands
+  // that slipped past meta-ads-discover) would get random numbers attached
+  // from Google SERP / name-search collisions.
+  if (!hasDkCompanyEvidence(lead) || looksLikeNonDkBrand(lead.name)) {
+    return null;
+  }
+
   // PATH 1 — Real DK 8-digit CVR → direct Datafordeler lookup
   if (/^\d{8}$/.test(String(lead.cvr || ""))) {
     try {
@@ -9503,6 +9511,65 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
 
 const META_ADS_DISCOVER_STATE_FILE = path.join(DATA_DIR, "discovery", "meta_ads_discover.json");
 
+// ─── Non-DK brand blocklist ───────────────────────────────────────
+// Big international brands run Meta ads in DK but aren't DK companies.
+// We reject them at meta-ads-discover intake AND in a periodic sweep.
+// Match is case-insensitive substring on the Meta pageName / lead name,
+// anchored with word-boundaries so "Apple" won't match "Pineapplecake".
+// Grow this list whenever a brand appears in the queue that shouldn't.
+const NON_DK_BRAND_BLOCKLIST = [
+  // US tech / e-commerce
+  "AT&T", "Apple", "Amazon", "Google", "Microsoft", "Meta",
+  "Netflix", "Disney", "Spotify", "Uber", "Airbnb", "PayPal", "Stripe",
+  "Shopify", "Wix", "Squarespace", "Zoom", "Adobe", "Oracle", "Salesforce",
+  "IBM", "Intel", "Dell", "Tesla", "Ford", "Toyota",
+  // SaaS / B2B
+  "Atlassian", "Slack", "Notion", "Asana", "Monday.com", "HubSpot",
+  "Mailchimp", "Klaviyo", "Intercom", "Zendesk", "Twilio", "Cloudflare",
+  // Travel / OTA
+  "Booking.com", "Expedia", "Trivago", "Hotels.com", "TripAdvisor",
+  "Skyscanner", "Kayak", "Vrbo", "Agoda",
+  // UK / EU e-com that just runs DK ads
+  "WeightWorld", "ASOS", "Boohoo", "Zalando", "Wish",
+  // Telecom
+  "Vodafone", "Verizon", "T-Mobile",
+  // Misc global
+  "Coca-Cola", "Nike", "Adidas", "McDonald", "Starbucks",
+  "L'Oréal", "Loreal", "Unilever", "Nestlé", "Nestle", "Samsung",
+  "Huawei", "Xiaomi", "Sony", "Panasonic",
+];
+function looksLikeNonDkBrand(name) {
+  if (!name) return false;
+  const lower = String(name).toLowerCase().trim();
+  for (const brand of NON_DK_BRAND_BLOCKLIST) {
+    const b = brand.toLowerCase();
+    const idx = lower.indexOf(b);
+    if (idx < 0) continue;
+    const before = idx === 0 || /[^a-zæøå0-9]/.test(lower[idx - 1]);
+    const after  = idx + b.length === lower.length || /[^a-zæøå0-9]/.test(lower[idx + b.length]);
+    if (before && after) return true;
+  }
+  return false;
+}
+
+// DK-company evidence check — phone recovery gates on this so we don't
+// attach a phone to a lead unless we have at least one signal that it's
+// actually a Danish company.
+function hasDkCompanyEvidence(lead) {
+  if (!lead) return false;
+  if (/^\d{8}$/.test(String(lead.cvr || ""))) return true;
+  if (/^\d{8}$/.test(String(lead.df_cvr_match || ""))) return true;
+  const web = String(lead.web || lead.website || "").toLowerCase();
+  if (/\.dk(\/|$|\?)/.test(web)) return true;
+  const apolloCountry = String((lead.apollo_company && lead.apollo_company.country) || "").toLowerCase();
+  if (apolloCountry === "denmark" || apolloCountry === "dk") return true;
+  const zip = String(lead.zip || "").trim();
+  if (/^\d{4}$/.test(zip) && Number(zip) >= 800 && Number(zip) <= 9999) return true;
+  const ph = String(lead.phone || lead.ph || "").replace(/[\s\-\(\)]/g, "");
+  if (ph.startsWith("+45") || /^\d{8}$/.test(ph)) return true;
+  return false;
+}
+
 // Broad Danish keywords used to surface DK advertisers from Meta Ad Library.
 // Each run rotates through these via the keywordCursor in the state file so
 // we sweep different slices of the active-ad pool over time. Picked for two
@@ -9757,6 +9824,12 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   for (const adv of fresh) {
     state.scannedPageIds[adv.pageId] = checkedAt;
     if (!adv.pageName) continue;
+    // Hard reject non-DK mega-brands at intake (AT&T, Booking.com, etc.
+    // run Meta ads to DK audiences but aren't DK companies).
+    if (looksLikeNonDkBrand(adv.pageName)) {
+      stats.skippedNonDkBrand = (stats.skippedNonDkBrand || 0) + 1;
+      continue;
+    }
     try {
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
@@ -10564,11 +10637,34 @@ async function runRestoreSpillLeads(req, res) {
   // Optional: only restore leads archived in the last N hours
   const HOURS = Number(req.query.hours);
   const cutoffMs = HOURS ? Date.now() - HOURS * 3600 * 1000 : 0;
+  // Optional: ?cvrs=foo,bar — restore exactly these CVRs, bypass guards.
+  // Used when an SDR wants to manually rescue specific over-size leads
+  // the heuristic emp-cap would otherwise skip.
+  const cvrsParam = (req.query.cvrs || "").toString().trim();
+  const explicitCvrs = cvrsParam ? new Set(cvrsParam.split(",").map((s) => s.trim()).filter(Boolean)) : null;
   const stats = { matched: 0, restored: 0, alreadyActive: 0 };
   const ud = loadUserData(TARGET_USER);
   for (const l of ud.leads || []) {
     if (l.lastAction !== "not-relevant") { stats.alreadyActive++; continue; }
     const reason = String(l.archived_reason || "");
+    // Explicit-CVR mode bypasses the reason/verified/cutoff filters
+    // (operator already vetted these specific leads manually).
+    if (explicitCvrs) {
+      if (!explicitCvrs.has(String(l.cvr))) continue;
+      stats.matched++;
+      if (DRY) continue;
+      if (stats.restored >= LIMIT) break;
+      delete l.lastAction;
+      delete l.lastDispositionAt;
+      delete l.archived_reason;
+      delete l.archived_at;
+      l.needs_research = true;
+      l.phone_missing = true;
+      l.apollo_enrichment_pending = false;
+      l.apollo_enrichment_deferred = true;
+      stats.restored++;
+      continue;
+    }
     if (!reason.startsWith("Apollo: ikke fundet") && !reason.startsWith("Apollo ICP")) continue;
     const isVerifiedAd =
       l.meta_advertiser === true ||
