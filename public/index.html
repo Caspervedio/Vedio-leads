@@ -6336,6 +6336,7 @@ function openActivityDrilldown(metricId, scope){
           <th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Lead</th>
           <th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Telefon</th>
           <th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Disposition</th>
+          ${metricId.startsWith('not_relevant') ? `<th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Grund</th>` : ''}
           <th style="text-align:right;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Tidspunkt</th>
         </tr></thead>
         <tbody>
@@ -6344,10 +6345,14 @@ function openActivityDrilldown(metricId, scope){
             const ts = l[tsKey] || l.lastCallAt;
             const da = l.lastAction || '';
             const dispChip = da ? `<span style="font-size:10px;padding:2px 7px;border-radius:5px;background:${lastActionColor(da,'bg')};color:${lastActionColor(da,'fg')};font-weight:700">${lastActionLabel(da)}</span>` : '';
+            const reasonCell = metricId.startsWith('not_relevant')
+              ? `<td style="padding:8px 10px;font-size:11.5px;color:${l.archived_reason?'#fca5a5':'var(--w35)'};max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e(l.archived_reason||'(ingen grund noteret)')}">${e(l.archived_reason||'—')}</td>`
+              : '';
             return `<tr style="border-bottom:1px solid var(--w04);cursor:pointer" onclick="document.getElementById('activity-drill-modal').remove();adOpenLead('${e(l.cvr)}')">
               <td style="padding:8px 10px"><div style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'?')}</div><div style="font-size:10.5px;color:var(--w55)">${e(l.cvr||'')}</div></td>
               <td style="padding:8px 10px;font-size:11.5px;font-family:'JetBrains Mono',monospace;color:#c4b5fd">${ph?e(ph):'—'}</td>
               <td style="padding:8px 10px">${dispChip}</td>
+              ${reasonCell}
               <td style="padding:8px 10px;text-align:right;font-size:11px;color:var(--w55);font-variant-numeric:tabular-nums">${fmt(ts)}</td>
             </tr>`;
           }).join('')}
