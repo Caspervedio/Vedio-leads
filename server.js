@@ -8472,27 +8472,40 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
   //    a strong B2B intent signal that survives the lazy-enrich pivot).
   const checkedAt = new Date().toISOString();
   for (const adv of fresh) {
+    if (!adv.name) continue;
+    if (looksLikeNonDkBrand(adv.name)) {
+      stats.skippedNonDkBrand = (stats.skippedNonDkBrand || 0) + 1;
+      continue;
+    }
+    // DK-verify via Datafordeler — drop if not a registered DK biz
+    let df = null;
+    try { df = await tryDfVerifyDkCompany(adv.name); } catch (_) {}
+    if (!df || !df.cvr || !/^\d{8}$/.test(String(df.cvr))) {
+      stats.skippedNotInDf = (stats.skippedNotInDf || 0) + 1;
+      continue;
+    }
+    if (!dfEmpPassesIcp(df)) {
+      stats.skippedOverSize = (stats.skippedOverSize || 0) + 1;
+      continue;
+    }
     try {
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
-      // Synthetic CVR from hash of name (LinkedIn doesn't give us a stable ID)
-      const hashSeed = adv.name.toLowerCase().trim();
-      let hash = 0;
-      for (let i = 0; i < hashSeed.length; i++) hash = ((hash << 5) - hash + hashSeed.charCodeAt(i)) | 0;
-      const syntheticCvr = `linkedin-${Math.abs(hash).toString(36)}`;
-      const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
+      const dupByCvr  = ud.leads.some((l) => l.cvr === df.cvr);
       const dupByName = ud.leads.some(
-        (l) => (l.name || "").toLowerCase().trim() === adv.name.toLowerCase().trim(),
+        (l) => (l.name || "").toLowerCase().trim() === (df.name || adv.name).toLowerCase().trim(),
       );
-      if (dupByCvr || dupByName) continue;
+      if (dupByCvr || dupByName) {
+        stats.skippedDuplicates = (stats.skippedDuplicates || 0) + 1;
+        continue;
+      }
+      const phone = df.phone || df.ph || "";
       ud.leads.push({
-        cvr: syntheticCvr,
-        name: adv.name,
-        addr: "", zip: "", city: "", ph: "", em: "", web: "", ind: "", ic: "",
-        emp: "", emps: null, st: "aktiv", yr: "", form: "",
-        eq: 0, res: 0, omsaetning: 0,
+        ...df,
+        listId: "ungrouped",
+        addedAt: checkedAt,
         source: "linkedin-ads-discover",
-        icpFit: false, // drain-enrichment sets to true on ICP-pass
+        icpFit: true,
         meta_advertiser: false,
         linkedin_advertiser: true,
         ad_signals: ["LinkedIn Ad Library (live)"],
@@ -8500,18 +8513,23 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
         meta_verified_at: null,
         meta_live_ad_count: null,
         linkedin_url: adv.linkedinUrl || "",
-        linkedin_ad_url: adv.adUrl || "", // PR4: deep-link to the LinkedIn ad
+        linkedin_ad_url: adv.adUrl || "",
         linkedin_ad_id: adv.adId || "",
         apollo_company: null,
-        apollo_enrichment_pending: true, // drain picks this up
+        apollo_enrichment_pending: false,
         apollo_enriched_at: null,
-        phone_missing: true,
+        phone: phone,
+        ph: phone,
+        phone_missing: !phone,
         discovered_at: checkedAt,
         pushed_to_cloudtalk_at: null,
         twenty_opportunity_id: null,
+        df_verified_at: checkedAt,
       });
       saveUserData(TARGET_USER, ud);
       stats.rawAppended = (stats.rawAppended || 0) + 1;
+      stats.dfVerified = (stats.dfVerified || 0) + 1;
+      if (phone) stats.withPhoneAtIntake = (stats.withPhoneAtIntake || 0) + 1;
     } catch (e) { stats.errors++; }
   }
 
@@ -9570,6 +9588,68 @@ function hasDkCompanyEvidence(lead) {
   return false;
 }
 
+// ─── DK-company verification via Datafordeler ─────────────────────────
+// Takes an advertiser name (from Meta/LinkedIn ad scrape) and tries to
+// find a real registered DK business with that legal name. Returns the
+// full DF company record (with phone, address, emp interval, branche) on
+// success, or null. Free — no Apollo credits charged.
+//
+// Used at intake to filter the firehose of "ads shown in DK" down to
+// "registered DK businesses we can actually call." Verified leads land
+// in the autodialer with phone + CVR + ICP data already populated; non-
+// matches are dropped (they were going to "needs research" purgatory
+// anyway).
+async function tryDfVerifyDkCompany(rawName) {
+  if (!rawName) return null;
+  const name = String(rawName).trim();
+  if (name.length < 3) return null;
+  // Try several name variants — DK companies are registered with legal
+  // form suffixes (A/S, ApS) but advertise under the bare brand. We
+  // also try UPPERCASE because some DF entries are all-caps.
+  const variants = [
+    name,
+    `${name} A/S`, `${name} ApS`, `${name} IVS`,
+    name.toUpperCase(),
+    `${name.toUpperCase()} A/S`, `${name.toUpperCase()} ApS`,
+  ];
+  for (const v of variants) {
+    try {
+      const r = await dfGqlFetch(
+        `{ CVR_Navn(first: 3, where: { vaerdi: { eq: "${v.replace(/"/g, '\\"')}" } }) { edges { node { CVREnhedsId vaerdi } } } }`,
+      );
+      const hit = r?.CVR_Navn?.edges?.[0]?.node;
+      if (!hit) continue;
+      // CVR_Navn returns the historical entry — pull current CVR number
+      const r2 = await dfGqlFetch(
+        `{ CVR_Virksomhed(first: 1, where: { id: { eq: "${hit.CVREnhedsId}" } }) { edges { node { CVRNummer } } } }`,
+      );
+      const cvrNr = r2?.CVR_Virksomhed?.edges?.[0]?.node?.CVRNummer;
+      if (!cvrNr) continue;
+      try {
+        const company = await lookupDatafordeler(String(cvrNr));
+        if (company && company.cvr) return company;
+      } catch (_) { /* try next variant */ }
+    } catch (_) { /* try next variant */ }
+  }
+  return null;
+}
+
+// Heuristic ICP-by-emp gate using Datafordeler's interval data.
+// DF reports employees as intervals (intervalFra/intervalTil), not exact
+// counts. We treat the LOWER bound as the size signal: if a company is
+// "100-249 employees", intervalFra=100 fails our 1-25 cap. Returns true
+// if the lead passes (or no emp data — give benefit of doubt).
+function dfEmpPassesIcp(dfCompany) {
+  if (!dfCompany) return false;
+  // emp field may be "10-19" interval string or exact number
+  const emp = String(dfCompany.emp || dfCompany.emps || "").trim();
+  if (!emp) return true; // no data → include
+  const m = emp.match(/^(\d+)/);
+  if (!m) return true;
+  const low = Number(m[1]);
+  return low <= 25;
+}
+
 // Broad Danish keywords used to surface DK advertisers from Meta Ad Library.
 // Each run rotates through these via the keywordCursor in the state file so
 // we sweep different slices of the active-ad pool over time. Picked for two
@@ -9813,13 +9893,14 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   stats.alreadyScanned = stats.uniqueAdvertisers - fresh.length;
   stats.fresh = fresh.length;
 
-  // 3. For each fresh advertiser: SAVE AS RAW LEAD (PR2: lazy-enrich).
-  //    Discovery is now Apollo-free — leads land with apollo_enrichment_
-  //    pending=true and icpFit=false. The drain-enrichment cron (every 5
-  //    min, 300/day cap) runs the ICP gate + contact fetch later. ICP-
-  //    fail leads auto-archive there with a clear reason. This drops
-  //    Apollo burn from ~21k/mo to ~6k/mo while preserving the spec:
-  //    fresh lead + currently advertising (Meta Ad Library guarantees it).
+  // 3. For each fresh advertiser: DK-VERIFY then SAVE.
+  //    v2 flow (PR9): Datafordeler name-search is the first gate. Only
+  //    advertisers that resolve to a real registered DK business (real
+  //    8-digit CVR) make it into the pool. Phone + address + emp data
+  //    come from DF for free. Non-matches are dropped (the previous
+  //    "needs research" purgatory path is gone — those leads had a
+  //    7% conversion-to-callable rate and burned context). ICP gate
+  //    on DF's intervalFra: drop if 25+ employees.
   const checkedAt = new Date().toISOString();
   for (const adv of fresh) {
     state.scannedPageIds[adv.pageId] = checkedAt;
@@ -9830,63 +9911,72 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
       stats.skippedNonDkBrand = (stats.skippedNonDkBrand || 0) + 1;
       continue;
     }
+    // Datafordeler verification — drop if not a registered DK business
+    let df = null;
+    try {
+      df = await tryDfVerifyDkCompany(adv.pageName);
+    } catch (e) { /* network blip — treat as not found */ }
+    if (!df || !df.cvr || !/^\d{8}$/.test(String(df.cvr))) {
+      stats.skippedNotInDf = (stats.skippedNotInDf || 0) + 1;
+      continue;
+    }
+    if (!dfEmpPassesIcp(df)) {
+      stats.skippedOverSize = (stats.skippedOverSize || 0) + 1;
+      continue;
+    }
     try {
       const ud = loadUserData(TARGET_USER);
       if (!ud.leads) ud.leads = [];
-      const syntheticCvr = `meta-${adv.pageId}`;
-      const dupByCvr = ud.leads.some((l) => l.cvr === syntheticCvr);
-      const dupByName = ud.leads.some(
-        (l) => (l.name || "").toLowerCase().trim() === adv.pageName.toLowerCase().trim(),
+      // De-dup by real CVR (the DF-verified one) and by name. Past meta-
+      // leads may use synthetic "meta-<pageId>" CVRs from before this
+      // change — skip if either form already exists.
+      const dupByRealCvr = ud.leads.some((l) => l.cvr === df.cvr);
+      const dupByOldCvr  = ud.leads.some((l) => l.cvr === `meta-${adv.pageId}`);
+      const dupByName    = ud.leads.some(
+        (l) => (l.name || "").toLowerCase().trim() === (df.name || adv.pageName).toLowerCase().trim(),
       );
-      if (dupByCvr || dupByName) { stats.skippedDuplicates = (stats.skippedDuplicates || 0) + 1; continue; }
+      if (dupByRealCvr || dupByOldCvr || dupByName) {
+        stats.skippedDuplicates = (stats.skippedDuplicates || 0) + 1;
+        continue;
+      }
+      const phone = df.phone || df.ph || "";
       ud.leads.push({
-        cvr: syntheticCvr,
-        name: adv.pageName,
-        addr: "",
-        zip: "",
-        city: "",
-        ph: "",
-        em: "",
-        web: "",
-        ind: "",
-        ic: "",
-        emp: "",
-        emps: null,
-        st: "aktiv",
-        yr: "",
-        form: "",
-        eq: 0,
-        res: 0,
-        omsaetning: 0,
+        // Take the DF record wholesale, then overlay meta-ad signals
+        ...df,
+        listId: "ungrouped",
+        addedAt: checkedAt,
         source: "meta-ads-discover",
-        icpFit: false, // drain-enrichment sets to true on ICP-pass
+        icpFit: true,                       // DF-verified DK + emp-pass
         meta_advertiser: true,
-        // PR4: ad_signals now reflects actual activity instead of a static
-        // "live" tag. SDR sees "2 aktive · 5 sidste 90 dage" on the card.
         ad_signals: [
           adv.ads_active_now > 0
             ? `${adv.ads_active_now} aktive ad${adv.ads_active_now === 1 ? "" : "s"} på Meta`
             : `${adv.ads_recent90d} ad${adv.ads_recent90d === 1 ? "" : "s"} sidste 90 dage`,
         ],
-        meta_verified_active: adv.ads_active_now > 0, // strict: currently-running only
+        meta_verified_active: adv.ads_active_now > 0,
         meta_verified_at: checkedAt,
         meta_live_ad_count: adv.ads_active_now,
         meta_ads_active_now: adv.ads_active_now,
         meta_ads_recent90d: adv.ads_recent90d,
         meta_ads_total_in_library: adv.ads_total_in_library,
         apollo_company: null,
-        apollo_enrichment_pending: true, // drain picks this up
+        apollo_enrichment_pending: false,   // DF gave us everything needed
         apollo_enriched_at: null,
-        phone_missing: true,
+        phone: phone,
+        ph: phone,
+        phone_missing: !phone,
         discovered_at: checkedAt,
         pushed_to_cloudtalk_at: null,
         twenty_opportunity_id: null,
         meta_page_id: adv.pageId,
         meta_page_name: adv.pageName,
         meta_ad_sample_archive: adv.adArchiveId,
+        df_verified_at: checkedAt,
       });
       saveUserData(TARGET_USER, ud);
       stats.rawAppended = (stats.rawAppended || 0) + 1;
+      stats.dfVerified = (stats.dfVerified || 0) + 1;
+      if (phone) stats.withPhoneAtIntake = (stats.withPhoneAtIntake || 0) + 1;
     } catch (e) {
       stats.errors++;
       console.warn("[meta-ads-discover] append failed:", adv.pageName, e.message);
