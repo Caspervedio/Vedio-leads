@@ -6727,16 +6727,53 @@ async function callingListDeleteById(id){
   showToast(`Listen slettet · ${inList.length} leads tilbage i Leadlist`);
   renderCallingListPage();
 }
+// "+ Opret ny liste" — dark-themed modal that matches the rest of the
+// platform (vs the browser-native prompt() which looked alien). Built
+// inline; no global CSS class — keeps the modal contained.
 function callingListPromptNewList(){
-  const name = prompt('Navn på ny ring-liste?');
-  if (!name || !name.trim()) return;
-  const baseId = name.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40) || 'list';
+  // Suggest a couple of common list names so the SDR can one-click create.
+  const suggestions = ['📦 Logistik', '🍔 Restauranter', '🏥 Sundhed', '⚖️ Advokat'];
+  const bg = document.createElement('div');
+  bg.id = 'new-list-modal-bg';
+  bg.style.cssText = 'position:fixed;inset:0;z-index:350;background:rgba(0,0,0,0.55);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;font-family:\'Outfit\',sans-serif';
+  bg.onclick = (ev) => { if (ev.target === bg) _closeNewListModal(); };
+  bg.innerHTML = `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:22px 24px;width:440px;max-width:92vw;box-shadow:0 18px 48px rgba(0,0,0,0.5)">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📞 Ny ring-liste</div>
+    <h3 style="margin:0 0 4px;font-size:18px;color:#fff;font-weight:800">Opret en ny ring-liste</h3>
+    <p style="margin:0 0 18px;font-size:12.5px;color:var(--w55);line-height:1.5">Til en niche, branche, kampagne eller målgruppe. Du kan altid omdøbe eller slette den senere.</p>
+    <input id="new-list-name" type="text" placeholder="Navn på listen…" autocomplete="off" autofocus
+           style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:11px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;outline:none;transition:border-color 0.12s;box-sizing:border-box"
+           onfocus="this.style.borderColor='rgba(124,58,237,0.6)'" onblur="this.style.borderColor='var(--w08)'"
+           onkeydown="if(event.key==='Enter')_submitNewList(); if(event.key==='Escape')_closeNewListModal()">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">
+      <span style="font-size:11px;color:var(--w35);font-weight:600;align-self:center;margin-right:4px">Forslag:</span>
+      ${suggestions.map(s=>`<button onclick="document.getElementById('new-list-name').value='${e(s)}';document.getElementById('new-list-name').focus()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:5px 10px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer;transition:border-color 0.12s,color 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.4)';this.style.color='#fff'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)'">${e(s)}</button>`).join('')}
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+      <button onclick="_closeNewListModal()" style="background:transparent;border:1px solid var(--w08);border-radius:9px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">Annuller</button>
+      <button onclick="_submitNewList()" class="btn-start-call" style="border-radius:9px;padding:10px 22px;font-size:13px;animation:none">+ Opret liste</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  setTimeout(() => document.getElementById('new-list-name')?.focus(), 60);
+}
+function _closeNewListModal(){
+  const m = document.getElementById('new-list-modal-bg');
+  if (m) m.remove();
+}
+function _submitNewList(){
+  const input = document.getElementById('new-list-name');
+  const name = (input?.value || '').trim();
+  if (!name) { input?.focus(); return; }
+  const baseId = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40) || 'list';
   const lists = loadCallingLists();
   let id = baseId; let n = 2;
   while (lists.some(x => x.id === id)) { id = `${baseId}-${n}`; n++; }
-  lists.push({ id, name: name.trim() });
+  lists.push({ id, name });
   saveCallingLists(lists);
   setActiveCallingListId(id);
+  _closeNewListModal();
+  showToast(`✓ Listen "${name}" oprettet`);
   renderCallingListPage();
 }
 function callingListRenameActive(){
@@ -8293,7 +8330,8 @@ function renderCockpitDetail(c){
           ${aco.latestFundingStage?`<span style="font-size:11px;color:var(--w55);font-weight:600">Senest funding: <span style="color:#fff;font-weight:800">${e(aco.latestFundingStage)}</span>${aco.latestFundingDate?` (${e(aco.latestFundingDate.slice(0,7))})`:''}</span>`:''}
           ${aco.publiclyTradedExchange?`<span style="font-size:11px;color:var(--w55);font-weight:600">Public: <span style="color:#fff;font-weight:800">${e(aco.publiclyTradedExchange)}:${e(aco.publiclyTradedSymbol||'')}</span></span>`:''}
         </div>
-        ${aco.technologyNames?.length?`<div style="margin-top:6px"><span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-right:6px">Tech stack</span>${aco.technologyNames.slice(0,8).map(t=>`<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:rgba(124,58,237,0.15);color:#c4b5fd;font-size:10.5px;font-weight:700;margin:2px 4px 2px 0">${e(t)}</span>`).join('')}</div>`:''}
+<!-- Tech stack pills removed 2026-06-16 — irrelevant to SDR call flow -->
+
         ${aco.keywords?.length?`<div style="margin-top:6px;font-size:10.5px;color:var(--w55)">${aco.keywords.slice(0,6).map(k=>e(k)).join(' · ')}</div>`:''}
         <div style="display:flex;gap:10px;margin-top:10px;font-size:11px;flex-wrap:wrap;align-items:center">
           ${aco.websiteUrl?`<a href="${e(aco.websiteUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🌐 Website ↗</a>`:''}
@@ -8314,7 +8352,6 @@ function renderCockpitDetail(c){
           })()}
           <!-- Meta Ads Library — always shown so SDR can verify current ad activity even if our scrape didn't see any. Pre-filled with the company name. -->
           <a href="${metaAdsLibUrl(c.name||aco.name)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="Åbn Meta Ads Library i ny fane">🎯 Meta Ads Library ↗</a>
-          <button onclick="cockpitCheckMetaAds('${e(c.cvr||'')}')" title="Scrape Meta Ad Library for denne virksomhed nu (~60-90s, ~$0.02)" style="background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);border-radius:10px;padding:2px 9px;font-size:10.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">↻ Tjek ads</button>
           ${(c.adsMatched||0)>0?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.15);color:#fb923c;font-size:10.5px;font-weight:800;border:1px solid rgba(251,146,60,0.3)" title="META scrape fandt ${c.adsMatched} aktive ads ved seneste run">🔥 ${c.adsMatched} aktive ads</span>`:''}
           ${(c.meta_ads_active_now||c.meta_ads_recent90d)?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.12);color:#fb923c;font-size:10.5px;font-weight:700;border:1px solid rgba(251,146,60,0.25)" title="Senest set i Meta Ad Library: ${c.meta_ads_active_now||0} aktive lige nu · ${c.meta_ads_recent90d||0} kørte sidste 90 dage">🎯 ${c.meta_ads_active_now||0} aktive · ${c.meta_ads_recent90d||0} sidste 90 dage</span>`:''}
           ${c.linkedin_ad_url?`<a href="${e(c.linkedin_ad_url)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(10,102,194,0.15);color:#60a5fa;font-size:10.5px;font-weight:700;border:1px solid rgba(10,102,194,0.3);text-decoration:none" title="Se den specifikke LinkedIn-ad de kører nu">💼 Se LinkedIn-ad ↗</a>`:''}
@@ -8375,7 +8412,7 @@ function renderCockpitDetail(c){
            cockpit to fix a wrong number). When the phone is missing, the
            edit button is the primary CTA — Nicolas can paste a number found
            via Google/LinkedIn research and immediately dial it. -->
-      ${(()=>{ const cph=c.phone||c.ph||''; const btw = cockpitBestTimeWindow();
+      ${(()=>{ const cph=c.phone||c.ph||'';
         // Label the phone by where it came from so SDR knows whether to
         // expect a person (direct dial) or gatekeeper (switchboard).
         const srcLbl = (() => {
@@ -8384,10 +8421,6 @@ function renderCockpitDetail(c){
           if (s === 'apollo')     return { txt:'Direkte (Apollo)', col:'#c4b5fd', bg:'rgba(124,58,237,0.14)', bd:'rgba(124,58,237,0.32)' };
           if (s.startsWith('df-')) return { txt:'Hovednr. (CVR)', col:'#fbbf24', bg:'rgba(251,191,36,0.12)', bd:'rgba(251,191,36,0.32)' };
           if (s === 'website')    return { txt:'Hovednr. (website)', col:'#fbbf24', bg:'rgba(251,191,36,0.12)', bd:'rgba(251,191,36,0.32)' };
-          // No recorded source — fall back to inferring by length: a DK
-          // mobile starts with 2/3/4/5 in the 8-digit number; landlines
-          // start with 3/4/5/6/7/8/9. Without info we say "Hovednr." as
-          // the safer assumption (don't oversell SDR on direct dial).
           if (!s && cph) return { txt:'Hovednr.', col:'var(--w55)', bg:'var(--w04)', bd:'var(--w08)' };
           return null;
         })();
@@ -8395,12 +8428,11 @@ function renderCockpitDetail(c){
       <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:16px">
         <span style="font-size:20px">📞</span>
         <div style="flex:1;min-width:0">
-          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)} <span style="margin-left:8px;padding:2px 7px;border-radius:5px;background:${btw.bg};color:${btw.fg};border:1px solid ${btw.border};font-size:10px;font-weight:700;letter-spacing:0.3px" title="${e(btw.tip)}">${e(btw.label)}</span>${srcLbl?` <span style="margin-left:6px;padding:2px 7px;border-radius:5px;background:${srcLbl.bg};color:${srcLbl.col};border:1px solid ${srcLbl.bd};font-size:10px;font-weight:700;letter-spacing:0.3px">${srcLbl.txt}</span>`:''}</div>
+          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)}${srcLbl?` <span style="margin-left:8px;padding:2px 7px;border-radius:5px;background:${srcLbl.bg};color:${srcLbl.col};border:1px solid ${srcLbl.bd};font-size:10px;font-weight:700;letter-spacing:0.3px">${srcLbl.txt}</span>`:''}</div>
           ${cph
             ? `<div style="display:flex;align-items:center;gap:8px"><button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring">${fp(cph)}</button><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" title="Ret nummeret" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:4px 8px;color:var(--w55);font-size:12px;cursor:pointer;line-height:1" onmouseover="this.style.color='#c4b5fd';this.style.borderColor='rgba(196,181,253,0.4)'" onmouseout="this.style.color='var(--w55)';this.style.borderColor='var(--w08)'">✎ ret</button></div>`
             : `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer</span><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer">+ Indtast nummer</button></div>`}
         </div>
-        ${cph?`<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;border:none;cursor:pointer;font-family:'Outfit',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</button>`:''}
       </div>`; })()}
 
       <!-- Quick-research deep links + gatekeeper script library.
@@ -8419,13 +8451,6 @@ function renderCockpitDetail(c){
         <span style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">Find direct dial</span>
         <a href="https://www.google.com/search?q=${gq}" target="_blank" rel="noopener" style="padding:5px 11px;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:7px;color:#c4b5fd;font-size:11px;font-weight:700;text-decoration:none">🔎 Google</a>
         <a href="https://www.linkedin.com/search/results/people/?keywords=${liq}" target="_blank" rel="noopener" style="padding:5px 11px;background:rgba(10,102,194,0.18);border:1px solid rgba(10,102,194,0.4);border-radius:7px;color:#93c5fd;font-size:11px;font-weight:700;text-decoration:none">💼 LinkedIn</a>
-        <a href="https://www.krak.dk/firma/${encodeURIComponent(company)}" target="_blank" rel="noopener" style="padding:5px 11px;background:rgba(255,255,255,0.06);border:1px solid var(--w08);border-radius:7px;color:var(--w80);font-size:11px;font-weight:700;text-decoration:none">📒 Krak</a>
-        <span style="flex:1"></span>
-        <button onclick="cockpitToggleScripts()" style="padding:5px 11px;background:rgba(251,146,60,0.15);border:1px solid rgba(251,146,60,0.35);border-radius:7px;color:#fdba74;font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">🛡 Gatekeeper-scripts ▾</button>
-      </div>
-      <div id="cockpit-script-library" style="display:none;background:var(--dark2);border:1px solid var(--w08);border-radius:11px;padding:12px 14px;margin-bottom:18px;font-size:12px;line-height:1.55">
-        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Klik for at kopiere</div>
-        ${COCKPIT_GATEKEEPER_SCRIPTS.map(s=>`<div style="margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><button onclick="cockpitCopyScript(${JSON.stringify(s.body).replace(/"/g,'&quot;')})" style="flex-shrink:0;padding:3px 8px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Kopier til udklipsholder">📋 ${e(s.label)}</button><span style="color:var(--w80);font-style:italic">"${e(s.body)}"</span></div>`).join('')}
       </div>`; })()}
 
       <!-- Post-call disposition. Required before next call.
@@ -8476,9 +8501,23 @@ function renderCockpitDetail(c){
         <div style="background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.30);border-radius:11px;padding:11px 16px;margin-bottom:18px;font-size:12px;color:#bfdbfe">🎯 Pushet til Twenty${c.twenty_url?` · <a href="${e(c.twenty_url)}" target="_blank" rel="noopener" style="color:#60a5fa;font-weight:700">Åbn opportunity →</a>`:''}</div>
       `:''}
 
-      <!-- Notes -->
-      <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px">Noter</div>
-      <textarea id="cockpit-notes" placeholder="Skriv kort note efter kaldet…" style="width:100%;min-height:80px;background:var(--w04);border:1px solid var(--w08);border-radius:11px;padding:12px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;resize:vertical" onchange="cockpitSaveNote(this.value)">${e(c.notes||'')}</textarea>
+      <!-- Notes — refined 2026-06-16. Card-style container with header,
+           save-indicator hint, and a friendly placeholder that prompts
+           good note-taking. -->
+      <div style="background:linear-gradient(135deg,rgba(124,58,237,0.06),rgba(124,58,237,0.02));border:1px solid var(--w08);border-radius:14px;padding:16px 18px;margin-top:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:16px;line-height:1">📝</span>
+            <span style="font-size:11px;color:var(--w55);font-weight:800;letter-spacing:1.2px;text-transform:uppercase">Noter til dette lead</span>
+          </div>
+          <span id="cockpit-notes-status" style="font-size:10.5px;color:var(--w35);font-style:italic">${(c.notes||'').trim() ? '✓ Gemt' : 'Gemmes automatisk'}</span>
+        </div>
+        <textarea id="cockpit-notes" placeholder="Hvad sagde de? Næste skridt? Vigtige detaljer for opfølgning…&#10;&#10;Tip: skriv mens du taler — vil hjælpe dig næste gang du ringer."
+                  oninput="(document.getElementById('cockpit-notes-status')||{}).textContent='Skriver…';"
+                  onchange="cockpitSaveNote(this.value);(document.getElementById('cockpit-notes-status')||{}).textContent='✓ Gemt';"
+                  style="width:100%;min-height:110px;background:rgba(0,0,0,0.18);border:1px solid var(--w08);border-radius:10px;padding:13px 15px;color:#fff;font-family:'Outfit',sans-serif;font-size:13.5px;line-height:1.55;resize:vertical;outline:none;transition:border-color 0.12s;box-sizing:border-box"
+                  onfocus="this.style.borderColor='rgba(124,58,237,0.5)'" onblur="this.style.borderColor='var(--w08)'">${e(c.notes||'')}</textarea>
+      </div>
 
       <!-- Navigation -->
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:space-between">
