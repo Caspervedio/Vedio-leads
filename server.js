@@ -1720,46 +1720,35 @@ app.get("/api/discovery/pipeline-status", authMiddleware, (req, res) => {
   // Source catalog — kept in code so adding a new cron requires a deploy
   // anyway (cron config + endpoint + state file all live in code).
   // schedule = array of {hour, minute} in Europe/Copenhagen, weekday-only.
+  // Only sources currently scheduled in Cloud Scheduler AND producing
+  // leads. Dead sources removed 2026-06-16:
+  //   • meta-ads-discover    — paused (Phase 1 pivot, scorer-only now)
+  //   • tech-discover        — Apollo cancelled (cost)
+  //   • linkedin-ads-discover — paused (Phase 1 pivot)
   const SOURCES = [
-    {
-      id: "meta-ads-discover",
-      label: "Meta Ad Library",
-      icon: "📣",
-      runs: [{ h: 8,  m: 0  }],
-      stateFile: "meta_ads_discover.json",
-      sourcePrefix: "meta-ads-discover",
-    },
-    {
-      id: "tech-discover",
-      label: "Apollo tech-stack",
-      icon: "🛠",
-      runs: [{ h: 9,  m: 0  }],
-      stateFile: "apollo_tech_discover.json",
-      sourcePrefix: "tech-discover",
-    },
     {
       id: "branche-walk",
       label: "Branche-walk (CVR)",
       icon: "🇩🇰",
-      runs: [{ h: 9, m: 30 }, { h: 11, m: 30 }, { h: 13, m: 0 }, { h: 15, m: 0 }],
+      runs: [{ h: 8, m: 0 }, { h: 9, m: 30 }, { h: 11, m: 30 }, { h: 13, m: 0 }, { h: 15, m: 0 }, { h: 16, m: 30 }],
       stateFile: "branche_walk_discover.json",
       sourcePrefix: "branche-walk",
+    },
+    {
+      id: "storeleads-discover",
+      label: "StoreLeads (Shopify/Woo)",
+      icon: "🛒",
+      runs: [{ h: 8, m: 30 }, { h: 14, m: 30 }],
+      stateFile: "storeleads_state.json",
+      sourcePrefix: "storeleads",
     },
     {
       id: "gmaps-discover",
       label: "Google Maps (OSM)",
       icon: "📍",
-      runs: [{ h: 10, m: 0 }],
+      runs: [{ h: 10, m: 0 }, { h: 16, m: 0 }],
       stateFile: "gmaps_discover.json",
       sourcePrefix: "gmaps-discover",
-    },
-    {
-      id: "linkedin-ads-discover",
-      label: "LinkedIn Ads",
-      icon: "💼",
-      runs: [{ h: 11, m: 0 }],
-      stateFile: "linkedin_discover.json",
-      sourcePrefix: "linkedin-ads-discover",
     },
     {
       id: "recover-phones",
