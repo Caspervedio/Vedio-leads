@@ -6461,6 +6461,88 @@ async function fullEnrichLookupOne(contact, opts = {}) {
   return entry || null;
 }
 
+// ─── Full Enrich People Search (discovery, FREE) ───────────────────────
+// POST /api/v2/people/search — returns people whose CURRENT company
+// matches the given domain. Filter shape (cracked 2026-06-16 via the
+// OpenAPI spec): each filter is an ARRAY of {value, exact_match} objects.
+// Cost: 0 credits per query. Only Contact Enrich (phone reveal) costs.
+//
+// Limited to DK location since we only call DK numbers; saves on noise.
+// Ranks by seniority so the SDR gets decision-makers first.
+async function fullEnrichPeopleSearch(domain, opts = {}) {
+  if (!isFullEnrichConfigured()) return [];
+  const cleanDomain = String(domain || "").trim().toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/.*$/, "");
+  if (!cleanDomain) return [];
+  const body = {
+    current_company_domains: [{ value: cleanDomain, exact_match: true }],
+    // Bias toward DK-located people — we only dial Danish numbers, so a
+    // US employee of a DK company isn't useful even if Full Enrich has them.
+    person_locations: [{ value: "Denmark", exact_match: false }],
+    limit: Math.min(Math.max(opts.limit || 10, 1), 25),
+  };
+  try {
+    const r = await fetch(`${FULLENRICH_API_BASE}/api/v2/people/search`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.FULLENRICH_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      console.warn("[FullEnrich.peopleSearch] HTTP", r.status, await r.text().catch(()=>""));
+      return [];
+    }
+    const data = await r.json();
+    const people = Array.isArray(data.people) ? data.people : [];
+    // Normalize + rank — high-seniority decision-makers float to the top.
+    const SENIORITY_RANK = { "Owner": 100, "Founder": 95, "C-Suite": 90, "VP": 80, "Director": 70, "Head": 65, "Manager": 50, "Senior": 30, "Entry": 10 };
+    const normalized = people.map((p) => {
+      const cur = (p.employment && p.employment.current) || {};
+      const company = cur.company || {};
+      return {
+        full_name: p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || null,
+        first_name: p.first_name || null,
+        last_name: p.last_name || null,
+        title: cur.title || null,
+        seniority: cur.seniority || null,
+        country: (p.location && p.location.country) || null,
+        country_code: (p.location && p.location.country_code) || null,
+        company_name: company.name || null,
+        company_domain: company.domain || null,
+        company_linkedin_url: (company.social_profiles && company.social_profiles.professional_network && company.social_profiles.professional_network.url) || null,
+        fe_id: p.id || null,
+        _rank: SENIORITY_RANK[cur.seniority] || 0,
+      };
+    });
+    normalized.sort((a, b) => b._rank - a._rank);
+    return normalized;
+  } catch (e) {
+    console.warn("[FullEnrich.peopleSearch] failed for", cleanDomain, e.message);
+    return [];
+  }
+}
+
+// Smoke-test endpoint for People Search — verifies filter syntax + DK
+// coverage. GET /api/fullenrich/search?domain=hairlust.com
+app.get("/api/fullenrich/search", authMiddleware, async (req, res) => {
+  if (!isFullEnrichConfigured()) {
+    return res.status(503).json({ error: "Full Enrich ikke konfigureret" });
+  }
+  const domain = (req.query.domain || "").toString().trim();
+  if (!domain) return res.status(400).json({ error: "?domain= required" });
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 5, 1), 25);
+  try {
+    const people = await fullEnrichPeopleSearch(domain, { limit });
+    return res.json({ ok: true, domain, count: people.length, people });
+  } catch (e) {
+    return res.status(502).json({ error: e.message });
+  }
+});
+
 // Smoke-test endpoint — used to verify the API key + understand response
 // shape with a known LinkedIn URL or name+company. ?linkedinUrl= OR
 // ?firstName= + ?lastName= + ?company= (or ?domain=) required.
@@ -6780,6 +6862,38 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
   lead.contacts = apolloContacts;
   lead.apollo_company = company || lead.apollo_company;
   lead.apollo_enriched_at = new Date().toISOString();
+
+  // ─── STAGE 1.5: Full Enrich People Search (FREE, fills missing names) ─
+  // When Apollo returned ZERO people for a DK SMB (common — Apollo's DK
+  // coverage is bad), hit Full Enrich's people-search to discover names
+  // + titles + LinkedIn URLs at zero credit cost. Stage 2 below then
+  // picks the top one and calls Contact Enrich (paid) for the phone.
+  if (apolloContacts.length === 0 && isFullEnrichConfigured()) {
+    const domain = (company && company.domain) || lead.web || lead.website || "";
+    if (domain) {
+      const found = await fullEnrichPeopleSearch(domain, { limit: 5 });
+      if (found.length > 0) {
+        // Convert FE People Search results into Apollo-shaped contacts so
+        // the downstream code (Stage 2, cockpit detail panel, Twenty push)
+        // doesn't care which discovery source the names came from.
+        apolloContacts = found.map((p) => ({
+          name: p.full_name,
+          first_name: p.first_name,
+          last_name: p.last_name,
+          title: p.title,
+          seniority: p.seniority,
+          country: p.country_code,
+          linkedin: p.company_linkedin_url, // company LinkedIn (no person URL yet from search)
+          phone: "",
+          email: "",
+          source_discovery: "fullenrich-search",
+          _fe_id: p.fe_id,
+        }));
+        lead.contacts = apolloContacts;
+        lead.fullenrich_search_at = new Date().toISOString();
+      }
+    }
+  }
 
   let directDial = (apolloContacts.find((c) => c.phone) || {}).phone || "";
   let fullEnrichUsed = false;
