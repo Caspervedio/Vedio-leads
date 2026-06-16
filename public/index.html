@@ -757,10 +757,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 
 <div class="app" id="app" style="display:none">
 
-<!-- Floating Aktivitet icon — top-right of the viewport, visible on every
-     page. Moved here 2026-06-16 from the sidebar footer so it doesn't
-     compete with the primary "Start opkald" CTA. -->
-<button id="floating-activity-btn" onclick="openActivityLog()" title="Vis aktivitetslog" style="position:fixed;top:14px;right:18px;z-index:90;width:42px;height:42px;border-radius:50%;background:rgba(20,15,32,0.92);border:1px solid var(--w08);color:var(--w80);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.4);backdrop-filter:blur(8px);transition:border-color 0.12s,color 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)'">📋</button>
+<!-- Floating activity icon removed 2026-06-16 — the Aktivitet button now
+     lives in the sidebar user-profile row next to the logout button,
+     replacing the rarely-used refresh button. -->
+
 
 <!-- Softphone (CloudTalk iframe + popup) removed 2026-06-16 — subscription
      cancelled. Calls + SMS now route via tel:/sms: deeplinks to the SDR's
@@ -839,7 +839,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <div class="user-info">
         <div class="user-name" id="user-name"></div>
       </div>
-      <div class="user-logout" onclick="event.stopPropagation();softRefresh()" data-tip="Opdater data uden at logge ud" style="margin-right:4px"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 8a6 6 0 1 1-2-4.5M14 2v3h-3"/></svg></div>
+      <div class="user-logout" onclick="event.stopPropagation();openActivityLog()" data-tip="Vis aktivitetslog" style="margin-right:4px"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2h10v12H3z M6 1h4v2H6z M5 6h6 M5 9h6 M5 12h4"/></svg></div>
       <div class="user-logout" onclick="event.stopPropagation();logout()" data-tip="Log ud"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h7v12H6M2 8h8M8 5l3 3-3 3"/></svg></div>
     </div>
   </div>
@@ -1179,7 +1179,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div>
           <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📞 Calling list</div>
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Ring-listen</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Dine ring-lister — en pr. niche, branche eller kampagne. Klik <strong style="color:#fff">"▶ Start opkald"</strong> på et kort for at åbne cockpittet. Tilføj nye leads fra <strong style="color:#fff">Pipeline</strong>.</p>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Dine ring-lister — en pr. niche, branche eller kampagne. Klik <strong style="color:#fff">"▶ Start opkald"</strong> på et kort for at åbne cockpittet. Tilføj nye leads fra <strong style="color:#fff">Leadlist</strong>.</p>
         </div>
         <div style="display:flex;gap:10px;flex-shrink:0">
           <button onclick="openExportPicker(getActiveCallingListId&&getActiveCallingListId()?{callingListId:getActiveCallingListId()}:undefined)" title="Eksportér leads til CSV — forudvalgt til den aktive ring-liste" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:border-color 0.12s,color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff';this.style.background='rgba(124,58,237,0.10)'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)';this.style.background='var(--w04)'">⬇ Eksportér</button>
@@ -6590,7 +6590,7 @@ function renderCallingListPage(){
   const renderLeadTable = (s) => {
     if (s.total === 0) {
       return `<div style="padding:32px 24px;text-align:center;font-size:13px;color:var(--w55);background:var(--w02)">
-        Ingen leads i denne liste endnu. Tilføj fra <strong style="color:#fff">Pipeline</strong> via "→ Tilføj til ring-liste".
+        Ingen leads i denne liste endnu. Tilføj fra <strong style="color:#fff">Leadlist</strong> via "→ Tilføj til ring-liste".
       </div>`;
     }
     return `<div style="max-height:55vh;overflow-y:auto;background:var(--w02)">
@@ -6607,7 +6607,7 @@ function renderCallingListPage(){
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
             <td style="padding:10px 14px;text-align:right">${phoneCell}</td>
             <td style="padding:10px 24px 10px 6px;text-align:right">
-              <button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Pipeline" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>
+              <button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Leadlist" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>
             </td>
           </tr>`;
         }).join('')}</tbody>
@@ -6636,7 +6636,7 @@ function renderCallingListPage(){
           <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.total>0?'#fff':'var(--w55)'};font-weight:800">${s.total}</strong> ${s.total===1?'lead':'leads'}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
         </div>
         <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
-        <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Pipeline)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
+        <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
         <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.35;cursor:not-allowed;animation:none':''}" ${disabled?'disabled':''}>▶ Start opkald</button>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;flex-shrink:0"><path d="M3 5l4 4 4-4"/></svg>
       </div>
@@ -6675,7 +6675,7 @@ function callingListToggleExpand(id){
 function callingListStartList(id){
   setActiveCallingListId(id);
   const inList = (leads||[]).filter(x => x.calling_list_id === id);
-  if (inList.length === 0) { showToast('Listen er tom — tilføj leads fra Pipeline først'); return; }
+  if (inList.length === 0) { showToast('Listen er tom — tilføj leads fra Leadlist først'); return; }
   openCockpit(inList[0].cvr);
 }
 // Per-card rename — replaces the page-level "✎ Omdøb" since each card
@@ -6698,7 +6698,7 @@ async function callingListDeleteById(id){
   const list = lists.find(l => l.id === id);
   if (!list) return;
   const inList = (leads||[]).filter(x => x.calling_list_id === id);
-  if (!confirm(`Slet ring-listen "${list.name}"?\n\n${inList.length} leads sendes tilbage til Pipeline (ingen leads slettes).`)) return;
+  if (!confirm(`Slet ring-listen "${list.name}"?\n\n${inList.length} leads sendes tilbage til Leadlist (ingen leads slettes).`)) return;
   await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
     method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ calling_list_id: null }),
@@ -6706,7 +6706,7 @@ async function callingListDeleteById(id){
   const next = lists.filter(l => l.id !== id);
   saveCallingLists(next.length ? next : DEFAULT_CALLING_LISTS.slice());
   if (getActiveCallingListId() === id) setActiveCallingListId(next[0]?.id || '');
-  showToast(`Listen slettet · ${inList.length} leads tilbage i Pipeline`);
+  showToast(`Listen slettet · ${inList.length} leads tilbage i Leadlist`);
   renderCallingListPage();
 }
 function callingListPromptNewList(){
