@@ -1110,20 +1110,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Pre-liste</h2>
           <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Forbered leads her — marker dem du vil ringe til og send dem til din <strong style="color:#fff">Calling list</strong>. Brug ☑ checkboksen i hver række eller "Vælg alle".</p>
         </div>
-        <!-- Cross-list search — filters the queue by navn / CVR / by /
-             branche / domæne / telefon / kontakt. Works across whichever
-             chip-filter is active (active queue, archive, twenty-pushed,
-             phone-missing, etc.) so SDR can find a lead from any list. -->
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <div style="position:relative">
-            <input id="ad-search" type="text" placeholder="Søg lead — navn, CVR, by, telefon…" autocomplete="off"
-                   oninput="adSetSearchQuery(this.value)"
-                   style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 14px 10px 36px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;width:320px;outline:none;transition:border-color 0.12s"
-                   onfocus="this.style.borderColor='rgba(124,58,237,0.6)'" onblur="this.style.borderColor='var(--w08)'" />
-            <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--w35);pointer-events:none">🔎</span>
-            <button id="ad-search-clear" onclick="adClearSearchQuery()" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--w08);border:0;border-radius:6px;padding:3px 7px;color:var(--w80);font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Ryd søgningen">✕</button>
-          </div>
-        </div>
+        <!-- Search field moved into the filter strip below (under Kilde row)
+             — closer to the leads it filters. -->
       </div>
       <!-- Discovery pipeline widget — moved from Dashboard 2026-06-16.
            Shows per-source cron health + leads added today. Populated
@@ -5799,6 +5787,20 @@ function renderAutodialerPage(){
         <option value="name" ${_adState.sort==='name'?'selected':''}>Navn (A-Å)</option>
         <option value="manual" ${_adState.sort==='manual'?'selected':''}>Manuel (træk)</option>
       </select>
+    </div>
+    <!-- Search row — sits directly under Kategori + Kilde filters so the
+         SDR can scope the queue down further by free text after picking
+         chips. Persists value through re-renders via _adState.searchQ. -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Søg</span>
+      <div style="position:relative;flex:1;max-width:520px">
+        <input id="ad-search" type="text" value="${e(_adState.searchQ || '')}" placeholder="Navn, CVR, by, telefon, kontakt-navn…" autocomplete="off"
+               oninput="adSetSearchQuery(this.value)"
+               style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 38px 9px 36px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;outline:none;transition:border-color 0.12s;box-sizing:border-box"
+               onfocus="this.style.borderColor='rgba(124,58,237,0.6)'" onblur="this.style.borderColor='var(--w08)'" />
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--w35);pointer-events:none">🔎</span>
+        <button id="ad-search-clear" onclick="adClearSearchQuery()" style="display:${_adState.searchQ?'':'none'};position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--w08);border:0;border-radius:6px;padding:3px 7px;color:var(--w80);font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Ryd søgningen">✕</button>
+      </div>
     </div>`;
 
   // Queue preview — first 30 leads with name + CVR + last disposition.
@@ -5995,8 +5997,24 @@ function adSetSearchQuery(q){
   const clearBtn = document.getElementById('ad-search-clear');
   if (clearBtn) clearBtn.style.display = _adState.searchQ ? '' : 'none';
   // Debounce by ~120ms so fast typing doesn't hammer the renderer.
+  // The search input lives inside listsEl which gets rebuilt on render,
+  // so we capture focus + caret BEFORE the re-render and restore them
+  // after — otherwise every keystroke would yank focus out of the field.
   if (_adSearchDebounceId) clearTimeout(_adSearchDebounceId);
-  _adSearchDebounceId = setTimeout(() => { _adSearchDebounceId = null; renderAutodialerPage(); }, 120);
+  _adSearchDebounceId = setTimeout(() => {
+    _adSearchDebounceId = null;
+    const prev = document.getElementById('ad-search');
+    const wasFocused = prev && document.activeElement === prev;
+    const caretPos = prev ? prev.selectionStart : null;
+    renderAutodialerPage();
+    if (wasFocused) {
+      const next = document.getElementById('ad-search');
+      if (next) {
+        next.focus();
+        if (caretPos !== null) { try { next.setSelectionRange(caretPos, caretPos); } catch {} }
+      }
+    }
+  }, 120);
 }
 function adClearSearchQuery(){
   _adState.searchQ = '';
@@ -6763,19 +6781,10 @@ function renderAdActivityTable(today, week, all, perSdr){
             <span id="ad-freshness-dot" style="width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,0.6);display:inline-block"></span>
             <span id="ad-freshness-label">Live</span>
           </div>
-          ${(()=>{
-            // Daily call goal — configurable via localStorage 'vl_daily_call_goal',
-            // defaults to 40. Visualised as a progress chip + thin bar so the
-            // SDR sees momentum vs target without leaving the queue view.
-            const goal = Number(localStorage.getItem('vl_daily_call_goal')) || 40;
-            const dialed = Number(today.dialed) || 0;
-            const pct = Math.min(100, Math.round((dialed/goal)*100));
-            const col = pct >= 100 ? '#34d399' : pct >= 75 ? '#a78bfa' : pct >= 25 ? '#c4b5fd' : 'var(--w55)';
-            return `<div title="Daglig opkaldsmål — klik for at ændre" onclick="const v=prompt('Daglig opkaldsmål (antal kald)?', '${goal}'); if(v && Number(v)>0){localStorage.setItem('vl_daily_call_goal',String(Number(v))); renderAutodialerPage();}" style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:${col};font-weight:700;cursor:pointer;padding:3px 8px;border-radius:6px;background:var(--w04);border:1px solid var(--w08)">
-              🎯 Mål: <strong style="color:${col}">${dialed}/${goal}</strong>
-              <span style="display:inline-block;width:42px;height:4px;background:var(--w08);border-radius:3px;overflow:hidden;margin-left:2px"><span style="display:block;height:100%;width:${pct}%;background:${col};transition:width 0.3s"></span></span>
-            </div>`;
-          })()}
+          <!-- "🎯 Mål: N/40" pill removed 2026-06-16 — the same goal lives
+               in the BIG hero on Dashboard, so this small chip was just
+               visual noise next to the activity table header. -->
+
         </div>
         <div style="font-size:11px;color:var(--w55)">Konvertering · I dag: <strong style="color:${today.dialed>0?'#fff':'var(--w35)'}">${conv(today.interested, today.dialed)}</strong> · Uge: <strong style="color:${week.dialed>0?'#fff':'var(--w35)'}">${conv(week.interested, week.dialed)}</strong> · All-time: <strong style="color:${all.dialed>0?'#fff':'var(--w35)'}">${conv(all.interested, all.dialed)}</strong></div>
       </div>
