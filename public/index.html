@@ -1093,6 +1093,20 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Din leadliste</h2>
           <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Alle leads klar til bearbejdning. Klik en række for at åbne cockpittet — disposér med tasterne 1–4 og spring videre med pil-højre.</p>
         </div>
+        <!-- Cross-list search — filters the queue by navn / CVR / by /
+             branche / domæne / telefon / kontakt. Works across whichever
+             chip-filter is active (active queue, archive, twenty-pushed,
+             phone-missing, etc.) so SDR can find a lead from any list. -->
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <div style="position:relative">
+            <input id="ad-search" type="text" placeholder="Søg lead — navn, CVR, by, telefon…" autocomplete="off"
+                   oninput="adSetSearchQuery(this.value)"
+                   style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 14px 10px 36px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;width:320px;outline:none;transition:border-color 0.12s"
+                   onfocus="this.style.borderColor='rgba(124,58,237,0.6)'" onblur="this.style.borderColor='var(--w08)'" />
+            <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--w35);pointer-events:none">🔎</span>
+            <button id="ad-search-clear" onclick="adClearSearchQuery()" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--w08);border:0;border-radius:6px;padding:3px 7px;color:var(--w80);font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Ryd søgningen">✕</button>
+          </div>
+        </div>
       </div>
       <!-- Discovery pipeline widget — moved from Dashboard 2026-06-16.
            Shows per-source cron health + leads added today. Populated
@@ -5234,7 +5248,7 @@ async function gmAddAllMatched(){
 // list they want to dial, sees a summary of the queue, and starts the
 // cockpit with one click. The cockpit overlay is unchanged underneath.
 // Autodialer state — sort + source filter so the queue isn't random.
-if(typeof _adState==='undefined') var _adState={ sort:'priority', sourceFilter:'all', stackFilter:'', categoryFilter:'all' };
+if(typeof _adState==='undefined') var _adState={ sort:'priority', sourceFilter:'all', stackFilter:'', categoryFilter:'all', searchQ:'' };
 
 // Frontend mirror of server.js deriveSourceCategory. Returns 'ecom' |
 // 'service' | 'unknown'. Trusts lead.source_category if set; otherwise
@@ -5344,6 +5358,27 @@ function renderAutodialerPage(){
   // Apply tech-stack filter (set by Tech Stack Scanner page)
   if(_adState.stackFilter){
     filtered=filtered.filter(l=>Array.isArray(l.techStack)&&l.techStack.includes(_adState.stackFilter));
+  }
+  // Cross-list search — free-text filter on top of whatever chip-filter
+  // is active. Matches across name, CVR, phone, domæne, city, branche,
+  // and contact names so the SDR can find a lead from any state (active
+  // queue, archive, twenty-pushed, phone-missing, …) without first
+  // remembering which chip it lives under.
+  if(_adState.searchQ && _adState.searchQ.trim()){
+    const q = _adState.searchQ.trim().toLowerCase();
+    // Strip spaces from CVR/phone candidates so "12 34 56 78" still matches "12345678".
+    const qDigits = q.replace(/\s+/g, '');
+    filtered = filtered.filter(l => {
+      const hay = [
+        l.name, l.cvr, l.phone, l.ph, l.web, l.domain,
+        l.city, l.address, l.branche, l.industry,
+        (l.contacts||[]).map(c => `${c.name||''} ${c.title||''} ${c.phone||''} ${c.email||''}`).join(' '),
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (hay.includes(q)) return true;
+      // Digit-only retry — catches CVR/phone matches when input has spaces
+      if (qDigits !== q && hay.replace(/\s+/g,'').includes(qDigits)) return true;
+      return false;
+    });
   }
   // Sort — priority (info-rich first, then ICP-klar, then ads count) is
   // the default smart sort. The order operator asked for is:
@@ -5823,6 +5858,28 @@ function adSetCategoryFilter(id){
   // filter (back to "all"). Replaces the removed "Alle leads" chip from
   // the 2026-06-16 cleanup.
   _adState.categoryFilter = (_adState.categoryFilter === id) ? 'all' : id;
+  renderAutodialerPage();
+}
+// Cross-list search — runs the same query across every chip-filter state
+// so the SDR can find any lead from any list (active, archive, twenty-
+// pushed, phone-missing). Debounce-free: render is fast enough that
+// per-keystroke filtering feels live.
+let _adSearchDebounceId = null;
+function adSetSearchQuery(q){
+  _adState.searchQ = q || '';
+  // Toggle the clear-button visibility without a full re-render.
+  const clearBtn = document.getElementById('ad-search-clear');
+  if (clearBtn) clearBtn.style.display = _adState.searchQ ? '' : 'none';
+  // Debounce by ~120ms so fast typing doesn't hammer the renderer.
+  if (_adSearchDebounceId) clearTimeout(_adSearchDebounceId);
+  _adSearchDebounceId = setTimeout(() => { _adSearchDebounceId = null; renderAutodialerPage(); }, 120);
+}
+function adClearSearchQuery(){
+  _adState.searchQ = '';
+  const input = document.getElementById('ad-search');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('ad-search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
   renderAutodialerPage();
 }
 
