@@ -10693,6 +10693,93 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
   return runArchiveByCvrs(req, res);
 });
 
+// ─── Backfill contacts via Apollo people-match ────────────────────────
+// One-shot batch enrichment for the existing queue. Walks active leads
+// that have a domain (or real CVR) but no contacts attached, calls
+// enrichWithApollo for each, saves the returned contacts.
+//
+// Used after a queue cleanup to bulk-attach decision-makers to legacy
+// leads so the SDR doesn't have to open each one to trigger the
+// auto-reveal. Cost: 1 Apollo credit per lead processed.
+async function runBackfillContacts(req, res) {
+  const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
+  const LIMIT = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+  const DRY = req.query.dry === "1";
+  const stats = {
+    candidates: 0,
+    processed: 0,
+    contactsAdded: 0,
+    apolloMisses: 0,
+    capReached: false,
+    errors: 0,
+  };
+  if (!isApolloConfigured()) {
+    return res.status(503).json({ error: "Apollo not configured" });
+  }
+  const ud = loadUserData(TARGET_USER);
+  // Candidates: active, no contacts, has domain OR real 8-digit CVR
+  const candidates = (ud.leads || []).filter((l) => {
+    if (l.lastAction === "not-relevant") return false;
+    if (l.twenty_opportunity_id) return false;
+    if (Array.isArray(l.contacts) && l.contacts.length > 0) return false;
+    const domain = String(l.web || l.website || "").toLowerCase();
+    const hasDomain = !!(domain && domain.includes(".") && domain.length > 4);
+    const hasRealCvr = /^\d{8}$/.test(String(l.cvr || ""));
+    return hasDomain || hasRealCvr;
+  }).slice(0, LIMIT);
+  stats.candidates = candidates.length;
+  if (DRY) {
+    return res.json({ ok: true, stats, dry: true, sampleCvrs: candidates.slice(0, 5).map((l) => l.cvr) });
+  }
+
+  for (const lead of candidates) {
+    try {
+      // Re-load state — other crons may have mutated since the candidate
+      // list was built.
+      const udNow = loadUserData(TARGET_USER);
+      const l = (udNow.leads || []).find((x) => x.cvr === lead.cvr);
+      if (!l || (l.contacts && l.contacts.length > 0) || l.lastAction === "not-relevant") {
+        continue;
+      }
+      const { contacts, company } = await enrichWithApollo({
+        name: l.name,
+        domain: l.web || l.website,
+      });
+      stats.processed++;
+      if (contacts && contacts.length > 0) {
+        l.contacts = contacts;
+        l.apollo_company = company || l.apollo_company;
+        l.apollo_enriched_at = new Date().toISOString();
+        saveUserData(TARGET_USER, udNow);
+        stats.contactsAdded++;
+      } else {
+        stats.apolloMisses++;
+      }
+    } catch (e) {
+      stats.errors++;
+      if (e && e.code === "APOLLO_CAP_REACHED") {
+        stats.capReached = true;
+        break;
+      }
+      console.warn("[backfill-contacts]", lead.cvr, e.message);
+    }
+  }
+  logActivity(
+    "backfill",
+    `🔗 Backfill kontakter: ${stats.contactsAdded}/${stats.processed} fundet via Apollo (${stats.apolloMisses} miss)`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[backfill-contacts]", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+}
+app.post("/api/admin/backfill-contacts", authMiddleware, runBackfillContacts);
+app.post("/api/cron/backfill-contacts", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  return runBackfillContacts(req, res);
+});
+
 // ── DF-VERIFY RETROACTIVE for unknowns ─────────────────────────────────
 // Walks active leads with no employee data and runs them through
 // tryDfVerifyDkCompany. If found → backfill cvr, phone, address, emp.
