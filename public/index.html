@@ -1159,12 +1159,12 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div>
           <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📞 Calling list</div>
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Ring-listen</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Leads klar til opkald, grupperet i navngivne lister. Klik "▶ Start opkald" for at åbne cockpittet på den aktive liste.</p>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Leads klar til opkald, grupperet i navngivne lister. Klik en række for at åbne cockpittet — eller "▶ Start her" for at begynde fra toppen.</p>
         </div>
-        <!-- "Start opkald" button removed 2026-06-16 — Calling list now
-             opens the cockpit directly from the sidebar nav, so a button
-             on this (now-unreachable) page is redundant. -->
-
+        <div style="display:flex;gap:10px;flex-shrink:0">
+          <button onclick="openExportPicker(getActiveCallingListId&&getActiveCallingListId()?{callingListId:getActiveCallingListId()}:undefined)" title="Eksportér leads til CSV — forudvalgt til denne ring-liste" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:border-color 0.12s,color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff';this.style.background='rgba(124,58,237,0.10)'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)';this.style.background='var(--w04)'">⬇ Eksportér</button>
+          <button id="cl-start-btn" class="btn-start-call" onclick="callingListStartCalling()" style="border-radius:11px;padding:11px 22px;font-size:14px">▶ Start her</button>
+        </div>
       </div>
       <!-- Named-list tabs (with counts) + "+ Ny liste" -->
       <div id="cl-tabs" style="margin-bottom:14px"></div>
@@ -9086,13 +9086,11 @@ function sv(v){
     renderAutodialerPage();
     if(typeof startDashAutoRefresh==='function') startDashAutoRefresh();
   } else if(v==='calling-list'){
-    // Calling list IS the cockpit — sidebar nav opens it directly rather
-    // than routing through the old table view. The cockpit's queue is
-    // built from the active calling list (see openCockpit). When the
-    // user closes the cockpit they land back on whichever view they
-    // came from (handled by _prevView in closeCockpit).
-    if (clPage) clPage.style.display = 'none';
-    if (typeof startCallingFromSidebar === 'function') startCallingFromSidebar();
+    // Calling list is its own PAGE — category tabs + list table at the top,
+    // click a row (or "▶ Start her") to drop into the cockpit. The cockpit
+    // remains a modal on top of this page; closing the modal lands back here.
+    if (clPage) { clPage.style.display = 'flex'; clPage.style.flexDirection = 'column'; }
+    if (typeof renderCallingListPage === 'function') renderCallingListPage();
   } else if(v==='list-builder'){
     if(lbPage)lbPage.style.display='flex';lbPage.style.flexDirection='column';
     renderListBuilderPage();
