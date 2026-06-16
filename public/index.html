@@ -1278,18 +1278,14 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div id="cockpit-progress" style="font-size:10.5px;color:var(--w55)">0 / 0 leads</div>
       </div>
     </div>
-    <!-- Skip control — kept for "I'm done with this lead, next" without disposition.
-         The Start Dialer / Pause / dialer-state pill were removed 2026-06-16 when
-         the autodialer flow was retired. SDR now calls by clicking the phone-number
-         badge in the cockpit detail panel (tel: deeplink to iPhone). -->
-    <div style="display:flex;align-items:center;gap:6px;margin-left:18px;padding-left:18px;border-left:1px solid var(--w08)">
-      <button id="cockpit-skip-btn" onclick="cockpitSkip()" title="Spring dette lead over og gå til næste (uden disposition)" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 14px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏭ Skip</button>
-    </div>
+    <!-- Skip control removed 2026-06-16 — SDR uses ← Forrige / Næste →
+         in the disposition panel for navigation. cockpitSkip() function
+         still exists (called by keyboard shortcut handler if added later). -->
+
     <div style="flex:1"></div>
-    <!-- Calling list-level Eksportér — opens the picker modal pre-filtered
-         to the current calling list (the SDR can broaden the scope inside
-         the modal). The sidebar footer no longer carries this action. -->
-    <button class="btn btn-sm" onclick="openExportPicker(getActiveCallingListId&&getActiveCallingListId()?{callingListId:getActiveCallingListId()}:undefined)" title="Eksportér leads til CSV — forudvalgt til denne ring-liste" style="padding:8px 12px">⬇ Eksportér</button>
+    <!-- Eksportér removed from cockpit toolbar 2026-06-16 — cockpit is
+         for calling, not data export. Export lives on Leadlist + Calling
+         list page headers. -->
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
     <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
   </div>
