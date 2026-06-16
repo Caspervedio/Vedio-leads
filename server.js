@@ -6344,8 +6344,15 @@ function deriveSourceCategory(source, brancheCode) {
 // 10/mobile, 3/personal email, 1/work email.
 //
 // PR10. Smoke-test endpoint: /api/fullenrich/test
-const FULLENRICH_API_BASE = "https://api.fullenrich.com";
+// Correct host is app.fullenrich.com (api.fullenrich.com doesn't resolve —
+// docs are misleading). Verified 2026-06-16 with a real DK lead.
+const FULLENRICH_API_BASE = "https://app.fullenrich.com";
 const FULLENRICH_DAILY_CREDIT_CAP = 500; // ~50 phone reveals/day
+// Each contact in a batch needs enrich_fields listing what to look up.
+// Valid values per the API: contact.phones, contact.work_emails,
+// contact.personal_emails, contact.emails. We always ask for the two
+// we actually use; the rest are optional and cost extra credits.
+const FULLENRICH_DEFAULT_FIELDS = ["contact.phones", "contact.work_emails"];
 const FULLENRICH_SPEND_FILE = path.join(DATA_DIR, "discovery", "fullenrich_spend.json");
 const FULLENRICH_POLL_INTERVAL_MS = 5000;
 const FULLENRICH_POLL_TIMEOUT_MS  = 180_000; // 3 min sync cap
@@ -6383,6 +6390,10 @@ function consumeFullEnrichCredits(credits) {
 
 // Submit a bulk enrichment. contacts = [{first_name, last_name, domain,
 // company_name, linkedin_url, custom: {cvr, ...}}]. Returns the job id.
+// enrich_fields is REQUIRED and is PER-CONTACT (not top-level); we inject
+// FULLENRICH_DEFAULT_FIELDS unless the caller already provided one. The
+// error path is undocumented — the API responds with EnrichFields cannot
+// be empty if any contact omits the field.
 async function fullEnrichSubmitBatch(contacts, opts = {}) {
   if (!isFullEnrichConfigured()) throw new Error("Full Enrich not configured");
   const spend = loadFullEnrichSpend();
@@ -6391,12 +6402,21 @@ async function fullEnrichSubmitBatch(contacts, opts = {}) {
     err.code = "FULLENRICH_CAP_REACHED";
     throw err;
   }
+  const fields = Array.isArray(opts.enrich_fields) && opts.enrich_fields.length
+    ? opts.enrich_fields
+    : FULLENRICH_DEFAULT_FIELDS;
+  const normalized = (contacts || []).map((c) => ({
+    enrich_fields: c.enrich_fields || fields,
+    ...c,
+  }));
   const body = {
     name: opts.name || `vedio-leads-${Date.now()}`,
-    data: contacts,
+    data: normalized,
   };
-  // Skip invalid contacts rather than blocking the whole batch
-  const url = `${FULLENRICH_API_BASE}/api/v2/contact/enrich/bulk?silentFail=true`;
+  // No silentFail — we want errors on malformed contacts surfaced now,
+  // not silently dropped (which would let bugs hide). All callers should
+  // be passing well-formed contacts since we control them in-process.
+  const url = `${FULLENRICH_API_BASE}/api/v2/contact/enrich/bulk`;
   const r = await fetch(url, {
     method: "POST",
     headers: {
@@ -6410,7 +6430,7 @@ async function fullEnrichSubmitBatch(contacts, opts = {}) {
     throw new Error(`Full Enrich submit ${r.status}: ${t.slice(0, 300)}`);
   }
   const d = await r.json();
-  return d.id || d.enrichment_id || null;
+  return d.enrichment_id || d.id || null;
 }
 
 // Poll a job until completed or timeout. Returns the full response object.
