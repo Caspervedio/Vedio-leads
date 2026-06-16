@@ -737,6 +737,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 
 <div class="app" id="app" style="display:none">
 
+<!-- Floating Aktivitet icon — top-right of the viewport, visible on every
+     page. Moved here 2026-06-16 from the sidebar footer so it doesn't
+     compete with the primary "Start opkald" CTA. -->
+<button id="floating-activity-btn" onclick="openActivityLog()" title="Vis aktivitetslog" style="position:fixed;top:14px;right:18px;z-index:90;width:42px;height:42px;border-radius:50%;background:rgba(20,15,32,0.92);border:1px solid var(--w08);color:var(--w80);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.4);backdrop-filter:blur(8px);transition:border-color 0.12s,color 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)'">📋</button>
+
 <!-- Softphone (CloudTalk iframe + popup) removed 2026-06-16 — subscription
      cancelled. Calls + SMS now route via tel:/sms: deeplinks to the SDR's
      iPhone (Continuity audio on Mac). No on-screen softphone anymore. -->
@@ -803,10 +808,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
          list is currently active. The primary action of the whole tool
          lives in the sidebar so it's reachable from every view. -->
     <button onclick="startCallingFromSidebar()" title="Start opkald på den aktive ring-liste" style="width:100%;background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:11px;padding:13px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:0.3px;box-shadow:0 3px 12px rgba(34,197,94,0.35);margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px">📞 Start opkald</button>
-    <!-- Global Aktivitet — moved here 2026-06-16 so it's reachable from any
-         page (was previously only on Leadlist + cockpit toolbars). -->
-    <button class="exp-btn" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, opkald, dispositioner" style="margin-bottom:6px">📋 Aktivitet</button>
-    <button class="exp-btn" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
+    <!-- Eksportér opens a selector modal — pick which leads to export
+         (active / archive / a specific ring-liste / by category / by source)
+         before generating the CSV. Aktivitet lives in the floating
+         top-right icon (no longer in this footer). -->
+    <button class="exp-btn" onclick="openExportPicker()">⬇ Eksportér leads (CSV)</button>
   </div>
 
   <!-- USER PROFILE -->
@@ -9491,6 +9497,180 @@ function addAll(){showListPicker(res.map(c=>c.cvr));}
 function togSB(){sbOpen=!sbOpen;document.getElementById('sb').style.width=sbOpen?'280px':'0';}
 function togFilterPop(){const p=document.getElementById('filter-popover'),o=document.getElementById('fp-overlay');const isOpen=p.classList.toggle('open');o.classList.toggle('open',isOpen);}
 function doExport(){const vis=aList==='all'?leads:leads.filter(l=>l.listId===aList);if(!vis.length){alert('Ingen leads endnu');return;}doCSV(vis,'vedio_leads');}
+
+// ─── Export picker — select WHICH leads to export ──────────────────────
+// The bare "doExport()" dumps every lead. This picker lets the SDR scope
+// the CSV by:
+//   • Lead status    (active / archive / twenty-pushed / phone-missing)
+//   • Calling list   (any specific named list, or "ikke i ring-liste")
+//   • Category       (DK e-com / DK service / all)
+//   • Source         (branche-walk / storeleads / gmaps / csv / manual)
+//   • Free-text search (same matcher as the Prelist search bar)
+// Live count of matching leads updates as the SDR toggles filters.
+var _exportSel = null;
+function openExportPicker(){
+  if(!leads || leads.length === 0){ showToast('Ingen leads at eksportere'); return; }
+  const callingLists = (typeof loadCallingLists === 'function') ? loadCallingLists() : [];
+  // Default selection — current visible queue from the user's POV
+  _exportSel = {
+    status: 'active',         // active | archive | twenty | phone_missing | all
+    callingListId: 'any',     // any | none | <list-id>
+    category: 'all',          // all | ecom | service
+    source: 'all',            // all | branche-walk | storeleads | gmaps-discover | csv | manual
+    searchQ: '',
+  };
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg'; bg.id = 'export-picker-bg';
+  // Build option pickers — each radio group is a simple row of pill-style buttons.
+  const pill = (group, id, label, count) => {
+    const active = _exportSel[group] === id;
+    return `<button onclick="_exportSet('${group}','${id}')" style="padding:6px 12px;border-radius:8px;border:1px solid ${active?'rgba(124,58,237,0.5)':'var(--w08)'};background:${active?'rgba(124,58,237,0.18)':'var(--w04)'};color:${active?'#fff':'var(--w80)'};font-family:'Outfit',sans-serif;font-size:12px;font-weight:${active?'700':'600'};cursor:pointer;display:inline-flex;align-items:center;gap:6px">${label}${count!=null?`<span style="opacity:0.6;font-weight:500">${count}</span>`:''}</button>`;
+  };
+  // (We don't pre-compute counts per option — too many combos; the live total
+  // at the bottom is enough signal.)
+  const callingListPills = [
+    pill('callingListId', 'any',  'Alle'),
+    pill('callingListId', 'none', '☐ Ikke i ring-liste'),
+    ...callingLists.map(l => pill('callingListId', l.id, e(l.name))),
+  ].join(' ');
+  bg.innerHTML = `<div class="modal" style="width:580px;max-width:94vw;max-height:88vh;overflow-y:auto">
+    <div style="padding:18px 22px 14px">
+      <h3 style="margin:0 0 4px;font-size:18px;color:#fff;font-weight:800">⬇ Eksportér leads</h3>
+      <p style="margin:0;font-size:12.5px;color:var(--w55);line-height:1.5">Vælg hvilke leads CSV-filen skal indeholde. Live-tæller nedenfor opdaterer mens du toggler.</p>
+    </div>
+    <div style="padding:0 22px 14px;display:flex;flex-direction:column;gap:14px">
+      <div>
+        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Status</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="exp-status">
+          ${pill('status','active','✓ Aktive')}
+          ${pill('status','archive','✕ Arkiverede')}
+          ${pill('status','twenty','🎯 Pushede til Twenty')}
+          ${pill('status','phone_missing','⚠ Mangler nummer')}
+          ${pill('status','all','Alt')}
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Ring-liste</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="exp-cl">${callingListPills}</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Kategori (niche)</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="exp-cat">
+          ${pill('category','all','Alle')}
+          ${pill('category','ecom','🛍 DK e-commerce')}
+          ${pill('category','service','🏢 DK service')}
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Kilde</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap" id="exp-src">
+          ${pill('source','all','Alle')}
+          ${pill('source','branche-walk','🇩🇰 Branche-walk')}
+          ${pill('source','storeleads','🛒 StoreLeads')}
+          ${pill('source','gmaps-discover','📍 Maps')}
+          ${pill('source','csv','📋 CSV')}
+          ${pill('source','manual','✎ Manuel')}
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Tekst-filter (valgfri)</div>
+        <input type="text" placeholder="Søg på navn, CVR, by, telefon…" oninput="_exportSetSearch(this.value)" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:10px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;outline:none">
+      </div>
+    </div>
+    <div id="exp-summary" style="padding:14px 22px;border-top:1px solid var(--w08);background:rgba(124,58,237,0.05);display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div>
+        <div style="font-size:11px;color:var(--w55);font-weight:600">Klar til eksport</div>
+        <div id="exp-count" style="font-size:24px;font-weight:900;color:#fff;font-variant-numeric:tabular-nums">… leads</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="_closeExportPicker()" style="background:transparent;border:1px solid var(--w08);border-radius:9px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">Annuller</button>
+        <button id="exp-go-btn" onclick="_runExport()" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:9px;padding:10px 22px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(34,197,94,0.3)">⬇ Eksportér</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  _refreshExportCount();
+}
+function _exportSet(group, id){ _exportSel[group] = id; _redrawExportPicker(); }
+function _exportSetSearch(q){ _exportSel.searchQ = q || ''; _refreshExportCount(); }
+function _closeExportPicker(){ const m = document.getElementById('export-picker-bg'); if (m) m.remove(); }
+function _redrawExportPicker(){
+  // Cheapest re-render: just rebuild the modal in place. Lose focus on the
+  // search input, but that's OK since pills are mouse interactions.
+  const search = _exportSel.searchQ;
+  _closeExportPicker();
+  openExportPicker();
+  if (search) {
+    _exportSel.searchQ = search;
+    const input = document.querySelector('#export-picker-bg input[type="text"]');
+    if (input) input.value = search;
+    _refreshExportCount();
+  }
+}
+function _exportFilteredLeads(){
+  const sel = _exportSel || {};
+  let out = (leads||[]).slice();
+  const isTwentyPushed = (l) => !!l.twenty_opportunity_id;
+  // Status filter
+  if (sel.status === 'active') {
+    out = out.filter(l => l.lastAction !== 'not-relevant' && !isTwentyPushed(l));
+  } else if (sel.status === 'archive') {
+    out = out.filter(l => l.lastAction === 'not-relevant');
+  } else if (sel.status === 'twenty') {
+    out = out.filter(l => isTwentyPushed(l));
+  } else if (sel.status === 'phone_missing') {
+    out = out.filter(l => l.phone_missing === true);
+  }
+  // Calling-list filter
+  if (sel.callingListId === 'none') {
+    out = out.filter(l => !l.calling_list_id);
+  } else if (sel.callingListId && sel.callingListId !== 'any') {
+    out = out.filter(l => l.calling_list_id === sel.callingListId);
+  }
+  // Category filter
+  if (sel.category && sel.category !== 'all') {
+    out = out.filter(l => (typeof leadCategory === 'function' ? leadCategory(l) : '') === sel.category);
+  }
+  // Source filter
+  if (sel.source && sel.source !== 'all') {
+    out = out.filter(l => (l.source || 'manual') === sel.source);
+  }
+  // Search filter — same matcher as the Prelist search
+  if (sel.searchQ && sel.searchQ.trim()) {
+    const q = sel.searchQ.trim().toLowerCase();
+    const qd = q.replace(/\s+/g,'');
+    out = out.filter(l => {
+      const hay = [l.name, l.cvr, l.phone, l.ph, l.web, l.domain, l.city, l.address, l.branche, l.industry,
+        (l.contacts||[]).map(c => `${c.name||''} ${c.title||''} ${c.phone||''} ${c.email||''}`).join(' '),
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (hay.includes(q)) return true;
+      if (qd !== q && hay.replace(/\s+/g,'').includes(qd)) return true;
+      return false;
+    });
+  }
+  return out;
+}
+function _refreshExportCount(){
+  const out = _exportFilteredLeads();
+  const el = document.getElementById('exp-count'); if (el) el.textContent = `${out.length} leads`;
+  const btn = document.getElementById('exp-go-btn');
+  if (btn) { btn.disabled = out.length === 0; btn.style.opacity = out.length === 0 ? '0.5' : ''; btn.style.cursor = out.length === 0 ? 'not-allowed' : 'pointer'; }
+}
+function _runExport(){
+  const out = _exportFilteredLeads();
+  if (out.length === 0) { showToast('Ingen leads matcher dit valg'); return; }
+  // Filename includes the status + calling-list scope so the SDR can tell
+  // exported files apart without opening them.
+  const sel = _exportSel || {};
+  const parts = ['vedio_leads', sel.status];
+  if (sel.callingListId && sel.callingListId !== 'any' && sel.callingListId !== 'none') parts.push(sel.callingListId);
+  if (sel.callingListId === 'none') parts.push('no-list');
+  if (sel.category && sel.category !== 'all') parts.push(sel.category);
+  if (sel.source && sel.source !== 'all') parts.push(sel.source);
+  doCSV(out, parts.join('_'));
+  _closeExportPicker();
+  showToast(`✓ Eksporterede ${out.length} leads`);
+}
 function doCSV(data,fn){
   const f=[
     ['cvr','CVR'],['name','Navn'],['web','Website'],['ph','Telefon'],['em','Email'],
