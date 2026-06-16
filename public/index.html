@@ -322,53 +322,8 @@ tr.chk td{background:var(--bluebg)}
 .modal input::placeholder{color:var(--gray2)}
 .modal-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:14px}
 
-/* ─── EMBEDDED SOFTPHONE (CloudTalk Phone iframe) ──────────────────────
-   Fixed bottom-right dock + collapsed pill. Sits above all SPA content
-   but below the login overlay. Default size 460x720 was tuned so
-   CloudTalk's SMS detail view (which has header + tabs + recipient
-   field + message body + send button stacked) fits without overflow or
-   button-clipping. Smaller sizes caused the SMS UI to silently break.
-   .expanded goes to 600x840 for power users who want chat-history side
-   visible too. */
-#softphone-dock{
-  position:fixed;bottom:18px;right:18px;width:460px;height:720px;z-index:900;
-  background:#14111f;border:1px solid rgba(124,58,237,0.35);border-radius:14px;
-  box-shadow:0 24px 64px rgba(0,0,0,0.55),0 0 32px rgba(124,58,237,0.18);
-  overflow:hidden;display:flex;flex-direction:column;
-  animation:softphoneFadeIn 0.22s cubic-bezier(0.22,1,0.36,1);
-  transition:width 0.18s cubic-bezier(0.22,1,0.36,1),height 0.18s cubic-bezier(0.22,1,0.36,1)
-}
-#softphone-dock.expanded{
-  width:min(640px,calc(100vw - 40px));
-  height:min(860px,calc(100vh - 40px))
-}
+/* CloudTalk softphone CSS removed 2026-06-16 — subscription cancelled. */
 @keyframes softphoneFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-#softphone-header{
-  display:flex;align-items:center;gap:6px;padding:9px 10px 9px 12px;
-  background:linear-gradient(180deg,rgba(124,58,237,0.22),rgba(124,58,237,0.08));
-  border-bottom:1px solid rgba(124,58,237,0.25);
-  user-select:none
-}
-#softphone-status-dot{
-  width:8px;height:8px;border-radius:50%;background:#6b7280;
-  box-shadow:0 0 0 2px rgba(107,114,128,0.18);transition:background 0.2s,box-shadow 0.2s
-}
-#softphone-status-dot.ready{background:#34d399;box-shadow:0 0 0 2px rgba(52,211,153,0.22)}
-#softphone-status-dot.calling{background:#fb923c;box-shadow:0 0 0 2px rgba(251,146,60,0.22);animation:pulse-dot 1.2s ease-in-out infinite}
-#softphone-iframe{flex:1;width:100%;border:0;background:#1a1626;display:block}
-#softphone-pill{
-  display:flex;align-items:center;gap:8px;padding:10px 16px;
-  background:linear-gradient(135deg,#7c3aed,#a78bfa);
-  border:0;border-radius:24px;color:#fff;cursor:pointer;
-  font-family:'Outfit',sans-serif;
-  box-shadow:0 12px 32px rgba(124,58,237,0.45),0 0 0 1px rgba(255,255,255,0.06) inset;
-  transition:transform 0.12s,box-shadow 0.12s
-}
-#softphone-pill:hover{transform:translateY(-1px);box-shadow:0 16px 36px rgba(124,58,237,0.55)}
-#softphone-pill.calling{animation:pulse-dot 1.2s ease-in-out infinite}
-@media (max-width:1280px){
-  #softphone-dock{width:420px;height:680px;bottom:14px;right:14px}
-}
 
 /* LOGIN OVERLAY */
 /* LOGIN — Vedio 3.0 brand */
@@ -782,51 +737,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
 
 <div class="app" id="app" style="display:none">
 
-<!-- ─── EMBEDDED SOFTPHONE (CloudTalk Phone web app) ─────────────────────
-  Persistent across all SPA navigation so call sessions survive the
-  Autodialer ↔ Cockpit ↔ Dashboard switching. Iframe never unmounts.
-  CloudTalk's phone.cloudtalk.io explicitly allows third-party embed
-  (no X-Frame-Options, no frame-ancestors CSP).
-  Two states: docked (bottom-right floating panel 380x620) or collapsed
-  (just a phone-icon tab on the right edge). State persists in
-  localStorage so SDR's preference survives reloads. -->
-<div id="softphone-dock" style="display:none">
-  <!-- Header strip — drag handle + collapse button + status dot -->
-  <div id="softphone-header">
-    <div style="display:flex;align-items:center;gap:8px;flex:1">
-      <span id="softphone-status-dot" title="Softphone status"></span>
-      <span style="font-size:12px;font-weight:700;color:#fff;letter-spacing:0.3px">📞 Softphone</span>
-      <span id="softphone-substatus" style="font-size:10px;color:rgba(255,255,255,0.55);font-weight:500"></span>
-    </div>
-    <button id="softphone-sms" onclick="softphoneOpenSmsInPopout()" title="Åbn SMS i eget vindue — anbefalet hvis softphone-SMS hænger" style="background:rgba(167,139,250,0.18);border:1px solid rgba(167,139,250,0.35);color:#c4b5fd;cursor:pointer;padding:3px 9px;font-size:11px;font-weight:700;line-height:1.4;border-radius:7px;font-family:'Outfit',sans-serif;margin-right:2px">💬 SMS</button>
-    <button id="softphone-expand" onclick="softphoneExpand()" title="Udvid (større visning til SMS m.v.)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">⤢</button>
-    <button id="softphone-popout" onclick="softphoneOpenWindow()" title="Åbn softphone i eget vindue (anbefalet — fuld mikrofon/højttaler-adgang)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:13px;line-height:1">⧉</button>
-    <button id="softphone-reload" onclick="softphoneReload()" title="Genindlæs softphone (destroy + recreate)" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 6px;font-size:14px;line-height:1">↻</button>
-    <button id="softphone-collapse" onclick="softphoneToggle()" title="Skjul softphone" style="background:transparent;border:0;color:rgba(255,255,255,0.55);cursor:pointer;padding:4px 8px;font-size:16px;line-height:1;font-weight:700">−</button>
-  </div>
-  <!-- Mic-permission helper banner — shown if calls can't fire from the
-       embedded iframe (Chrome restricts mic for cross-origin iframes). -->
-  <div id="softphone-mic-hint" style="padding:8px 12px;background:rgba(251,146,60,0.12);border-bottom:1px solid rgba(251,146,60,0.3);font-size:11px;color:#fdba74;line-height:1.4">
-    ⚠ Starter opkald ikke? Klik <strong>⧉ Åbn i eget vindue</strong> ovenfor — der får softphonen fuld mikrofon-adgang. Opkald fra Autodialer rammer stadig den samme softphone.
-  </div>
-  <iframe id="softphone-iframe"
-          src="about:blank"
-          allow="microphone *; camera *; autoplay; speaker-selection *; clipboard-read; clipboard-write; web-share *; display-capture *; notifications *; encrypted-media *"
-          referrerpolicy="strict-origin"
-          title="CloudTalk Phone"></iframe>
-</div>
-<!-- Collapsed pill — softphone launcher.
-     In popup mode (default): click opens a fresh popup window.
-     In dock mode (opt-in):   click reveals the iframe dock.
-     The tiny ⚙ button switches between modes — popup is recommended
-     for SMS reliability + first-class mic/audio permissions. -->
-<div id="softphone-pill-wrap" style="position:fixed;bottom:18px;right:18px;z-index:900;display:none;align-items:center;gap:6px">
-  <button id="softphone-pill" onclick="softphoneToggle()" title="Åbn CloudTalk i eget vindue">
-    <span style="font-size:16px;pointer-events:none">📞</span>
-    <span id="softphone-pill-label" style="font-size:11px;font-weight:700;letter-spacing:0.5px;pointer-events:none">Open CloudTalk App</span>
-  </button>
-  <button id="softphone-mode-toggle" onclick="softphoneSwitchMode()" title="Skift tilstand: pop-up ↔ indlejret CloudTalk" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;width:30px;height:30px;border-radius:50%;font-size:13px;line-height:1;font-family:'Outfit',sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:background 0.12s,transform 0.12s" onmouseover="this.style.background='rgba(255,255,255,0.22)';this.style.transform='scale(1.08)'" onmouseout="this.style.background='rgba(255,255,255,0.12)';this.style.transform='scale(1)'">⚙</button>
-</div>
+<!-- Softphone (CloudTalk iframe + popup) removed 2026-06-16 — subscription
+     cancelled. Calls + SMS now route via tel:/sms: deeplinks to the SDR's
+     iPhone (Continuity audio on Mac). No on-screen softphone anymore. -->
 
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sb">
@@ -1551,481 +1464,24 @@ function showApp(){
   }
   if(isServerMode)fetchOwners();
   setTimeout(()=>{const t=document.getElementById('ai-toggle');if(t)t.checked=aiEnabled;if(aiEnabled&&aView==='leads')fetchEnrichStatus();if(aiEnabled){const gear=document.getElementById('icp-gear');if(gear)gear.style.display='';}},200);
-  // Boot the embedded softphone — first reveal lazily loads the iframe
-  // so the page-load cost is paid only after login.
-  softphoneInit();
-  // CloudTalk subscription cancelled 2026-06-08 — the active-call
-  // polling would just hit a 503 every 3s. Disabled by default.
-  // To re-enable (if CloudTalk ever comes back), uncomment below or
-  // set localStorage.cloudtalk_polling = '1' in DevTools.
-  if (localStorage.getItem('cloudtalk_polling') === '1') {
-    startCallPolling();
-  }
+  // (CloudTalk softphone + active-call polling removed 2026-06-16 —
+  // subscription cancelled. Calls route via tel: deeplink to iPhone.)
 }
 
-// ─── Softphone — popup-default, iframe-dock opt-in ────────────────────
-// Two modes:
-//   'popup' (default): pill click → opens CloudTalk in a fresh popup
-//                      window. First-class browser permissions (full
-//                      mic + audio), full-size UI (no iframe layout
-//                      glitches in SMS view), reliable across the
-//                      board. Recommended.
-//   'dock':            pill click → reveals an embedded iframe in a
-//                      docked panel bottom-right. Legacy mode kept as
-//                      opt-in for SDRs who prefer never to leave the
-//                      Vedio Leads window. SMS view can be fragile due
-//                      to cross-origin iframe restrictions.
-//
-// Inbound calls show a screen-pop notification banner inside the main
-// app regardless of mode — so popup-mode SDRs never miss a ring even
-// if the popup window is minimized.
-const SOFTPHONE_URL = 'https://phone.cloudtalk.io/';
-const SOFTPHONE_MODE_KEY = 'softphone_mode';
-function getSoftphoneMode(){
-  // Default to 'popup' for new sessions / first-time users
-  const m = localStorage.getItem(SOFTPHONE_MODE_KEY);
-  return m === 'dock' ? 'dock' : 'popup';
-}
-function softphoneSwitchMode(){
-  const current = getSoftphoneMode();
-  const next = current === 'popup' ? 'dock' : 'popup';
-  localStorage.setItem(SOFTPHONE_MODE_KEY, next);
-  // Tearing down: if switching FROM popup, close the popup window so
-  // the SDR doesn't have a stale CloudTalk window floating around.
-  if(current === 'popup' && _softphoneWin && !_softphoneWin.closed){
-    try{ _softphoneWin.close(); }catch{}
-    _softphoneWin = null;
-  }
-  // If switching FROM dock to popup, hide the dock (iframe stays loaded
-  // in memory but invisible — could be GC'd by clearing src, but the
-  // user might switch back, so we keep it warm).
-  softphoneInit();
-  showToast(next === 'popup'
-    ? '📞 CloudTalk App pop-up tilstand (anbefalet)'
-    : '📞 CloudTalk dock-tilstand (indlejret)');
-}
-function softphoneInit(){
-  const dock=document.getElementById('softphone-dock');
-  const pillWrap=document.getElementById('softphone-pill-wrap');
-  const iframe=document.getElementById('softphone-iframe');
-  if(!dock||!pillWrap||!iframe)return;
-  // 2026-06-08 — CloudTalk removed from primary workflow. Calls now
-  // route via tel: links to the SDR's iPhone (Continuity routes audio
-  // through Mac speaker/headset if signed in). Native carrier audio,
-  // no iframe quirks. Hide both dock and pill so the cockpit is the
-  // only thing on screen.
-  dock.style.display = 'none';
-  pillWrap.style.display = 'none';
-  return;
-  // ── Legacy CloudTalk softphone code below — unreachable but kept
-  //    for fast revert if we ever want the embedded dialer back. ──
-  const mode = getSoftphoneMode();
-  const pillLabel = document.getElementById('softphone-pill-label');
-  if(mode === 'popup'){
-    // Popup mode — pill is always the launcher; dock + iframe stay
-    // hidden (and the iframe is NOT loaded, saving CloudTalk's ~3MB
-    // bundle from being fetched in this tab).
-    dock.style.display='none';
-    pillWrap.style.display='flex';
-    if(pillLabel) pillLabel.textContent = 'Open CloudTalk App';
-    // Hint the SDR if they don't have a popup open yet
-    softphoneSetStatus(_softphoneWin && !_softphoneWin.closed ? 'ready' : '', _softphoneWin && !_softphoneWin.closed ? 'CloudTalk App åben' : '');
-    return;
-  }
-  // ── Dock mode (opt-in) ──
-  if(pillLabel) pillLabel.textContent = 'Vis CloudTalk dock';
-  // Lazy-load: only set src once when the dock or pill first becomes visible.
-  if(iframe.src==='about:blank' || !iframe.src.startsWith('https://phone.cloudtalk.io')){
-    iframe.src = SOFTPHONE_URL;
-    softphoneSetStatus('loading','indlæser…');
-    iframe.addEventListener('load', ()=>{
-      // Iframe loaded. We can't read inside (cross-origin) so we can't
-      // know if the SDR is signed in — show neutral "klar" until a call
-      // fires, at which point we flip to 'calling'.
-      softphoneSetStatus('ready','klar');
-    }, {once:true});
-  }
-  // Restore last collapse state (default: docked open after login).
-  const collapsed = localStorage.getItem('softphone_collapsed')==='1';
-  if(collapsed){ dock.style.display='none'; pillWrap.style.display='flex'; }
-  else { dock.style.display='flex'; pillWrap.style.display='none'; }
-  // Restore last expanded state
-  const expanded = localStorage.getItem('softphone_expanded')==='1';
-  if(expanded) dock.classList.add('expanded');
-}
-function softphoneToggle(){
-  const mode = getSoftphoneMode();
-  if(mode === 'popup'){
-    // Pill click in popup mode = open / focus the popup window
-    softphoneOpenWindow();
-    // Refresh status to reflect "popup open"
-    softphoneInit();
-    return;
-  }
-  // Dock mode toggle (existing behaviour)
-  const dock=document.getElementById('softphone-dock');
-  const pillWrap=document.getElementById('softphone-pill-wrap');
-  if(!dock||!pillWrap)return;
-  const isOpen = dock.style.display !== 'none';
-  if(isOpen){
-    dock.style.display='none';
-    pillWrap.style.display='flex';
-    localStorage.setItem('softphone_collapsed','1');
-  } else {
-    dock.style.display='flex';
-    pillWrap.style.display='none';
-    localStorage.setItem('softphone_collapsed','0');
-    // First open may need to lazy-load the iframe.
-    softphoneInit();
-  }
-}
-// Toggle the dock between default 380×600 and expanded 600×840 size.
-// CloudTalk's SMS detail view + contacts list don't fit at 600px tall
-// (header + tabs + active call + body all stacked). Expanded gives
-// enough room without forcing a popout. Persisted in localStorage so
-// the SDR's preference survives reloads.
-function softphoneExpand(){
-  const dock = document.getElementById('softphone-dock');
-  if(!dock) return;
-  const wasExpanded = dock.classList.contains('expanded');
-  dock.classList.toggle('expanded');
-  localStorage.setItem('softphone_expanded', wasExpanded ? '0' : '1');
-  const btn = document.getElementById('softphone-expand');
-  if(btn) btn.title = wasExpanded ? 'Udvid (større visning til SMS m.v.)' : 'Skift til kompakt størrelse';
-}
-
-// Hard reload — destroys and recreates the iframe DOM node entirely.
-// Simply setting iframe.src can leave a stuck CloudTalk JS context
-// behind (especially after the SMS detail view glitches): the iframe
-// reports load=ok but the React tree inside is in a broken state.
-// Recreating the element gives a guaranteed-clean slate, which is what
-// the SDR needs when SMS sends get stuck. The session cookie survives
-// (same-origin to CloudTalk), so the SDR doesn't have to log back in.
-function softphoneReload(){
-  const oldIframe = document.getElementById('softphone-iframe');
-  if(!oldIframe) return;
-  const parent = oldIframe.parentNode;
-  if(!parent) return;
-  softphoneSetStatus('loading','genindlæser…');
-  // Build the replacement with the exact same id + attrs as the original
-  // template, so the layout + permissions are preserved.
-  const fresh = document.createElement('iframe');
-  fresh.id = 'softphone-iframe';
-  fresh.setAttribute('allow', 'microphone *; camera *; autoplay; speaker-selection *; clipboard-read; clipboard-write; web-share *; display-capture *; notifications *; encrypted-media *');
-  fresh.setAttribute('referrerpolicy', 'strict-origin');
-  fresh.setAttribute('title', 'CloudTalk Phone');
-  fresh.src = SOFTPHONE_URL + '?_t=' + Date.now();
-  fresh.addEventListener('load', () => { softphoneSetStatus('ready', 'klar'); }, { once: true });
-  // Watchdog — if the iframe hasn't fired 'load' within 12s, retry once.
-  // CloudTalk normally finishes the first paint in 2-4s. 12s strongly
-  // implies a network or auth glitch where recovery is worth attempting.
-  const watchdog = setTimeout(() => {
-    if(document.getElementById('softphone-iframe') === fresh){
-      console.warn('[softphone] reload watchdog tripped — retrying with cache-bust');
-      try { fresh.src = SOFTPHONE_URL + '?_t=' + Date.now() + '&retry=1'; } catch {}
-    }
-  }, 12000);
-  fresh.addEventListener('load', () => clearTimeout(watchdog), { once: true });
-  // Swap atomically. Removing the old node tears down its JS context.
-  parent.replaceChild(fresh, oldIframe);
-  showToast('🔄 Softphone genindlæst — log evt. ind på ny hvis SMS stadig hænger');
-}
-// Open CloudTalk Phone in its OWN browser window. A first-class window
-// gets normal microphone/speaker permissions (no cross-origin iframe
-// restriction), so this is the reliable path when calls won't fire from
-// the embedded dock. Click-to-call from the Autodialer still rings this
-// session because CloudTalk routes the call to the agent's logged-in
-// device — iframe or window, whichever is active. We reuse a named
-// window so repeated clicks focus the existing one instead of stacking.
-// Open CloudTalk in a popout window optimized for SMS. The popout uses
-// the same base URL as the regular softphone window — but at a larger
-// SMS-friendly size (520x780) and with a clear toast hint that the SDR
-// should click the SMS tab. CloudTalk's URL routing inside the SPA is
-// undocumented, so we don't try to deep-link to /sms (risk of 404);
-// instead we rely on the SDR's one-click navigation to the SMS tab,
-// which is right there in CloudTalk's left nav. This is the bulletproof
-// path when the in-dock SMS view glitches.
-let _softphoneSmsWin = null;
-function softphoneOpenSmsInPopout(){
-  const feats = 'width=520,height=780,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
-  try{
-    if(_softphoneSmsWin && !_softphoneSmsWin.closed){
-      _softphoneSmsWin.focus();
-      showToast('💬 SMS-vindue allerede åbent — klik på det');
-      return;
-    }
-    _softphoneSmsWin = window.open(SOFTPHONE_URL, 'vedio_softphone_sms', feats);
-    if(_softphoneSmsWin){
-      _softphoneSmsWin.focus();
-      showToast('💬 SMS-vindue åbnet — klik på SMS-fanen i CloudTalk');
-    } else {
-      showToast('Popup blokeret — tillad popups for dette site og prøv igen');
-    }
-  }catch(e){ showToast('Kunne ikke åbne SMS-vindue: '+e.message); }
-}
-
-let _softphoneWin = null;
-function softphoneOpenWindow(){
-  // 520×780 — same dimensions as the popout-default SMS popup so all
-  // CloudTalk views (dialer, SMS, contacts, call history) get enough
-  // room. Was 400×680, which was tight for SMS detail.
-  const feats = 'width=520,height=780,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
-  try{
-    if(_softphoneWin && !_softphoneWin.closed){ _softphoneWin.focus(); return; }
-    _softphoneWin = window.open(SOFTPHONE_URL, 'vedio_softphone', feats);
-    if(_softphoneWin){
-      _softphoneWin.focus();
-      showToast('📞 CloudTalk App åbnet i eget vindue — log ind + tillad mikrofon der');
-      // Collapse the dock (if in dock mode) since the window is now the
-      // active phone.
-      const dock=document.getElementById('softphone-dock');
-      const pillWrap=document.getElementById('softphone-pill-wrap');
-      if(dock)dock.style.display='none';
-      if(pillWrap)pillWrap.style.display='flex';
-      localStorage.setItem('softphone_collapsed','1');
-    } else {
-      showToast('Popup blokeret — tillad popups for dette site og prøv igen');
-    }
-  }catch(e){ showToast('Kunne ikke åbne vindue: '+e.message); }
-}
-
-// ─── Inbound/outbound screen-pop ────────────────────────────────────────
-// Polls the backend for the live CloudTalk call and pops the matching
-// company on screen — works even when the softphone dock is closed. The
-// backend (CloudTalk webhook) sets the active call; here we surface it.
-let _callPollTimer=null, _lastPoppedCall='';
-function startCallPolling(){
-  if(_callPollTimer) return;
-  _callPollTimer=setInterval(pollActiveCall, 3000);
-  pollActiveCall();
-}
-function stopCallPolling(){
-  if(_callPollTimer){ clearInterval(_callPollTimer); _callPollTimer=null; }
-  _lastPoppedCall=''; hideCallPop();
-}
-async function pollActiveCall(){
-  try{
-    const r=await fetch('/api/cloudtalk/active-call',{headers:ah()});
-    if(!r.ok) return;
-    const d=await r.json();
-    if(!d.active){ _lastPoppedCall=''; hideCallPop(); return; }
-    const key=(d.call.callId||'')+'|'+(d.call.startedAt||'');
-    if(key===_lastPoppedCall) return;   // already showing this call
-    _lastPoppedCall=key;
-    showCallPop(d);
-  }catch(e){ /* network blip — try again next tick */ }
-}
-function hideCallPop(){ const el=document.getElementById('call-pop'); if(el)el.remove(); }
-function showCallPop(d){
-  hideCallPop();
-  const inbound=(d.call.direction||'')!=='outbound';
-  const company=d.lead ? d.lead.name : (d.call.contactName || 'Ukendt nummer');
-  const num=d.call.number||'';
-  // History hint — if we've called this lead before, show last disposition.
-  const hist = d.lead && d.lead.lastAction
-    ? `<span style="color:var(--w55)">Sidste: ${e(lastActionLabel(d.lead.lastAction))}${d.lead.lastCallAt?` · ${new Date(d.lead.lastCallAt).toLocaleDateString('da-DK')}`:''}</span>`
-    : (d.lead ? '<span style="color:var(--w35)">Ikke ringet før</span>' : '<span style="color:#fdba74">Nummer ikke i listen</span>');
-  // Chime on first appearance (different for inbound vs outbound).
-  try{ playCallChime(inbound?'inbound':'outbound'); }catch{}
-  // Inbound = bigger, greener border + pulsing glow; outbound = subtle.
-  const borderCol = inbound ? '#34d399' : 'rgba(124,58,237,0.5)';
-  const glowCol = inbound ? 'rgba(52,211,153,0.45)' : 'rgba(124,58,237,0.3)';
-  const labelCol = inbound ? '#34d399' : '#c4b5fd';
-  const el=document.createElement('div');
-  el.id='call-pop';
-  el.style.cssText=`position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:1100;background:#14111f;border:1px solid ${borderCol};border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,0.6),0 0 36px ${glowCol};padding:${inbound?'20px 26px':'16px 22px'};min-width:${inbound?'520px':'440px'};max-width:90vw;animation:softphoneFadeIn 0.2s${inbound?';outline:0':''}`;
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;gap:16px">
-      <div style="font-size:${inbound?'36px':'30px'};${inbound?'animation:pulse-dot 1.2s ease-in-out infinite':''}">${inbound?'📲':'📞'}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:${labelCol}">${inbound?'Indgående opkald — ringer nu':'Udgående opkald'}${d.lead&&d.lead.meta_advertiser?' · 🎯 Annoncør':''}</div>
-        <div style="font-size:${inbound?'20px':'17px'};font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e(company)}</div>
-        <div style="font-size:12px;color:var(--w55);font-family:monospace">${e(num)}${d.lead&&d.lead.city?` · ${e(d.lead.city)}`:''}</div>
-        <div style="font-size:11px;margin-top:2px">${hist}</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-        ${inbound?`
-          <button onclick="callPopAccept('${d.lead?e(d.lead.cvr):''}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:0;color:#fff;border-radius:9px;padding:10px 18px;font-size:13px;font-weight:800;cursor:pointer;font-family:'Outfit',sans-serif;box-shadow:0 2px 8px rgba(34,197,94,0.35)" title="Åbn softphonen — tag opkaldet">✓ Tag opkaldet</button>
-          <button onclick="callPopDecline()" style="background:var(--w04);border:1px solid rgba(252,165,165,0.4);color:#fca5a5;border-radius:9px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Luk pop'en (CloudTalk afgør selv hvad der sker hvis du ikke tager)">✕ Afvis</button>
-        `:`
-          ${d.lead?`<button onclick="callPopOpenLead('${e(d.lead.cvr)}')" style="background:#7c3aed;border:0;color:#fff;border-radius:9px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">Åbn lead ↗</button>`:''}
-          <button onclick="hideCallPop()" style="background:var(--w04);border:1px solid var(--w08);color:var(--w80);border-radius:9px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
-        `}
-      </div>
-    </div>`;
-  document.body.appendChild(el);
-}
-// "Take the call" — focus the softphone (where the actual answer happens).
-// If a separate window is open use that; else expand the in-app dock.
-function callPopAccept(cvr){
-  hideCallPop();
-  if(window._softphoneWin && !window._softphoneWin.closed){
-    try{ window._softphoneWin.focus(); }catch{}
-  } else {
-    // In popup mode, open the popup. In dock mode, reveal the dock.
-    if(getSoftphoneMode() === 'popup'){
-      softphoneOpenWindow();
-    } else {
-      const dock=document.getElementById('softphone-dock');
-      const pillWrap=document.getElementById('softphone-pill-wrap');
-      if(dock){ dock.style.display='flex'; localStorage.setItem('softphone_collapsed','0'); }
-      if(pillWrap) pillWrap.style.display='none';
-    }
-  }
-  if(cvr){ callPopOpenLead(cvr); }
-}
-// "Decline" just dismisses the pop. We can't actually reject the call from
-// outside CloudTalk — the call continues to ring until the agent picks up
-// or CloudTalk's routing rules kick in (voicemail / fail-over to mobile,
-// if configured in their dashboard).
-function callPopDecline(){
-  hideCallPop();
-  showToast('Pop lukket — CloudTalks regler håndterer opkaldet (voicemail / mobil-redirect)');
-}
-function callPopOpenLead(cvr){
-  hideCallPop();
-  const lead=(leads||[]).find(l=>l.cvr===cvr);
-  if(!lead){ showToast('Lead ikke i din liste'); return; }
-  // Switch to Autodialer + open the cockpit at this lead so the SDR has
-  // history, notes and disposition ready for the callback.
-  if(typeof sv==='function') sv('autodialer');
-  setTimeout(()=>{
-    if(typeof openCockpit==='function'){
-      openCockpit();
-      setTimeout(()=>{ const qi=(_cockpit.queue||[]).findIndex(l=>l.cvr===cvr); if(qi>=0)cockpitJump(qi); }, 120);
-    }
-  }, 60);
-}
-function softphoneSetStatus(kind, label){
-  const dot=document.getElementById('softphone-status-dot');
-  const sub=document.getElementById('softphone-substatus');
-  const pill=document.getElementById('softphone-pill');
-  if(!dot)return;
-  dot.classList.remove('ready','calling');
-  if(pill)pill.classList.remove('calling');
-  if(kind==='ready')dot.classList.add('ready');
-  else if(kind==='calling'){
-    dot.classList.add('calling');
-    if(pill)pill.classList.add('calling');
-  }
-  if(sub)sub.textContent = label || '';
-  // Auto-stop the ringback loop whenever the status changes away
-  // from 'calling' — covers the 60s safety reset + any explicit
-  // status flip.
-  if(kind !== 'calling' && typeof softphoneStopRingback === 'function'){
-    softphoneStopRingback();
-  }
-}
-// Called from the click-to-call flow to (a) auto-expand the dock so
-// the SDR can interact with the ringing softphone, (b) flip the status
-// dot to "calling" so it's visually obvious where the call is happening.
-function softphoneOnCallStart(name){
-  const mode = getSoftphoneMode();
-  if(mode === 'popup'){
-    // Auto-open the popup if not yet open. If already open, focus it
-    // so the SDR sees the ringing softphone immediately.
-    if(!_softphoneWin || _softphoneWin.closed){
-      softphoneOpenWindow();
-    } else {
-      try{ _softphoneWin.focus(); }catch{}
-    }
-    softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
-    playCallChime('outbound');
-    softphoneStartRingback(45000); // looping ringback until pickup / 45s timeout
-    clearTimeout(window._softphoneStatusTimer);
-    window._softphoneStatusTimer = setTimeout(()=>softphoneSetStatus('ready','pop-up åben'), 60000);
-    return;
-  }
-  // ── Dock mode (existing behaviour) ──
-  const dock=document.getElementById('softphone-dock');
-  const pillWrap=document.getElementById('softphone-pill-wrap');
-  if(dock && dock.style.display==='none'){
-    // Auto-expand the dock when a call fires — but only if the iframe
-    // is actually loaded. If still loading, leave the pill visible so
-    // the pulse is the visible signal.
-    dock.style.display='flex';
-    if(pillWrap)pillWrap.style.display='none';
-    localStorage.setItem('softphone_collapsed','0');
-  }
-  softphoneSetStatus('calling', name ? ('ringer '+name) : 'ringer…');
-  playCallChime('outbound');
-  softphoneStartRingback(45000); // looping ringback until pickup / 45s timeout
-  // Reset to "ready" after a generous window (CloudTalk doesn't emit
-  // events to us cross-origin; this is a UI hint, not the truth).
-  clearTimeout(window._softphoneStatusTimer);
-  window._softphoneStatusTimer = setTimeout(()=>softphoneSetStatus('ready','klar'), 60000);
-}
-
-// Play a short notification chime when a call starts. Uses WebAudio so
-// there's no asset to host. Outbound = a short rising tone; inbound = a
-// distinct two-note pattern (so the SDR can tell ear-first).
+// ─── Softphone (REMOVED) ──────────────────────────────────────────────
+// CloudTalk subscription cancelled 2026-06-16. Calls + SMS now route via
+// tel:/sms: deeplinks to the SDR's iPhone (Continuity audio on Mac).
+// These stubs stay so existing call sites (cockpitDisposition,
+// cockpitStartDialer, logout, showApp) don't break.
+function softphoneInit(){ /* no-op */ }
+function softphoneOnCallStart(/* name */){ /* no-op — tel: handles the call */ }
+function softphoneStopRingback(){ /* no-op */ }
+function startCallPolling(){ /* no-op — no CloudTalk active-call endpoint */ }
+function stopCallPolling(){ /* no-op */ }
+// Mute toggle key is still honoured by other parts of the UI, so keep
+// the helper. Lightweight WebAudio chime — fired on call-pop only.
 let _audioCtx=null;
 function _ac(){ if(!_audioCtx){ try{ _audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }catch{} } return _audioCtx; }
-function _beep(freq, durMs, startDelayMs, type='sine', gain=0.18){
-  const ctx=_ac(); if(!ctx) return;
-  if(ctx.state==='suspended') ctx.resume().catch(()=>{});
-  const t=ctx.currentTime + (startDelayMs||0)/1000;
-  const osc=ctx.createOscillator(); const g=ctx.createGain();
-  osc.type=type; osc.frequency.setValueAtTime(freq, t);
-  g.gain.setValueAtTime(0.001, t);
-  g.gain.exponentialRampToValueAtTime(gain, t+0.02);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + durMs/1000);
-  osc.connect(g); g.connect(ctx.destination);
-  osc.start(t); osc.stop(t + durMs/1000 + 0.05);
-}
-function playCallChime(kind){
-  // Skip if the user has muted via the toggle (localStorage)
-  if(localStorage.getItem('mute_call_chime')==='1') return;
-  if(kind==='inbound'){
-    // Two-note rising pattern: 660 → 880 Hz
-    _beep(660, 180, 0, 'sine', 0.22);
-    _beep(880, 220, 200, 'sine', 0.22);
-  } else {
-    // Outbound: single soft beep
-    _beep(740, 160, 0, 'sine', 0.18);
-  }
-}
-
-// ─── Outbound ringback tone ────────────────────────────────────────────
-// Plays a continuous "calling" sound while the call is being placed —
-// just like a normal phone where you hear ringing until the other party
-// picks up. The CloudTalk softphone runs in a separate window/iframe so
-// we can't hear its native ringback through speakers; this is the
-// substitute.
-//
-// Pattern: Danish/European ringback — ~1 sec tone at 425 Hz, ~3 sec
-// silence, looping. Auto-stops after maxDuration (default 45s) as a
-// safety net; explicit softphoneStopRingback() fires sooner on
-// disposition, navigation, or status change.
-let _ringbackTimer = null;
-let _ringbackStartedAt = 0;
-function softphoneStartRingback(maxDurationMs = 45000){
-  // Respect the existing mute toggle
-  if(localStorage.getItem('mute_call_chime')==='1') return;
-  const ctx = _ac(); if(!ctx) return;
-  if(ctx.state==='suspended') ctx.resume().catch(()=>{});
-  // Clear any previous loop
-  softphoneStopRingback();
-  _ringbackStartedAt = Date.now();
-  const playTone = () => {
-    if(Date.now() - _ringbackStartedAt > maxDurationMs){
-      softphoneStopRingback();
-      return;
-    }
-    // 1-second tone at 425 Hz (European standard call-progress tone),
-    // slightly quieter than the chime so it's not jarring on repeat.
-    _beep(425, 1000, 0, 'sine', 0.10);
-  };
-  playTone();                              // first tone immediately
-  _ringbackTimer = setInterval(playTone, 4000); // then every 4s (1s tone + 3s silence)
-}
-function softphoneStopRingback(){
-  if(_ringbackTimer){
-    clearInterval(_ringbackTimer);
-    _ringbackTimer = null;
-  }
-  _ringbackStartedAt = 0;
-}
 async function fetchOwners(){
   try{
     const r=await fetch('/api/leads/owners',{headers:ah()});
@@ -2176,24 +1632,7 @@ async function logout(){
   leadNotes={};leadTags={};leadFollowup={};
   leadContacts={};
   leads=[];lists=[{id:'all',name:'Alle leads'}];
-  // Tear down the embedded softphone — drops the CloudTalk session
-  // so the next SDR who logs in starts clean. Also closes the popup
-  // window in popup mode so the CloudTalk session there is dropped too.
-  const dock=document.getElementById('softphone-dock');
-  const pillWrap=document.getElementById('softphone-pill-wrap');
-  const iframe=document.getElementById('softphone-iframe');
-  if(dock)dock.style.display='none';
-  if(pillWrap)pillWrap.style.display='none';
-  if(iframe)iframe.src='about:blank';
-  if(_softphoneWin && !_softphoneWin.closed){
-    try{ _softphoneWin.close(); }catch{}
-    _softphoneWin = null;
-  }
-  if(_softphoneSmsWin && !_softphoneSmsWin.closed){
-    try{ _softphoneSmsWin.close(); }catch{}
-    _softphoneSmsWin = null;
-  }
-  stopCallPolling();
+  // (Softphone teardown removed — CloudTalk subscription cancelled.)
   showLogin();
 }
 
@@ -3232,7 +2671,7 @@ function renderDiscoverySummary(){
   </div>`;
   document.getElementById('disc-summary').innerHTML=[
     tile('Aktive annoncører',(s.totalActiveAdvertisers||0).toLocaleString('da-DK'),`af ${(s.totalChecked||0).toLocaleString('da-DK')} tjekkede`),
-    tile('📌 ICP-kvalificerede',(s.icpQualified||0).toLocaleString('da-DK'),`${(s.pendingPushToCloudTalk||0)} klar til CloudTalk-push`),
+    tile('📌 ICP-kvalificerede',(s.icpQualified||0).toLocaleString('da-DK'),`${(s.pendingPushToCloudTalk||0)} klar til dialer`),
     tile('Seneste kørsel',ago,s.lastRunCompletedAt?new Date(s.lastRunCompletedAt).toLocaleString('da-DK'):'—'),
     tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`aktive virksomheder i mål-brancher`),
   ].join('');
@@ -3603,9 +3042,9 @@ function renderDiscoveryRow(c){
   if(c.twenty_opportunity_id){
     chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);margin-left:6px" title="Pushet til Twenty CRM">🎯 I Twenty</span>`;
   }else if(c.pushed_to_cloudtalk_at){
-    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);margin-left:6px" title="I CloudTalk-køen siden ${e((c.pushed_to_cloudtalk_at||'').slice(0,10))}">📞 I dialer</span>`;
+    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);margin-left:6px" title="I dialer-køen siden ${e((c.pushed_to_cloudtalk_at||'').slice(0,10))}">📞 I dialer</span>`;
   }else if(c.icpFit){
-    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);margin-left:6px" title="Opfylder ICP-reglerne — auto-push til CloudTalk når Phase C er klar">📌 ICP-klar</span>`;
+    chip=`<span style="font-size:9.5px;font-weight:800;letter-spacing:0.4px;padding:2px 6px;border-radius:5px;background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);margin-left:6px" title="Opfylder ICP-reglerne — klar til dialer">📌 ICP-klar</span>`;
   }
   const icpChip=chip;
   const srcChip=sourceBadge(c);
@@ -3703,7 +3142,7 @@ function openDiscoveryDetail(cvr){
           <div style="font-size:13px;font-weight:700;color:#fff">${e(p.name||'—')}</div>
           ${p.title?`<div style="font-size:11px;color:var(--w55)">${e(p.title)}</div>`:''}
         </div>
-        ${p.phone?`<button onclick="ringNow('${e(p.phone)}','','${e(p.name||'')}')" title="Ring via CloudTalk" style="all:unset;cursor:pointer;color:var(--purple-light);font-size:13px;font-weight:600">${e(p.phone)}</button>`:''}
+        ${p.phone?`<button onclick="ringNow('${e(p.phone)}','','${e(p.name||'')}')" title="Ring" style="all:unset;cursor:pointer;color:var(--purple-light);font-size:13px;font-weight:600">${e(p.phone)}</button>`:''}
         ${p.email?`<a href="mailto:${p.email}" style="color:var(--purple-light);font-size:12px;text-decoration:none">${e(p.email)}</a>`:''}
       </div>`).join('')
     : `<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:18px;text-align:center">
@@ -5204,7 +4643,7 @@ function renderMsStats() {
   el.innerHTML = [
     tile('Aktive annoncører', (s.totalActiveAdvertisers||0).toLocaleString('da-DK'), `${hitRate}% hit-rate på ${(s.totalChecked||0).toLocaleString('da-DK')} tjekkede`, 'var(--purple-light)'),
     tile('Kandidatpulje', (s.candidatePoolSize||0).toLocaleString('da-DK'), 'aktive DK-virksomheder i mål-brancher'),
-    tile('📌 ICP-klar fra META', (s.icpQualified||0).toLocaleString('da-DK'), `${s.pendingPushToCloudTalk||0} klar til CloudTalk`),
+    tile('📌 ICP-klar fra META', (s.icpQualified||0).toLocaleString('da-DK'), `${s.pendingPushToCloudTalk||0} klar til dialer`),
     tile('Sidste 7 dage', (_msCache.newRows.length).toLocaleString('da-DK'), 'nye annoncører set'),
   ].join('');
 }
@@ -5746,7 +5185,7 @@ function renderAutodialerPage(){
     filtered=filtered.filter(l=>!isEnriching(l));
     // PR6: Verified-advertising leads stay in the main queue EVEN
     // without a phone yet. They're high-value (currently running ads)
-    // and cockpit-open auto-reveal will fire Lusha/Apollo to find a
+    // and cockpit-open auto-reveal will fire Apollo to find a
     // phone the moment the SDR opens them. Non-advertising phone-
     // missing leads still go to "⚠ Mangler nummer" research bucket.
     filtered=filtered.filter(l=>{
@@ -6176,7 +5615,7 @@ function renderAutodialerPage(){
           // company). In archive mode, show a "Genopret" button instead.
           // Phone — loud and clear: this is the number that gets dialed.
           const phoneDisplay = l.phone
-            ? `<button onclick="event.stopPropagation();ringNow('${e(l.phone)}','${e(l.cvr||'')}','${e(l.name||'')}')" title="Ring via CloudTalk" style="all:unset;cursor:pointer;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd;letter-spacing:0.3px">${e(l.phone)}</button>`
+            ? `<button onclick="event.stopPropagation();ringNow('${e(l.phone)}','${e(l.cvr||'')}','${e(l.name||'')}')" title="Ring" style="all:unset;cursor:pointer;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd;letter-spacing:0.3px">${e(l.phone)}</button>`
             : `<span style="font-size:11px;color:#fca5a5">ingen tlf</span>`;
           // Per-view "last cell" — the right-aligned action column:
           //   • archive view  → ↻ Genopret button
@@ -6546,11 +5985,10 @@ function toggleSwitchboard(){
   if(typeof renderCockpit==='function' && _cockpit && _cockpit.open) renderCockpit();
 }
 
-// Trigger a CloudTalk click-to-call. Never falls back to tel: (the OS
-// FaceTime/Phone app shouldn't intercept these — calls must go through
-// CloudTalk so the call lands on Nicolas's softphone and is recorded).
-// When CloudTalk says the agent isn't online, surface a clear message
-// pointing to the softphone instead of failing silently.
+// Click-to-call. Routes via the OS dialer (tel: deeplink) — iPhone
+// Continuity bridges the audio to the Mac when both are signed in to
+// the same Apple ID. CloudTalk softphone integration was retired
+// 2026-06-16 when the subscription was cancelled.
 async function ringNow(phone, cvr, leadName){
   if(!phone){ showToast('Intet nummer på leadet'); return; }
   // HARD GUARD — we only call DK numbers. Apollo sometimes returns
@@ -6591,18 +6029,8 @@ async function ringNow(phone, cvr, leadName){
   showToast(`📞 Ringer ${leadName||''}${leadName?' · ':''}${dial} — bekræft på din iPhone`);
   window.location.href = 'tel:' + dial;
 }
-// Big yellow banner that points the SDR to the softphone when CloudTalk
-// rejects click-to-call. Auto-dismisses after 8s or on click.
-function showCloudTalkOfflineBanner(msg){
-  document.getElementById('ct-offline-banner')?.remove();
-  const el=document.createElement('div');
-  el.id='ct-offline-banner';
-  el.style.cssText='position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:1200;background:#1e1410;border:1px solid rgba(251,146,60,0.55);border-radius:12px;padding:14px 18px;color:#fdba74;font-size:13px;line-height:1.4;max-width:520px;box-shadow:0 12px 40px rgba(0,0,0,0.55),0 0 24px rgba(251,146,60,0.25);font-family:"Outfit",sans-serif;cursor:pointer';
-  el.innerHTML=`<div style="display:flex;align-items:flex-start;gap:10px"><span style="font-size:18px">⚠</span><div style="flex:1"><div style="font-weight:800;color:#fb923c;margin-bottom:3px">Softphone er ikke online</div><div>${e(msg)}</div></div></div>`;
-  el.onclick=()=>el.remove();
-  document.body.appendChild(el);
-  setTimeout(()=>el.remove(), 8000);
-}
+// (showCloudTalkOfflineBanner removed 2026-06-16 — no longer needed
+//  now that calls go through tel: deeplinks.)
 
 // Edit the phone number the autodialer/cockpit will call for a lead.
 // Lets the SDR correct a wrong number (e.g. an Apollo foreign-HQ number)
@@ -6945,9 +6373,9 @@ function adJumpToLead(idx){
 
 // ─── COCKPIT ──────────────────────────────────────────────────────────────
 // Single-screen call workflow. Filtered to the currently-active list (or
-// all leads if 'Alle leads' is selected). Action handlers are placeholders
-// that toast for now — Phase C swaps them for real CloudTalk calls, Phase D
-// adds the Twenty push. Queue position survives close→reopen via _cockpit.
+// all leads if 'Alle leads' is selected). Calls go via tel: deeplink to
+// the SDR's iPhone; Twenty CRM push fires on "Interesseret" disposition.
+// Queue position survives close→reopen via _cockpit.
 
 const _cockpit={open:false,queue:[],idx:0,history:[]};
 
@@ -6974,7 +6402,7 @@ function openCockpit(forceCvr){
     if(l.twenty_opportunity_id) return false;       // PR2: pushed to AE — done from SDR's view
     // PR6: same relaxation as the autodialer page — verified-advertising
     // leads stay callable even without a phone yet. Cockpit-open auto-
-    // reveal fires Lusha/Apollo when SDR lands on them.
+    // reveal fires Apollo when SDR lands on them.
     if(l.phone_missing===true) {
       const isVerifiedAd = l.meta_advertiser===true || l.linkedin_advertiser===true || l.meta_verified_active===true;
       if(!isVerifiedAd) return false;
@@ -7403,15 +6831,15 @@ function renderCockpit(){
   renderCockpitDetail(c);
   // AUTO-REVEAL: when SDR lands on a lead with no contacts (typical for
   // branche-walk Datafordeler-direct leads + meta-ads research-bucket
-  // leads), automatically fire the Lusha-first reveal. Saves the SDR a
-  // click per lead. Cost: 1 Lusha credit (~$0.08) or 1 Apollo credit
-  // (~$0.05) per lead actually opened. Daily Apollo cap still protects.
+  // leads), automatically fire the Apollo reveal. Saves the SDR a click
+  // per lead. Cost: ~1 Apollo credit (~$0.05) per lead actually opened.
+  // Daily Apollo cap still protects.
   if (c && !_autoRevealAttempted.has(c.cvr)) {
     const contactsCount = Array.isArray(c.contacts) ? c.contacts.length : 0;
     // PR6: also fire auto-reveal for verified-advertising leads that
     // simply lack a phone (meta-ads/linkedin-ads fresh out of discovery).
-    // The cockpit shouldn't sit stuck with "ingen tlf" — try Lusha/
-    // Apollo immediately so SDR sees a phone within seconds of opening.
+    // The cockpit shouldn't sit stuck with "ingen tlf" — try Apollo
+    // immediately so SDR sees a phone within seconds of opening.
     const hasPhone = !!((c.phone || c.ph || '').toString().trim());
     const isVerifiedAd = c.meta_advertiser === true || c.linkedin_advertiser === true || c.meta_verified_active === true;
     const needsReveal = contactsCount === 0 && (
@@ -7615,7 +7043,7 @@ function renderCockpitDetail(c){
             <button onclick="toggleSwitchboard()" title="Minimér / vis switchboard" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;line-height:1;padding:0">${window._cockpitSwitchboardMin?'▸':'▾'}</button>
             <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase">Ring til switchboard — bed om</div>
           </div>
-          ${c.ph?`<button onclick="ringNow('${e(c.ph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring via CloudTalk" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;font-family:monospace">📞 ${fp(c.ph)}</button>`:''}
+          ${c.ph?`<button onclick="ringNow('${e(c.ph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;font-family:monospace">📞 ${fp(c.ph)}</button>`:''}
         </div>
         <div id="cockpit-switchboard-body" style="${window._cockpitSwitchboardMin?'display:none':''}">
         ${pending?`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)"><span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Apollo beriger — kontakter klar om få sekunder…</div>`:contacts.length?contacts.map((p,i)=>`
@@ -7668,10 +7096,10 @@ function renderCockpitDetail(c){
         <div style="flex:1;min-width:0">
           <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)} <span style="margin-left:8px;padding:2px 7px;border-radius:5px;background:${btw.bg};color:${btw.fg};border:1px solid ${btw.border};font-size:10px;font-weight:700;letter-spacing:0.3px" title="${e(btw.tip)}">${e(btw.label)}</span></div>
           ${cph
-            ? `<div style="display:flex;align-items:center;gap:8px"><button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring via CloudTalk">${fp(cph)}</button><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" title="Ret nummeret" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:4px 8px;color:var(--w55);font-size:12px;cursor:pointer;line-height:1" onmouseover="this.style.color='#c4b5fd';this.style.borderColor='rgba(196,181,253,0.4)'" onmouseout="this.style.color='var(--w55)';this.style.borderColor='var(--w08)'">✎ ret</button></div>`
+            ? `<div style="display:flex;align-items:center;gap:8px"><button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring">${fp(cph)}</button><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" title="Ret nummeret" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:4px 8px;color:var(--w55);font-size:12px;cursor:pointer;line-height:1" onmouseover="this.style.color='#c4b5fd';this.style.borderColor='rgba(196,181,253,0.4)'" onmouseout="this.style.color='var(--w55)';this.style.borderColor='var(--w08)'">✎ ret</button></div>`
             : `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer</span><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer">+ Indtast nummer</button></div>`}
         </div>
-        ${cph?`<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring via CloudTalk" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;border:none;cursor:pointer;font-family:'Outfit',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</button>`:''}
+        ${cph?`<button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:11px;padding:11px 18px;font-size:14px;font-weight:800;border:none;cursor:pointer;font-family:'Outfit',sans-serif;white-space:nowrap;box-shadow:0 2px 8px rgba(34,197,94,0.35)">📞 Ring</button>`:''}
       </div>`; })()}
 
       <!-- Quick-research deep links + gatekeeper script library.
@@ -7837,37 +7265,15 @@ async function cockpitStartDialer(){
   _cockpit.dialerState = 'dialing';
   cockpitUpdateToolbarButtons();
   renderCockpit();
-  // Trigger the real CloudTalk call if configured. Falls back gracefully
-  // to a tel: link on the SDR's device when CloudTalk isn't ready yet
-  // (e.g. DK number / agent_id pending).
   const phone = c.phone || c.ph || (c.contacts && c.contacts.find(x=>x.phone)?.phone) || '';
   if(!phone){
     showToast('Ingen telefonnummer på leadet — berig først med Apollo');
+    _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
     return;
   }
-  // Pop the embedded softphone if hidden + flip status dot to "calling"
-  // so the SDR sees where the conversation will land.
-  softphoneOnCallStart(c.name);
-  try{
-    const r = await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({cvr:c.cvr, phone})});
-    const d = await r.json();
-    if(r.ok){
-      showToast(`📞 CloudTalk ringer ${c.name}…`);
-    } else if(r.status===503){
-      // CloudTalk rejected the click-to-call. Show the actionable banner
-      // (most common cause: agent not online in the softphone). DO NOT
-      // fall back to tel: — that opens FaceTime/Phone instead of routing
-      // through CloudTalk, which is never what the SDR wants.
-      _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
-      showCloudTalkOfflineBanner(d.error||'Log ind i softphonen og sæt status til Online.');
-    } else {
-      _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
-      showToast('CloudTalk fejl: '+(d.error||'kunne ikke ringe'));
-    }
-  }catch(ex){
-    _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
-    showToast('Netværksfejl: '+ex.message);
-  }
+  // CloudTalk subscription was cancelled — calls now route via tel:
+  // deeplink straight to the SDR's iPhone (Continuity audio on Mac).
+  ringNow(phone, c.cvr, c.name);
 }
 
 function cockpitPauseDialer(){
@@ -7924,8 +7330,8 @@ async function cockpitDisposition(action){
 
   // Disposition-specific side effects.
   if(action==='sms'){
-    // SMS disposition — open the SMS composer for this lead. Until CloudTalk
-    // SMS API is wired, this is a tel:sms link.
+    // SMS disposition — open the SMS composer for this lead. Routes
+    // via the device's native SMS app (sms: deeplink).
     cockpitOpenSmsForLead(c);
   } else if(action==='no-answer'){
     // Schedule callback — answers the "what happens when they don't pick up"
@@ -7988,11 +7394,10 @@ function cockpitAdvanceAfterDisposition(){
 // existing button onclick handlers — under the hood it now calls Apollo.
 async function enrichLeadWithKaspr(cvr, context){
   if(!cvr){showToast('Mangler CVR');return;}
-  showToast('🔍 Lusha + Apollo finder beslutningstager…');
+  showToast('🔍 Apollo finder beslutningstager…');
   try{
-    // Use the unified Lusha-first reveal endpoint. Tries Lusha by
-    // LinkedIn URL first (cheap + accurate DK), falls back to Apollo
-    // automatically when Lusha doesn't find a DK direct dial.
+    // Unified contact-reveal endpoint. Lusha-first path was removed
+    // 2026-06-16 (subscription cancelled); now Apollo-only.
     const r=await fetch(`/api/contact/reveal-direct-dial/${cvr}`,{method:'POST',headers:ah()});
     const d=await r.json();
     if(r.status===503){
@@ -8313,7 +7718,7 @@ function cockpitOpenSmsModal(prefill){
     </div>
     <div style="font-size:10.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase;margin-bottom:5px">Besked <span style="color:var(--w55);font-weight:500;text-transform:none;letter-spacing:0;margin-left:6px">— variabler {{name}}, {{contact}}, {{my_name}} substitueres ved indsættelse</span></div>
     <textarea id="sms-text" rows="5" placeholder="Skriv eller indsæt en skabelon…" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:9px;color:#fff;padding:10px 14px;font-family:'Outfit',sans-serif;font-size:13px;outline:none;resize:vertical;margin-bottom:8px"></textarea>
-    <div style="font-size:10.5px;color:var(--w35);margin-bottom:14px"><span id="sms-charcount">0</span> / 480 tegn · CloudTalk loft</div>
+    <div style="font-size:10.5px;color:var(--w35);margin-bottom:14px"><span id="sms-charcount">0</span> / 480 tegn</div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('sms-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:600;cursor:pointer">Annullér</button>
       <button onclick="cockpitSendSmsConfirm('${e(prefill.cvr||'')}')" style="background:#7c3aed;border:none;border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">💬 Send</button>
@@ -8394,19 +7799,8 @@ async function cockpitManualCallConfirm(){
   const phone=document.getElementById('mc-phone')?.value.trim()||'';
   if(!phone){showToast('Indtast nummer');return;}
   document.getElementById('mc-modal')?.remove();
-  softphoneOnCallStart(phone);
-  try{
-    const r=await fetch('/api/cloudtalk/call',{method:'POST',headers:{...ah(),'Content-Type':'application/json'},body:JSON.stringify({phone})});
-    const d=await r.json();
-    if(r.ok){showToast('📞 CloudTalk ringer '+phone);return;}
-    if(r.status===503){
-      showCloudTalkOfflineBanner(d.error||'Log ind i softphonen og sæt status til Online.');
-      return;
-    }
-    showToast('CloudTalk fejl: '+(d.error||'ukendt'));
-  }catch(ex){
-    showToast('Netværksfejl: '+ex.message);
-  }
+  // CloudTalk removed — route via tel: deeplink to the SDR's iPhone.
+  ringNow(phone, '', '');
 }
 function cockpitOpenManualSms(){
   cockpitOpenSmsModal({ phone:'', name:'', cvr:'' });
@@ -8452,42 +7846,18 @@ async function runLinkedinLookup(){
   const resultEl = document.getElementById('li-lookup-result');
   const goBtn = document.getElementById('li-lookup-go');
   if (!url) { showToast('Indtast LinkedIn URL'); return; }
-  if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Slår op i Lusha (bedre DK-dækning)…';
+  if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Slår op i Apollo…';
   if (goBtn) { goBtn.disabled = true; goBtn.style.opacity = '0.6'; }
-  // Try Lusha FIRST — much better DK SMB direct dial coverage and
-  // verified DK numbers (Apollo's DK phone DB returned ~60-70% non-DK
-  // noise in user testing). Falls through to Apollo if Lusha:
-  //   - isn't configured (no LUSHA_API_KEY)
-  //   - hits its daily cap
-  //   - doesn't find the person
-  //   - finds the person but no DK phones (Apollo may have email/name)
+  // Apollo /people/match by LinkedIn URL. Lusha-first path was removed
+  // 2026-06-16 when the subscription was cancelled; Full Enrich handles
+  // the dedicated phone-reveal flow via its own endpoints.
   try {
-    const lushaResp = await fetch('/api/lusha/lookup', {
-      method: 'POST',
-      headers: { ...ah(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const lushaData = await lushaResp.json();
-    // Configured + found + has DK phone → done, return immediately
-    if (lushaResp.ok && lushaData.found && (lushaData.contact?.phones?.length > 0)) {
-      _renderLinkedinLookupResult(lushaData, 'lusha');
-      if (goBtn) { goBtn.disabled = false; goBtn.style.opacity = ''; }
-      return;
-    }
-    // Lusha didn't find the person OR found them without DK phones —
-    // try Apollo as second source (might have email/name + cached info)
-    if (resultEl) resultEl.innerHTML = '<span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:middle"></span>Lusha mangler — prøver Apollo…';
     const r = await fetch('/api/apollo/lookup-linkedin', {
       method: 'POST',
       headers: { ...ah(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
     });
     const d = await r.json();
-    // Merge: if Lusha gave us SOMETHING (e.g. name but no DK phone),
-    // include those scraps in the Apollo result so the SDR sees both.
-    if (lushaResp.ok && lushaData.found && lushaData.contact) {
-      d._lushaPartial = lushaData.contact;
-    }
     if (r.status === 429) {
       if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">⏸️ ${e(d.error || 'Daily cap reached')}</span>`;
       return;
@@ -8496,8 +7866,8 @@ async function runLinkedinLookup(){
       if (resultEl) resultEl.innerHTML = `<span style="color:#fca5a5">${e(d.error || 'Fejl ved opslag')}</span>`;
       return;
     }
-    if (!d.found && !d._lushaPartial) {
-      if (resultEl) resultEl.innerHTML = `<span style="color:var(--w55)">Hverken Lusha eller Apollo havde denne person. Prøv hovednummeret eller Google-research.</span>`;
+    if (!d.found) {
+      if (resultEl) resultEl.innerHTML = `<span style="color:var(--w55)">Apollo havde ikke denne person. Prøv hovednummeret eller Google-research.</span>`;
       return;
     }
     _renderLinkedinLookupResult(d, 'apollo');
@@ -8508,32 +7878,25 @@ async function runLinkedinLookup(){
   }
 }
 
-// Render the lookup result panel — handles both Lusha and Apollo response
-// shapes. Lusha returns a flatter shape (contact has phones[] directly);
-// Apollo returns contact+company+phones at the top level.
+// Render the Apollo lookup result panel.
 function _renderLinkedinLookupResult(d, source){
   const resultEl = document.getElementById('li-lookup-result');
   if (!resultEl) return;
-  // Determine source from shape
-  const isLusha = source === 'lusha' || d.source === 'lusha';
   const c = d.contact || {};
-  const co = isLusha ? { name: c.companyName || '', industry: c.companyIndustry || '' } : (d.company || {});
-  const phones = (isLusha ? c.phones : d.phones) || [];
-  const sources = d.sources || (isLusha ? ['lusha'] : ['apollo']);
+  const co = d.company || {};
+  const phones = d.phones || [];
+  const sources = d.sources || ['apollo'];
   const fromCache = !!d.cached;
-  const stillNoPhone = !phones.length && !isLusha && !!d.stillNoPhone;
-  // Merge in Lusha-partial data if Apollo fallback included it
-  const lushaPartial = d._lushaPartial;
-  const displayName = c.name && c.name !== '—' ? c.name : (lushaPartial?.name || '—');
-  const displayTitle = c.title || c.headline || lushaPartial?.title || '';
-  const displayCompany = co.name || lushaPartial?.companyName || '';
-  const displayEmail = c.email || lushaPartial?.email || '';
-  const displayLi = c.linkedin || c.linkedinUrl || lushaPartial?.linkedinUrl || '';
+  const stillNoPhone = !phones.length && !!d.stillNoPhone;
+  const displayName = c.name && c.name !== '—' ? c.name : '—';
+  const displayTitle = c.title || c.headline || '';
+  const displayCompany = co.name || '';
+  const displayEmail = c.email || '';
+  const displayLi = c.linkedin || c.linkedinUrl || '';
 
   // Source chip
   let srcChip;
   if (fromCache) srcChip = `<span style="background:rgba(34,197,94,0.18);color:#6ee7b7;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Cached · 0 credit</span>`;
-  else if (isLusha) srcChip = `<span style="background:rgba(34,197,94,0.18);color:#6ee7b7;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Lusha · ${phones.length} DK ${phones.length===1?'nummer':'numre'}</span>`;
   else if (sources.length > 1) srcChip = `<span style="background:rgba(124,58,237,0.18);color:#c4b5fd;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo + LinkedIn-scrape</span>`;
   else srcChip = `<span style="background:rgba(255,255,255,0.06);color:var(--w55);padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;margin-left:4px">Apollo</span>`;
 
@@ -8553,7 +7916,7 @@ function _renderLinkedinLookupResult(d, source){
         return `
       <div style="margin-top:10px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);border-radius:9px;padding:10px 12px">
         <div style="font-size:11.5px;color:#fdba74;font-weight:700;margin-bottom:6px">⚠ Ingen DK-telefon fundet</div>
-        <div style="font-size:11px;color:var(--w80);margin-bottom:8px;line-height:1.4">Personen blev ${isLusha?'fundet i Lusha':'fundet'} men ingen DK-telefon. Prøv Google:</div>
+        <div style="font-size:11px;color:var(--w80);margin-bottom:8px;line-height:1.4">Personen blev fundet men ingen DK-telefon. Prøv Google:</div>
         <a href="https://www.google.com/search?q=${googleQ}" target="_blank" rel="noopener" style="display:inline-block;padding:5px 11px;background:rgba(124,58,237,0.18);border:1px solid rgba(124,58,237,0.35);border-radius:7px;color:#c4b5fd;font-size:11px;font-weight:700;text-decoration:none">🔎 Søg Google</a>
       </div>`;
       })()
@@ -8561,9 +7924,7 @@ function _renderLinkedinLookupResult(d, source){
 
   const spendFooter = fromCache
     ? `<span style="color:#6ee7b7">✓ Fra cache (gratis · slået op ${new Date(d.cachedAt).toLocaleDateString('da-DK')})</span>`
-    : isLusha
-      ? `Lusha credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '60'}`
-      : `Apollo credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '100'}`;
+    : `Apollo credits brugt i dag: ${d.spendAfter?.spent || '?'}/${d.spendAfter?.cap || '100'}`;
 
   resultEl.innerHTML = `
     <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:12px 14px">
