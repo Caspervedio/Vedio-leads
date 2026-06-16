@@ -8701,26 +8701,34 @@ async function cockpitAddContactFromLinkedin(cvr) {
       showToast(`⏸ Apollo dagsbudget brugt op (${d.spent}/${d.cap})`); return;
     }
     if (!r.ok) { showToast('Fejl: ' + (d.error || 'ukendt')); return; }
-    if (!d.found && !d.person && !d.name) {
-      showToast('Apollo har ikke denne person i deres database');
+    if (!d.found) {
+      showToast('Apollo + Full Enrich kunne ikke finde denne person');
       return;
     }
-    // Normalize the contact shape — endpoint already returns flat fields
+    // The endpoint returns `contact` as a nested object. Older code in
+    // this function was reading flat top-level fields (d.name, d.phone)
+    // which never existed — bug from a response-shape mismatch. Now we
+    // read from d.contact and fall back to flat fields for safety.
+    const src = d.contact || d.person || d;
+    const phonesArr = src.phones || d.phones || (src.phone ? [{ number: src.phone, type: 'work', typeLabel: 'work' }] : []);
     const contact = {
-      name: d.name || (d.person && d.person.name) || '',
-      title: d.title || (d.person && d.person.title) || '',
-      email: d.email || '',
-      emailStatus: d.emailStatus || '',
+      name: src.name || src.full_name || '',
+      title: src.title || '',
+      email: src.email || '',
+      emailStatus: src.emailStatus || src.email_status || '',
       linkedin: url,
       linkedinUrl: url,
-      seniority: d.seniority || '',
-      photoUrl: d.photoUrl || '',
-      phones: d.phones || (d.phone ? [{ number: d.phone, typeLabel: 'work' }] : []),
-      phone: d.phone || (d.phones && d.phones[0] && d.phones[0].number) || '',
+      seniority: src.seniority || '',
+      photoUrl: src.photoUrl || src.photo_url || '',
+      phones: phonesArr,
+      phone: src.phone || (phonesArr[0] && phonesArr[0].number) || '',
+      phoneType: src.phoneType || src.phone_type || (phonesArr[0] && phonesArr[0].type) || '',
+      phoneTypeLabel: src.phoneTypeLabel || (phonesArr[0] && phonesArr[0].typeLabel) || '',
+      source_phone: src.source_phone || (d.sources && d.sources.includes('fullenrich') ? 'fullenrich' : 'apollo'),
       source: 'manual-linkedin-url',
       addedAt: new Date().toISOString(),
     };
-    if (!contact.name) { showToast('Apollo returnerede ingen navn — tjek URL'); return; }
+    if (!contact.name) { showToast('Kunne ikke læse navn fra opslaget — tjek LinkedIn URL'); return; }
     // Append to lead.contacts locally, then PATCH to persist
     const lead = leads.find(l => l.cvr === cvr);
     if (lead) {
