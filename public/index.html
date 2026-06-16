@@ -760,53 +760,22 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2h2l1.5 3.5L5 7c.7 2 2.3 3.6 4.3 4.3L11 10l3.5 1.5V14c0 .5-.5 1-1 1C8 14.5 1 7.5 0 2c0-.5.5-1 1-1z" transform="translate(1 0)"/></svg>
       Autodialer
     </a>
-    <!-- AI Agent (singular) — META Scraper is the daily-driver autonomous
-         agent. Look-alike / Maps / Tech Stack moved into "Eksperimentelle"
-         below after the channel audit — they add complexity without
-         materially helping the 30/day target until we have richer data. -->
-    <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">AI Agent</div>
-    <a id="nv-meta" onclick="sv('meta-scraper')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M3 8c0-3 2-5 5-5s5 2 5 5M3 8c0 3 2 5 5 5s5-2 5-5"/></svg>
-      META Scraper
-    </a>
+    <!-- Dead nav items hidden 2026-06-16 — the underlying pages + render
+         functions are intact (in case of code paths still using them),
+         only the sidebar entry-points are suppressed. To restore: just
+         remove the display:none style attribute. -->
+    <a id="nv-meta" onclick="sv('meta-scraper')" style="display:none">META Scraper</a>
     <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Værktøjer</div>
     <a id="nv-csv" onclick="sv('csv-upload')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 10V2M5 5l3-3 3 3M2 12v2h12v-2"/></svg>
       CSV Analyse
     </a>
-    <a id="nv-s" onclick="sv('search')">
-      <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="5"/><path d="m11 11 3 3"/></svg>
-      CVR Discovery
-    </a>
-    <!-- Eksperimentelle — collapsed by default; localStorage holds state.
-         The agents below still work, we're just keeping them out of the
-         daily-flow lineup until they earn their place back. -->
-    <div id="sb-exp-hdr" onclick="toggleExperimentalSection()" style="display:flex;align-items:center;justify-content:space-between;font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px;cursor:pointer;user-select:none">
-      <span>Eksperimentelle</span>
-      <span id="sb-exp-arrow" style="font-size:10px;transition:transform 0.18s;transform:rotate(-90deg)">▾</span>
-    </div>
-    <div id="sb-exp-body" style="display:none">
-      <a id="nv-la" onclick="sv('lookalike')">
-        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2"/></svg>
-        Look-alike Finder
-      </a>
-      <a id="nv-gm" onclick="sv('google-maps')">
-        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1c-2.5 0-4.5 2-4.5 4.5 0 3 4.5 8 4.5 8s4.5-5 4.5-8C12.5 3 10.5 1 8 1z"/><circle cx="8" cy="5.5" r="1.5"/></svg>
-        Maps Scraper
-      </a>
-      <a id="nv-ts" onclick="sv('tech-stack')">
-        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="3" rx="0.5"/><rect x="2" y="6.5" width="12" height="3" rx="0.5"/><rect x="2" y="11" width="12" height="3" rx="0.5"/></svg>
-        Tech Stack Scanner
-      </a>
-      <a id="nv-lb" onclick="sv('list-builder')">
-        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3h10v3H3zM3 7h10v3H3zM3 11h10v3H3z"/><circle cx="5" cy="4.5" r="0.5" fill="currentColor"/><circle cx="5" cy="8.5" r="0.5" fill="currentColor"/><circle cx="5" cy="12.5" r="0.5" fill="currentColor"/></svg>
-        Liste-builder
-      </a>
-      <a id="nv-li" onclick="openLinkedinLookupModal()" title="Paste en LinkedIn URL → Apollo afslører direct dial">
-        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6.5"/><path d="M5 7v4M5 5v0.5M8 8v3M8 8c0-1 1-1.5 1.8-1.5 1 0 1.7 0.7 1.7 1.7v2.8"/></svg>
-        LinkedIn-opslag
-      </a>
-    </div>
+    <a id="nv-s" onclick="sv('search')" style="display:none">CVR Discovery</a>
+    <a id="nv-la" onclick="sv('lookalike')" style="display:none">Look-alike Finder</a>
+    <a id="nv-gm" onclick="sv('google-maps')" style="display:none">Maps Scraper</a>
+    <a id="nv-ts" onclick="sv('tech-stack')" style="display:none">Tech Stack Scanner</a>
+    <a id="nv-lb" onclick="sv('list-builder')" style="display:none">Liste-builder</a>
+    <a id="nv-li" onclick="openLinkedinLookupModal()" style="display:none">LinkedIn-opslag</a>
     <!-- Min liste retired from the sidebar — the Autodialer cockpit is now
          the canonical "calling list" surface. The underlying leads page
          remains reachable internally (e.g. Look-alike "Administrer seed →"
@@ -1510,7 +1479,7 @@ async function doLogin(){
         const d=await r.json();
         authToken=d.token;currentUser=d.user;
         localStorage.setItem('vl_token',authToken);
-        showApp();await loadUserState();sv('discovery');
+        showApp();await loadUserState();sv('autodialer');
         setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
         checkLinkedinLookupParam();
         return;
@@ -1687,7 +1656,7 @@ async function loadUserState(){
           currentUser=await me.json();
           showApp();
           await loadUserState();
-          sv('discovery');
+          sv('autodialer');
           setTimeout(()=>{
             ['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
           },80);
