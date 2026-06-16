@@ -291,49 +291,12 @@ function loadUserData(userId) {
   };
 }
 
-// Server-side mirror of public/index.html's leadCategory() — used by
-// auto-assignCallingList to map a new lead's source to a category.
-// Keep these two functions in sync if the category rules change.
-function serverLeadCategory(l) {
-  if (l && l.source_category) return l.source_category;
-  const s = String((l && l.source) || "").toLowerCase();
-  if (s.startsWith("storeleads")) return "ecom";
-  if (s.startsWith("meta-ads-discover")) return "ecom";
-  if (s.startsWith("linkedin-ads")) return "service";
-  if (s.startsWith("gmaps-discover")) return "service";
-  if (s.startsWith("tech-discover")) return "ecom";
-  if (s.startsWith("branche-walk-")) {
-    const code = s.replace(/^branche-walk-/, "");
-    // Mirror the ECOM/SERV maps in public/index.html.
-    const ECOM = ["477110","477210","475100","479110","478990","477800","475250","475440","476420","476500","477630","477640","477990"];
-    const SERV = ["731000","741010","683210","791100","563000","742010","961040"];
-    if (ECOM.includes(code)) return "ecom";
-    if (SERV.includes(code)) return "service";
-  }
-  return "unknown";
-}
-
-// Auto-assign calling_list_id to any lead that's never been assigned.
-// `undefined` = never set → assign now.
-// `null` = explicitly cleared (e.g. SDR clicked "← Fjern fra ring-liste") → leave it.
-// `<string>` = already assigned → no-op.
-// Skips archived + twenty-pushed leads (they're done from the call queue's perspective).
-function assignCallingListIfMissing(lead) {
-  if (!lead) return;
-  if (lead.calling_list_id !== undefined) return; // already set or explicitly cleared
-  if (lead.lastAction === "not-relevant") return;
-  if (lead.twenty_opportunity_id) return;
-  const cat = serverLeadCategory(lead);
-  lead.calling_list_id = cat === "service" ? "dk-service" : "dk-ecom";
-}
-
 function saveUserData(userId, d) {
-  // Self-healing: every save normalises calling_list_id on every active
-  // lead, regardless of which create-path the lead came from (cron, CSV,
-  // manual single-add, etc.). Cheap — pure O(n) field check.
-  if (d && Array.isArray(d.leads)) {
-    for (const l of d.leads) assignCallingListIfMissing(l);
-  }
+  // Server-side auto-assignment of calling_list_id was removed 2026-06-16.
+  // New leads should land in Pipeline (calling_list_id=undefined) so the
+  // SDR can review + filter + bulk-add into named calling lists. A future
+  // commit will add per-list auto-add RULES (e.g. "any branche-walk-ecom
+  // lead → DK E-commerce") that run here, but those need explicit opt-in.
   fs.writeFileSync(getUserDataFile(userId), JSON.stringify(d, null, 2));
 }
 
