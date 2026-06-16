@@ -6513,45 +6513,133 @@ function filterDkPhones(phones) {
 // Phone-reveal is now Full Enrich (primary) + Apollo (fallback).
 
 // POST /api/contact/reveal-direct-dial/:cvr — unified phone-reveal for
-// the cockpit "Find beslutningstager" button. Uses Apollo's enrich path
-// (Full Enrich is wired separately via its own endpoints).
+// the cockpit "Find beslutningstager" button.
+//
+// Two-stage flow:
+//   1. Apollo people-match by domain/name — fast (~5-10s). Returns up to
+//      5 contacts with names, titles, LinkedIn URLs, and sometimes phones.
+//   2. If Apollo gave us a usable phone → return immediately.
+//      If not, fire Full Enrich for the TOP contact (one Apollo credit
+//      already spent — pick the most senior with a LinkedIn URL). Full
+//      Enrich is async + slower (~60-90s) but has ~80% DK hit rate vs
+//      Apollo's spotty ~30%. Wait inline; Cloud Run timeout is 1200s.
+//
+// Cost shape: typical reveal = 1 Apollo credit + 0 or 10 Full Enrich
+// credits depending on whether Apollo had a phone cached.
+async function pickTopContactForFullEnrich(contacts) {
+  if (!Array.isArray(contacts) || !contacts.length) return null;
+  // Prefer contacts with a LinkedIn URL (10-60% better Full Enrich hit
+  // rate per their docs) and a senior title. Fall back to first in list.
+  const seniorityRank = (s) => {
+    const v = String(s || "").toLowerCase();
+    if (/ceo|founder|owner|president|cmo|cto|coo|cfo/.test(v)) return 1;
+    if (/director|head|vp|vice/.test(v)) return 2;
+    if (/manager|lead/.test(v)) return 3;
+    return 9;
+  };
+  const sorted = [...contacts].sort((a, b) => {
+    const aLi = !!(a.linkedin || a.linkedinUrl);
+    const bLi = !!(b.linkedin || b.linkedinUrl);
+    if (aLi !== bLi) return bLi - aLi; // LinkedIn URL wins
+    return seniorityRank(a.seniority || a.title) - seniorityRank(b.seniority || b.title);
+  });
+  return sorted[0];
+}
+
 app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res) => {
   const cvr = req.params.cvr;
   const ud = loadUserData(req.userId);
   const lead = (ud.leads || []).find((l) => l.cvr === cvr);
   if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
 
-  // Apollo enrich path (Full Enrich is wired via its own endpoints).
   if (!isApolloConfigured()) {
     return res.status(503).json({ error: "Apollo ikke konfigureret — kan ikke finde direkte nummer." });
   }
+  // ─── STAGE 1: Apollo people-match ────────────────────────────────────
+  let apolloContacts = [];
+  let company = null;
   try {
-    const { contacts: apolloContacts, company } = await enrichWithApollo({
+    const r = await enrichWithApollo({
       name: lead.name,
       domain: lead.web || lead.website,
     });
-    lead.contacts = apolloContacts;
-    lead.apollo_company = company || lead.apollo_company;
-    lead.apollo_enriched_at = new Date().toISOString();
-    const directDial = (apolloContacts.find((c) => c.phone) || {}).phone || "";
-    if (directDial) {
-      lead.phone = directDial;
-      lead.phone_missing = false;
-    }
-    saveUserData(req.userId, ud);
-    return res.json({
-      ok: true,
-      source: "apollo",
-      contacts: apolloContacts,
-      company,
-      phone: directDial || null,
-    });
+    apolloContacts = r.contacts || [];
+    company = r.company || null;
   } catch (e) {
     if (e && e.code === "APOLLO_CAP_REACHED") {
       return res.status(429).json({ error: "Apollo dagsbudget brugt op", code: "APOLLO_CAP_REACHED", spent: e.spent, cap: e.cap });
     }
     return res.status(502).json({ error: e.message });
   }
+  lead.contacts = apolloContacts;
+  lead.apollo_company = company || lead.apollo_company;
+  lead.apollo_enriched_at = new Date().toISOString();
+
+  let directDial = (apolloContacts.find((c) => c.phone) || {}).phone || "";
+  let fullEnrichUsed = false;
+  let fullEnrichHit = false;
+
+  // ─── STAGE 2: Full Enrich fallback for the top contact ───────────────
+  if (!directDial && isFullEnrichConfigured()) {
+    const top = await pickTopContactForFullEnrich(apolloContacts);
+    if (top && top.name) {
+      const [firstName, ...rest] = String(top.name).trim().split(/\s+/);
+      const lastName = rest.join(" ");
+      const linkedinUrl = top.linkedin || top.linkedinUrl || "";
+      const contact = {
+        first_name: firstName,
+        last_name: lastName,
+        company_name: lead.name,
+        domain: (company && company.domain) || lead.web || lead.website || "",
+      };
+      if (linkedinUrl) contact.linkedin_url = linkedinUrl;
+      try {
+        fullEnrichUsed = true;
+        const result = await fullEnrichLookupOne(contact, { timeoutMs: 180_000 });
+        const info = result && result.contact_info;
+        const phone = info && info.most_probable_phone && info.most_probable_phone.number;
+        const workEmail = info && info.most_probable_work_email && info.most_probable_work_email.email;
+        if (phone) {
+          directDial = phone;
+          // Update the top contact in-place with the new phone + email
+          const idx = apolloContacts.findIndex((c) => c === top);
+          if (idx >= 0) {
+            apolloContacts[idx] = {
+              ...top,
+              phone,
+              phones: [{ number: phone, type: "mobile", typeLabel: "Direkte (Full Enrich)" }],
+              email: workEmail || top.email,
+              source_phone: "fullenrich",
+            };
+            lead.contacts = apolloContacts;
+          }
+          fullEnrichHit = true;
+        }
+      } catch (e) {
+        // Don't fail the whole request — Apollo data is still useful.
+        // Log and surface as a soft warning. Cap-reached or network blip:
+        // operator can retry.
+        console.warn("[reveal-direct-dial/fullenrich]", lead.cvr, e.message);
+      }
+    }
+  }
+
+  if (directDial) {
+    lead.phone = directDial;
+    lead.ph = directDial;
+    lead.phone_missing = false;
+    lead.phone_recovered_at = new Date().toISOString();
+    lead.phone_recovered_source = fullEnrichHit ? "fullenrich" : "apollo";
+  }
+  saveUserData(req.userId, ud);
+  return res.json({
+    ok: true,
+    contacts: apolloContacts,
+    company,
+    phone: directDial || null,
+    source: fullEnrichHit ? "apollo+fullenrich" : "apollo",
+    fullenrich: { used: fullEnrichUsed, hit: fullEnrichHit },
+  });
 });
 
 app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
