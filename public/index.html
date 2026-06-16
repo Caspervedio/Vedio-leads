@@ -8159,6 +8159,13 @@ function renderCockpitQueue(){
 }
 
 function lastActionLabel(a){return{'interested':'✓ Interesseret','follow-up':'📅 Follow-up planlagt','sms':'💬 Sendt SMS','no-answer':'✕ Ingen svar','not-relevant':'– Ikke relevant'}[a]||a;}
+// Global lastActionChip — was previously a const scoped to
+// renderAutodialerPage, which silently broke renderCallingListPage
+// (ReferenceError when expanding any list with ≥1 lead → empty page).
+function lastActionChip(a){
+  if(!a) return '';
+  return `<span style="font-size:9.5px;padding:2px 6px;border-radius:6px;background:${lastActionColor(a,'bg')};color:${lastActionColor(a,'fg')};font-weight:700">${lastActionLabel(a)}</span>`;
+}
 function lastActionColor(a,which){
   const map={
     'interested':{bg:'rgba(52,211,153,0.18)',fg:'#34d399'},
