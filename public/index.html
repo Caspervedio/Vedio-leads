@@ -969,17 +969,25 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
       <div style="margin-bottom:18px">
         <div class="section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📊 Dashboard</div>
-        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Daglig aktivitet · pipeline-status</h2>
-        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Dagens og ugens performance, plus hvor friske leads kommer fra. Discovery-crons kører i baggrunden — du behøver ikke at gøre noget her, bare overvåge.</p>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Daglig overblik</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Dagens performance — ringet, interesse, konvertering. Discovery-pipeline + lead-listen lever på Leadlist-fanen.</p>
       </div>
 
-      <!-- Activity + goal widget (today + week) — rendered by renderDashboardActivity() -->
-      <div id="dashboard-activity" style="margin-bottom:18px"></div>
+      <!-- BIG daily-goal hero — rendered by renderDashboardActivity() -->
+      <div id="dashboard-activity" style="margin-bottom:20px"></div>
 
-      <!-- Pipeline status — where leads come from + cron health -->
-      <div id="disc-autoflow" style="margin-bottom:14px"></div>
+      <!-- Activity tiles row (5 cards: Klar i kø / Ringet i dag / Interesseret /
+           Konvertering / Næste callback) — populated by renderAutodialerPage() -->
+      <div id="ad-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px"></div>
 
-      <!-- Recently added leads — last 48h, refreshes on page open + soft refresh -->
+      <!-- Activity breakdown table (Ringet / Interesseret / Follow-up / SMS /
+           Ingen svar / Ikke relevant / Auto-arkiveret / Pushet til Twenty) -->
+      <div id="ad-activity" style="margin-bottom:18px"></div>
+
+      <!-- Admin-only lead-economics card — silent for non-admin (403) -->
+      <div id="ad-economics" style="margin-bottom:18px"></div>
+
+      <!-- Recently added leads — last 48h -->
       <div id="pipeline-recent-leads" style="margin-bottom:14px"></div>
 
       <!-- Legacy slots kept hidden but in DOM so code paths referencing
@@ -1083,11 +1091,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Alle leads klar til bearbejdning. Klik en række for at åbne cockpittet — disposér med tasterne 1–4 og spring videre med pil-højre.</p>
         </div>
       </div>
-      <div id="ad-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px"></div>
-      <!-- Activity breakdown table — today / week / all-time -->
-      <div id="ad-activity" style="margin-bottom:18px"></div>
-      <!-- Admin-only: lead-economics card — daily $/lead trend. Empty for non-admin. -->
-      <div id="ad-economics" style="margin-bottom:18px"></div>
+      <!-- Discovery pipeline widget — moved from Dashboard 2026-06-16.
+           Shows per-source cron health + leads added today. Populated
+           by renderPipelineStatusWidget(). -->
+      <div id="disc-autoflow" style="margin-bottom:18px"></div>
       <div id="ad-lists"></div>
       <div id="ad-queue"></div>
     </div>
@@ -2613,12 +2620,17 @@ async function fetchDiscoveryRows(){
 function renderDiscoverySummary(){
   const s=_discCache.summary;if(!s)return;
   const ago=s.lastRunCompletedAt?humanAgo(s.lastRunCompletedAt):'aldrig';
-  // New "Discovery pipeline" widget — replaces the legacy Auto-pipeline
-  // banner which referenced PAUSED jobs and hardcoded "06:00 + 12:00".
-  // Fetches live state from /api/discovery/pipeline-status and renders
-  // a per-source status grid.
+  // Dashboard layout (2026-06-16 restructure):
+  //   1. BIG daily-goal hero — renderDashboardActivity → #dashboard-activity
+  //   2. Activity tiles + breakdown — renderAutodialerPage fills
+  //      #ad-stats + #ad-activity (the Leadlist-render pieces no longer
+  //      live on Leadlist; that page now hosts the Discovery pipeline +
+  //      queue only).
+  //   3. Recently-added leads — renderRecentLeadsWidget → #pipeline-recent-leads
+  // renderPipelineStatusWidget is no longer called from here — disc-autoflow
+  // moved to Leadlist and is triggered from renderAutodialerPage().
   renderDashboardActivity();
-  renderPipelineStatusWidget();
+  if(typeof renderAutodialerPage==='function') renderAutodialerPage();
   renderRecentLeadsWidget();
   const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
@@ -2633,103 +2645,64 @@ function renderDiscoverySummary(){
   ].join('');
 }
 
-// Dashboard activity widget — Today + Week metrics with goal progress.
-// Reads from the same `leads` array the rest of the UI uses (refreshed
-// via loadUserState + softRefresh). Goals come from localStorage:
-//   vl_daily_call_goal  (default 40)
-//   vl_weekly_call_goal (default 200)
+// Dashboard goal hero — a BIG visible daily-goal banner.
+// Goal stored in localStorage (vl_daily_call_goal, default 40). Click
+// the goal number to edit. The activity tiles + breakdown below come
+// from renderAutodialerPage (now hosted on Dashboard after the
+// 2026-06-16 layout move).
 function renderDashboardActivity(){
   const el = document.getElementById('dashboard-activity');
   if (!el) return;
 
-  const now = Date.now();
+  // Count today's dialed using the same logic as the activity table —
+  // any lead whose lastCallAt is today's midnight or later.
   const startToday = new Date(); startToday.setHours(0,0,0,0);
   const TODAY_MS = startToday.getTime();
-  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  let dialed = 0;
+  for (const l of (leads || [])) {
+    if (l.lastCallAt && new Date(l.lastCallAt).getTime() >= TODAY_MS) dialed++;
+  }
 
-  // Same classifier the activity table uses (manual vs auto-archive)
-  const isSysArchive = (l) => {
-    const r = String(l.archived_reason || '');
-    return r.startsWith('Apollo:') || r.startsWith('Apollo ICP') ||
-           r.startsWith('Branche-walk') || r.startsWith('Auto-arkiveret') ||
-           r.startsWith('Auto-archived');
-  };
-  const inScope = (iso, scope) => {
-    if (!iso) return false;
-    const t = new Date(iso).getTime();
-    if (!t) return false;
-    if (scope === 'today') return t >= TODAY_MS;
-    if (scope === 'week')  return (now - t) < WEEK_MS;
-    return true;
-  };
-
-  const count = (scope) => {
-    const c = { dialed:0, interested:0, follow_up:0, no_answer:0, not_relevant_manual:0, sms:0, twentyPushed:0 };
-    for (const l of (leads || [])) {
-      const dispTime = l.lastDispositionAt || l.lastCallAt;
-      if (inScope(l.lastCallAt, scope)) c.dialed++;
-      if (inScope(dispTime, scope) && l.lastAction) {
-        const a = l.lastAction;
-        if (a === 'interested')   c.interested++;
-        else if (a === 'follow-up') c.follow_up++;
-        else if (a === 'no-answer') c.no_answer++;
-        else if (a === 'not-relevant' && !isSysArchive(l)) c.not_relevant_manual++;
-        else if (a === 'sms')      c.sms++;
-      }
-      if (l.twenty_pushed_at && inScope(l.twenty_pushed_at, scope)) c.twentyPushed++;
-    }
-    return c;
-  };
-  const today = count('today');
-  const week  = count('week');
-
-  // Goals (localStorage-backed, click chip to edit)
-  const dailyGoal  = Number(localStorage.getItem('vl_daily_call_goal'))  || 40;
-  const weeklyGoal = Number(localStorage.getItem('vl_weekly_call_goal')) || (dailyGoal * 5);
-  const dPct = Math.min(100, Math.round((today.dialed/dailyGoal)*100));
-  const wPct = Math.min(100, Math.round((week.dialed/weeklyGoal)*100));
-  const dCol = dPct >= 100 ? '#34d399' : dPct >= 75 ? '#a78bfa' : dPct >= 25 ? '#c4b5fd' : 'var(--w55)';
-  const wCol = wPct >= 100 ? '#34d399' : wPct >= 75 ? '#a78bfa' : wPct >= 25 ? '#c4b5fd' : 'var(--w55)';
-
-  const stat = (lbl, val, color) => `<div style="text-align:center;padding:10px 8px;background:var(--w04);border-radius:9px;border:1px solid var(--w08)">
-    <div style="font-size:22px;font-weight:900;color:${color || '#fff'};line-height:1.1;font-variant-numeric:tabular-nums">${val}</div>
-    <div style="font-size:9.5px;font-weight:700;color:var(--w55);letter-spacing:0.6px;text-transform:uppercase;margin-top:3px">${lbl}</div>
-  </div>`;
-
-  const goalBar = (label, dialed, goal, pct, col, kind) => `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px;cursor:pointer" onclick="const k='${kind}';const v=prompt('${label} (antal kald)?', '${goal}'); if(v && Number(v)>0){localStorage.setItem(k, String(Number(v))); renderDashboardActivity();}">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <span style="font-size:11px;color:var(--w55);font-weight:700;letter-spacing:0.5px;text-transform:uppercase">${label}</span>
-      <span style="font-size:13px;color:${col};font-weight:800">${dialed}/${goal} <span style="color:var(--w35);font-weight:600">(${pct}%)</span></span>
-    </div>
-    <div style="height:6px;background:var(--w08);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${col};transition:width 0.3s"></div></div>
-  </div>`;
+  const dailyGoal = Number(localStorage.getItem('vl_daily_call_goal')) || 40;
+  const pct = Math.min(100, Math.round((dialed / dailyGoal) * 100));
+  const remaining = Math.max(0, dailyGoal - dialed);
+  // Goal-state color: hit (green), close (purple-light), in-progress (purple), early (dim).
+  const accent = pct >= 100 ? '#34d399'
+               : pct >= 75  ? '#a78bfa'
+               : pct >= 25  ? '#c4b5fd'
+               : 'var(--w55)';
+  const accentBg = pct >= 100 ? 'rgba(52,211,153,0.10)'
+                 : pct >= 75  ? 'rgba(167,139,250,0.12)'
+                 :              'rgba(124,58,237,0.08)';
+  const status = pct >= 100 ? '✓ Dagens mål nået! Fortsæt i pipeline.'
+               : pct >= 75  ? `Næsten i mål — ${remaining} kald tilbage`
+               : pct >= 25  ? `${remaining} kald tilbage — du er på vej`
+               :              `${remaining} kald i dag for at nå målet`;
 
   el.innerHTML = `
-    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1.2px;text-transform:uppercase">Aktivitet · I dag</div>
-        <div style="font-size:11px;color:var(--w55)">Klik på mål-bar for at ændre</div>
+    <div style="background:linear-gradient(135deg,${accentBg},rgba(0,0,0,0));border:1px solid var(--w08);border-radius:18px;padding:24px 28px;display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+      <div style="flex:0 0 auto">
+        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">🎯 Dagens mål</div>
+        <div style="display:flex;align-items:baseline;gap:14px;line-height:1">
+          <span onclick="(()=>{const v=prompt('Dagligt kald-mål?','${dailyGoal}'); if(v&&Number(v)>0){localStorage.setItem('vl_daily_call_goal',String(Number(v)));renderDashboardActivity();}})()" title="Klik for at ændre målet" style="font-size:72px;font-weight:900;color:${accent};letter-spacing:-2px;font-variant-numeric:tabular-nums;cursor:pointer">${dialed}</span>
+          <span style="font-size:32px;font-weight:700;color:var(--w35);letter-spacing:-1px">/ ${dailyGoal}</span>
+        </div>
+        <div style="font-size:13px;color:${accent};font-weight:700;margin-top:6px">${status}</div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">
-        ${stat('Ringet',    today.dialed,            '#fff')}
-        ${stat('Interesseret', today.interested,    '#6ee7b7')}
-        ${stat('Follow-up',  today.follow_up,        '#c4b5fd')}
-        ${stat('Ingen svar', today.no_answer,        '#60a5fa')}
-        ${stat('Ikke rel.',  today.not_relevant_manual, 'var(--w55)')}
-        ${stat('→ Twenty',   today.twentyPushed,     '#60a5fa')}
+      <div style="flex:1;min-width:240px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:11px;color:var(--w55);font-weight:700">Fremgang</span>
+          <span style="font-size:14px;color:${accent};font-weight:800;font-variant-numeric:tabular-nums">${pct}%</span>
+        </div>
+        <div style="height:12px;background:var(--w04);border:1px solid var(--w08);border-radius:6px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,${accent},${accent === '#34d399' ? '#6ee7b7' : '#a78bfa'});transition:width 0.4s ease-out;border-radius:6px"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--w35);margin-top:6px;font-weight:600">
+          <span>0</span>
+          <span>${Math.round(dailyGoal/2)}</span>
+          <span>${dailyGoal}</span>
+        </div>
       </div>
-      ${goalBar('🎯 Daglig mål', today.dialed, dailyGoal, dPct, dCol, 'vl_daily_call_goal')}
-      <div style="height:14px"></div>
-      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Aktivitet · Denne uge</div>
-      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">
-        ${stat('Ringet',    week.dialed,            '#fff')}
-        ${stat('Interesseret', week.interested,    '#6ee7b7')}
-        ${stat('Follow-up',  week.follow_up,        '#c4b5fd')}
-        ${stat('Ingen svar', week.no_answer,        '#60a5fa')}
-        ${stat('Ikke rel.',  week.not_relevant_manual, 'var(--w55)')}
-        ${stat('→ Twenty',   week.twentyPushed,     '#60a5fa')}
-      </div>
-      ${goalBar('🎯 Ugentlig mål', week.dialed, weeklyGoal, wPct, wCol, 'vl_weekly_call_goal')}
     </div>`;
 }
 
@@ -5283,10 +5256,18 @@ function leadCategory(l){
 }
 
 function renderAutodialerPage(){
+  // Bail only if NONE of our target slots exist. After the 2026-06-16
+  // dashboard restructure, ad-stats + ad-activity + ad-economics live on
+  // Dashboard, while ad-lists + ad-queue stay on Leadlist. This function
+  // is called from both pages — each section soft-skips if its target
+  // div isn't in the current DOM.
   const statsEl=document.getElementById('ad-stats');
   const listsEl=document.getElementById('ad-lists');
   const queueEl=document.getElementById('ad-queue');
-  if(!statsEl||!listsEl||!queueEl)return;
+  if(!statsEl && !listsEl && !queueEl) return;
+  // Kick off the Discovery-pipeline widget on whichever page hosts it
+  // (currently Leadlist). Cheap — internally null-guards on disc-autoflow.
+  if(typeof renderPipelineStatusWidget==='function') renderPipelineStatusWidget();
   // Stats — queue size for the currently-selected list, total leads,
   // last-called timestamp (best-effort: latest lastCallAt on any lead).
   let filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
@@ -5515,7 +5496,7 @@ function renderAutodialerPage(){
   };
   // Color the conversion tile by performance: ≥30% green, 10-30% amber, <10% red.
   const convColor = convPct>=30?'#6ee7b7' : convPct>=10?'#fdba74' : convPct>0?'#fca5a5' : 'var(--w55)';
-  statsEl.innerHTML=[
+  if(statsEl) statsEl.innerHTML=[
     tile('Klar i kø', filtered.length.toLocaleString('da-DK'),
       aList==='all'?'alle leads':`liste: ${lists.find(l=>l.id===aList)?.name||aList}`, 'var(--purple-light)'),
     // Ringet → click opens drilldown with all leads called today
@@ -5538,15 +5519,9 @@ function renderAutodialerPage(){
   // Lead-economics card — admin only, silently skipped for non-admin (403)
   renderAdLeadEconomics();
 
-  // List selector — chips for each user-defined list + "Alle leads".
-  // Re-uses the same list state (`aList`) the cockpit reads from, so
-  // changing here changes the cockpit queue.
-  const listChip=(id,name,count,active)=>`<button onclick="adSetList('${e(id)}')" class="ad-chip" style="padding:7px 14px;border-radius:20px;border:1px solid ${active?'rgba(124,58,237,0.5)':'var(--w08)'};background:${active?'rgba(124,58,237,0.18)':'var(--w04)'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif;transition:all 0.12s">${e(name)} <span style="opacity:0.65;font-weight:500;margin-left:4px">${count}</span></button>`;
-  const userLists=Array.isArray(lists)?lists:[];
-  const chips=[
-    listChip('all','Alle leads',leads.length,aList==='all'||!aList),
-    ...userLists.map(l=>listChip(l.id,l.name,leads.filter(x=>x.listId===l.id).length,aList===l.id)),
-  ].join(' ');
+  // List-selector chip row removed 2026-06-16 — the only chip was
+  // "Alle leads" (no user-defined lists), so the row added zero info.
+  // adSetList() still works programmatically if we ever bring lists back.
   // Source counts for the filter chips. Counts EXCLUDE archived,
   // phone_missing AND currently-enriching leads (those live in dedicated
   // chips at the end of the chip row).
@@ -5633,33 +5608,29 @@ function renderAutodialerPage(){
     if(cnt===0&&id!=='all')return '';
     return `<button onclick="adSetSourceFilter('${id}')" style="padding:5px 11px;border-radius:8px;border:1px solid ${active?'rgba(124,58,237,0.5)':'var(--w08)'};background:${active?'rgba(124,58,237,0.18)':'transparent'};color:${active?'#fff':'var(--w55)'};font-size:11px;font-weight:${active?'700':'500'};cursor:pointer;font-family:'Outfit',sans-serif">${e(lbl)} <span style="opacity:0.6">${cnt}</span></button>`;
   };
+  if(!listsEl || !queueEl) return; // stats-only render (Dashboard) — done
   listsEl.innerHTML=`
-    <!-- Lists row -->
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Liste</span>
-      ${chips}
-      <span style="flex:1"></span>
-      <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, annoncører, agent-kørsler" style="padding:6px 12px">📋 Aktivitet</button>
-      <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:6px 12px">⬇ Eksportér</button>
-    </div>
-    <!-- Category tabs (DK e-com vs DK service) — primary segmentation -->
+    <!-- Category tabs (DK e-com vs DK service) + tools.
+         The "Liste" row + the "Alle leads" category chip were removed
+         2026-06-16 — both reduced to "Alle leads" labels since there are
+         no user-defined lists, and the redundant pills cluttered the bar.
+         To reset the category filter, click the active chip again
+         (toggle-off behavior, see adSetCategoryFilter). -->
     ${(()=>{
-      // Count by category over the active queue, before the category
-      // filter is applied (so the chip counts always reflect the full
-      // queue, not the current view).
       const baseActive = leads.filter(l => l.lastAction!=='not-relevant' && !isTwentyPushed(l));
       const ecomCount    = baseActive.filter(l => leadCategory(l) === 'ecom').length;
       const serviceCount = baseActive.filter(l => leadCategory(l) === 'service').length;
-      const allCount     = baseActive.length;
       const catChip = (id, lbl, cnt) => {
         const active = (_adState.categoryFilter || 'all') === id;
-        return `<button onclick="adSetCategoryFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?'rgba(124,58,237,0.6)':'var(--w08)'};background:${active?'linear-gradient(135deg,rgba(124,58,237,0.22),rgba(167,139,250,0.14))':'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
+        return `<button onclick="adSetCategoryFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?'rgba(124,58,237,0.6)':'var(--w08)'};background:${active?'linear-gradient(135deg,rgba(124,58,237,0.22),rgba(167,139,250,0.14))':'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s" title="${active?'Klik igen for at vise alle kategorier':'Vis kun '+lbl}">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
       };
-      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kategori</span>
-        ${catChip('all',      'Alle leads', allCount)}
         ${catChip('ecom',    '🛍 DK e-commerce', ecomCount)}
         ${catChip('service', '🏢 DK service',    serviceCount)}
+        <span style="flex:1"></span>
+        <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, annoncører, agent-kørsler" style="padding:6px 12px">📋 Aktivitet</button>
+        <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:6px 12px">⬇ Eksportér</button>
       </div>`;
     })()}
     <!-- Filter + sort row -->
@@ -5845,7 +5816,13 @@ function renderAutodialerPage(){
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
-function adSetCategoryFilter(id){_adState.categoryFilter=id;renderAutodialerPage();}
+function adSetCategoryFilter(id){
+  // Toggle-off: clicking the currently-active category chip clears the
+  // filter (back to "all"). Replaces the removed "Alle leads" chip from
+  // the 2026-06-16 cleanup.
+  _adState.categoryFilter = (_adState.categoryFilter === id) ? 'all' : id;
+  renderAutodialerPage();
+}
 
 // ─── Activity log viewer ────────────────────────────────────────────────
 // Shows what the machine is doing: CSV imports, queue refills, Apollo
