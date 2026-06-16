@@ -6247,99 +6247,94 @@ function dismissMigrateBanner(){
 function renderCallingListPage(){
   const tabsEl = document.getElementById('cl-tabs');
   const tableEl = document.getElementById('cl-table');
-  if (!tabsEl || !tableEl) return;
+  if (!tabsEl) return;
+  if (tableEl) tableEl.innerHTML = ''; // legacy slot — the new layout puts
+                                         // the lead table INSIDE each row.
   const lists = loadCallingLists();
-  // Active list (the one whose table is drilled-in below the cards).
+  // The active list = the one expanded inline.
   let activeId = getActiveCallingListId();
   if (!lists.some(l => l.id === activeId)) {
     activeId = lists[0]?.id || '';
     if (activeId) setActiveCallingListId(activeId);
   }
 
-  // Per-list stats for the cards.
+  // Per-list stats.
   const today0 = new Date(); today0.setHours(0,0,0,0);
   const todayMs = today0.getTime();
   const stats = lists.map(l => {
     const inList = (leads||[]).filter(x => x.calling_list_id === l.id);
     const calledToday = inList.filter(x => x.lastCallAt && new Date(x.lastCallAt).getTime() >= todayMs).length;
-    return { ...l, total: inList.length, calledToday };
+    return { ...l, total: inList.length, calledToday, leads: inList };
   });
 
-  // Multi-list card grid — each card is its own surface: header, big lead
-  // count, "▶ Start opkald" CTA + ✎ Omdøb / 🗑 Slet. Clicking the card
-  // body sets it active (drills the table below into it).
-  const listCard = (s) => {
-    const isActive = s.id === activeId;
-    const disabled = s.total === 0;
-    return `<div onclick="callingListSetActive('${e(s.id)}')" style="background:var(--dark2);border:1px solid ${isActive?'rgba(124,58,237,0.55)':'var(--w08)'};border-radius:14px;padding:18px 20px;cursor:pointer;transition:border-color 0.15s,background 0.15s" onmouseover="this.style.borderColor='rgba(124,58,237,0.45)'" onmouseout="this.style.borderColor='${isActive?'rgba(124,58,237,0.55)':'var(--w08)'}'">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:12px">
-        <div style="font-size:15px;font-weight:800;color:#fff;line-height:1.3">${e(s.name)}</div>
-        ${isActive?'<span style="font-size:9px;color:#c4b5fd;font-weight:800;letter-spacing:0.6px;background:rgba(124,58,237,0.18);padding:3px 7px;border-radius:5px">AKTIV</span>':''}
-      </div>
-      <div style="font-size:32px;font-weight:900;color:#fff;letter-spacing:-1px;line-height:1">${s.total}</div>
-      <div style="font-size:11px;color:var(--w55);margin-top:4px;margin-bottom:14px">${s.total===1?'lead':'leads'}${s.calledToday>0?` · ${s.calledToday} ringet i dag`:''}</div>
-      <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="width:100%;border-radius:9px;padding:9px 14px;font-size:13px;${disabled?'opacity:0.35;cursor:not-allowed;animation:none':''}" ${disabled?'disabled':''}>▶ Start opkald</button>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="flex:1;background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 8px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:10.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
-        <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Pipeline)" style="flex:1;background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:7px;padding:5px 8px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:10.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
-      </div>
-    </div>`;
-  };
-  const newListCard = `<div onclick="callingListPromptNewList()" style="background:transparent;border:2px dashed rgba(124,58,237,0.35);border-radius:14px;padding:18px 20px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;min-height:200px;color:#c4b5fd;transition:border-color 0.15s,color 0.15s" onmouseover="this.style.borderColor='rgba(124,58,237,0.6)';this.style.color='#fff'" onmouseout="this.style.borderColor='rgba(124,58,237,0.35)';this.style.color='#c4b5fd'">
-    <div style="font-size:32px;line-height:1">+</div>
-    <div style="font-size:13.5px;font-weight:700">Opret ny liste</div>
-    <div style="font-size:11px;color:var(--w55);text-align:center;max-width:200px">Til en niche, branche, kampagne eller målgruppe</div>
-  </div>`;
-  tabsEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">${stats.map(listCard).join('')}${newListCard}</div>`;
-
-  // Active-list lead table — sits below the cards as a preview of what
-  // the SDR is about to call through. Empty state when the list has no
-  // leads yet, with a pointer to Pipeline for bulk-add.
-  const inList = (leads||[]).filter(x => x.calling_list_id === activeId);
-  if (!activeId) { tableEl.innerHTML = ''; return; }
-  if (inList.length === 0) {
-    tableEl.innerHTML = `<div style="margin-top:24px;background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:36px;text-align:center">
-      <div style="font-size:34px;margin-bottom:8px">📞</div>
-      <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Ingen leads i den valgte liste endnu</div>
-      <div style="font-size:12px;color:var(--w55);max-width:440px;margin:0 auto 14px;line-height:1.5">Gå til <strong style="color:#fff">Pipeline</strong>, filtrér leads efter kategori, kilde eller branche, og send dem hertil med "→ Tilføj til ring-liste".</div>
-      <button class="btn btn-primary btn-sm" onclick="sv('autodialer')" style="padding:8px 16px">→ Åbn Pipeline</button>
-    </div>`;
-    return;
-  }
-  // Reuse the same row shape as the Prelist queue but stripped of
-  // archive/twenty-pushed-specific branches, and with a "← Fjern" action
-  // that sends the lead back to Prelist (clears calling_list_id).
-  tableEl.innerHTML = `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
-      <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">${inList.length} ${inList.length===1?'lead':'leads'} i denne liste</div>
-      <span style="font-size:11px;color:var(--w55);font-style:italic">Klik en række for at åbne cockpittet</span>
-    </div>
-    <div style="max-height:72vh;overflow-y:auto">
-    <table style="width:100%;border-collapse:collapse">
-      <tbody>
-        ${inList.map((l,i) => {
+  // Full-width horizontal accordion rows. Click a row to expand its
+  // lead table inline. Only one expands at a time (the active one).
+  // Per-row actions sit on the right: ✎ Omdøb · 🗑 Slet · ▶ Start opkald.
+  const renderLeadTable = (s) => {
+    if (s.total === 0) {
+      return `<div style="padding:32px 24px;text-align:center;font-size:13px;color:var(--w55);background:var(--w02)">
+        Ingen leads i denne liste endnu. Tilføj fra <strong style="color:#fff">Pipeline</strong> via "→ Tilføj til ring-liste".
+      </div>`;
+    }
+    return `<div style="max-height:55vh;overflow-y:auto;background:var(--w02)">
+      <table style="width:100%;border-collapse:collapse">
+        <tbody>${s.leads.map((l,i) => {
           const phone = l.phone || l.ph || '';
           const phoneCell = phone
             ? `<button onclick="event.stopPropagation();ringNow('${e(phone)}','${e(l.cvr||'')}','${e(l.name||'')}')" title="Ring" style="all:unset;cursor:pointer;font-family:monospace;font-size:13px;font-weight:700;color:#c4b5fd;letter-spacing:0.3px">${e(phone)}</button>`
             : `<span style="font-size:11px;color:var(--w35);font-style:italic">mangler nummer</span>`;
-          return `<tr data-cvr="${e(l.cvr)}" onclick="callingListOpenCockpit('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='rgba(124,58,237,0.06)'" onmouseout="this.style.background='transparent'">
-            <td style="padding:10px 8px 10px 16px;font-size:12px;color:var(--w35);width:42px">${i+1}</td>
+          return `<tr onclick="callingListOpenCockpit('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.background='transparent'">
+            <td style="padding:10px 8px 10px 24px;font-size:12px;color:var(--w35);width:42px">${i+1}</td>
             <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span></td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
             <td style="padding:10px 14px;text-align:right">${phoneCell}</td>
-            <td style="padding:10px 16px 10px 6px;text-align:right">
-              <button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Prelist" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>
+            <td style="padding:10px 24px 10px 6px;text-align:right">
+              <button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Pipeline" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>
             </td>
           </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
-    </div>
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+  };
+
+  const listRow = (s) => {
+    const isExpanded = s.id === activeId;
+    const disabled = s.total === 0;
+    return `<div style="background:var(--dark2);border:1px solid ${isExpanded?'rgba(124,58,237,0.55)':'var(--w08)'};border-radius:14px;margin-bottom:10px;overflow:hidden;transition:border-color 0.15s">
+      <div onclick="callingListToggleExpand('${e(s.id)}')" style="display:flex;align-items:center;gap:14px;padding:18px 22px;cursor:pointer;transition:background 0.12s" onmouseover="this.style.background='rgba(124,58,237,0.04)'" onmouseout="this.style.background='transparent'">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px">
+            <span style="font-size:16px;font-weight:800;color:#fff">${e(s.name)}</span>
+            ${isExpanded?'<span style="font-size:9px;color:#c4b5fd;font-weight:800;letter-spacing:0.6px;background:rgba(124,58,237,0.18);padding:3px 7px;border-radius:5px">ÅBEN</span>':''}
+          </div>
+          <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.total>0?'#fff':'var(--w55)'};font-weight:800">${s.total}</strong> ${s.total===1?'lead':'leads'}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
+        </div>
+        <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
+        <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Pipeline)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
+        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${disabled?'opacity:0.35;cursor:not-allowed;animation:none':''}" ${disabled?'disabled':''}>▶ Start opkald</button>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;flex-shrink:0"><path d="M3 5l4 4 4-4"/></svg>
+      </div>
+      ${isExpanded ? `<div style="border-top:1px solid var(--w08)">${renderLeadTable(s)}</div>` : ''}
+    </div>`;
+  };
+
+  const newListRow = `<div onclick="callingListPromptNewList()" style="background:transparent;border:2px dashed rgba(124,58,237,0.35);border-radius:14px;padding:18px 22px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;color:#c4b5fd;font-family:'Outfit',sans-serif;font-size:13.5px;font-weight:700;transition:border-color 0.15s,color 0.15s" onmouseover="this.style.borderColor='rgba(124,58,237,0.6)';this.style.color='#fff'" onmouseout="this.style.borderColor='rgba(124,58,237,0.35)';this.style.color='#c4b5fd'">
+    <span style="font-size:18px;line-height:1">+</span> Opret ny liste
   </div>`;
+
+  tabsEl.innerHTML = stats.map(listRow).join('') + newListRow;
 }
 function callingListSetActive(id){
   setActiveCallingListId(id);
+  renderCallingListPage();
+}
+// Accordion toggle — click an already-expanded row collapses it (clears
+// active state). Click a different row expands it (and collapses any
+// previously expanded). Active = expanded.
+function callingListToggleExpand(id){
+  const current = getActiveCallingListId();
+  setActiveCallingListId(current === id ? '' : id);
   renderCallingListPage();
 }
 // Per-card "▶ Start opkald" — sets the card's list active + opens the
