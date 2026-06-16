@@ -198,6 +198,26 @@ tr.chk td{background:var(--bluebg)}
 .badge-warm{background:#f59e0b;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
 .badge-cold{background:#94a3b8;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
 @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+/* Purple-glow animation for the primary "Start opkald" CTA — the button
+   gently breathes a brand-purple aura so it reads as the page's primary
+   action without being garishly animated. */
+@keyframes start-call-glow {
+  0%, 100% { box-shadow: 0 4px 14px rgba(124,58,237,0.45), 0 0 0 1px rgba(167,139,250,0.15) inset, 0 0 18px rgba(124,58,237,0.35); }
+  50%      { box-shadow: 0 4px 22px rgba(124,58,237,0.70), 0 0 0 1px rgba(167,139,250,0.30) inset, 0 0 32px rgba(167,139,250,0.55); }
+}
+.btn-start-call {
+  background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+  border: none;
+  color: #fff;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  animation: start-call-glow 2.4s ease-in-out infinite;
+  transition: transform 0.12s ease-out;
+}
+.btn-start-call:hover { transform: translateY(-1px); }
+.btn-start-call:active { transform: translateY(0); }
 .pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse-dot 2s ease-in-out infinite;margin-right:4px}
 .disc-status{border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;font-size:12px}
 .disc-status.running{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:#059669}
@@ -807,7 +827,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <!-- Big "Start opkald" CTA — opens the cockpit on whatever calling
          list is currently active. The primary action of the whole tool
          lives in the sidebar so it's reachable from every view. -->
-    <button onclick="startCallingFromSidebar()" title="Start opkald på den aktive ring-liste" style="width:100%;background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:11px;padding:13px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:0.3px;box-shadow:0 3px 12px rgba(34,197,94,0.35);margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px">📞 Start opkald</button>
+    <button class="btn-start-call" onclick="startCallingFromSidebar()" title="Start opkald på den aktive ring-liste" style="width:100%;border-radius:11px;padding:13px 16px;font-size:14px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px">📞 Start opkald</button>
     <!-- Eksportér opens a selector modal — pick which leads to export
          (active / archive / a specific ring-liste / by category / by source)
          before generating the CSV. Aktivitet lives in the floating
@@ -1139,7 +1159,7 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Ring-listen</h2>
           <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Leads klar til opkald, grupperet i navngivne lister. Klik "▶ Start opkald" for at åbne cockpittet på den aktive liste.</p>
         </div>
-        <button id="cl-start-btn" onclick="callingListStartCalling()" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:11px;padding:13px 22px;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:0.3px;box-shadow:0 3px 12px rgba(34,197,94,0.35)">📞 Start opkald</button>
+        <button id="cl-start-btn" class="btn-start-call" onclick="callingListStartCalling()" style="border-radius:11px;padding:13px 22px;font-size:14px">📞 Start opkald</button>
       </div>
       <!-- Named-list tabs (with counts) + "+ Ny liste" -->
       <div id="cl-tabs" style="margin-bottom:14px"></div>
