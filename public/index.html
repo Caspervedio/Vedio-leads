@@ -1134,6 +1134,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
            Shows per-source cron health + leads added today. Populated
            by renderPipelineStatusWidget(). -->
       <div id="disc-autoflow" style="margin-bottom:18px"></div>
+      <!-- One-shot migration banner — populated by render when there
+           are 5+ unassigned active leads, so the SDR can move them all
+           into named calling lists in one click instead of bulk-checking
+           manually. Dismissable; auto-hides once the Leadlist is empty. -->
+      <div id="ad-migrate-banner" style="display:none"></div>
       <!-- Bulk-selection action bar — appears above the queue when 1+
            rows are checked. The big "→ Tilføj til ring-liste" button
            opens the calling-list picker modal. -->
@@ -5747,6 +5752,42 @@ function renderAutodialerPage(){
   };
   if(!listsEl || !queueEl) return; // stats-only render (Dashboard) — done
 
+  // One-shot migration banner — when there are 5+ unassigned active
+  // leads sitting in the Leadlist, surface a single-click migrator that
+  // splits them into DK E-commerce / DK Service by category. Dismissable
+  // via the ✕ — dismissal persists in localStorage.
+  const migBanner = document.getElementById('ad-migrate-banner');
+  if (migBanner) {
+    const dismissed = localStorage.getItem('vl_migrate_banner_dismissed') === '1';
+    const unassigned = (leads||[]).filter(l =>
+      !l.calling_list_id &&
+      l.lastAction !== 'not-relevant' &&
+      !l.twenty_opportunity_id
+    );
+    const showBanner = !dismissed && !showArchive && !showTwentyPushed
+      && !showPhoneMissing && !showEnriching && !showMaybeRelevant
+      && unassigned.length >= 5;
+    if (showBanner) {
+      const ecomCount = unassigned.filter(l => leadCategory(l) === 'ecom').length;
+      const serviceCount = unassigned.filter(l => leadCategory(l) === 'service').length;
+      const otherCount = unassigned.length - ecomCount - serviceCount;
+      migBanner.style.display = '';
+      migBanner.innerHTML = `
+        <div style="background:linear-gradient(135deg,rgba(124,58,237,0.15),rgba(167,139,250,0.06));border:1px solid rgba(124,58,237,0.35);border-radius:14px;padding:18px 22px;margin-bottom:14px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+          <div style="font-size:32px;line-height:1">🚀</div>
+          <div style="flex:1;min-width:240px">
+            <div style="font-size:14.5px;font-weight:800;color:#fff;margin-bottom:4px">Flyt ${unassigned.length} leads til Calling list i ét klik</div>
+            <div style="font-size:12px;color:var(--w55);line-height:1.5">Vi splitter automatisk efter kategori: <strong style="color:#c4b5fd">${ecomCount} → 🛍 DK E-commerce</strong> · <strong style="color:#c4b5fd">${serviceCount} → 🏢 DK Service</strong>${otherCount>0?` · <strong style="color:var(--w80)">${otherCount} → 🛍 DK E-commerce</strong> (ukendt kategori, default)`:''}.</div>
+          </div>
+          <button onclick="migrateAllToCallingList()" class="btn-start-call" style="border-radius:10px;padding:11px 20px;font-size:13px;animation:none">→ Migrer ${unassigned.length} leads</button>
+          <button onclick="dismissMigrateBanner()" title="Skjul denne besked" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:8px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:12px;font-weight:600;cursor:pointer">✕</button>
+        </div>`;
+    } else {
+      migBanner.style.display = 'none';
+      migBanner.innerHTML = '';
+    }
+  }
+
   // Bulk-selection bar — surfaces "→ Tilføj til ring-liste" when 1+ leads
   // are checked. Clears stale selections (CVRs that aren't in the current
   // filtered view) so the count is honest.
@@ -6144,6 +6185,62 @@ function adCreateAndAssignCallingList(rawName){
   existing.push({ id, name });
   saveCallingLists(existing);
   adAssignToCallingList(id);
+}
+
+// ─── One-shot Leadlist → Calling list migration ────────────────────────
+// Bulk-assigns every "active" lead (not archived, not twenty-pushed, not
+// already in a calling list) to a named list based on leadCategory():
+//   • ecom    → dk-ecom    (🛍 DK E-commerce)
+//   • service → dk-service (🏢 DK Service)
+//   • unknown → dk-ecom    (default — easier to re-sort later)
+// Runs in batches of 20 with a small delay between batches so we don't
+// overwhelm the server. Shows progress toast every batch.
+async function migrateAllToCallingList(){
+  const unassigned = (leads||[]).filter(l =>
+    !l.calling_list_id &&
+    l.lastAction !== 'not-relevant' &&
+    !l.twenty_opportunity_id
+  );
+  if (unassigned.length === 0) { showToast('Ingen aktive leads at migrere'); return; }
+  // Ensure the default lists exist before we start patching
+  const lists = loadCallingLists();
+  const hasEcom = lists.some(l => l.id === 'dk-ecom');
+  const hasService = lists.some(l => l.id === 'dk-service');
+  if (!hasEcom) lists.push({ id: 'dk-ecom', name: '🛍 DK E-commerce' });
+  if (!hasService) lists.push({ id: 'dk-service', name: '🏢 DK Service' });
+  if (!hasEcom || !hasService) saveCallingLists(lists);
+
+  showToast(`⏳ Migrerer ${unassigned.length} leads…`);
+  let done = 0, fail = 0;
+  const BATCH = 20;
+  for (let i = 0; i < unassigned.length; i += BATCH) {
+    const batch = unassigned.slice(i, i + BATCH);
+    await Promise.all(batch.map(async (lead) => {
+      const cat = (typeof leadCategory === 'function') ? leadCategory(lead) : 'unknown';
+      const target = cat === 'service' ? 'dk-service' : 'dk-ecom';
+      try {
+        const r = await fetch(`/api/leads/${encodeURIComponent(lead.cvr)}`, {
+          method: 'PATCH',
+          headers: { ...ah(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calling_list_id: target }),
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        lead.calling_list_id = target;
+        done++;
+      } catch (_) { fail++; }
+    }));
+    showToast(`⏳ ${done}/${unassigned.length} migreret${fail?` · ${fail} fejlede`:''}`);
+  }
+  // Remember the active calling list so subsequent cockpit-opens land here
+  setActiveCallingListId('dk-ecom');
+  // Hide the banner permanently — migration done.
+  localStorage.setItem('vl_migrate_banner_dismissed', '1');
+  showToast(fail ? `✓ ${done} migreret · ${fail} fejlede — prøv igen?` : `✓ ${done} leads flyttet til Calling list`);
+  renderAutodialerPage();
+}
+function dismissMigrateBanner(){
+  localStorage.setItem('vl_migrate_banner_dismissed', '1');
+  renderAutodialerPage();
 }
 
 // ─── Calling list page render ──────────────────────────────────────────
