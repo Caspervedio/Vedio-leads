@@ -1243,6 +1243,28 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
      paused). Twenty push is a manual button on Interesseret leads (not
      automatic). Keyboard: 1=interested, 2=SMS, 3=no-answer (→ callback
      picker), 4=not-relevant, → next, ← prev, esc=close, ?=help. -->
+<!-- LEADLIST INSPECTION PANEL — slide-in drawer for inspecting a single
+     lead from the Leadlist (workbench). Replaces the "click row → open
+     cockpit" behavior. Cockpit is reserved for actual calling, opened
+     only from the Calling list. Click outside or ✕ to close. -->
+<div id="lead-inspector-bg" onclick="closeLeadInspector()" style="display:none;position:fixed;inset:0;z-index:280;background:rgba(0,0,0,0.45);backdrop-filter:blur(2px)"></div>
+<aside id="lead-inspector" style="display:none;position:fixed;top:0;right:0;bottom:0;width:520px;max-width:96vw;z-index:290;background:var(--dark);border-left:1px solid var(--w08);box-shadow:-12px 0 32px rgba(0,0,0,0.4);overflow-y:auto;font-family:'Outfit',sans-serif">
+  <!-- Sticky header — title + close button -->
+  <div style="position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 20px;background:rgba(13,10,20,0.96);border-bottom:1px solid var(--w08);backdrop-filter:blur(6px)">
+    <div>
+      <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--purple-light)">Lead detalje</div>
+      <div id="lead-inspector-title" style="font-size:16px;font-weight:800;color:#fff;margin-top:2px">—</div>
+    </div>
+    <button onclick="closeLeadInspector()" title="Luk (esc)" style="background:transparent;border:1px solid var(--w08);border-radius:8px;width:32px;height:32px;color:var(--w55);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
+  </div>
+  <div id="lead-inspector-body" style="padding:18px 22px"></div>
+</aside>
+
+<!-- Sticky bulk-add confirmation banner — appears bottom-right when the
+     SDR adds N leads to a calling list. Has a "→ Åbn Calling list" link
+     so the handoff between Leadlist and Calling list is explicit. -->
+<div id="bulk-add-banner" style="display:none;position:fixed;bottom:24px;right:24px;z-index:200;max-width:380px;background:linear-gradient(135deg,rgba(124,58,237,0.18),rgba(167,139,250,0.10));border:1px solid rgba(124,58,237,0.5);border-radius:14px;padding:16px 18px;box-shadow:0 8px 28px rgba(0,0,0,0.45),0 0 24px rgba(124,58,237,0.25);font-family:'Outfit',sans-serif"></div>
+
 <div id="cockpit" style="display:none;position:fixed;inset:0;z-index:300;background:var(--dark);font-family:'Outfit',sans-serif;flex-direction:column">
   <!-- Autodialer toolbar -->
   <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--w08);background:rgba(13,10,20,0.95);flex-shrink:0">
@@ -6075,11 +6097,14 @@ function renderAutodialerPage(){
           // of the autodialer flow. Row click already opens the cockpit;
           // the SDR calls from there by clicking the phone-number badge.
           const startCell = '';
+          // Row click now opens the LEAD INSPECTION PANEL (slide-in drawer),
+          // not the cockpit. The Leadlist is for triage/prep — the cockpit
+          // is for calling, reached only via Calling list "▶ Start opkald".
           const rowAction = showArchive
-            ? `onclick="event.stopPropagation()"` // archive rows shouldn't jump into cockpit
+            ? `onclick="openLeadInspector('${e(l.cvr)}')"` // archive rows: inspect, don't dial
             : showTwentyPushed
-            ? (l.twenty_url ? `onclick="window.open('${e(l.twenty_url)}','_blank','noopener')"` : `onclick="event.stopPropagation()"`)
-            : `onclick="adOpenLead('${e(l.cvr)}')"`;
+            ? (l.twenty_url ? `onclick="window.open('${e(l.twenty_url)}','_blank','noopener')"` : `onclick="openLeadInspector('${e(l.cvr)}')"`)
+            : `onclick="openLeadInspector('${e(l.cvr)}')"`;
           // Drag-to-reorder (only in the active queue, not archive or twenty).
           const dragAttrs = (showArchive || showTwentyPushed) ? '' :
             `draggable="true" ondragstart="adDragStart(event,'${e(l.cvr)}')" ondragover="adDragOver(event)" ondrop="adDrop(event,'${e(l.cvr)}')" ondragend="adDragEnd(event)"`;
@@ -6255,7 +6280,16 @@ async function adAssignToCallingList(listId){
   // Remember the most recently used calling list so the sidebar
   // "Start opkald" button has a sane default.
   setActiveCallingListId(listId);
-  showToast(fail ? `${ok} tilføjet · ${fail} fejlede` : `✓ ${ok} tilføjet til ring-listen`);
+  if (fail) {
+    showToast(`${ok} tilføjet · ${fail} fejlede`);
+  } else {
+    // Sticky banner replaces the simple toast — gives the SDR a clear
+    // "→ Åbn Calling list" handoff so the flow doesn't break at the
+    // most important transition (preparation → execution).
+    const lists = loadCallingLists();
+    const list = lists.find(x => x.id === listId);
+    showBulkAddBanner(ok, list ? list.name : 'ring-listen', listId);
+  }
   renderAutodialerPage();
 }
 function adCreateAndAssignCallingList(rawName){
@@ -6269,6 +6303,170 @@ function adCreateAndAssignCallingList(rawName){
   existing.push({ id, name });
   saveCallingLists(existing);
   adAssignToCallingList(id);
+}
+
+// ─── Sticky bulk-add banner ──────────────────────────────────────────
+// Replaces the simple toast after bulk-adding leads to a calling list.
+// Surfaces the "→ Åbn Calling list" CTA so the SDR can move from prep
+// to execution in one click. Auto-fades after 8s, or on ✕ dismiss.
+let _bulkAddBannerTimer = null;
+function showBulkAddBanner(count, listName, listId){
+  const el = document.getElementById('bulk-add-banner');
+  if (!el) return;
+  el.style.display = '';
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px">
+      <div style="width:28px;height:28px;border-radius:7px;background:rgba(110,231,153,0.18);border:1px solid rgba(110,231,153,0.4);display:flex;align-items:center;justify-content:center;color:#6ee7b7;font-size:14px;font-weight:900;flex-shrink:0">✓</div>
+      <div style="flex:1;font-size:13.5px;color:#fff;line-height:1.5">
+        <strong style="color:#c4b5fd">${count}</strong> ${count===1?'lead tilføjet':'leads tilføjet'} til
+        <strong style="color:#fff">${e(listName)}</strong>
+      </div>
+      <button onclick="dismissBulkAddBanner()" title="Skjul" style="background:transparent;border:0;color:var(--w55);font-size:14px;cursor:pointer;line-height:1;padding:2px">✕</button>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button onclick="dismissBulkAddBanner();sv('calling-list')${listId?`;setActiveCallingListId('${e(listId)}')`:''}" class="btn-start-call" style="flex:1;border-radius:9px;padding:9px 14px;font-size:12.5px;animation:none">→ Åbn Calling list</button>
+    </div>
+  `;
+  if (_bulkAddBannerTimer) clearTimeout(_bulkAddBannerTimer);
+  _bulkAddBannerTimer = setTimeout(dismissBulkAddBanner, 8000);
+}
+function dismissBulkAddBanner(){
+  const el = document.getElementById('bulk-add-banner');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  if (_bulkAddBannerTimer) { clearTimeout(_bulkAddBannerTimer); _bulkAddBannerTimer = null; }
+}
+
+// ─── Lead Inspector — slide-in detail panel for the Leadlist ──────────
+// Replaces the old "click row → open cockpit" behavior. The Leadlist is
+// for triage/prep; the cockpit is for calling. This panel shows lead
+// detail, contacts, source, calling-list state, with quick actions:
+// add to a calling list, archive, edit phone, open in Twenty.
+function openLeadInspector(cvr){
+  const lead = (leads||[]).find(l => l.cvr === cvr);
+  if (!lead) { showToast('Lead ikke fundet'); return; }
+  const bg = document.getElementById('lead-inspector-bg');
+  const aside = document.getElementById('lead-inspector');
+  const titleEl = document.getElementById('lead-inspector-title');
+  const bodyEl = document.getElementById('lead-inspector-body');
+  if (!bg || !aside || !titleEl || !bodyEl) return;
+
+  titleEl.textContent = lead.name || lead.cvr || '—';
+
+  // Build the body content. Modeled after the cockpit detail panel but
+  // stripped of calling-mode pieces (no disposition grid, no gatekeeper
+  // scripts, no talking-points autosuggest).
+  const ac = lead.apollo_company || {};
+  const phone = lead.phone || lead.ph || '';
+  const website = lead.web || ac.websiteUrl || ac.domain || '';
+  const websiteClean = website.replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/$/, '');
+  const contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+  const lists = loadCallingLists();
+  const currentListId = lead.calling_list_id;
+  const currentList = currentListId ? lists.find(l => l.id === currentListId) : null;
+  const sourceLbl = (lead.source || 'manual').replace(/^branche-walk-/, 'branche-walk · ');
+  const addedAt = lead.addedAt ? new Date(lead.addedAt).toLocaleString('da-DK', { dateStyle:'medium', timeStyle:'short' }) : '—';
+
+  const section = (lbl, body) => `<div style="margin-bottom:18px">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35);margin-bottom:8px">${lbl}</div>
+    ${body}
+  </div>`;
+
+  const phoneRow = phone
+    ? `<div style="display:flex;align-items:center;gap:10px;background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 14px">
+        <button onclick="ringNow('${e(phone)}','${e(lead.cvr||'')}','${e(lead.name||'')}')" title="Ring (tel: deeplink)" style="all:unset;cursor:pointer;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd">📞 ${e(phone)}</button>
+        <button onclick="adEditPhone('${e(lead.cvr)}')" title="Ret nummer" style="margin-left:auto;background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;cursor:pointer">✎ Ret</button>
+      </div>`
+    : `<div style="display:flex;align-items:center;gap:10px;background:rgba(252,165,165,0.08);border:1px solid rgba(252,165,165,0.25);border-radius:10px;padding:10px 14px;color:#fca5a5;font-size:12.5px">
+        ⚠ Mangler nummer — kør Apollo eller indtast manuelt
+        <button onclick="adEditPhone('${e(lead.cvr)}')" style="margin-left:auto;background:transparent;border:1px solid rgba(252,165,165,0.35);border-radius:7px;padding:5px 10px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11px;cursor:pointer">+ Tilføj</button>
+      </div>`;
+
+  const contactsHtml = contacts.length > 0
+    ? contacts.slice(0, 4).map(c => `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 12px;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:700;color:#fff">${e(c.name||'?')}</div>
+        ${c.title?`<div style="font-size:11px;color:var(--w55)">${e(c.title)}</div>`:''}
+        ${c.phone?`<button onclick="ringNow('${e(c.phone)}','${e(lead.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:12px;color:#c4b5fd;margin-top:4px;display:inline-block">📞 ${e(c.phone)}</button>`:''}
+        ${c.email?`<div style="font-size:11px;color:var(--w80);margin-top:3px"><a href="mailto:${e(c.email)}" style="color:#60a5fa;text-decoration:none">${e(c.email)}</a></div>`:''}
+      </div>`).join('')
+    : `<div style="font-size:12px;color:var(--w55);font-style:italic;padding:8px 0">Ingen beslutningstagere fundet endnu. Apollo enrichment kører automatisk ved cockpit-åbning.</div>`;
+
+  const listOptions = lists.map(l => {
+    const isCurrent = l.id === currentListId;
+    return `<button onclick="inspectorAssignList('${e(lead.cvr)}','${e(l.id)}')" style="background:${isCurrent?'rgba(124,58,237,0.18)':'var(--w04)'};border:1px solid ${isCurrent?'rgba(124,58,237,0.5)':'var(--w08)'};border-radius:8px;padding:7px 12px;color:${isCurrent?'#fff':'var(--w80)'};font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:${isCurrent?'800':'600'};cursor:pointer">${isCurrent?'✓ ':''}${e(l.name)}</button>`;
+  }).join(' ');
+
+  bodyEl.innerHTML = `
+    ${section('Telefon', phoneRow)}
+    ${section('Firma', `<div style="font-size:12.5px;color:var(--w80);line-height:1.7">
+        <div>${ac.estimatedEmployees ? `<strong>${ac.estimatedEmployees}</strong> ansatte · ` : ''}${e(ac.industry || lead.ind || lead.branche || '')}${ac.city || lead.city ? ` · ${e(ac.city || lead.city)}` : ''}</div>
+        ${websiteClean?`<div>🌐 <a href="${e(website.startsWith('http')?website:'https://'+website)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">${e(websiteClean)}</a></div>`:''}
+        <div style="color:var(--w35);font-size:11px;margin-top:4px">CVR <strong style="color:var(--w55);font-family:monospace">${e(lead.cvr||'—')}</strong> · ${e(sourceLbl)} · tilføjet ${e(addedAt)}</div>
+      </div>`)}
+    ${section('Beslutningstagere', contactsHtml)}
+    ${section('Ring-liste', currentList
+        ? `<div style="background:rgba(124,58,237,0.10);border:1px solid rgba(124,58,237,0.35);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+            <span style="color:#c4b5fd;font-size:13px;font-weight:700">${e(currentList.name)}</span>
+            <button onclick="inspectorRemoveFromList('${e(lead.cvr)}')" style="margin-left:auto;background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;cursor:pointer">← Fjern</button>
+          </div>
+          <div style="font-size:11px;color:var(--w55);margin-top:8px">Skift liste:</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${listOptions}</div>`
+        : `<div style="font-size:12px;color:var(--w55);margin-bottom:8px">Ikke i nogen ring-liste endnu. Vælg en:</div>
+           <div style="display:flex;flex-wrap:wrap;gap:6px">${listOptions}</div>`
+    )}
+    ${section('Hurtige handlinger', `<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${lead.lastAction !== 'not-relevant' ? `<button onclick="inspectorArchive('${e(lead.cvr)}')" style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.30);border-radius:8px;padding:8px 14px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer">✕ Arkivér</button>` : ''}
+      ${lead.twenty_url ? `<a href="${e(lead.twenty_url)}" target="_blank" rel="noopener" style="background:rgba(96,165,250,0.12);border:1px solid rgba(96,165,250,0.3);border-radius:8px;padding:8px 14px;color:#60a5fa;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none">→ Åbn i Twenty</a>` : ''}
+    </div>`)}
+  `;
+
+  bg.style.display = 'block';
+  aside.style.display = 'block';
+  // Allow ESC to close
+  document.addEventListener('keydown', _inspectorKeyHandler);
+}
+function closeLeadInspector(){
+  const bg = document.getElementById('lead-inspector-bg');
+  const aside = document.getElementById('lead-inspector');
+  if (bg) bg.style.display = 'none';
+  if (aside) aside.style.display = 'none';
+  document.removeEventListener('keydown', _inspectorKeyHandler);
+}
+function _inspectorKeyHandler(ev) {
+  if (ev.key === 'Escape') closeLeadInspector();
+}
+// Inspector-scoped action wrappers — patch + re-render the inspector
+// without closing it, so the SDR can chain actions on one lead.
+async function inspectorAssignList(cvr, listId){
+  try {
+    await fetch(`/api/leads/${encodeURIComponent(cvr)}`, {
+      method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calling_list_id: listId }),
+    });
+    const lead = leads.find(l => l.cvr === cvr);
+    if (lead) lead.calling_list_id = listId;
+    setActiveCallingListId(listId);
+    showToast('✓ Tilføjet til ring-liste');
+    openLeadInspector(cvr); // re-render
+    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+  } catch (ex) { showToast('Fejl: ' + ex.message); }
+}
+async function inspectorRemoveFromList(cvr){
+  try {
+    await fetch(`/api/leads/${encodeURIComponent(cvr)}`, {
+      method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ calling_list_id: null }),
+    });
+    const lead = leads.find(l => l.cvr === cvr);
+    if (lead) lead.calling_list_id = null;
+    showToast('← Fjernet fra ring-listen');
+    openLeadInspector(cvr);
+    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+  } catch (ex) { showToast('Fejl: ' + ex.message); }
+}
+async function inspectorArchive(cvr){
+  // Reuse the existing archive-reason modal so the audit trail captures WHY.
+  closeLeadInspector();
+  if (typeof adArchiveLead === 'function') adArchiveLead(cvr);
 }
 
 // ─── One-shot Leadlist → Calling list migration ────────────────────────
