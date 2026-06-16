@@ -1137,11 +1137,13 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <button onclick="openExportPicker()" title="Eksportér leads til CSV — vælg hvilke i modal" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;transition:border-color 0.12s,color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff';this.style.background='rgba(124,58,237,0.10)'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)';this.style.background='var(--w04)'">⬇ Eksportér</button>
       </div>
       <!-- Discovery pipeline widget — per-source cron health + leads
-           added today. Lives here on the Pipeline page now (Dashboard
-           is goals-only). renderPipelineStatusWidget targets #disc-autoflow. -->
+           added today. renderPipelineStatusWidget targets #disc-autoflow. -->
       <div id="disc-autoflow" style="margin-bottom:18px"></div>
-      <!-- Recently added leads (last 48h) — also moved from Dashboard. -->
-      <div id="pipeline-recent-leads" style="margin-bottom:18px"></div>
+      <!-- "Senest tilføjede leads" widget removed 2026-06-16 — the main
+           Pipeline table now sorts newest-first by default, which serves
+           the same purpose. Legacy slot kept hidden so any leftover
+           render call doesn't 404. -->
+      <div id="pipeline-recent-leads" style="display:none"></div>
       <!-- One-shot migration banner — populated by render when there
            are 5+ unassigned active leads, so the SDR can move them all
            into named calling lists in one click instead of bulk-checking
@@ -2546,9 +2548,10 @@ const DISC_INDUSTRY_GROUPS=[
 ];
 
 async function renderDiscoveryV2(){
-  // Mount filter bar + initial frame so the user sees structure while data
-  // loads. Header summary + rows fill in via three concurrent fetches.
-  renderDiscoveryFilterBar();
+  // Filter-bar render call removed 2026-06-16 — that bar belongs to the
+  // legacy CVR Discovery search view, not the Dashboard. It was leaking
+  // onto the Dashboard because renderDiscoveryFilterBar() force-sets
+  // bar.style.display=''.
   document.getElementById('disc-summary').innerHTML='<div style="grid-column:1/-1;color:var(--w55);font-size:12px;padding:14px;text-align:center"><span class="search-spinner" style="display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:middle"></span>Henter data…</div>';
   document.getElementById('disc-results').innerHTML='';
   const rqEl=document.getElementById('disc-review-queue');
@@ -5308,7 +5311,7 @@ async function gmAddAllMatched(){
 // list they want to dial, sees a summary of the queue, and starts the
 // cockpit with one click. The cockpit overlay is unchanged underneath.
 // Autodialer state — sort + source filter so the queue isn't random.
-if(typeof _adState==='undefined') var _adState={ sort:'priority', sourceFilter:'all', stackFilter:'', categoryFilter:'all', searchQ:'' };
+if(typeof _adState==='undefined') var _adState={ sort:'added', sourceFilter:'all', stackFilter:'', categoryFilter:'all', searchQ:'' };
 
 // ─── CALLING LIST — named lead-lists the SDR works through ────────────
 // Two concepts:
@@ -5452,17 +5455,12 @@ function renderAutodialerPage(){
   if(_adState.stackFilter){
     filtered=filtered.filter(l=>Array.isArray(l.techStack)&&l.techStack.includes(_adState.stackFilter));
   }
-  // Prelist excludes leads already moved to a Calling list. They live
-  // on the Calling list page now — keeping them here would double-count
-  // and confuse the "what's left to prepare" mental model.
-  // Exception: archive / twenty-pushed / phone-missing / maybe-relevant
-  // are SDR-state views, not the "active queue", so we keep the calling-
-  // list lead visible in those audit views.
-  const showSpecialState = showArchive || showTwentyPushed || showPhoneMissing
-    || showEnriching || showMaybeRelevant;
-  if (!showSpecialState) {
-    filtered = filtered.filter(l => !l.calling_list_id);
-  }
+  // Pipeline shows EVERY lead in the tool — calling-list-id is irrelevant
+  // for visibility here. Leads still appear on their named Calling list
+  // as well; the Pipeline is the master index, not a "what's left to
+  // prep" inbox. Was filtering on !l.calling_list_id previously; removed
+  // 2026-06-16 because that left Pipeline empty once everything had been
+  // assigned to a list.
   // Cross-list search — free-text filter on top of whatever chip-filter
   // is active. Matches across name, CVR, phone, domæne, city, branche,
   // and contact names so the SDR can find a lead from any state (active
