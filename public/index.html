@@ -7230,7 +7230,8 @@ function renderCockpitDetail(c){
             return `<a href="${e(igUrl)}" target="_blank" rel="noopener" style="color:#f472b6;text-decoration:none" title="Best-guess fra Facebook-handle">📷 Instagram ↗</a>`;
           })()}
           <!-- Meta Ads Library — always shown so SDR can verify current ad activity even if our scrape didn't see any. Pre-filled with the company name. -->
-          <a href="${metaAdsLibUrl(c.name||aco.name)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="Tjek hvilke ads de kører lige nu">🎯 Meta Ads Library ↗</a>
+          <a href="${metaAdsLibUrl(c.name||aco.name)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="Åbn Meta Ads Library i ny fane">🎯 Meta Ads Library ↗</a>
+          <button onclick="cockpitCheckMetaAds('${e(c.cvr||'')}')" title="Scrape Meta Ad Library for denne virksomhed nu (~60-90s, ~$0.02)" style="background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);border-radius:10px;padding:2px 9px;font-size:10.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">↻ Tjek ads</button>
           ${(c.adsMatched||0)>0?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.15);color:#fb923c;font-size:10.5px;font-weight:800;border:1px solid rgba(251,146,60,0.3)" title="META scrape fandt ${c.adsMatched} aktive ads ved seneste run">🔥 ${c.adsMatched} aktive ads</span>`:''}
           ${(c.meta_ads_active_now||c.meta_ads_recent90d)?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.12);color:#fb923c;font-size:10.5px;font-weight:700;border:1px solid rgba(251,146,60,0.25)" title="Senest set i Meta Ad Library: ${c.meta_ads_active_now||0} aktive lige nu · ${c.meta_ads_recent90d||0} kørte sidste 90 dage">🎯 ${c.meta_ads_active_now||0} aktive · ${c.meta_ads_recent90d||0} sidste 90 dage</span>`:''}
           ${c.linkedin_ad_url?`<a href="${e(c.linkedin_ad_url)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(10,102,194,0.15);color:#60a5fa;font-size:10.5px;font-weight:700;border:1px solid rgba(10,102,194,0.3);text-decoration:none" title="Se den specifikke LinkedIn-ad de kører nu">💼 Se LinkedIn-ad ↗</a>`:''}
@@ -7697,6 +7698,46 @@ async function cockpitAddContactFromLinkedin(cvr) {
         body: JSON.stringify({ contacts: lead.contacts }),
       });
       showToast(`✓ ${contact.name} tilføjet`);
+      renderCockpit();
+    }
+  } catch (ex) {
+    showToast('Fejl: ' + ex.message);
+  }
+}
+
+// Per-lead Meta Ad Library check — replaces the standalone META Scraper
+// page. Fires Apify against Meta Ad Library for this specific company,
+// returns active_now + recent_90d ad counts, updates the lead in place.
+// Cost: ~$0.02 per click. Latency: ~60-90s.
+async function cockpitCheckMetaAds(cvr) {
+  if (!cvr) return;
+  showToast('🎯 Tjekker Meta Ad Library… (~60-90s)');
+  try {
+    const r = await fetch('/api/lead/' + encodeURIComponent(cvr) + '/check-meta-ads', {
+      method: 'POST',
+      headers: ah(),
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      showToast('Meta-tjek fejlede: ' + t.slice(0, 120));
+      return;
+    }
+    const d = await r.json();
+    const active = d.active_now || 0;
+    const recent = d.recent_90d || 0;
+    if (d.hit) {
+      showToast(`✓ ${active} aktive ads · ${recent} sidste 90 dage`);
+    } else {
+      showToast('✕ Ingen ads fundet på Meta');
+    }
+    // Update the in-memory lead so the cockpit re-renders with fresh chips
+    const lead = leads.find((l) => l.cvr === cvr);
+    if (lead) {
+      lead.meta_ads_active_now = active;
+      lead.meta_ads_recent90d = recent;
+      lead.meta_verified_active = active > 0;
+      lead.meta_verified_at = new Date().toISOString();
+      if (d.hit) lead.meta_advertiser = true;
       renderCockpit();
     }
   } catch (ex) {

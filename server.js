@@ -10780,6 +10780,70 @@ app.post("/api/cron/backfill-contacts", (req, res) => {
   return runBackfillContacts(req, res);
 });
 
+// ── Per-lead Meta Ad Library check ─────────────────────────────────
+// Replaces the standalone META Scraper page — the SDR clicks a button
+// on the cockpit and we hit Apify's Meta Ad Library scraper for THAT
+// company only. Updates meta_ads_active_now / meta_ads_recent90d /
+// meta_verified_active / meta_verified_at on the lead.
+//
+// Cost: ~$0.005-0.02 per check (one Apify run with 5-result limit).
+// Latency: ~60-90s. Operator clicks the button and waits.
+app.post("/api/lead/:cvr/check-meta-ads", authMiddleware, async (req, res) => {
+  const cvr = req.params.cvr;
+  if (!process.env.APIFY_API_TOKEN) {
+    return res.status(503).json({ error: "Apify not configured" });
+  }
+  const ud = loadUserData(req.userId);
+  const lead = (ud.leads || []).find((l) => l.cvr === cvr);
+  if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+  if (!lead.name) return res.status(400).json({ error: "Lead mangler navn" });
+
+  try {
+    const { verified, stats } = await verifyCandidatesAgainstMeta(
+      [{ name: lead.name, cvr: lead.cvr }],
+      "cvr",
+    );
+    // Re-load in case other crons mutated since
+    const udNow = loadUserData(req.userId);
+    const l = (udNow.leads || []).find((x) => x.cvr === cvr);
+    if (!l) return res.status(404).json({ error: "Lead forsvandt midt i opslaget" });
+
+    const checkedAt = new Date().toISOString();
+    if (verified.length > 0) {
+      const v = verified[0];
+      l.meta_advertiser = true;
+      l.meta_verified_active = (v.meta_ads_active_now || 0) > 0;
+      l.meta_verified_at = checkedAt;
+      l.meta_ads_active_now = v.meta_ads_active_now || 0;
+      l.meta_ads_recent90d = v.meta_ads_recent90d || 0;
+      l.meta_ads_total_in_library = v.meta_ads_total || 0;
+      l.ad_signals = [
+        l.meta_ads_active_now > 0
+          ? `${l.meta_ads_active_now} aktive ads på Meta`
+          : `${l.meta_ads_recent90d} ads sidste 90 dage`,
+      ];
+    } else {
+      // No ads found — record the negative so cockpit doesn't keep prompting
+      l.meta_verified_active = false;
+      l.meta_verified_at = checkedAt;
+      l.meta_ads_active_now = 0;
+      l.meta_ads_recent90d = 0;
+    }
+    saveUserData(req.userId, udNow);
+    res.json({
+      ok: true,
+      hit: verified.length > 0,
+      active_now: l.meta_ads_active_now || 0,
+      recent_90d: l.meta_ads_recent90d || 0,
+      total: l.meta_ads_total_in_library || 0,
+      stats,
+    });
+  } catch (e) {
+    console.warn("[check-meta-ads]", cvr, e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ── DF-VERIFY RETROACTIVE for unknowns ─────────────────────────────────
 // Walks active leads with no employee data and runs them through
 // tryDfVerifyDkCompany. If found → backfill cvr, phone, address, emp.
