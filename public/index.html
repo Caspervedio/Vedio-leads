@@ -1080,9 +1080,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div>
           <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📋 Leadlist</div>
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Din leadliste</h2>
-          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Alle leads klar til bearbejdning. Åbn Cockpittet for at gennemgå listen — disposér med tasterne 1–4 og spring videre med pil-højre.</p>
+          <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Alle leads klar til bearbejdning. Klik en række for at åbne cockpittet — disposér med tasterne 1–4 og spring videre med pil-højre.</p>
         </div>
-        <button class="btn btn-primary btn-sm" id="ad-start-btn" style="padding:12px 22px;font-size:13.5px;flex-shrink:0;background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none" onclick="openCockpit()">▶ Start opkald</button>
       </div>
       <div id="ad-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px"></div>
       <!-- Activity breakdown table — today / week / all-time -->
@@ -1155,12 +1154,12 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <div id="cockpit-progress" style="font-size:10.5px;color:var(--w55)">0 / 0 leads</div>
       </div>
     </div>
-    <!-- Start / Pause controls -->
+    <!-- Skip control — kept for "I'm done with this lead, next" without disposition.
+         The Start Dialer / Pause / dialer-state pill were removed 2026-06-16 when
+         the autodialer flow was retired. SDR now calls by clicking the phone-number
+         badge in the cockpit detail panel (tel: deeplink to iPhone). -->
     <div style="display:flex;align-items:center;gap:6px;margin-left:18px;padding-left:18px;border-left:1px solid var(--w08)">
-      <button id="cockpit-start-btn" onclick="cockpitStartDialer()" style="background:linear-gradient(135deg,#7c3aed,#a78bfa);border:none;border-radius:9px;padding:9px 18px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(124,58,237,0.25)">▶ Start Dialer</button>
-      <button id="cockpit-pause-btn" onclick="cockpitPauseDialer()" style="display:none;background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏸ Pause</button>
       <button id="cockpit-skip-btn" onclick="cockpitSkip()" title="Spring dette lead over og gå til næste (uden disposition)" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 14px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏭ Skip</button>
-      <div id="cockpit-dialer-state" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--w55);margin-left:4px;font-weight:700"></div>
     </div>
     <div style="flex:1"></div>
     <!-- Manual call / SMS -->
@@ -5683,24 +5682,15 @@ function renderAutodialerPage(){
   // Clicking a row jumps the cockpit straight to that lead.
   if(filtered.length===0){
     queueEl.innerHTML=`<div style="background:var(--dark2);border:1px dashed var(--w08);border-radius:14px;padding:40px;text-align:center">
-      <div style="font-size:36px;margin-bottom:10px">📞</div>
+      <div style="font-size:36px;margin-bottom:10px">📋</div>
       <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Ingen leads i kø endnu</div>
-      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto 14px;line-height:1.5">Tilføj leads fra <strong>Dashboard</strong>, en AI Agent (META Scraper, Look-alike, Maps, Tech Stack), eller upload en CSV-fil. Når du har noget i kø, kommer "Start opkald" til live.</div>
+      <div style="font-size:12px;color:var(--w55);max-width:420px;margin:0 auto 14px;line-height:1.5">Discovery-crons (branche-walk, StoreLeads, Google Maps) lægger automatisk nye leads ind hver dag. Du kan også uploade en CSV-fil manuelt nedenfor.</div>
       <div style="display:inline-flex;gap:8px">
         <button class="btn btn-primary btn-sm" onclick="sv('discovery')" style="padding:8px 16px">→ Dashboard</button>
-        <button class="btn btn-sm" onclick="sv('csv-upload')" style="padding:8px 16px">📥 CSV Upload</button>
+        <button class="btn btn-sm" onclick="sv('csv-upload')" style="padding:8px 16px">📥 Upload list</button>
       </div>
     </div>`;
-    const adBtn=document.getElementById('ad-start-btn');if(adBtn){adBtn.disabled=true;adBtn.style.opacity='0.5';adBtn.style.cursor='not-allowed';}
     return;
-  }
-  const adBtn=document.getElementById('ad-start-btn');
-  if(adBtn){
-    // Archive view doesn't need a "Start opkald" target — it's a read-only
-    // ledger of dismissed leads. Disable the top start button to avoid
-    // confusion.
-    if(showArchive){adBtn.disabled=true;adBtn.style.opacity='0.5';adBtn.style.cursor='not-allowed';}
-    else{adBtn.disabled=false;adBtn.style.opacity='';adBtn.style.cursor='';}
   }
   // Render ALL filtered leads — operator asked for the full list visible
   // (was capped at 30 with "...og N mere — start cockpittet" footer).
@@ -5777,7 +5767,7 @@ function renderAutodialerPage(){
            </div>`
         : showTwentyPushed
         ? `<span style="font-size:11px;color:var(--w55);font-style:italic">Klik en række for at åbne i Twenty CRM</span>`
-        : `<button class="btn btn-primary btn-sm" onclick="openCockpit()" style="padding:6px 14px;font-size:11.5px">▶ Start opkald</button>`}
+        : `<span style="font-size:11px;color:var(--w55);font-style:italic">Klik en række for at åbne cockpittet</span>`}
     </div>
     <div style="max-height:72vh;overflow-y:auto">
     <table style="width:100%;border-collapse:collapse">
@@ -5808,11 +5798,10 @@ function renderAutodialerPage(){
             : showTwentyPushed
             ? `<div style="display:inline-flex;align-items:center;gap:8px;justify-content:flex-end">${twentyStageChip}${l.twenty_url ? `<a href="${e(l.twenty_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="background:linear-gradient(135deg,#60a5fa,#3b82f6);border:0;border-radius:7px;padding:5px 11px;color:#fff;font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;text-decoration:none;white-space:nowrap;box-shadow:0 2px 6px rgba(96,165,250,0.3)">→ Åbn i Twenty</a>` : `<span style="font-size:10.5px;color:var(--w35);font-style:italic">pushet</span>`}</div>`
             : `<div style="display:inline-flex;align-items:center;gap:7px;justify-content:flex-end">${phoneDisplay}<button onclick="event.stopPropagation();adEditPhone('${e(l.cvr)}')" title="Ret nummeret autodialeren ringer til" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button></div>`;
-          // "▶ Start opkald" — opens the cockpit at THIS lead and starts the
-          // dialer from here. Hidden in archive + twenty-pushed views (those
-          // leads are done from SDR's perspective).
-          const startCell = (showArchive || showTwentyPushed) ? '' :
-            `<button onclick="event.stopPropagation();adOpenLead('${e(l.cvr)}',true)" title="Start opkald fra dette lead" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:6px 12px;color:#fff;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:800;cursor:pointer;white-space:nowrap;box-shadow:0 2px 6px rgba(34,197,94,0.3)">▶ Start opkald</button>`;
+          // Per-row "Start opkald" button removed 2026-06-16 with the rest
+          // of the autodialer flow. Row click already opens the cockpit;
+          // the SDR calls from there by clicking the phone-number badge.
+          const startCell = '';
           const rowAction = showArchive
             ? `onclick="event.stopPropagation()"` // archive rows shouldn't jump into cockpit
             : showTwentyPushed
@@ -6550,12 +6539,11 @@ async function adRestoreAllArchived(){
 // Force-include: even if the lead is in phone_missing / pending-enrichment
 // state (normally filtered out), we still let the SDR land on it so they
 // can inspect contacts, notes, history, etc.
-function adOpenLead(cvr, autostart){
+function adOpenLead(cvr){
   openCockpit(cvr);
   if(!_cockpit.open) return;            // queue was empty
   const qi=(_cockpit.queue||[]).findIndex(l=>l.cvr===cvr);
-  if(qi>=0){ _cockpit.idx=qi; renderCockpit(); cockpitUpdateToolbarButtons(); }
-  if(autostart && typeof cockpitStartDialer==='function') cockpitStartDialer();
+  if(qi>=0){ _cockpit.idx=qi; renderCockpit(); }
 }
 // Back-compat shim (older callers passed an index).
 function adJumpToLead(idx){
@@ -6646,12 +6634,10 @@ function openCockpit(forceCvr){
   _cockpit.idx=resumeIdx>=0?resumeIdx:0;
   _cockpit.leadEnteredAt = Date.now();        // start view-timer for first lead
   _cockpit.open=true;
-  _cockpit.dialerState='idle'; // every reopen starts fresh
   const el=document.getElementById('cockpit');
   el.style.display='flex';
   document.body.style.overflow='hidden';
   renderCockpit();
-  cockpitUpdateToolbarButtons();
   // Keyboard shortcuts only active while cockpit is open
   document.addEventListener('keydown',cockpitKeyHandler);
   // Poll every 60s for newly-due callbacks — injects them after current
@@ -6685,21 +6671,12 @@ function cockpitKeyHandler(ev){
 
 function cockpitCurrent(){return _cockpit.queue[_cockpit.idx]||null;}
 function cockpitNext(){
-  // Two-tier disposition guard.
-  //
-  // Tier 1 (existing): block when dialerState is dialing/pending and no
-  // lastAction yet — covers the "Start opkald" workflow.
-  //
-  // Tier 2 (manual-dial): if SDR has been on the lead >30 seconds
-  // without pressing a disposition, assume they've made a call (or are
-  // about to) and require disposition before advance. This catches the
-  // "I called but forgot to press a key" case that was undercounting
-  // calls by ~50% before today's fix.
+  // Disposition guard: if SDR has been on the lead >30 seconds without
+  // pressing a disposition, assume they've made a call (or are about to)
+  // and require disposition before advance. Catches the "I called but
+  // forgot to press a key" case (#67 fix). Tier 1 dialerState guard
+  // retired with the autodialer flow (2026-06-16).
   const c = cockpitCurrent();
-  if (c && (_cockpit.dialerState === 'dialing' || _cockpit.dialerState === 'pending') && !c.lastAction) {
-    showToast('Vælg en disposition før du går videre');
-    return;
-  }
   if (c && _cockpit.leadEnteredAt) {
     const onLeadMs = Date.now() - _cockpit.leadEnteredAt;
     const lastDispMs = c.lastDispositionAt ? new Date(c.lastDispositionAt).getTime() : 0;
@@ -6712,11 +6689,7 @@ function cockpitNext(){
   if (_cockpit.idx < _cockpit.queue.length - 1) {
     _cockpit.idx++;
     _cockpit.leadEnteredAt = Date.now();         // reset view-timer for next lead
-    if (_cockpit.dialerState === 'dialing' || _cockpit.dialerState === 'pending') {
-      _cockpit.dialerState = 'dialing';
-    }
     renderCockpit();
-    cockpitUpdateToolbarButtons();
   } else { showToast('Sidste lead i køen'); }
 }
 
@@ -6948,9 +6921,7 @@ async function _archiveReasonPick(reasonId, reasonLabel) {
     return;
   }
   // Default: cockpit advance flow
-  _cockpit.dialerState = 'pending';
   renderCockpit();
-  cockpitUpdateToolbarButtons();
   setTimeout(() => cockpitAdvanceAfterDisposition(), 400);
 }
 
@@ -6989,19 +6960,15 @@ function cockpitPrev(){
     renderCockpit();
   }
 }
-// Skip — abandon the current lead's call without a disposition and move on.
-// Resets the dialer to idle so the next lead starts clean. Does NOT mark
-// any disposition (the lead stays in the queue for a later attempt).
+// Skip — move past the current lead without a disposition. Does NOT
+// mark any disposition (the lead stays in the queue for a later attempt).
 function cockpitSkip(){
-  _cockpit.dialerState='idle';
   if(_cockpit.idx<_cockpit.queue.length-1){
     _cockpit.idx++;
     renderCockpit();
-    cockpitUpdateToolbarButtons();
     showToast('⏭ Sprunget over — næste lead');
   }else{
     renderCockpit();
-    cockpitUpdateToolbarButtons();
     showToast('Sidste lead i køen');
   }
 }
@@ -7411,95 +7378,28 @@ function renderCockpitDetail(c){
     </div>`;
 }
 
-// ─── Dialer state machine ───────────────────────────────────────────────
-// _cockpit.dialerState transitions:
-//   'idle'       — landed in cockpit, queue loaded but nothing calling
-//   'dialing'    — Start Dialer pressed; current lead is "calling"
-//   'pending'    — call ended; disposition required before next call
-//   'paused'     — Pause pressed; freeze auto-advance even with disposition set
+// ─── Cockpit status helpers ─────────────────────────────────────────────
+// Autodialer state machine retired 2026-06-16. The SDR now opens a lead
+// by clicking a row, calls by clicking the phone-number badge in the
+// detail panel (tel: deeplink to iPhone), and presses 1–4 for disposition.
+// No idle/dialing/pending/paused transitions.
 //
-// The user's hard requirement: after a call ends, no advance to next lead
-// until a disposition is selected. That's enforced by transitioning into
-// 'pending' on Start (we treat Start → next-lead as "call ended, please
-// disposition") and refusing cockpitNext from 'pending' unless lastAction
-// is set on the current lead.
-
-if(!_cockpit.dialerState) _cockpit.dialerState = 'idle';
-if(!_cockpit.requireDisposition) _cockpit.requireDisposition = false;
+// The "30s on lead → disposition required" guard in cockpitNext (Tier 2)
+// remains — that's the workflow-enforcement rule from #68, independent
+// of any dialer-flow.
 
 function cockpitCallStatusText(c){
   if(!c) return 'Ingen aktivt lead.';
-  if(_cockpit.dialerState==='paused') return '⏸ Pause — klik Start Dialer for at fortsætte.';
-  if(_cockpit.dialerState==='idle')   return 'Klik <strong style="color:var(--w80)">▶ Start Dialer</strong> for at ringe.';
-  if(_cockpit.dialerState==='dialing'){
-    // When we have an Apollo decision-maker, prompt SDR with who to ask for.
-    // This is the cold-call playbook: dial switchboard, ask for named person.
-    const topContact = (c.contacts && c.contacts[0]) ? c.contacts[0] : null;
-    if(topContact && topContact.name && c.ph) {
-      return `📞 Ringer <strong style="color:#fff">${e(c.name)}</strong> — bed om <strong style="color:#c4b5fd">${e(topContact.name)}</strong>${topContact.title?` (${e(topContact.title)})`:''}`;
-    }
-    return `📞 Ringer til <strong style="color:#fff">${e(c.name)}</strong>`;
+  const topContact = (c.contacts && c.contacts[0]) ? c.contacts[0] : null;
+  if(topContact && topContact.name && c.ph) {
+    return `Klar — bed om <strong style="color:#c4b5fd">${e(topContact.name)}</strong>${topContact.title?` (${e(topContact.title)})`:''} hvis du ringer`;
   }
-  if(_cockpit.dialerState==='pending') return '⚠ Kald afsluttet — <strong style="color:#fdba74">vælg disposition</strong> før du går videre.';
-  return '';
+  return `Klar — <strong style="color:#fff">${e(c.name||'')}</strong>`;
 }
 
-function cockpitUpdateToolbarButtons(){
-  const startBtn = document.getElementById('cockpit-start-btn');
-  const pauseBtn = document.getElementById('cockpit-pause-btn');
-  const stateEl  = document.getElementById('cockpit-dialer-state');
-  if(!startBtn || !pauseBtn) return;
-  const s = _cockpit.dialerState;
-  if(s==='dialing' || s==='pending'){
-    startBtn.style.display = 'none';
-    pauseBtn.style.display = '';
-  } else {
-    startBtn.style.display = '';
-    pauseBtn.style.display = 'none';
-    startBtn.textContent = (s==='paused') ? '▶ Fortsæt' : '▶ Start Dialer';
-  }
-  if(stateEl){
-    // Status with a colored live dot. "Klar" is green + gently pulsing so
-    // it feels alive and ready.
-    const cfg = {
-      idle:    { lbl:'Klar',              col:'#34d399', pulse:true },
-      dialing: { lbl:'Ringer…',           col:'#fb923c', pulse:true },
-      pending: { lbl:'Venter disposition',col:'#fdba74', pulse:false },
-      paused:  { lbl:'Pause',             col:'var(--w55)', pulse:false },
-    }[s] || { lbl:'', col:'var(--w55)', pulse:false };
-    stateEl.innerHTML = cfg.lbl
-      ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${cfg.col};${cfg.pulse?'animation:pulse-dot 1.2s ease-in-out infinite;':''}box-shadow:0 0 0 3px ${cfg.col}22"></span><span style="color:${cfg.col}">${cfg.lbl}</span>`
-      : '';
-  }
-}
-
-async function cockpitStartDialer(){
-  const c = cockpitCurrent();
-  if(!c){showToast('Køen er tom — tilføj leads først');return;}
-  if(_cockpit.dialerState==='pending' && !c.lastAction){
-    showToast('Vælg en disposition før du fortsætter');
-    return;
-  }
-  _cockpit.dialerState = 'dialing';
-  cockpitUpdateToolbarButtons();
-  renderCockpit();
-  const phone = c.phone || c.ph || (c.contacts && c.contacts.find(x=>x.phone)?.phone) || '';
-  if(!phone){
-    showToast('Ingen telefonnummer på leadet — berig først med Apollo');
-    _cockpit.dialerState='idle'; cockpitUpdateToolbarButtons();
-    return;
-  }
-  // CloudTalk subscription was cancelled — calls now route via tel:
-  // deeplink straight to the SDR's iPhone (Continuity audio on Mac).
-  ringNow(phone, c.cvr, c.name);
-}
-
-function cockpitPauseDialer(){
-  _cockpit.dialerState = 'paused';
-  showToast('⏸ Pause — auto-advance frosset');
-  cockpitUpdateToolbarButtons();
-  renderCockpit();
-}
+// Toolbar Start/Pause/dialer-state pill no longer exist. Kept as a no-op
+// so any leftover call-sites don't throw before they're cleaned up.
+function cockpitUpdateToolbarButtons(){}
 
 // ─── Disposition handling ───────────────────────────────────────────────
 async function cockpitDisposition(action){
@@ -7570,10 +7470,7 @@ async function cockpitDisposition(action){
     _showInterestedTwentyPrompt(c);
   }
 
-  // Transition: pending → dialing-of-next (only after disposition is set)
-  _cockpit.dialerState = 'pending';
   renderCockpit();
-  cockpitUpdateToolbarButtons();
 
   // Auto-advance policy:
   //  - 'interested' → STAY on lead. SDR needs to manually click "Push til
@@ -7587,18 +7484,13 @@ async function cockpitDisposition(action){
 }
 
 function cockpitAdvanceAfterDisposition(){
-  // Move to next lead and immediately enter 'dialing' state. If we hit
-  // the end of the queue, fall back to idle.
+  // Move to next lead. End-of-queue → show finished toast.
   if(_cockpit.idx < _cockpit.queue.length - 1){
     _cockpit.idx++;
-    _cockpit.dialerState = 'dialing';
-    showToast(`📞 Næste lead: ${cockpitCurrent()?.name||''}`);
+    showToast(`Næste lead: ${cockpitCurrent()?.name||''}`);
     renderCockpit();
-    cockpitUpdateToolbarButtons();
   } else {
-    _cockpit.dialerState = 'idle';
     showToast('✓ Færdig med køen');
-    cockpitUpdateToolbarButtons();
   }
 }
 
@@ -7771,9 +7663,7 @@ async function cockpitPushToTwenty(){
         // Keep idx pointing at what was the NEXT lead (which is now at the same index)
         if (_cockpit.idx >= _cockpit.queue.length) _cockpit.idx = Math.max(0, _cockpit.queue.length - 1);
       }
-      _cockpit.dialerState = 'idle';
       renderCockpit();
-      cockpitUpdateToolbarButtons();
       return;
     } else if(r.status===503&&d.queued){
       c.twenty_queued_at=new Date().toISOString();
@@ -7841,7 +7731,7 @@ async function cockpitSetCustomCallback(){
     showToast(`📅 Callback planlagt ${humanFutureTime(callbackAt)}`);
   }catch(ex){showToast('Fejl: '+ex.message); return;}
   if(gcal) openGoogleCalendarEvent(c, when);
-  setTimeout(()=>{ if(_cockpit.dialerState!=='paused' && _cockpit.dialerState!=='idle') cockpitAdvanceAfterDisposition(); },300);
+  setTimeout(cockpitAdvanceAfterDisposition, 300);
 }
 
 // Open a Google Calendar event-creation URL pre-filled with lead details.
@@ -7891,11 +7781,7 @@ async function cockpitSetCallback(idx){
     }catch(ex){showToast('Fejl: '+ex.message);}
   }
   // Auto-advance now that the SDR has fully handled the lead.
-  setTimeout(()=>{
-    if(_cockpit.dialerState!=='paused' && _cockpit.dialerState!=='idle'){
-      cockpitAdvanceAfterDisposition();
-    }
-  },300);
+  setTimeout(cockpitAdvanceAfterDisposition, 300);
 }
 
 function humanFutureTime(iso){
