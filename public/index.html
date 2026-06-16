@@ -823,17 +823,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div class="sb-addlist" onclick="togNL()">＋ Ny liste</div>
     <input id="nli" class="nlinput" placeholder="Navn + Enter" style="display:none" autocomplete="off">
   </div>
-  <div class="sb-footer" id="sb-footer">
-    <!-- Big "Start opkald" CTA — opens the cockpit on whatever calling
-         list is currently active. The primary action of the whole tool
-         lives in the sidebar so it's reachable from every view. -->
-    <button class="btn-start-call" onclick="startCallingFromSidebar()" title="Start opkald på den aktive ring-liste" style="width:100%;border-radius:11px;padding:13px 16px;font-size:14px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px">📞 Start opkald</button>
-    <!-- Eksportér opens a selector modal — pick which leads to export
-         (active / archive / a specific ring-liste / by category / by source)
-         before generating the CSV. Aktivitet lives in the floating
-         top-right icon (no longer in this footer). -->
-    <button class="exp-btn" onclick="openExportPicker()">⬇ Eksportér leads (CSV)</button>
-  </div>
+  <!-- Sidebar footer emptied 2026-06-16. Start opkald moved into the
+       Calling list flow (sidebar nav "Calling list" opens the cockpit
+       directly). Eksportér leads now lives per-page (Leadlist + cockpit)
+       so it sits next to the data it scopes. -->
+  <div class="sb-footer" id="sb-footer" style="display:none"></div>
 
   <!-- USER PROFILE -->
   <div class="user-profile" id="user-profile" style="display:none">
@@ -1130,8 +1124,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Din leadliste</h2>
           <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Forbered leads her — marker dem du vil ringe til og send dem til din <strong style="color:#fff">Calling list</strong>. Brug ☑ checkboksen i hver række eller "Vælg alle".</p>
         </div>
-        <!-- Search field moved into the filter strip below (under Kilde row)
-             — closer to the leads it filters. -->
+        <!-- Page-level Eksportér — opens the picker modal scoped to whatever
+             selection the SDR makes (status / list / category / source /
+             search). Lives here on the Leadlist page so it's next to the
+             data it acts on, not buried in the sidebar. -->
+        <button onclick="openExportPicker()" title="Eksportér leads til CSV — vælg hvilke i modal" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;transition:border-color 0.12s,color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff';this.style.background='rgba(124,58,237,0.10)'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)';this.style.background='var(--w04)'">⬇ Eksportér</button>
       </div>
       <!-- Discovery pipeline widget — moved from Dashboard 2026-06-16.
            Shows per-source cron health + leads added today. Populated
@@ -1159,7 +1156,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
           <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Ring-listen</h2>
           <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Leads klar til opkald, grupperet i navngivne lister. Klik "▶ Start opkald" for at åbne cockpittet på den aktive liste.</p>
         </div>
-        <button id="cl-start-btn" class="btn-start-call" onclick="callingListStartCalling()" style="border-radius:11px;padding:13px 22px;font-size:14px">📞 Start opkald</button>
+        <!-- "Start opkald" button removed 2026-06-16 — Calling list now
+             opens the cockpit directly from the sidebar nav, so a button
+             on this (now-unreachable) page is redundant. -->
+
       </div>
       <!-- Named-list tabs (with counts) + "+ Ny liste" -->
       <div id="cl-tabs" style="margin-bottom:14px"></div>
@@ -1240,10 +1240,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <button id="cockpit-skip-btn" onclick="cockpitSkip()" title="Spring dette lead over og gå til næste (uden disposition)" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 14px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏭ Skip</button>
     </div>
     <div style="flex:1"></div>
-    <!-- Manuelt opkald / Manuel SMS / Aktivitet were removed 2026-06-16 —
-         the calling list is the dialer surface (SDR calls leads from
-         the queue, not arbitrary numbers); SMS as a disposition was
-         retired; Aktivitet moved to the sidebar footer for global access. -->
+    <!-- Calling list-level Eksportér — opens the picker modal pre-filtered
+         to the current calling list (the SDR can broaden the scope inside
+         the modal). The sidebar footer no longer carries this action. -->
+    <button class="btn btn-sm" onclick="openExportPicker(getActiveCallingListId&&getActiveCallingListId()?{callingListId:getActiveCallingListId()}:undefined)" title="Eksportér leads til CSV — forudvalgt til denne ring-liste" style="padding:8px 12px">⬇ Eksportér</button>
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
     <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
   </div>
@@ -9660,15 +9660,18 @@ function doExport(){const vis=aList==='all'?leads:leads.filter(l=>l.listId===aLi
 //   • Free-text search (same matcher as the Prelist search bar)
 // Live count of matching leads updates as the SDR toggles filters.
 var _exportSel = null;
-function openExportPicker(){
+function openExportPicker(preset){
   if(!leads || leads.length === 0){ showToast('Ingen leads at eksportere'); return; }
   const callingLists = (typeof loadCallingLists === 'function') ? loadCallingLists() : [];
-  // Default selection — current visible queue from the user's POV
+  // Default selection — current visible queue from the user's POV.
+  // Callers can pre-fill by passing {callingListId, status, category, source}
+  // — used by the cockpit's Eksportér button to default-scope to the
+  // active ring-liste.
   _exportSel = {
-    status: 'active',         // active | archive | twenty | phone_missing | all
-    callingListId: 'any',     // any | none | <list-id>
-    category: 'all',          // all | ecom | service
-    source: 'all',            // all | branche-walk | storeleads | gmaps-discover | csv | manual
+    status: (preset && preset.status) || 'active',     // active | archive | twenty | phone_missing | all
+    callingListId: (preset && preset.callingListId) || 'any',  // any | none | <list-id>
+    category: (preset && preset.category) || 'all',    // all | ecom | service
+    source: (preset && preset.source) || 'all',        // all | branche-walk | storeleads | gmaps-discover | csv | manual
     searchQ: '',
   };
   const bg = document.createElement('div');
