@@ -6526,7 +6526,25 @@ function dismissMigrateBanner(){
 }
 
 // ─── Calling list page render ──────────────────────────────────────────
+// Wrapped in try/catch since this is a render path that's bitten us twice
+// (once with lastActionChip scoping). Any future silent failure now
+// surfaces as a visible error block instead of an empty page.
 function renderCallingListPage(){
+  try {
+    return _renderCallingListPageImpl();
+  } catch (ex) {
+    console.error('renderCallingListPage failed:', ex);
+    const el = document.getElementById('cl-tabs');
+    if (el) {
+      el.innerHTML = `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.4);border-radius:12px;padding:18px 22px;color:#fca5a5;font-family:'Outfit',sans-serif">
+        <div style="font-size:14px;font-weight:800;margin-bottom:8px">⚠ Fejl under rendering af Calling list</div>
+        <div style="font-size:12px;color:var(--w80);line-height:1.5;white-space:pre-wrap;font-family:monospace;background:rgba(0,0,0,0.25);padding:10px 12px;border-radius:8px;margin-top:8px">${(ex && (ex.message || String(ex))) || 'Ukendt fejl'}</div>
+        <div style="font-size:11.5px;color:var(--w55);margin-top:10px">Hard-reload (Cmd+Shift+R) eller send mig denne besked.</div>
+      </div>`;
+    }
+  }
+}
+function _renderCallingListPageImpl(){
   const tabsEl = document.getElementById('cl-tabs');
   const tableEl = document.getElementById('cl-table');
   if (!tabsEl) return;
@@ -6637,7 +6655,7 @@ function renderCallingListPage(){
         </div>
         <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
         <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
-        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.35;cursor:not-allowed;animation:none':''}" ${disabled?'disabled':''}>▶ Start opkald</button>
+        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.45;animation:none':''}">▶ Start opkald</button>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;flex-shrink:0"><path d="M3 5l4 4 4-4"/></svg>
       </div>
       ${isExpanded ? `<div style="border-top:1px solid var(--w08)">${renderLeadTable(s)}</div>` : ''}
