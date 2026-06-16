@@ -6540,14 +6540,49 @@ function renderCallingListPage(){
     if (activeId) setActiveCallingListId(activeId);
   }
 
-  // Per-list stats.
+  // Per-list stats — including "NEW since last opened" so the SDR can
+  // tell at a glance which lists have fresh leads worth a fresh pass.
+  // Last-opened timestamps are stamped in openCockpit() per active list.
   const today0 = new Date(); today0.setHours(0,0,0,0);
   const todayMs = today0.getTime();
+  let lastOpenedMap = {};
+  try { lastOpenedMap = JSON.parse(localStorage.getItem('vl_cl_last_opened') || '{}'); } catch {}
   const stats = lists.map(l => {
     const inList = (leads||[]).filter(x => x.calling_list_id === l.id);
     const calledToday = inList.filter(x => x.lastCallAt && new Date(x.lastCallAt).getTime() >= todayMs).length;
-    return { ...l, total: inList.length, calledToday, leads: inList };
+    const lastOpenedStr = lastOpenedMap[l.id];
+    const lastOpenedMs = lastOpenedStr ? new Date(lastOpenedStr).getTime() : 0;
+    const newSinceLast = lastOpenedMs
+      ? inList.filter(x => x.addedAt && new Date(x.addedAt).getTime() > lastOpenedMs).length
+      : 0; // first time → no "NEW" badge, the SDR has seen nothing yet
+    return { ...l, total: inList.length, calledToday, newSinceLast, leads: inList };
   });
+
+  // Post-call summary banner — pops at the top of the Calling list when
+  // the SDR closes the cockpit. Lives in sessionStorage so it's gone on
+  // the next browser session (tomorrow). Auto-disappears 5 min after
+  // the cockpit closed.
+  let postCallBanner = '';
+  try {
+    const raw = sessionStorage.getItem('vl_last_call_session');
+    if (raw) {
+      const s = JSON.parse(raw);
+      const ageMin = (Date.now() - (s.endedAt || 0)) / 60000;
+      if (s && s.calls > 0 && ageMin < 5) {
+        const listName = (lists.find(x => x.id === s.listId)?.name) || 'Calling list';
+        postCallBanner = `<div id="cl-post-session" style="background:linear-gradient(135deg,rgba(110,231,153,0.10),rgba(110,231,153,0.02));border:1px solid rgba(110,231,153,0.35);border-radius:14px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;gap:14px">
+          <span style="font-size:22px;line-height:1">✓</span>
+          <div style="flex:1">
+            <div style="font-size:13.5px;font-weight:800;color:#fff">Session afsluttet — ${listName}</div>
+            <div style="font-size:11.5px;color:var(--w55);margin-top:2px"><strong style="color:#6ee7b7">${s.calls}</strong> ${s.calls===1?'opkald':'opkald'} · <strong style="color:#6ee7b7">${s.interested||0}</strong> ${(s.interested||0)===1?'interesseret':'interesserede'}</div>
+          </div>
+          <button onclick="dismissPostCallBanner()" title="Skjul" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:6px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">Skjul</button>
+        </div>`;
+      } else if (ageMin >= 5) {
+        sessionStorage.removeItem('vl_last_call_session');
+      }
+    }
+  } catch {}
 
   // Full-width horizontal accordion rows. Click a row to expand its
   // lead table inline. Only one expands at a time (the active one).
@@ -6583,18 +6618,26 @@ function renderCallingListPage(){
   const listRow = (s) => {
     const isExpanded = s.id === activeId;
     const disabled = s.total === 0;
+    const hasNew = s.newSinceLast > 0;
+    // Subtle: only intensify the glow when there's genuinely something
+    // new to call. Otherwise keep the standard animation so the page
+    // doesn't feel like a slot machine.
+    const startBtnExtra = hasNew
+      ? 'box-shadow:0 0 28px rgba(124,58,237,0.65),0 4px 18px rgba(124,58,237,0.55)'
+      : '';
     return `<div style="background:var(--dark2);border:1px solid ${isExpanded?'rgba(124,58,237,0.55)':'var(--w08)'};border-radius:14px;margin-bottom:10px;overflow:hidden;transition:border-color 0.15s">
       <div onclick="callingListToggleExpand('${e(s.id)}')" style="display:flex;align-items:center;gap:14px;padding:18px 22px;cursor:pointer;transition:background 0.12s" onmouseover="this.style.background='rgba(124,58,237,0.04)'" onmouseout="this.style.background='transparent'">
         <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px;flex-wrap:wrap">
             <span style="font-size:16px;font-weight:800;color:#fff">${e(s.name)}</span>
             ${isExpanded?'<span style="font-size:9px;color:#c4b5fd;font-weight:800;letter-spacing:0.6px;background:rgba(124,58,237,0.18);padding:3px 7px;border-radius:5px">ÅBEN</span>':''}
+            ${hasNew?`<span style="font-size:9.5px;color:#6ee7b7;font-weight:800;letter-spacing:0.6px;background:rgba(110,231,153,0.14);border:1px solid rgba(110,231,153,0.35);padding:3px 8px;border-radius:5px" title="Nye leads siden sidste session i denne liste">+${s.newSinceLast} NYE</span>`:''}
           </div>
           <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.total>0?'#fff':'var(--w55)'};font-weight:800">${s.total}</strong> ${s.total===1?'lead':'leads'}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
         </div>
         <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
         <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Pipeline)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
-        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${disabled?'opacity:0.35;cursor:not-allowed;animation:none':''}" ${disabled?'disabled':''}>▶ Start opkald</button>
+        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.35;cursor:not-allowed;animation:none':''}" ${disabled?'disabled':''}>▶ Start opkald</button>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;flex-shrink:0"><path d="M3 5l4 4 4-4"/></svg>
       </div>
       ${isExpanded ? `<div style="border-top:1px solid var(--w08)">${renderLeadTable(s)}</div>` : ''}
@@ -6605,7 +6648,14 @@ function renderCallingListPage(){
     <span style="font-size:18px;line-height:1">+</span> Opret ny liste
   </div>`;
 
-  tabsEl.innerHTML = stats.map(listRow).join('') + newListRow;
+  tabsEl.innerHTML = postCallBanner + stats.map(listRow).join('') + newListRow;
+}
+// Dismiss the "Session afsluttet" banner — clears the sessionStorage entry
+// so it doesn't reappear on the next renderCallingListPage tick.
+function dismissPostCallBanner(){
+  try { sessionStorage.removeItem('vl_last_call_session'); } catch {}
+  const el = document.getElementById('cl-post-session');
+  if (el) el.remove();
 }
 function callingListSetActive(id){
   setActiveCallingListId(id);
@@ -7649,6 +7699,20 @@ function openCockpit(forceCvr){
   _cockpit.idx=resumeIdx>=0?resumeIdx:0;
   _cockpit.leadEnteredAt = Date.now();        // start view-timer for first lead
   _cockpit.open=true;
+  // Session stats — counts dispositions for the post-call summary banner
+  // on the Calling list page. Resets every cockpit-open. activeListId
+  // captures which calling list the SDR worked through this session.
+  _cockpit.session = { startedAt: Date.now(), listId: activeCallingListId, calls: 0, interested: 0 };
+  // Stamp the "last opened" timestamp for the active calling list so
+  // renderCallingListPage can compute a "NEW since last opened" badge
+  // on each list row.
+  if (activeCallingListId) {
+    try {
+      const map = JSON.parse(localStorage.getItem('vl_cl_last_opened') || '{}');
+      map[activeCallingListId] = new Date().toISOString();
+      localStorage.setItem('vl_cl_last_opened', JSON.stringify(map));
+    } catch {}
+  }
   const el=document.getElementById('cockpit');
   el.style.display='flex';
   document.body.style.overflow='hidden';
@@ -7664,6 +7728,17 @@ function openCockpit(forceCvr){
 function closeCockpit(){
   _cockpit.open=false;
   if (_cockpit.callbackPollId) { clearInterval(_cockpit.callbackPollId); _cockpit.callbackPollId = null; }
+  // Persist session summary so the Calling list page can show a post-call
+  // banner ("Du ringede til 23 leads · 2 interesserede"). Lives in
+  // sessionStorage so it doesn't pollute the next day's first cockpit-open.
+  if (_cockpit.session && (_cockpit.session.calls > 0)) {
+    try {
+      sessionStorage.setItem('vl_last_call_session', JSON.stringify({
+        ...(_cockpit.session),
+        endedAt: Date.now(),
+      }));
+    } catch {}
+  }
   document.getElementById('cockpit').style.display='none';
   document.body.style.overflow='';
   document.removeEventListener('keydown',cockpitKeyHandler);
@@ -8439,6 +8514,13 @@ async function cockpitDisposition(action){
   //
   // First-ever-called is preserved in firstCallAt (new field, only set
   // if missing) for historical analytics. lastCallAt = MOST RECENT.
+  // Tally session stats for the post-call summary banner on the Calling
+  // list page. Counts every disposition (except not-relevant which
+  // returns early above). Resets every cockpit-open.
+  if (_cockpit.session) {
+    _cockpit.session.calls = (_cockpit.session.calls || 0) + 1;
+    if (action === 'interested') _cockpit.session.interested = (_cockpit.session.interested || 0) + 1;
+  }
   const nowIso = new Date().toISOString();
   const patch = {
     lastAction: action,
