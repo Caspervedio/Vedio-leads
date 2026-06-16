@@ -5133,7 +5133,29 @@ async function gmAddAllMatched(){
 // list they want to dial, sees a summary of the queue, and starts the
 // cockpit with one click. The cockpit overlay is unchanged underneath.
 // Autodialer state — sort + source filter so the queue isn't random.
-if(typeof _adState==='undefined') var _adState={ sort:'priority', sourceFilter:'all', stackFilter:'' };
+if(typeof _adState==='undefined') var _adState={ sort:'priority', sourceFilter:'all', stackFilter:'', categoryFilter:'all' };
+
+// Frontend mirror of server.js deriveSourceCategory. Returns 'ecom' |
+// 'service' | 'unknown'. Trusts lead.source_category if set; otherwise
+// derives from source prefix. Keep in sync with the server-side helper.
+function leadCategory(l){
+  if(l && l.source_category) return l.source_category;
+  const s = String((l&&l.source) || '').toLowerCase();
+  if(s.startsWith('storeleads'))       return 'ecom';
+  if(s.startsWith('meta-ads-discover'))return 'ecom';
+  if(s.startsWith('linkedin-ads'))     return 'service';
+  if(s.startsWith('gmaps-discover'))   return 'service';
+  if(s.startsWith('tech-discover'))    return 'ecom';
+  if(s.startsWith('branche-walk-')){
+    const code = s.replace(/^branche-walk-/,'');
+    // E-com codes from server.js BRANCHE_WALK_ECOM_CODES
+    const ECOM = ['477110','477210','475100','479110','478990','477800','475250','475440','476420','476500','477630','477640','477990'];
+    const SERV = ['731000','741010','683210','791100','563000','742010','961040'];
+    if(ECOM.includes(code)) return 'ecom';
+    if(SERV.includes(code)) return 'service';
+  }
+  return 'unknown';
+}
 
 function renderAutodialerPage(){
   const statsEl=document.getElementById('ad-stats');
@@ -5204,6 +5226,11 @@ function renderAutodialerPage(){
       // Apply source filter (other than the special filter modes above)
       filtered=filtered.filter(l=>(l.source||'manual')===_adState.sourceFilter);
     }
+  }
+  // Apply category filter (ecom vs service) — applies on top of source
+  // filter so SDR can stay in e-com mode while toggling between sources.
+  if(_adState.categoryFilter && _adState.categoryFilter !== 'all'){
+    filtered = filtered.filter(l => leadCategory(l) === _adState.categoryFilter);
   }
   // Apply tech-stack filter (set by Tech Stack Scanner page)
   if(_adState.stackFilter){
@@ -5484,6 +5511,26 @@ function renderAutodialerPage(){
       <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, annoncører, agent-kørsler" style="padding:6px 12px">📋 Aktivitet</button>
       <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:6px 12px">⬇ Eksportér</button>
     </div>
+    <!-- Category tabs (DK e-com vs DK service) — primary segmentation -->
+    ${(()=>{
+      // Count by category over the active queue, before the category
+      // filter is applied (so the chip counts always reflect the full
+      // queue, not the current view).
+      const baseActive = leads.filter(l => l.lastAction!=='not-relevant' && !isTwentyPushed(l));
+      const ecomCount    = baseActive.filter(l => leadCategory(l) === 'ecom').length;
+      const serviceCount = baseActive.filter(l => leadCategory(l) === 'service').length;
+      const allCount     = baseActive.length;
+      const catChip = (id, lbl, cnt) => {
+        const active = (_adState.categoryFilter || 'all') === id;
+        return `<button onclick="adSetCategoryFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?'rgba(124,58,237,0.6)':'var(--w08)'};background:${active?'linear-gradient(135deg,rgba(124,58,237,0.22),rgba(167,139,250,0.14))':'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
+      };
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kategori</span>
+        ${catChip('all',      'Alle leads', allCount)}
+        ${catChip('ecom',    '🛍 DK e-commerce', ecomCount)}
+        ${catChip('service', '🏢 DK service',    serviceCount)}
+      </div>`;
+    })()}
     <!-- Filter + sort row -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kilde</span>
@@ -5677,6 +5724,7 @@ function renderAutodialerPage(){
 
 function adSetList(id){aList=id;rSB();renderAutodialerPage();}
 function adSetSourceFilter(id){_adState.sourceFilter=id;renderAutodialerPage();}
+function adSetCategoryFilter(id){_adState.categoryFilter=id;renderAutodialerPage();}
 
 // ─── Activity log viewer ────────────────────────────────────────────────
 // Shows what the machine is doing: CSV imports, queue refills, Apollo
