@@ -6896,25 +6896,22 @@ function renderCockpit(){
   document.getElementById('cockpit-progress').textContent=`${_cockpit.idx+1} / ${_cockpit.queue.length} leads`;
   renderCockpitQueue();
   renderCockpitDetail(c);
-  // AUTO-REVEAL: when SDR lands on a lead with no contacts (typical for
-  // branche-walk Datafordeler-direct leads + meta-ads research-bucket
-  // leads), automatically fire the Apollo reveal. Saves the SDR a click
-  // per lead. Cost: ~1 Apollo credit (~$0.05) per lead actually opened.
-  // Daily Apollo cap still protects.
+  // AUTO-REVEAL: every time the SDR opens a lead with no decision-maker
+  // contacts, fire Apollo people-match + Full Enrich phone reveal. Even
+  // if a switchboard phone is already on the lead — the WHOLE POINT is
+  // to surface a direct-dial mobile + the right person to ask for,
+  // rather than dial a gatekeeper who blocks 90% of calls.
+  //
+  // Cost per cockpit-open (worst case):
+  //   • 1 Apollo credit for people-match (~$0.05)
+  //   • 10 Full Enrich credits IF top contact has LinkedIn URL AND
+  //     phone is actually found (~$0.55) — Full Enrich only bills on hit
+  // Apollo + Full Enrich daily caps still protect against runaway burn.
+  // Idempotency: _autoRevealAttempted ensures one reveal per lead per
+  // session, even if SDR clicks back and forth.
   if (c && !_autoRevealAttempted.has(c.cvr)) {
     const contactsCount = Array.isArray(c.contacts) ? c.contacts.length : 0;
-    // PR6: also fire auto-reveal for verified-advertising leads that
-    // simply lack a phone (meta-ads/linkedin-ads fresh out of discovery).
-    // The cockpit shouldn't sit stuck with "ingen tlf" — try Apollo
-    // immediately so SDR sees a phone within seconds of opening.
-    const hasPhone = !!((c.phone || c.ph || '').toString().trim());
-    const isVerifiedAd = c.meta_advertiser === true || c.linkedin_advertiser === true || c.meta_verified_active === true;
-    const needsReveal = contactsCount === 0 && (
-      c.apollo_enrichment_deferred === true ||
-      c.needs_research === true ||
-      (!hasPhone && isVerifiedAd)
-    );
-    if (needsReveal) {
+    if (contactsCount === 0) {
       _autoRevealAttempted.add(c.cvr);
       _cockpitAutoReveal(c.cvr);
     }
