@@ -6384,7 +6384,7 @@ function openLeadInspector(cvr){
         ${c.phone?`<button onclick="ringNow('${e(c.phone)}','${e(lead.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:12px;color:#c4b5fd;margin-top:4px;display:inline-block">📞 ${e(c.phone)}</button>`:''}
         ${c.email?`<div style="font-size:11px;color:var(--w80);margin-top:3px"><a href="mailto:${e(c.email)}" style="color:#60a5fa;text-decoration:none">${e(c.email)}</a></div>`:''}
       </div>`).join('')
-    : `<div style="font-size:12px;color:var(--w55);font-style:italic;padding:8px 0">Ingen beslutningstagere fundet endnu. Apollo enrichment kører automatisk ved cockpit-åbning.</div>`;
+    : `<div style="font-size:12px;color:var(--w55);font-style:italic;padding:8px 0">Ingen beslutningstagere fundet endnu. Åbn cockpittet og klik <strong style="color:#fff">"Find beslutningstagere"</strong> for at lade Apollo + Full Enrich søge (~$0.60 per fundet nummer).</div>`;
 
   const listOptions = lists.map(l => {
     const isCurrent = l.id === currentListId;
@@ -8131,26 +8131,11 @@ function renderCockpit(){
   if (typeof renderCockpitListSwitcher === 'function') renderCockpitListSwitcher();
   renderCockpitQueue();
   renderCockpitDetail(c);
-  // AUTO-REVEAL: every time the SDR opens a lead with no decision-maker
-  // contacts, fire Apollo people-match + Full Enrich phone reveal. Even
-  // if a switchboard phone is already on the lead — the WHOLE POINT is
-  // to surface a direct-dial mobile + the right person to ask for,
-  // rather than dial a gatekeeper who blocks 90% of calls.
-  //
-  // Cost per cockpit-open (worst case):
-  //   • 1 Apollo credit for people-match (~$0.05)
-  //   • 10 Full Enrich credits IF top contact has LinkedIn URL AND
-  //     phone is actually found (~$0.55) — Full Enrich only bills on hit
-  // Apollo + Full Enrich daily caps still protect against runaway burn.
-  // Idempotency: _autoRevealAttempted ensures one reveal per lead per
-  // session, even if SDR clicks back and forth.
-  if (c && !_autoRevealAttempted.has(c.cvr)) {
-    const contactsCount = Array.isArray(c.contacts) ? c.contacts.length : 0;
-    if (contactsCount === 0) {
-      _autoRevealAttempted.add(c.cvr);
-      _cockpitAutoReveal(c.cvr);
-    }
-  }
+  // Auto-reveal on cockpit-open was REMOVED 2026-06-16 per user request.
+  // Apollo (~$0.05) + Full Enrich (~$0.60 on hit) now fire ONLY when the
+  // SDR clicks the "🔍 Find beslutningstagere" button in the cockpit
+  // contacts section. _cockpitAutoReveal() is still the implementation;
+  // it's just gated behind a button click instead of automatic firing.
 }
 
 async function _cockpitAutoReveal(cvr) {
@@ -8392,7 +8377,11 @@ function renderCockpitDetail(c){
               </div>
             </div>
           </div>
-        `).join(''):`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)">${c.apollo_enrichment_deferred?`<div style="margin-bottom:6px;color:var(--w80)">Beslutningstager ikke hentet endnu.</div><div style="margin-bottom:8px;font-size:10.5px;color:var(--w35)">Du kan ringe på hovednummeret med det samme.<br>Klik for at finde direkte kontakt (~1 Apollo credit)</div>`:`Ingen kontakter fundet endnu.<br>`}<button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" style="margin-top:8px;background:var(--purple);color:#fff;padding:7px 14px;border-radius:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:'Outfit',sans-serif">🔍 Find beslutningstager</button>
+        `).join(''):`<div style="background:linear-gradient(135deg,rgba(124,58,237,0.10),rgba(124,58,237,0.02));border:1px solid rgba(124,58,237,0.30);border-radius:12px;padding:20px;text-align:center">
+          <div style="font-size:24px;line-height:1;margin-bottom:8px">🔍</div>
+          <div style="font-size:14.5px;font-weight:800;color:#fff;margin-bottom:6px">Ingen beslutningstager fundet endnu</div>
+          <div style="font-size:11.5px;color:var(--w55);line-height:1.55;margin-bottom:14px;max-width:440px;margin-left:auto;margin-right:auto">Klik for at lade Apollo + Full Enrich finde navne, titler og direkte telefonnumre på beslutningstagerne. ~60-90 sek per lead · ~10 credits hvis et nummer findes (~$0.60).</div>
+          <button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" class="btn-start-call" style="border-radius:10px;padding:11px 22px;font-size:13.5px">🔍 Find beslutningstagere</button>
           <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--w08);font-size:10.5px;color:var(--w35);text-align:left">
             <div style="margin-bottom:6px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase">Eller tilføj selv via LinkedIn URL</div>
             <div style="display:flex;gap:6px">
