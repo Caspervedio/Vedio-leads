@@ -7056,6 +7056,46 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
       }
     }
 
+    // ─── Final phone-reveal stage: Full Enrich on the LinkedIn URL ─────
+    // Apollo + Apify rarely return phones for DK SMB profiles. Full
+    // Enrich Contact Enrich accepts a linkedin_url directly and runs
+    // its 20+ vendor waterfall to find a mobile. Costs ~10 credits on
+    // hit, $0 on miss. This closes the "paste LinkedIn URL → got a
+    // name but no phone" gap. Added 2026-06-16.
+    if ((contact.phones || []).length === 0 && isFullEnrichConfigured()) {
+      try {
+        const feResult = await fullEnrichLookupOne(
+          { linkedin_url: url },
+          { name: "li-lookup-" + cacheKey, timeoutMs: 180_000 }
+        );
+        const info = feResult && feResult.contact_info;
+        const fePhone = info && info.most_probable_phone && info.most_probable_phone.number;
+        const feEmail = info && info.most_probable_work_email && info.most_probable_work_email.email;
+        if (fePhone) {
+          contact.phones = contact.phones || [];
+          contact.phones.push({
+            number: fePhone,
+            type: "mobile",
+            typeLabel: "Direkte mobil (Full Enrich)",
+            status: "verified",
+            position: 0,
+          });
+          if (!contact.phone) {
+            contact.phone = fePhone;
+            contact.phoneType = "mobile";
+            contact.phoneTypeLabel = "Direkte mobil (Full Enrich)";
+            contact.source_phone = "fullenrich";
+          }
+          dataSources.push("fullenrich");
+        }
+        if (feEmail && !contact.email) {
+          contact.email = feEmail;
+        }
+      } catch (e) {
+        console.warn("[apollo/lookup-linkedin] full-enrich fallback failed:", e.message);
+      }
+    }
+
     const result = {
       ok: true,
       found: true,
