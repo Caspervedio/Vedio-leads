@@ -6496,6 +6496,218 @@ app.post("/api/fullenrich/test", authMiddleware, async (req, res) => {
   }
 });
 
+// ─── StoreLeads (DK e-commerce discovery) ─────────────────────────────
+// Source layer for DK Shopify + WooCommerce SMBs in our 1-25 employee
+// ICP. Pulls ~1,000+ stores filtered tight, runs each domain through
+// Datafordeler-name-search to attach a real CVR + phone, then saves
+// with source="storeleads", source_category="ecom" so they show up in
+// the e-com tab of the autodialer.
+//
+// Pro plan limited to 2 platforms — we chose Shopify + WooCommerce
+// (covers ~70% of DK e-com SMBs). Rate-limited to 5 req/sec by their
+// API; one daily run does 10-20 requests so we're well under.
+const STORELEADS_API_BASE = "https://storeleads.app/json/api/v1/all";
+const STORELEADS_PLATFORMS = ["shopify", "woocommerce"];
+const STORELEADS_ICP_EMPMIN = 1;
+const STORELEADS_ICP_EMPMAX = 25;
+const STORELEADS_STATE_FILE = path.join(DATA_DIR, "discovery", "storeleads_state.json");
+
+function isStoreLeadsConfigured() {
+  return !!process.env.STORELEADS_API_KEY;
+}
+
+function loadStoreLeadsState() {
+  try {
+    if (fs.existsSync(STORELEADS_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(STORELEADS_STATE_FILE, "utf8"));
+    }
+  } catch (_) {}
+  // scannedDomains: { "<domain>": "<isoDate>" } so we don't re-process
+  // platformCursors: { shopify: "<cursor>", woocommerce: "<cursor>" }
+  // so pagination continues across runs.
+  return { scannedDomains: {}, platformCursors: {}, lastRunAt: null };
+}
+
+function saveStoreLeadsState(state) {
+  fs.mkdirSync(path.dirname(STORELEADS_STATE_FILE), { recursive: true });
+  fs.writeFileSync(STORELEADS_STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+// POST /domain with filters. Returns {domains, has_next_page, next_cursor, total}.
+async function storeLeadsSearchDomains(platform, opts = {}) {
+  if (!isStoreLeadsConfigured()) throw new Error("StoreLeads not configured");
+  const body = {
+    "f:cc": "DK",
+    "f:p": platform,
+    "f:empcmin": STORELEADS_ICP_EMPMIN,
+    "f:empcmax": STORELEADS_ICP_EMPMAX,
+    "page_size": Math.max(1, Math.min(100, opts.pageSize || 50)),
+  };
+  if (opts.cursor) body.cursor = opts.cursor;
+  const r = await fetch(`${STORELEADS_API_BASE}/domain`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.STORELEADS_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`StoreLeads ${r.status}: ${t.slice(0, 300)}`);
+  }
+  return r.json();
+}
+
+// Pull a phone number from a StoreLeads domain's contact_info array.
+// They store { type, value } where type can be 'phone', 'tel', 'mobile' etc.
+// Returns null if none.
+function _storeLeadsPhone(dom) {
+  const ci = Array.isArray(dom.contact_info) ? dom.contact_info : [];
+  for (const c of ci) {
+    const t = String(c.type || "").toLowerCase();
+    if (t.includes("phone") || t === "tel" || t === "mobile") {
+      const v = String(c.value || "").trim();
+      if (v) return v;
+    }
+  }
+  return null;
+}
+
+// The main discovery cron — paginates each platform, dedupes vs the
+// state file's scannedDomains, runs each through Datafordeler-verify,
+// saves as a lead. Same downstream pipeline as branche-walk.
+app.post("/api/cron/storeleads-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isStoreLeadsConfigured()) {
+    return res.status(503).json({ error: "STORELEADS_API_KEY not configured" });
+  }
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  // Per-run: pull N fresh domains per platform. 30 × 2 = 60 candidates
+  // per run, after DF-verify drops we expect 20-40 saved leads.
+  const PER_PLATFORM = Math.max(5, Math.min(100, Number(req.query.per_platform) || 30));
+  const stats = {
+    perPlatform: {},
+    candidatesScanned: 0,
+    alreadyKnown: 0,
+    nonDkBrand: 0,
+    dfMatched: 0,
+    dfNoMatch: 0,
+    saved: 0,
+    skippedDuplicates: 0,
+    errors: 0,
+  };
+  const state = loadStoreLeadsState();
+  const checkedAt = new Date().toISOString();
+
+  for (const platform of STORELEADS_PLATFORMS) {
+    const pStats = { fetched: 0, saved: 0, dfMatched: 0 };
+    let cursor = state.platformCursors[platform] || null;
+    let pageSize = Math.min(50, PER_PLATFORM);
+    try {
+      const page = await storeLeadsSearchDomains(platform, { pageSize, cursor });
+      const domains = page.domains || [];
+      pStats.fetched = domains.length;
+      stats.candidatesScanned += domains.length;
+      state.platformCursors[platform] = page.has_next_page ? page.next_cursor : null;
+
+      for (const dom of domains) {
+        const domain = String(dom.name || dom.tld1 || "").toLowerCase().trim();
+        if (!domain) continue;
+        if (state.scannedDomains[domain]) { stats.alreadyKnown++; continue; }
+        state.scannedDomains[domain] = checkedAt;
+        const merchantName = (dom.merchant_name || dom.title || domain).trim();
+        if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
+
+        // Datafordeler verify by merchant_name — gives us real CVR + phone
+        let df = null;
+        try { df = await tryDfVerifyDkCompany(merchantName); } catch (_) {}
+
+        try {
+          const ud = loadUserData(TARGET_USER);
+          if (!ud.leads) ud.leads = [];
+          // Dedupe by domain, by real CVR (if DF found one), and by name.
+          const dupByDomain = ud.leads.some((l) => String(l.web || l.website || "").toLowerCase().includes(domain));
+          const dupByCvr = df && df.cvr && ud.leads.some((l) => l.cvr === df.cvr);
+          const dupByName = ud.leads.some((l) => (l.name || "").toLowerCase().trim() === merchantName.toLowerCase());
+          if (dupByDomain || dupByCvr || dupByName) {
+            stats.skippedDuplicates++;
+            continue;
+          }
+
+          const slPhone = _storeLeadsPhone(dom);
+          const phone = (df && (df.phone || df.ph)) || slPhone || "";
+          const employees = (df && (df.emp || df.emps)) || dom.employee_count || "";
+          const techNames = (dom.technologies || []).map((t) => t.name).filter(Boolean);
+
+          // Build a lead record. Prefer DF data when matched (real CVR,
+          // address, etc.); fall back to StoreLeads fields otherwise.
+          const lead = df && df.cvr ? { ...df } : {
+            cvr: `storeleads-${domain.replace(/[^a-z0-9]/g, "")}`,
+            name: merchantName,
+            addr: "", zip: "", city: dom.city || "",
+            ind: (dom.categories || [])[0] || "",
+            ic: "",
+            emp: String(employees || ""),
+            emps: null,
+            st: "aktiv",
+            yr: "", form: "",
+            eq: 0, res: 0, omsaetning: 0,
+          };
+          lead.listId = "ungrouped";
+          lead.addedAt = checkedAt;
+          lead.source = "storeleads";
+          lead.source_label = `${platform[0].toUpperCase()}${platform.slice(1)}`;
+          lead.source_category = "ecom";
+          lead.icpFit = true;
+          lead.web = "https://" + domain;
+          lead.website = "https://" + domain;
+          lead.phone = phone;
+          lead.ph = phone;
+          lead.phone_missing = !phone;
+          if (phone) {
+            lead.phone_recovered_source = df && (df.phone || df.ph) ? "df-cvr-lookup" : "storeleads";
+          }
+          lead.tech_stack = techNames;
+          lead.storeleads_platform = platform;
+          lead.storeleads_estimated_sales_yearly = dom.estimated_sales_yearly || null;
+          lead.storeleads_estimated_visits = dom.estimated_visits || null;
+          lead.discovered_at = checkedAt;
+          lead.apollo_company = null;
+          lead.apollo_enrichment_pending = false; // we'll lazy-enrich on cockpit-open
+          lead.df_verified_at = df && df.cvr ? checkedAt : null;
+
+          ud.leads.push(lead);
+          saveUserData(TARGET_USER, ud);
+          stats.saved++;
+          pStats.saved++;
+          if (df && df.cvr) { stats.dfMatched++; pStats.dfMatched++; }
+          else { stats.dfNoMatch++; }
+        } catch (e) {
+          stats.errors++;
+          console.warn("[storeleads-discover] append failed:", merchantName, e.message);
+        }
+      }
+    } catch (e) {
+      stats.errors++;
+      console.warn(`[storeleads-discover] platform=${platform} failed:`, e.message);
+    }
+    stats.perPlatform[platform] = pStats;
+  }
+
+  state.lastRunAt = checkedAt;
+  saveStoreLeadsState(state);
+  logActivity(
+    "discovery",
+    `StoreLeads: ${stats.candidatesScanned} scanned · ${stats.saved} saved (${stats.dfMatched} DF-matched) · ${stats.alreadyKnown} dup · ${stats.nonDkBrand} non-DK brand`,
+    { stats, userId: TARGET_USER },
+  );
+  console.log("[storeleads-discover] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
+
 // Filter phone array to DK-only (+45). Drops US/foreign HQ numbers
 // that Apollo occasionally surfaces for DK contacts.
 // Apollo's stats showed ~60-70% of DK reveals returned non-DK noise.
