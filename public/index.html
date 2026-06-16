@@ -760,22 +760,17 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3h10v2H3zM3 7h10v2H3zM3 11h10v2H3z"/></svg>
       Leadlist
     </a>
-    <!-- Dead nav items hidden 2026-06-16 — the underlying pages + render
-         functions are intact (in case of code paths still using them),
-         only the sidebar entry-points are suppressed. To restore: just
-         remove the display:none style attribute. -->
-    <a id="nv-meta" onclick="sv('meta-scraper')" style="display:none">META Scraper</a>
+    <!-- Legacy nav items fully removed 2026-06-16 — META Scraper,
+         CVR Discovery, Look-alike Finder, Maps Scraper, Tech Stack
+         Scanner, Liste-builder, LinkedIn-opslag. Underlying page divs
+         + render functions still exist in the file for code-path
+         safety but are unreachable from the UI. The Meta + LinkedIn
+         scrapers will get per-lead trigger buttons in the cockpit. -->
     <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Værktøjer</div>
     <a id="nv-csv" onclick="sv('csv-upload')">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 10V2M5 5l3-3 3 3M2 12v2h12v-2"/></svg>
       Upload list
     </a>
-    <a id="nv-s" onclick="sv('search')" style="display:none">CVR Discovery</a>
-    <a id="nv-la" onclick="sv('lookalike')" style="display:none">Look-alike Finder</a>
-    <a id="nv-gm" onclick="sv('google-maps')" style="display:none">Maps Scraper</a>
-    <a id="nv-ts" onclick="sv('tech-stack')" style="display:none">Tech Stack Scanner</a>
-    <a id="nv-lb" onclick="sv('list-builder')" style="display:none">Liste-builder</a>
-    <a id="nv-li" onclick="openLinkedinLookupModal()" style="display:none">LinkedIn-opslag</a>
     <!-- Min liste retired from the sidebar — the Autodialer cockpit is now
          the canonical "calling list" surface. The underlying leads page
          remains reachable internally (e.g. Look-alike "Administrer seed →"
@@ -973,42 +968,26 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
   <div id="discovery-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
     <div style="max-width:1200px;margin:0 auto;padding:28px 24px">
       <div style="margin-bottom:18px">
-        <div class="section-label" id="disc-section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">Dashboard</div>
-        <h2 id="disc-page-title" style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Vedio Leads — auto-pipeline</h2>
-        <p id="disc-page-sub" style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Samlet overblik over alle leads pushet ind af dine AI Agents. Manuelle agent-kørsler sker fra hver agent's side — Dashboard er udelukkende til review.</p>
+        <div class="section-label" style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📊 Dashboard</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Daglig aktivitet · pipeline-status</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:640px">Dagens og ugens performance, plus hvor friske leads kommer fra. Discovery-crons kører i baggrunden — du behøver ikke at gøre noget her, bare overvåge.</p>
       </div>
 
-      <!-- Auto-pipeline status banner — next run, queue counters, downstream status -->
+      <!-- Activity + goal widget (today + week) — rendered by renderDashboardActivity() -->
+      <div id="dashboard-activity" style="margin-bottom:18px"></div>
+
+      <!-- Pipeline status — where leads come from + cron health -->
       <div id="disc-autoflow" style="margin-bottom:14px"></div>
 
       <!-- Recently added leads — last 48h, refreshes on page open + soft refresh -->
       <div id="pipeline-recent-leads" style="margin-bottom:14px"></div>
 
-      <!-- Summary row -->
-      <div id="disc-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px"></div>
-
-      <!-- ICP-klar review queue — the bridge between Discovery pool and
-           Autodialer. Shows leads the agents have ICP-flagged but the SDR
-           hasn't yet promoted. Bulk-approve sends them to user.leads. -->
-      <div id="disc-review-queue" style="margin-bottom:18px"></div>
-
-      <!-- Source-filter tabs — Dashboard is now ONE unified pool of leads
-           pushed in from every AI Agent. Tabs let the SDR see where each
-           lead came from. Default = "Alle" (everything across sources). -->
-      <div style="display:flex;gap:0;border-bottom:1px solid var(--w08);margin-bottom:18px;flex-wrap:wrap">
-        <button class="disc-tab on" data-tab="all" onclick="discSetTab('all')" style="padding:10px 18px;font-size:12px;font-weight:700;letter-spacing:0.3px;color:var(--purple-light);background:transparent;border:none;border-bottom:2px solid var(--purple);margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">📡 Alle leads</button>
-        <button class="disc-tab" data-tab="meta" onclick="discSetTab('meta')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🔥 META Scraper</button>
-        <button class="disc-tab" data-tab="lookalike" onclick="discSetTab('lookalike')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🎯 Look-alike</button>
-        <button class="disc-tab" data-tab="maps" onclick="discSetTab('maps')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🗺️ Maps</button>
-        <button class="disc-tab" data-tab="tech" onclick="discSetTab('tech')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">🧱 Tech Stack</button>
-        <button class="disc-tab" data-tab="csv" onclick="discSetTab('csv')" style="padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:0.3px;color:var(--w55);background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:'Outfit',sans-serif">📥 CSV</button>
-      </div>
-
-      <!-- Filter bar -->
-      <div id="disc-filter-bar" style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center"></div>
-
-      <!-- Results -->
-      <div id="disc-results"></div>
+      <!-- Legacy slots kept hidden but in DOM so code paths referencing
+           them don't 404. Will be cleaned in a follow-up. -->
+      <div id="disc-summary" style="display:none"></div>
+      <div id="disc-review-queue" style="display:none"></div>
+      <div id="disc-filter-bar" style="display:none"></div>
+      <div id="disc-results" style="display:none"></div>
     </div>
   </div>
 
@@ -1528,6 +1507,7 @@ async function softRefresh() {
     if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
   } catch (_) {}
   try {
+    if (typeof renderDashboardActivity === 'function') renderDashboardActivity();
     if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
     if (typeof renderRecentLeadsWidget === 'function') renderRecentLeadsWidget();
   } catch (_) {}
@@ -1573,6 +1553,7 @@ async function _dashAutoRefreshTick() {
   try {
     await loadUserState();
     if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+    if (typeof renderDashboardActivity === 'function') renderDashboardActivity();
     if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
     if (typeof renderRecentLeadsWidget === 'function') renderRecentLeadsWidget();
     _dashLastRefreshAt = Date.now();
@@ -2637,6 +2618,7 @@ function renderDiscoverySummary(){
   // banner which referenced PAUSED jobs and hardcoded "06:00 + 12:00".
   // Fetches live state from /api/discovery/pipeline-status and renders
   // a per-source status grid.
+  renderDashboardActivity();
   renderPipelineStatusWidget();
   renderRecentLeadsWidget();
   const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
@@ -2650,6 +2632,106 @@ function renderDiscoverySummary(){
     tile('Seneste kørsel',ago,s.lastRunCompletedAt?new Date(s.lastRunCompletedAt).toLocaleString('da-DK'):'—'),
     tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`aktive virksomheder i mål-brancher`),
   ].join('');
+}
+
+// Dashboard activity widget — Today + Week metrics with goal progress.
+// Reads from the same `leads` array the rest of the UI uses (refreshed
+// via loadUserState + softRefresh). Goals come from localStorage:
+//   vl_daily_call_goal  (default 40)
+//   vl_weekly_call_goal (default 200)
+function renderDashboardActivity(){
+  const el = document.getElementById('dashboard-activity');
+  if (!el) return;
+
+  const now = Date.now();
+  const startToday = new Date(); startToday.setHours(0,0,0,0);
+  const TODAY_MS = startToday.getTime();
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  // Same classifier the activity table uses (manual vs auto-archive)
+  const isSysArchive = (l) => {
+    const r = String(l.archived_reason || '');
+    return r.startsWith('Apollo:') || r.startsWith('Apollo ICP') ||
+           r.startsWith('Branche-walk') || r.startsWith('Auto-arkiveret') ||
+           r.startsWith('Auto-archived');
+  };
+  const inScope = (iso, scope) => {
+    if (!iso) return false;
+    const t = new Date(iso).getTime();
+    if (!t) return false;
+    if (scope === 'today') return t >= TODAY_MS;
+    if (scope === 'week')  return (now - t) < WEEK_MS;
+    return true;
+  };
+
+  const count = (scope) => {
+    const c = { dialed:0, interested:0, follow_up:0, no_answer:0, not_relevant_manual:0, sms:0, twentyPushed:0 };
+    for (const l of (leads || [])) {
+      const dispTime = l.lastDispositionAt || l.lastCallAt;
+      if (inScope(l.lastCallAt, scope)) c.dialed++;
+      if (inScope(dispTime, scope) && l.lastAction) {
+        const a = l.lastAction;
+        if (a === 'interested')   c.interested++;
+        else if (a === 'follow-up') c.follow_up++;
+        else if (a === 'no-answer') c.no_answer++;
+        else if (a === 'not-relevant' && !isSysArchive(l)) c.not_relevant_manual++;
+        else if (a === 'sms')      c.sms++;
+      }
+      if (l.twenty_pushed_at && inScope(l.twenty_pushed_at, scope)) c.twentyPushed++;
+    }
+    return c;
+  };
+  const today = count('today');
+  const week  = count('week');
+
+  // Goals (localStorage-backed, click chip to edit)
+  const dailyGoal  = Number(localStorage.getItem('vl_daily_call_goal'))  || 40;
+  const weeklyGoal = Number(localStorage.getItem('vl_weekly_call_goal')) || (dailyGoal * 5);
+  const dPct = Math.min(100, Math.round((today.dialed/dailyGoal)*100));
+  const wPct = Math.min(100, Math.round((week.dialed/weeklyGoal)*100));
+  const dCol = dPct >= 100 ? '#34d399' : dPct >= 75 ? '#a78bfa' : dPct >= 25 ? '#c4b5fd' : 'var(--w55)';
+  const wCol = wPct >= 100 ? '#34d399' : wPct >= 75 ? '#a78bfa' : wPct >= 25 ? '#c4b5fd' : 'var(--w55)';
+
+  const stat = (lbl, val, color) => `<div style="text-align:center;padding:10px 8px;background:var(--w04);border-radius:9px;border:1px solid var(--w08)">
+    <div style="font-size:22px;font-weight:900;color:${color || '#fff'};line-height:1.1;font-variant-numeric:tabular-nums">${val}</div>
+    <div style="font-size:9.5px;font-weight:700;color:var(--w55);letter-spacing:0.6px;text-transform:uppercase;margin-top:3px">${lbl}</div>
+  </div>`;
+
+  const goalBar = (label, dialed, goal, pct, col, kind) => `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px;cursor:pointer" onclick="const k='${kind}';const v=prompt('${label} (antal kald)?', '${goal}'); if(v && Number(v)>0){localStorage.setItem(k, String(Number(v))); renderDashboardActivity();}">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <span style="font-size:11px;color:var(--w55);font-weight:700;letter-spacing:0.5px;text-transform:uppercase">${label}</span>
+      <span style="font-size:13px;color:${col};font-weight:800">${dialed}/${goal} <span style="color:var(--w35);font-weight:600">(${pct}%)</span></span>
+    </div>
+    <div style="height:6px;background:var(--w08);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${col};transition:width 0.3s"></div></div>
+  </div>`;
+
+  el.innerHTML = `
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:18px 20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1.2px;text-transform:uppercase">Aktivitet · I dag</div>
+        <div style="font-size:11px;color:var(--w55)">Klik på mål-bar for at ændre</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">
+        ${stat('Ringet',    today.dialed,            '#fff')}
+        ${stat('Interesseret', today.interested,    '#6ee7b7')}
+        ${stat('Follow-up',  today.follow_up,        '#c4b5fd')}
+        ${stat('Ingen svar', today.no_answer,        '#60a5fa')}
+        ${stat('Ikke rel.',  today.not_relevant_manual, 'var(--w55)')}
+        ${stat('→ Twenty',   today.twentyPushed,     '#60a5fa')}
+      </div>
+      ${goalBar('🎯 Daglig mål', today.dialed, dailyGoal, dPct, dCol, 'vl_daily_call_goal')}
+      <div style="height:14px"></div>
+      <div style="font-size:11px;font-weight:800;color:var(--w35);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Aktivitet · Denne uge</div>
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">
+        ${stat('Ringet',    week.dialed,            '#fff')}
+        ${stat('Interesseret', week.interested,    '#6ee7b7')}
+        ${stat('Follow-up',  week.follow_up,        '#c4b5fd')}
+        ${stat('Ingen svar', week.no_answer,        '#60a5fa')}
+        ${stat('Ikke rel.',  week.not_relevant_manual, 'var(--w55)')}
+        ${stat('→ Twenty',   week.twentyPushed,     '#60a5fa')}
+      </div>
+      ${goalBar('🎯 Ugentlig mål', week.dialed, weeklyGoal, wPct, wCol, 'vl_weekly_call_goal')}
+    </div>`;
 }
 
 // Recently added leads widget — shows last 48h of intake on the
