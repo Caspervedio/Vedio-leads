@@ -8425,8 +8425,8 @@ function sv(v){
   // Sidebar nav active-state — Dashboard is the new home of the old "Lead
   // discovery" page. Lead-source pages each get their own nav highlight so
   // the SDR always knows which tool they're inside.
-  document.getElementById('nv-s').classList.toggle('on',v==='search');
-  document.getElementById('nv-l').classList.toggle('on',v==='leads');
+  document.getElementById('nv-s')?.classList.toggle('on',v==='search');
+  document.getElementById('nv-l')?.classList.toggle('on',v==='leads');
   document.getElementById('nv-c')?.classList.toggle('on',v==='customers');
   document.getElementById('nv-d')?.classList.toggle('on',v==='discovery');
   document.getElementById('nv-la')?.classList.toggle('on',v==='lookalike');
