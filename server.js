@@ -9127,6 +9127,20 @@ const BRANCHE_WALK_CODES = [
   { code: "791100", label: "Rejsebureau"       },
   // Optics — chain stores advertise heavily
   { code: "477800", label: "Optikere"          },
+  // Phase 1 expansion (2026-06-16): more ICP-relevant DB07 codes for
+  // DK SMBs that buy paid acquisition / video. Each surfaces 500-3000
+  // companies in Datafordeler; combined with Meta Ad Library scoring,
+  // we get a wider net of marketing-active candidates.
+  { code: "475250", label: "Belysning"         },
+  { code: "475440", label: "Glas/keramik"      },
+  { code: "476420", label: "Sport"             },
+  { code: "476500", label: "Spil/legetøj"      },
+  { code: "477630", label: "Blomster"          },
+  { code: "477640", label: "Dyr/foder"         },
+  { code: "477990", label: "Anden detail"      },
+  { code: "563000", label: "Caféer/cafeterier" },
+  { code: "742010", label: "Fotograf-erhverv"  },
+  { code: "961040", label: "Wellness/skønhed"  },
 ];
 
 // Marketing-tech regex applied to Apollo's technology_names list.
