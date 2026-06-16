@@ -781,7 +781,13 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 8h4v6H2zM6 4h4v10H6zM10 1h4v13h-4z"/></svg>
       Dashboard
     </a>
-    <a id="nv-ad" onclick="sv('autodialer')">
+    <!-- Leadlist nav hidden 2026-06-16 — the "prep before calling" step is
+         retired now that server-side saveUserData auto-assigns
+         calling_list_id on every active lead. Old archive/twenty-pushed
+         audit views are still reachable via the chip-filter on the Calling
+         list page when needed. The autodialer-page div itself is left in
+         place since other flows still reference adOpenLead() etc. -->
+    <a id="nv-ad" onclick="sv('autodialer')" style="display:none">
       <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3h10v2H3zM3 7h10v2H3zM3 11h10v2H3z"/></svg>
       Leadlist
     </a>
@@ -1021,6 +1027,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <!-- Admin-only lead-economics card — silent for non-admin (403) -->
       <div id="ad-economics" style="margin-bottom:18px"></div>
 
+      <!-- Discovery pipeline — per-source cron health + leads added today.
+           Moved back here 2026-06-16 (was briefly on Leadlist). System-
+           health belongs on the overview surface. -->
+      <div id="disc-autoflow" style="margin-bottom:18px"></div>
+
       <!-- Recently added leads — last 48h -->
       <div id="pipeline-recent-leads" style="margin-bottom:14px"></div>
 
@@ -1130,10 +1141,11 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
              data it acts on, not buried in the sidebar. -->
         <button onclick="openExportPicker()" title="Eksportér leads til CSV — vælg hvilke i modal" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;transition:border-color 0.12s,color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.color='#fff';this.style.background='rgba(124,58,237,0.10)'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)';this.style.background='var(--w04)'">⬇ Eksportér</button>
       </div>
-      <!-- Discovery pipeline widget — moved from Dashboard 2026-06-16.
-           Shows per-source cron health + leads added today. Populated
-           by renderPipelineStatusWidget(). -->
-      <div id="disc-autoflow" style="margin-bottom:18px"></div>
+      <!-- Discovery pipeline widget moved BACK to Dashboard 2026-06-16
+           where it belongs (system-health overview, not prep workflow).
+           Slot stays here in case any cron-state polling code still
+           references it; render output now lands on Dashboard's slot. -->
+      <div id="disc-autoflow-legacy-leadlist" style="display:none"></div>
       <!-- One-shot migration banner — populated by render when there
            are 5+ unassigned active leads, so the SDR can move them all
            into named calling lists in one click instead of bulk-checking
@@ -2696,17 +2708,14 @@ async function fetchDiscoveryRows(){
 function renderDiscoverySummary(){
   const s=_discCache.summary;if(!s)return;
   const ago=s.lastRunCompletedAt?humanAgo(s.lastRunCompletedAt):'aldrig';
-  // Dashboard layout (2026-06-16 restructure):
+  // Dashboard layout:
   //   1. BIG daily-goal hero — renderDashboardActivity → #dashboard-activity
-  //   2. Activity tiles + breakdown — renderAutodialerPage fills
-  //      #ad-stats + #ad-activity (the Leadlist-render pieces no longer
-  //      live on Leadlist; that page now hosts the Discovery pipeline +
-  //      queue only).
-  //   3. Recently-added leads — renderRecentLeadsWidget → #pipeline-recent-leads
-  // renderPipelineStatusWidget is no longer called from here — disc-autoflow
-  // moved to Leadlist and is triggered from renderAutodialerPage().
+  //   2. Activity tiles + breakdown — renderAutodialerPage fills #ad-stats + #ad-activity
+  //   3. Discovery pipeline — per-source cron health → #disc-autoflow
+  //   4. Recently-added leads — renderRecentLeadsWidget → #pipeline-recent-leads
   renderDashboardActivity();
   if(typeof renderAutodialerPage==='function') renderAutodialerPage();
+  if(typeof renderPipelineStatusWidget==='function') renderPipelineStatusWidget();
   renderRecentLeadsWidget();
   const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
@@ -5375,9 +5384,8 @@ function renderAutodialerPage(){
   const listsEl=document.getElementById('ad-lists');
   const queueEl=document.getElementById('ad-queue');
   if(!statsEl && !listsEl && !queueEl) return;
-  // Kick off the Discovery-pipeline widget on whichever page hosts it
-  // (currently Leadlist). Cheap — internally null-guards on disc-autoflow.
-  if(typeof renderPipelineStatusWidget==='function') renderPipelineStatusWidget();
+  // Discovery-pipeline widget call removed from here 2026-06-16 — the
+  // widget lives on Dashboard now and renderDiscoverySummary fires it.
   // Stats — queue size for the currently-selected list, total leads,
   // last-called timestamp (best-effort: latest lastCallAt on any lead).
   let filtered=(aList&&aList!=='all')?leads.filter(l=>l.listId===aList):leads.slice();
