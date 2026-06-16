@@ -791,7 +791,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
     <div class="sb-addlist" onclick="togNL()">＋ Ny liste</div>
     <input id="nli" class="nlinput" placeholder="Navn + Enter" style="display:none" autocomplete="off">
   </div>
-  <div class="sb-footer" id="sb-footer" style="display:none">
+  <div class="sb-footer" id="sb-footer">
+    <!-- Global Aktivitet — moved here 2026-06-16 so it's reachable from any
+         page (was previously only on Leadlist + cockpit toolbars). -->
+    <button class="exp-btn" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, opkald, dispositioner" style="margin-bottom:6px">📋 Aktivitet</button>
     <button class="exp-btn" onclick="doExport()">⬇ Eksportér leads (CSV)</button>
   </div>
 
@@ -1169,10 +1172,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <button id="cockpit-skip-btn" onclick="cockpitSkip()" title="Spring dette lead over og gå til næste (uden disposition)" style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 14px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">⏭ Skip</button>
     </div>
     <div style="flex:1"></div>
-    <!-- Manual call / SMS -->
-    <button class="btn btn-sm" onclick="cockpitOpenManualCall()" title="Indtast et nummer og ring manuelt" style="padding:8px 12px">📞 Manuelt opkald</button>
-    <button class="btn btn-sm" onclick="cockpitOpenManualSms()" title="Indtast et nummer og send SMS manuelt" style="padding:8px 12px">💬 Manuel SMS</button>
-    <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog">📋 Aktivitet</button>
+    <!-- Manuelt opkald / Manuel SMS / Aktivitet were removed 2026-06-16 —
+         the calling list is the dialer surface (SDR calls leads from
+         the queue, not arbitrary numbers); SMS as a disposition was
+         retired; Aktivitet moved to the sidebar footer for global access. -->
     <button class="btn btn-sm" onclick="cockpitShowHelp()" title="Vis tastatur-genveje">?</button>
     <button class="btn btn-sm" onclick="closeCockpit()">Luk (esc)</button>
   </div>
@@ -5624,13 +5627,12 @@ function renderAutodialerPage(){
         const active = (_adState.categoryFilter || 'all') === id;
         return `<button onclick="adSetCategoryFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?'rgba(124,58,237,0.6)':'var(--w08)'};background:${active?'linear-gradient(135deg,rgba(124,58,237,0.22),rgba(167,139,250,0.14))':'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s" title="${active?'Klik igen for at vise alle kategorier':'Vis kun '+lbl}">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
       };
+      // Aktivitet + Eksportér moved to the sidebar footer 2026-06-16 — they
+      // are global actions and shouldn't live inside the Leadlist toolbar.
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kategori</span>
         ${catChip('ecom',    '🛍 DK e-commerce', ecomCount)}
         ${catChip('service', '🏢 DK service',    serviceCount)}
-        <span style="flex:1"></span>
-        <button class="btn btn-sm" onclick="openActivityLog()" title="Vis aktivitetslog — imports, berigning, annoncører, agent-kørsler" style="padding:6px 12px">📋 Aktivitet</button>
-        <button class="btn btn-sm" onclick="doExport()" title="Eksportér listen som CSV" style="padding:6px 12px">⬇ Eksportér</button>
       </div>`;
     })()}
     <!-- Filter + sort row -->
@@ -6288,7 +6290,6 @@ function renderAdActivityTable(today, week, all, perSdr){
     { id:'dialed',              lbl:'📞 Ringet',                  t:today.dialed,              w:week.dialed,              a:all.dialed,              color:'#fff' },
     { id:'interested',          lbl:'✓ Interesseret',              t:today.interested,          w:week.interested,          a:all.interested,          color:'#6ee7b7' },
     { id:'follow_up',           lbl:'📅 Follow-up planlagt',        t:today.follow_up,           w:week.follow_up,           a:all.follow_up,           color:'#c4b5fd' },
-    { id:'sms',                 lbl:'💬 SMS sendt',                 t:today.sms,                 w:week.sms,                 a:all.sms,                 color:'#a78bfa' },
     { id:'no_answer',           lbl:'✕ Ingen svar',                t:today.no_answer,           w:week.no_answer,           a:all.no_answer,           color:'#60a5fa' },
     { id:'not_relevant_manual', lbl:'– Ikke relevant (manuel)',     t:today.not_relevant_manual, w:week.not_relevant_manual, a:all.not_relevant_manual, color:'var(--w55)' },
     { id:'not_relevant_auto',   lbl:'⚙ Auto-arkiveret (system)',     t:today.not_relevant_auto,   w:week.not_relevant_auto,   a:all.not_relevant_auto,   color:'var(--w35)' },
@@ -6640,7 +6641,7 @@ function cockpitKeyHandler(ev){
   if(ev.key==='ArrowLeft'){cockpitPrev();ev.preventDefault();return;}
   if(ev.key==='?'||(ev.key==='/'&&ev.shiftKey)){cockpitShowHelp();ev.preventDefault();return;}
   if(ev.key>='1'&&ev.key<='5'){
-    const map={'1':'interested','2':'sms','3':'no-answer','4':'not-relevant','5':'follow-up'};
+    const map={'1':'interested','2':'follow-up','3':'no-answer','4':'not-relevant'};
     cockpitDisposition(map[ev.key]);
     ev.preventDefault();
   }
@@ -7289,23 +7290,17 @@ function renderCockpitDetail(c){
         ${COCKPIT_GATEKEEPER_SCRIPTS.map(s=>`<div style="margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><button onclick="cockpitCopyScript(${JSON.stringify(s.body).replace(/"/g,'&quot;')})" style="flex-shrink:0;padding:3px 8px;background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Kopier til udklipsholder">📋 ${e(s.label)}</button><span style="color:var(--w80);font-style:italic">"${e(s.body)}"</span></div>`).join('')}
       </div>`; })()}
 
-      <!-- Post-call disposition. Required before next call — guarded by
-           _cockpit.requireDisposition. SMS lives here in slot 2 with the
-           same icon-card style as the other actions. Follow-up = "we
-           talked, schedule a follow-up call" (distinct from no-answer). -->
+      <!-- Post-call disposition. Required before next call.
+           SMS retired 2026-06-16 (no longer a disposition path). Follow-up
+           takes slot 2 — clicking the card opens the callback picker,
+           same as the old standalone "📅 Planlæg follow-up…" button
+           below the grid (which was merged in here). -->
       <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px">Efter kald — vælg disposition</div>
-      <div id="cockpit-disposition-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div id="cockpit-disposition-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
         ${action('✓','Interesseret — Push til Twenty','1','cockpitDisposition(\'interested\')')}
-        ${action('📅','Vi talte — planlæg follow-up','5','cockpitDisposition(\'follow-up\')')}
-        ${action('💬','Send SMS','2','cockpitDisposition(\'sms\')')}
+        ${action('📅','Vi talte — planlæg follow-up','2','cockpitDisposition(\'follow-up\')')}
         ${action('✕','Ingen svar → planlæg callback','3','cockpitDisposition(\'no-answer\')')}
         ${action('–','Ikke relevant → arkivér','4','cockpitDisposition(\'not-relevant\')')}
-      </div>
-      <!-- Always-available "schedule follow-up" — works before/during/after
-           a call, regardless of current disposition. Useful when an
-           Interesseret lead also wants a follow-up scheduled. -->
-      <div style="margin-bottom:18px;display:flex;justify-content:flex-end">
-        <button onclick="cockpitOpenCallbackPicker(cockpitCurrent())" title="Planlæg en follow-up uden at ændre disposition (også oven på Interesseret)" style="background:var(--w04);border:1px solid rgba(196,181,253,0.4);color:#c4b5fd;border-radius:9px;padding:7px 14px;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer">📅 Planlæg follow-up…</button>
       </div>
 
       <!-- Twenty push — manual trigger, NOT automatic on "Interesseret".
@@ -8086,7 +8081,7 @@ async function cockpitSaveNote(text){
   }catch(_){}
 }
 function cockpitShowHelp(){
-  showToast('Genveje: 1=Interesseret · 2=SMS · 3=Ingen svar · 4=Ikke relevant · → næste · ← forrige · esc=luk');
+  showToast('Genveje: 1=Interesseret · 2=Follow-up · 3=Ingen svar · 4=Ikke relevant · → næste · ← forrige · esc=luk');
 }
 
 // ─── Gatekeeper-bypass helpers ─────────────────────────────────────────
@@ -8320,7 +8315,8 @@ function sv(v){
   bw.style.display='none';tb.style.display='none';
   if(sb)sb.style.display='none';if(selb)selb.style.display='none';
   document.getElementById('sb-lists').style.display='none';
-  document.getElementById('sb-footer').style.display='none';
+  // sb-footer stays visible across all views — hosts the global Aktivitet
+  // + Eksportér buttons that should be reachable from anywhere.
   document.getElementById('leads-list-bar').style.display='none';
   if(custPage)custPage.style.display='none';
   if(discPage)discPage.style.display='none';
