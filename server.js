@@ -6282,6 +6282,208 @@ function isLushaConfigured() {
   return !!process.env.LUSHA_API_KEY;
 }
 
+// ─── Source categorization ────────────────────────────────────────────
+// Two top-level lead lists: "DK e-commerce SMBs" and "DK service businesses".
+// Every lead carries source_category derived from its origin source + (for
+// branche-walk) the DB07 industry code. New sources map by source prefix.
+//
+// Returns "ecom" | "service" | "unknown". Use "unknown" sparingly so the
+// dual-list UI always has a definite home for each lead.
+const BRANCHE_WALK_ECOM_CODES = new Set([
+  "477110", // Tøjbutik
+  "477210", // Skobutik
+  "475100", // Møbler
+  "479110", // Detailhandel internet
+  "478990", // Anden detailhandel
+  "477800", // Optikere
+  "475250", // Belysning
+  "475440", // Glas/keramik
+  "476420", // Sport
+  "476500", // Spil/legetøj
+  "477630", // Blomster
+  "477640", // Dyr/foder
+  "477990", // Anden detail
+]);
+const BRANCHE_WALK_SERVICE_CODES = new Set([
+  "731000", // Marketing-bureau
+  "741010", // Design/web
+  "683210", // Ejendomsmægler
+  "791100", // Rejsebureau
+  "563000", // Caféer/cafeterier
+  "742010", // Fotograf-erhverv
+  "961040", // Wellness/skønhed
+]);
+
+function deriveSourceCategory(source, brancheCode) {
+  if (brancheCode) {
+    if (BRANCHE_WALK_ECOM_CODES.has(String(brancheCode))) return "ecom";
+    if (BRANCHE_WALK_SERVICE_CODES.has(String(brancheCode))) return "service";
+  }
+  const s = String(source || "").toLowerCase();
+  if (s.startsWith("storeleads"))         return "ecom";
+  if (s.startsWith("meta-ads-discover"))  return "ecom";
+  if (s.startsWith("linkedin-ads-disc"))  return "service"; // LinkedIn ads skew B2B-service
+  if (s.startsWith("gmaps-discover"))     return "service"; // local-business heavy
+  if (s.startsWith("tech-discover"))      return "ecom";
+  if (s.startsWith("branche-walk-")) {
+    const code = s.replace(/^branche-walk-/, "");
+    if (BRANCHE_WALK_ECOM_CODES.has(code))    return "ecom";
+    if (BRANCHE_WALK_SERVICE_CODES.has(code)) return "service";
+  }
+  return "unknown";
+}
+
+// ─── Full Enrich (B2B contact enrichment) ─────────────────────────────
+// Replaces Lusha + Apollo as primary phone-reveal source. Better DK SMB
+// coverage according to Nicolas + the reference setup — claimed ~80%
+// direct-dial hit rate from a LinkedIn URL.
+//
+// Async bulk endpoint: POST returns {id, status:"IN_PROGRESS"}, then poll
+// GET /api/v2/contact/enrich/bulk/{id} until status === "COMPLETED".
+// Most jobs finish in 30-90s. Credits charged only when results found:
+// 10/mobile, 3/personal email, 1/work email.
+//
+// PR10. Smoke-test endpoint: /api/fullenrich/test
+const FULLENRICH_API_BASE = "https://api.fullenrich.com";
+const FULLENRICH_DAILY_CREDIT_CAP = 500; // ~50 phone reveals/day
+const FULLENRICH_SPEND_FILE = path.join(DATA_DIR, "discovery", "fullenrich_spend.json");
+const FULLENRICH_POLL_INTERVAL_MS = 5000;
+const FULLENRICH_POLL_TIMEOUT_MS  = 180_000; // 3 min sync cap
+
+function isFullEnrichConfigured() {
+  return !!process.env.FULLENRICH_API_KEY;
+}
+
+function loadFullEnrichSpend() {
+  const today = _cphDateStr();
+  try {
+    if (fs.existsSync(FULLENRICH_SPEND_FILE)) {
+      const s = JSON.parse(fs.readFileSync(FULLENRICH_SPEND_FILE, "utf8"));
+      if (s.date === today) return s;
+      // New day — roll history and reset
+      const history = s.history || {};
+      history[s.date] = s.spent;
+      return { date: today, spent: 0, history };
+    }
+  } catch (_) {}
+  return { date: today, spent: 0, history: {} };
+}
+
+function saveFullEnrichSpend(state) {
+  fs.mkdirSync(path.dirname(FULLENRICH_SPEND_FILE), { recursive: true });
+  fs.writeFileSync(FULLENRICH_SPEND_FILE, JSON.stringify(state, null, 2));
+}
+
+function consumeFullEnrichCredits(credits) {
+  const state = loadFullEnrichSpend();
+  state.spent = (state.spent || 0) + Math.max(0, Number(credits) || 0);
+  saveFullEnrichSpend(state);
+  return state;
+}
+
+// Submit a bulk enrichment. contacts = [{first_name, last_name, domain,
+// company_name, linkedin_url, custom: {cvr, ...}}]. Returns the job id.
+async function fullEnrichSubmitBatch(contacts, opts = {}) {
+  if (!isFullEnrichConfigured()) throw new Error("Full Enrich not configured");
+  const spend = loadFullEnrichSpend();
+  if (spend.spent >= FULLENRICH_DAILY_CREDIT_CAP) {
+    const err = new Error(`Full Enrich daily cap reached: ${spend.spent}/${FULLENRICH_DAILY_CREDIT_CAP}`);
+    err.code = "FULLENRICH_CAP_REACHED";
+    throw err;
+  }
+  const body = {
+    name: opts.name || `vedio-leads-${Date.now()}`,
+    data: contacts,
+  };
+  // Skip invalid contacts rather than blocking the whole batch
+  const url = `${FULLENRICH_API_BASE}/api/v2/contact/enrich/bulk?silentFail=true`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.FULLENRICH_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`Full Enrich submit ${r.status}: ${t.slice(0, 300)}`);
+  }
+  const d = await r.json();
+  return d.id || d.enrichment_id || null;
+}
+
+// Poll a job until completed or timeout. Returns the full response object.
+async function fullEnrichWaitForResult(jobId, opts = {}) {
+  if (!isFullEnrichConfigured()) throw new Error("Full Enrich not configured");
+  const start = Date.now();
+  const timeout = opts.timeoutMs || FULLENRICH_POLL_TIMEOUT_MS;
+  const interval = opts.intervalMs || FULLENRICH_POLL_INTERVAL_MS;
+  while (Date.now() - start < timeout) {
+    const r = await fetch(
+      `${FULLENRICH_API_BASE}/api/v2/contact/enrich/bulk/${encodeURIComponent(jobId)}`,
+      { headers: { "Authorization": `Bearer ${process.env.FULLENRICH_API_KEY}` } },
+    );
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      throw new Error(`Full Enrich poll ${r.status}: ${t.slice(0, 300)}`);
+    }
+    const d = await r.json();
+    const status = String(d.status || "").toUpperCase();
+    if (status === "COMPLETED" || status === "FINISHED" || status === "DONE") {
+      // Stamp spent credits if reported
+      if (d.cost && typeof d.cost.credits === "number") {
+        consumeFullEnrichCredits(d.cost.credits);
+      }
+      return d;
+    }
+    if (status === "FAILED" || status === "ERROR") {
+      throw new Error(`Full Enrich job ${jobId} ended ${status}`);
+    }
+    await new Promise((res) => setTimeout(res, interval));
+  }
+  throw new Error(`Full Enrich job ${jobId} did not complete within ${timeout}ms`);
+}
+
+// Convenience: synchronously enrich a single contact (submit + poll).
+// Returns the contact_info object from the response data[0], or null.
+async function fullEnrichLookupOne(contact, opts = {}) {
+  const jobId = await fullEnrichSubmitBatch([contact], { name: opts.name });
+  if (!jobId) return null;
+  const result = await fullEnrichWaitForResult(jobId, opts);
+  const entry = (result.data || [])[0];
+  return entry || null;
+}
+
+// Smoke-test endpoint — used to verify the API key + understand response
+// shape with a known LinkedIn URL or name+company. ?linkedinUrl= OR
+// ?firstName= + ?lastName= + ?company= (or ?domain=) required.
+app.post("/api/fullenrich/test", authMiddleware, async (req, res) => {
+  if (!isFullEnrichConfigured()) {
+    return res.status(503).json({ error: "Full Enrich ikke konfigureret — sæt FULLENRICH_API_KEY secret" });
+  }
+  const li = (req.query.linkedinUrl || req.body?.linkedinUrl || "").toString().trim();
+  const first = (req.query.firstName || req.body?.firstName || "").toString().trim();
+  const last  = (req.query.lastName  || req.body?.lastName  || "").toString().trim();
+  const company = (req.query.company || req.body?.company || "").toString().trim();
+  const domain  = (req.query.domain  || req.body?.domain  || "").toString().trim();
+  const contact = {};
+  if (li) contact.linkedin_url = li;
+  if (first) contact.first_name = first;
+  if (last)  contact.last_name  = last;
+  if (company) contact.company_name = company;
+  if (domain)  contact.domain      = domain;
+  if (!contact.linkedin_url && !(contact.first_name && contact.last_name && (contact.company_name || contact.domain))) {
+    return res.status(400).json({ error: "linkedinUrl OR (firstName+lastName+company|domain) required" });
+  }
+  try {
+    const result = await fullEnrichLookupOne(contact);
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(502).json({ error: e.message });
+  }
+});
+
 function loadLushaSpend() {
   const today = _cphDateStr();
   try {
@@ -9467,6 +9669,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         omsaetning: 0,
         source: `branche-walk-${codeEntry.code}`,
         source_label: codeEntry.label,
+        source_category: deriveSourceCategory(`branche-walk-${codeEntry.code}`, codeEntry.code),
         // PR5: Datafordeler-direct AND Meta-verified. Real ICP — size +
         // industry + DK + currently advertising on Meta. Same quality
         // bar as meta-ads-discover leads.
