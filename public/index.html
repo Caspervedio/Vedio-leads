@@ -5466,17 +5466,23 @@ function renderAutodialerPage(){
   for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
     ['all','Alle',activeLeads.length],
-    // Confirmed Meta advertisers (Apollo tech-stack signal) — the strongest
-    // ICP. Sits first so the SDR can one-click to "only real advertisers".
+    // Confirmed Meta advertisers — strongest ICP signal. Click-through
+    // to "only real advertisers" view stays useful even with Meta as
+    // scorer (not source) since branche-walk leads pick up this flag.
     ['advertiser','🎯 Annoncører',advertiserCount],
-    // Ads-first discovery (sourced directly from live Meta Ad Library)
-    ['meta-ads-discover','🟢 Meta-ads live',srcCounts['meta-ads-discover']||0],
-    ['meta-scraper','META',srcCounts['meta-scraper']||0],
-    ['lookalike','Look-alike',srcCounts['lookalike']||0],
-    ['google-maps','Maps',srcCounts['google-maps']||0],
-    ['tech-stack','Tech',srcCounts['tech-stack']||0],
-    ['csv','CSV',srcCounts['csv']||0],
-    ['manual','Manuel',srcCounts['manual']||0],
+    // Active sources (post-Phase-1 cleanup 2026-06-16):
+    //   • branche-walk-* — Datafordeler-direct, marked per industry code
+    //   • storeleads — DK e-com via StoreLeads (rolls out next)
+    //   • gmaps-discover — DK local businesses
+    //   • csv — manual imports
+    //   • manual — single-lead adds
+    // Obsolete entries (meta-ads-discover, meta-scraper, lookalike,
+    // google-maps, tech-stack) removed — those crons no longer fire,
+    // counts would always be 0, and the chips just added visual noise.
+    ['storeleads','🛍 StoreLeads',srcCounts['storeleads']||0],
+    ['gmaps-discover','📍 Maps',srcCounts['gmaps-discover']||0],
+    ['csv','📋 CSV',srcCounts['csv']||0],
+    ['manual','✎ Manuel',srcCounts['manual']||0],
     // "Beriges nu" — Apollo is mid-flight on these. Lead appears in
     // active queue once apollo_enrichment_pending flips false.
     ['enriching','⏳ Beriges nu',enrichingCount],
@@ -6215,6 +6221,19 @@ function renderAdActivityTable(today, week, all, perSdr){
             <span id="ad-freshness-dot" style="width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,0.6);display:inline-block"></span>
             <span id="ad-freshness-label">Live</span>
           </div>
+          ${(()=>{
+            // Daily call goal — configurable via localStorage 'vl_daily_call_goal',
+            // defaults to 40. Visualised as a progress chip + thin bar so the
+            // SDR sees momentum vs target without leaving the queue view.
+            const goal = Number(localStorage.getItem('vl_daily_call_goal')) || 40;
+            const dialed = Number(today.dialed) || 0;
+            const pct = Math.min(100, Math.round((dialed/goal)*100));
+            const col = pct >= 100 ? '#34d399' : pct >= 75 ? '#a78bfa' : pct >= 25 ? '#c4b5fd' : 'var(--w55)';
+            return `<div title="Daglig opkaldsmål — klik for at ændre" onclick="const v=prompt('Daglig opkaldsmål (antal kald)?', '${goal}'); if(v && Number(v)>0){localStorage.setItem('vl_daily_call_goal',String(Number(v))); renderAutodialerPage();}" style="display:flex;align-items:center;gap:6px;font-size:10.5px;color:${col};font-weight:700;cursor:pointer;padding:3px 8px;border-radius:6px;background:var(--w04);border:1px solid var(--w08)">
+              🎯 Mål: <strong style="color:${col}">${dialed}/${goal}</strong>
+              <span style="display:inline-block;width:42px;height:4px;background:var(--w08);border-radius:3px;overflow:hidden;margin-left:2px"><span style="display:block;height:100%;width:${pct}%;background:${col};transition:width 0.3s"></span></span>
+            </div>`;
+          })()}
         </div>
         <div style="font-size:11px;color:var(--w55)">Konvertering · I dag: <strong style="color:${today.dialed>0?'#fff':'var(--w35)'}">${conv(today.interested, today.dialed)}</strong> · Uge: <strong style="color:${week.dialed>0?'#fff':'var(--w35)'}">${conv(week.interested, week.dialed)}</strong> · All-time: <strong style="color:${all.dialed>0?'#fff':'var(--w35)'}">${conv(all.interested, all.dialed)}</strong></div>
       </div>
@@ -6903,7 +6922,7 @@ function renderCockpit(){
 }
 
 async function _cockpitAutoReveal(cvr) {
-  showToast('🔍 Finder beslutningstager...');
+  showToast('🔍 Finder direkte nummer via Apollo + Full Enrich (~60-90s)...');
   try {
     const r = await fetch(`/api/contact/reveal-direct-dial/${encodeURIComponent(cvr)}`, {
       method: 'POST',
@@ -7021,7 +7040,18 @@ function renderCockpitDetail(c){
         <div style="position:relative;display:flex;align-items:flex-start;gap:16px">
           ${aco.logoUrl?`<img src="${e(aco.logoUrl)}" alt="" style="width:56px;height:56px;border-radius:11px;object-fit:contain;background:#fff;padding:4px;flex-shrink:0" onerror="this.style.display='none'">`:''}
           <div style="flex:1">
-            <div style="font-size:11px;color:var(--purple-light);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:6px">Lead ${_cockpit.idx+1} of ${_cockpit.queue.length}</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <span style="font-size:11px;color:var(--purple-light);font-weight:800;letter-spacing:1.2px;text-transform:uppercase">Lead ${_cockpit.idx+1} of ${_cockpit.queue.length}</span>
+              ${(()=>{
+                // Category badge so the SDR instantly knows the right talk
+                // track (e-com opener vs service-business opener). Pulls
+                // from source_category set at intake.
+                const cat = leadCategory(c);
+                if (cat === 'ecom')    return `<span style="font-size:10.5px;padding:3px 9px;border-radius:6px;background:rgba(52,211,153,0.14);color:#6ee7b7;font-weight:800;letter-spacing:0.3px;border:1px solid rgba(52,211,153,0.32)">🛍 DK e-commerce</span>`;
+                if (cat === 'service') return `<span style="font-size:10.5px;padding:3px 9px;border-radius:6px;background:rgba(96,165,250,0.14);color:#93c5fd;font-weight:800;letter-spacing:0.3px;border:1px solid rgba(96,165,250,0.32)">🏢 DK service</span>`;
+                return '';
+              })()}
+            </div>
             <h2 style="margin:0;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.6px;line-height:1.15">${e(c.name)}</h2>
             ${(()=>{
               // CVR row — prominent for real 8-digit Danish CVRs, hidden
@@ -7094,7 +7124,7 @@ function renderCockpitDetail(c){
           ${c.ph?`<button onclick="ringNow('${e(c.ph)}','${e(c.cvr||'')}','${e(c.name||'')}')" title="Ring" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:9px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;font-family:monospace">📞 ${fp(c.ph)}</button>`:''}
         </div>
         <div id="cockpit-switchboard-body" style="${window._cockpitSwitchboardMin?'display:none':''}">
-        ${pending?`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)"><span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Apollo beriger — kontakter klar om få sekunder…</div>`:contacts.length?contacts.map((p,i)=>`
+        ${pending?`<div style="background:var(--w04);border:1px dashed rgba(124,58,237,0.3);border-radius:11px;padding:14px;text-align:center;font-size:11.5px;color:var(--w55)"><span class="search-spinner" style="display:inline-block;width:13px;height:13px;margin-right:6px;vertical-align:middle"></span>Apollo + Full Enrich henter direkte nummer — kontakter klar om ca. 60-90 sek…</div>`:contacts.length?contacts.map((p,i)=>`
           <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--w04);border:1px solid var(--w08);border-radius:11px;${i>0?'margin-top:8px':''}">
             ${p.photoUrl?`<img src="${e(p.photoUrl)}" alt="" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0" onerror="this.outerHTML='<div style=&quot;width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px;flex-shrink:0&quot;>${(p.name||'?')[0].toUpperCase()}</div>'">`:`<div style="width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px;flex-shrink:0">${(p.name||'?')[0].toUpperCase()}</div>`}
             <div style="flex:1;min-width:0">
@@ -7138,11 +7168,27 @@ function renderCockpitDetail(c){
            cockpit to fix a wrong number). When the phone is missing, the
            edit button is the primary CTA — Nicolas can paste a number found
            via Google/LinkedIn research and immediately dial it. -->
-      ${(()=>{ const cph=c.phone||c.ph||''; const btw = cockpitBestTimeWindow(); return `
+      ${(()=>{ const cph=c.phone||c.ph||''; const btw = cockpitBestTimeWindow();
+        // Label the phone by where it came from so SDR knows whether to
+        // expect a person (direct dial) or gatekeeper (switchboard).
+        const srcLbl = (() => {
+          const s = c.phone_recovered_source || '';
+          if (s === 'fullenrich') return { txt:'Direkte mobil', col:'#6ee7b7', bg:'rgba(52,211,153,0.14)', bd:'rgba(52,211,153,0.32)' };
+          if (s === 'apollo')     return { txt:'Direkte (Apollo)', col:'#c4b5fd', bg:'rgba(124,58,237,0.14)', bd:'rgba(124,58,237,0.32)' };
+          if (s.startsWith('df-')) return { txt:'Hovednr. (CVR)', col:'#fbbf24', bg:'rgba(251,191,36,0.12)', bd:'rgba(251,191,36,0.32)' };
+          if (s === 'website')    return { txt:'Hovednr. (website)', col:'#fbbf24', bg:'rgba(251,191,36,0.12)', bd:'rgba(251,191,36,0.32)' };
+          // No recorded source — fall back to inferring by length: a DK
+          // mobile starts with 2/3/4/5 in the 8-digit number; landlines
+          // start with 3/4/5/6/7/8/9. Without info we say "Hovednr." as
+          // the safer assumption (don't oversell SDR on direct dial).
+          if (!s && cph) return { txt:'Hovednr.', col:'var(--w55)', bg:'var(--w04)', bd:'var(--w08)' };
+          return null;
+        })();
+        return `
       <div id="cockpit-call-status" style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:16px">
         <span style="font-size:20px">📞</span>
         <div style="flex:1;min-width:0">
-          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)} <span style="margin-left:8px;padding:2px 7px;border-radius:5px;background:${btw.bg};color:${btw.fg};border:1px solid ${btw.border};font-size:10px;font-weight:700;letter-spacing:0.3px" title="${e(btw.tip)}">${e(btw.label)}</span></div>
+          <div id="cockpit-call-status-text" style="color:var(--w55);font-size:12px;margin-bottom:3px">${cockpitCallStatusText(c)} <span style="margin-left:8px;padding:2px 7px;border-radius:5px;background:${btw.bg};color:${btw.fg};border:1px solid ${btw.border};font-size:10px;font-weight:700;letter-spacing:0.3px" title="${e(btw.tip)}">${e(btw.label)}</span>${srcLbl?` <span style="margin-left:6px;padding:2px 7px;border-radius:5px;background:${srcLbl.bg};color:${srcLbl.col};border:1px solid ${srcLbl.bd};font-size:10px;font-weight:700;letter-spacing:0.3px">${srcLbl.txt}</span>`:''}</div>
           ${cph
             ? `<div style="display:flex;align-items:center;gap:8px"><button onclick="ringNow('${e(cph)}','${e(c.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:24px;font-weight:800;letter-spacing:1px;color:#fff;line-height:1.1" title="Ring">${fp(cph)}</button><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" title="Ret nummeret" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:4px 8px;color:var(--w55);font-size:12px;cursor:pointer;line-height:1" onmouseover="this.style.color='#c4b5fd';this.style.borderColor='rgba(196,181,253,0.4)'" onmouseout="this.style.color='var(--w55)';this.style.borderColor='var(--w08)'">✎ ret</button></div>`
             : `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;color:#fca5a5;font-weight:700">Intet nummer</span><button onclick="cockpitEditPhone('${e(c.cvr||'')}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:7px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer">+ Indtast nummer</button></div>`}
