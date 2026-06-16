@@ -981,6 +981,9 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
       <!-- Auto-pipeline status banner — next run, queue counters, downstream status -->
       <div id="disc-autoflow" style="margin-bottom:14px"></div>
 
+      <!-- Recently added leads — last 48h, refreshes on page open + soft refresh -->
+      <div id="pipeline-recent-leads" style="margin-bottom:14px"></div>
+
       <!-- Summary row -->
       <div id="disc-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px"></div>
 
@@ -1526,6 +1529,7 @@ async function softRefresh() {
   } catch (_) {}
   try {
     if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
+    if (typeof renderRecentLeadsWidget === 'function') renderRecentLeadsWidget();
   } catch (_) {}
   try {
     if (typeof rSB === 'function') rSB();
@@ -1570,6 +1574,7 @@ async function _dashAutoRefreshTick() {
     await loadUserState();
     if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
     if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
+    if (typeof renderRecentLeadsWidget === 'function') renderRecentLeadsWidget();
     _dashLastRefreshAt = Date.now();
     _updateDashFreshnessLabel();
   } catch (_) { /* silent — keep timer alive */ }
@@ -2633,6 +2638,7 @@ function renderDiscoverySummary(){
   // Fetches live state from /api/discovery/pipeline-status and renders
   // a per-source status grid.
   renderPipelineStatusWidget();
+  renderRecentLeadsWidget();
   const tile=(label,value,sub)=>`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--w35);margin-bottom:4px">${label}</div>
     <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${value}</div>
@@ -2644,6 +2650,75 @@ function renderDiscoverySummary(){
     tile('Seneste kørsel',ago,s.lastRunCompletedAt?new Date(s.lastRunCompletedAt).toLocaleString('da-DK'):'—'),
     tile('Kandidatpulje',(s.candidatePoolSize||0).toLocaleString('da-DK'),`aktive virksomheder i mål-brancher`),
   ].join('');
+}
+
+// Recently added leads widget — shows last 48h of intake on the
+// Pipeline page so Casper can see what came in without opening the
+// Leadlist. Reads from the same `leads` array the rest of the UI uses
+// (refreshed by loadUserState + softRefresh).
+function renderRecentLeadsWidget(){
+  const el = document.getElementById('pipeline-recent-leads');
+  if (!el) return;
+  const now = Date.now();
+  const WINDOW_MS = 48 * 60 * 60 * 1000;
+  const recent = (leads || []).filter((l) => {
+    if (l.lastAction === 'not-relevant') return false;
+    const iso = l.discovered_at || l.addedAt;
+    if (!iso) return false;
+    const t = new Date(iso).getTime();
+    return t && (now - t) < WINDOW_MS;
+  }).sort((a, b) => {
+    const at = new Date(a.discovered_at || a.addedAt || 0).getTime();
+    const bt = new Date(b.discovered_at || b.addedAt || 0).getTime();
+    return bt - at;
+  });
+  if (recent.length === 0) {
+    el.innerHTML = `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:14px 18px;font-size:11.5px;color:var(--w55)">Ingen nye leads i de seneste 48 timer.</div>`;
+    return;
+  }
+  const ago = (iso) => {
+    const m = Math.round((now - new Date(iso).getTime()) / 60000);
+    if (m < 60) return `${m}m`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}t`;
+    return `${Math.round(h / 24)}d`;
+  };
+  const srcBadge = (src) => {
+    const s = String(src || '').toLowerCase();
+    if (s.startsWith('storeleads'))      return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(52,211,153,0.15);color:#6ee7b7;font-weight:700">🛍 StoreLeads</span>';
+    if (s.startsWith('branche-walk-'))    return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(96,165,250,0.15);color:#93c5fd;font-weight:700">🏢 Branche-walk</span>';
+    if (s.startsWith('gmaps'))            return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(167,139,250,0.15);color:#c4b5fd;font-weight:700">📍 Maps</span>';
+    if (s === 'csv' || s === 'csv-upload') return '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(251,191,36,0.12);color:#fbbf24;font-weight:700">📋 CSV</span>';
+    return `<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--w04);color:var(--w55);font-weight:700">${e(src || 'manual')}</span>`;
+  };
+  const rows = recent.slice(0, 30).map((l) => {
+    const phone = (l.phone || l.ph || '').toString().trim();
+    const contacts = Array.isArray(l.contacts) && l.contacts.length > 0;
+    return `<tr style="border-bottom:1px solid var(--w04);cursor:pointer" onclick="sv('autodialer');setTimeout(()=>adOpenLead('${e(l.cvr||'')}'),100)">
+      <td style="padding:8px 12px;font-size:12.5px;color:#fff;font-weight:600">${e(l.name || '?')}</td>
+      <td style="padding:8px 10px">${srcBadge(l.source)}</td>
+      <td style="padding:8px 10px;font-size:11px;color:${phone ? '#c4b5fd' : 'var(--w35)'};font-family:'JetBrains Mono',monospace">${phone || '—'}</td>
+      <td style="padding:8px 10px;font-size:11px;color:${contacts ? '#6ee7b7' : 'var(--w35)'};text-align:center">${contacts ? '✓' : '—'}</td>
+      <td style="padding:8px 12px;font-size:11px;color:var(--w55);text-align:right;font-variant-numeric:tabular-nums">${ago(l.discovered_at || l.addedAt)} siden</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
+      <div style="padding:11px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35)">Senest tilføjede leads</div>
+        <div style="font-size:11px;color:var(--w55)">${recent.length} de seneste 48 timer</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--w04)">
+          <th style="text-align:left;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Lead</th>
+          <th style="text-align:left;padding:7px 10px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Kilde</th>
+          <th style="text-align:left;padding:7px 10px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Telefon</th>
+          <th style="text-align:center;padding:7px 10px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Person</th>
+          <th style="text-align:right;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Tilføjet</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 // Live pipeline-status widget — replaces the legacy "Auto-pipeline"
