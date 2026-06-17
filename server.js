@@ -6680,6 +6680,15 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   const state = loadStoreLeadsState();
   const checkedAt = new Date().toISOString();
 
+  // Load user data ONCE at the top of the run instead of per-candidate.
+  // The old loop did loadUserData + saveUserData on every iteration —
+  // 60+ full disk-read+write cycles per run, which was the actual
+  // bottleneck (not Datafordeler). Now: read once, mutate in memory,
+  // save once at the end. This lets per_platform scale to ~100 without
+  // hitting Cloud Run's timeout.
+  const ud = loadUserData(TARGET_USER);
+  if (!ud.leads) ud.leads = [];
+
   for (const platform of STORELEADS_PLATFORMS) {
     const pStats = { fetched: 0, saved: 0, dfMatched: 0 };
     let cursor = state.platformCursors[platform] || null;
@@ -6704,9 +6713,9 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
         try { df = await tryDfVerifyDkCompany(merchantName); } catch (_) {}
 
         try {
-          const ud = loadUserData(TARGET_USER);
-          if (!ud.leads) ud.leads = [];
           // Dedupe by domain, by real CVR (if DF found one), and by name.
+          // ud.leads grows in-memory as we append within this run, so dupes
+          // landing across platforms within the same run also get caught.
           const dupByDomain = ud.leads.some((l) => String(l.web || l.website || "").toLowerCase().includes(domain));
           const dupByCvr = df && df.cvr && ud.leads.some((l) => l.cvr === df.cvr);
           const dupByName = ud.leads.some((l) => (l.name || "").toLowerCase().trim() === merchantName.toLowerCase());
@@ -6758,7 +6767,6 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
           lead.df_verified_at = df && df.cvr ? checkedAt : null;
 
           ud.leads.push(lead);
-          saveUserData(TARGET_USER, ud);
           stats.saved++;
           pStats.saved++;
           if (df && df.cvr) { stats.dfMatched++; pStats.dfMatched++; }
@@ -6775,6 +6783,8 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
     stats.perPlatform[platform] = pStats;
   }
 
+  // Single save at the end — flushes all appended leads in one disk write.
+  if (stats.saved > 0) saveUserData(TARGET_USER, ud);
   state.lastRunAt = checkedAt;
   saveStoreLeadsState(state);
   logActivity(
