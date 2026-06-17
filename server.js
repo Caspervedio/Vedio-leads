@@ -6796,6 +6796,110 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   res.json({ ok: true, stats });
 });
 
+// Auto-enrich one lead with FREE signals: website social links + Ad Library
+// URL + Full Enrich People Search by domain. Skips the paid phone-reveal
+// step (that stays manual via the cockpit "🔍 Find beslutningstagere"
+// button). Mutates the lead in place. Returns a stats object so the
+// caller can log results. Never throws — each enrichment step is wrapped
+// in try/catch so one failure doesn't drop the others.
+async function intakeEnrichLead(lead) {
+  const stats = { socials: false, contacts: 0, ad_library: false };
+  if (!lead || lead.intake_enriched_at) return stats;
+  const rawWeb = lead.web || lead.website || "";
+  const domain = String(rawWeb).replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+  // Website → Facebook / Instagram / LinkedIn URLs
+  try {
+    if (domain) {
+      const socials = await fetchWebsiteSocials(domain, { timeoutMs: 4000 });
+      if (socials.facebook_url) { lead.facebook_url = socials.facebook_url; stats.socials = true; }
+      if (socials.instagram_url) { lead.instagram_url = socials.instagram_url; stats.socials = true; }
+      if (socials.linkedin_url) { lead.linkedin_url = socials.linkedin_url; stats.socials = true; }
+    }
+  } catch (_) {}
+  // Ad Library URL is name-keyed (Meta's search), deterministic, always set
+  try {
+    if (lead.name) { lead.ad_library_url = buildAdsLibraryUrl(lead.name); stats.ad_library = true; }
+  } catch (_) {}
+  // Full Enrich People Search by domain — FREE, returns names + titles +
+  // LinkedIn URLs. Skips if the lead already has contacts from another source.
+  try {
+    if (domain && isFullEnrichConfigured() && (!Array.isArray(lead.contacts) || lead.contacts.length === 0)) {
+      const found = await fullEnrichPeopleSearch(domain, { limit: 5, timeoutMs: 8000 });
+      if (Array.isArray(found) && found.length > 0) {
+        lead.contacts = found.map((p) => ({
+          name: p.full_name,
+          first_name: p.first_name,
+          last_name: p.last_name,
+          title: p.title,
+          seniority: p.seniority,
+          country: p.country_code,
+          linkedin: p.company_linkedin_url,
+          phone: "",
+          email: "",
+          source_discovery: "fullenrich-search",
+          _fe_id: p.fe_id,
+        }));
+        lead.fullenrich_search_at = new Date().toISOString();
+        stats.contacts = found.length;
+      }
+    }
+  } catch (_) {}
+  lead.intake_enriched_at = new Date().toISOString();
+  return stats;
+}
+
+// Async worker: scans for leads that haven't been intake-enriched yet and
+// processes a batch in parallel. Cron-fired every few minutes. Decoupled
+// from storeleads-discover so a slow website fetch doesn't time out the
+// discovery cron, and so re-runs can pick up partial progress.
+//
+// Order priority for the batch:
+//   1. Newest leads first (the SDR is most likely to see these soon)
+//   2. Skip already-enriched (intake_enriched_at is set)
+//   3. Skip archived / Twenty-pushed (SDR won't open these)
+app.post("/api/cron/intake-enrich", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  const TARGET_USER = (req.query.userId || "u1").toString();
+  const BATCH_SIZE = Math.max(1, Math.min(30, Number(req.query.batch_size) || 10));
+  const CONCURRENCY = Math.max(1, Math.min(10, Number(req.query.concurrency) || 5));
+
+  const ud = loadUserData(TARGET_USER);
+  if (!ud.leads) ud.leads = [];
+
+  const pending = ud.leads
+    .filter((l) => !l.intake_enriched_at)
+    .filter((l) => l.lastAction !== "not-relevant")
+    .filter((l) => !l.twenty_opportunity_id)
+    .filter((l) => l.web || l.website)
+    .sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime())
+    .slice(0, BATCH_SIZE);
+
+  const totals = { processed: 0, with_socials: 0, with_contacts: 0, with_ad_library: 0, errors: 0 };
+  // Concurrency pool — process up to CONCURRENCY at a time. Each task is
+  // independent (different lead), so Promise.all on chunks is fine.
+  for (let i = 0; i < pending.length; i += CONCURRENCY) {
+    const chunk = pending.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(chunk.map((lead) => intakeEnrichLead(lead)));
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      if (r.status === "fulfilled") {
+        totals.processed++;
+        if (r.value.socials) totals.with_socials++;
+        if (r.value.contacts > 0) totals.with_contacts++;
+        if (r.value.ad_library) totals.with_ad_library++;
+      } else {
+        totals.errors++;
+        console.warn("[intake-enrich] failed:", chunk[j].cvr, r.reason && r.reason.message);
+      }
+    }
+  }
+  if (totals.processed > 0) saveUserData(TARGET_USER, ud);
+  console.log("[intake-enrich] done:", JSON.stringify(totals));
+  res.json({ ok: true, pending_total: ud.leads.filter((l) => !l.intake_enriched_at).length, batch: totals });
+});
+
 // Filter phone array to DK-only (+45). Drops US/foreign HQ numbers
 // that Apollo occasionally surfaces for DK contacts.
 // Apollo's stats showed ~60-70% of DK reveals returned non-DK noise.
@@ -6815,17 +6919,17 @@ function filterDkPhones(phones) {
 // POST /api/contact/reveal-direct-dial/:cvr — unified phone-reveal for
 // the cockpit "Find beslutningstager" button.
 //
-// Two-stage flow:
-//   1. Apollo people-match by domain/name — fast (~5-10s). Returns up to
-//      5 contacts with names, titles, LinkedIn URLs, and sometimes phones.
-//   2. If Apollo gave us a usable phone → return immediately.
-//      If not, fire Full Enrich for the TOP contact (one Apollo credit
-//      already spent — pick the most senior with a LinkedIn URL). Full
-//      Enrich is async + slower (~60-90s) but has ~80% DK hit rate vs
-//      Apollo's spotty ~30%. Wait inline; Cloud Run timeout is 1200s.
+// Flow after the 2026-06-17 flip (FE-first, Apollo fallback):
+//   1. If lead.contacts is already populated (intake worker ran) →
+//      skip discovery, jump to Stage 2.
+//   2. Full Enrich People Search by domain — FREE, ~80% DK SMB hit rate.
+//   3. Apollo fallback — only fires when FE returned 0. Useful for non-DK
+//      or larger companies where FE's index is thin.
+//   4. Full Enrich Contact Enrich on the top contact — async (~60-180s),
+//      10 credits = $0.60 only charged on success.
 //
-// Cost shape: typical reveal = 1 Apollo credit + 0 or 10 Full Enrich
-// credits depending on whether Apollo had a phone cached.
+// Cost shape: typical reveal = 0 Apollo credits (FE handled it) + 0 or 10
+// FE credits depending on whether Stage 4 found a phone.
 async function pickTopContactForFullEnrich(contacts) {
   if (!Array.isArray(contacts) || !contacts.length) return null;
   // Prefer contacts with a LinkedIn URL (10-60% better Full Enrich hit
@@ -6852,60 +6956,67 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
   const lead = (ud.leads || []).find((l) => l.cvr === cvr);
   if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
 
-  if (!isApolloConfigured()) {
-    return res.status(503).json({ error: "Apollo ikke konfigureret — kan ikke finde direkte nummer." });
-  }
-  // ─── STAGE 1: Apollo people-match ────────────────────────────────────
-  let apolloContacts = [];
-  let company = null;
-  try {
-    const r = await enrichWithApollo({
-      name: lead.name,
-      domain: lead.web || lead.website,
-    });
-    apolloContacts = r.contacts || [];
-    company = r.company || null;
-  } catch (e) {
-    if (e && e.code === "APOLLO_CAP_REACHED") {
-      return res.status(429).json({ error: "Apollo dagsbudget brugt op", code: "APOLLO_CAP_REACHED", spent: e.spent, cap: e.cap });
-    }
-    return res.status(502).json({ error: e.message });
-  }
-  lead.contacts = apolloContacts;
-  lead.apollo_company = company || lead.apollo_company;
-  lead.apollo_enriched_at = new Date().toISOString();
+  // Discovery order flipped 2026-06-17: Full Enrich is now the PRIMARY
+  // contact source (FREE, ~80% DK SMB hit rate). Apollo runs as fallback
+  // only when FE returns 0 results. Saves Apollo credits + better coverage
+  // for DK small webshops where Apollo's data is thin.
+  //
+  // Also: if the intake worker already populated lead.contacts via
+  // FE People Search, skip Stage 1 entirely and jump to phone reveal.
+  let workingContacts = Array.isArray(lead.contacts) ? lead.contacts.slice() : [];
+  let company = lead.apollo_company || null;
+  const domain = (company && company.domain) || (lead.web || lead.website || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 
-  // ─── STAGE 1.5: Full Enrich People Search (FREE, fills missing names) ─
-  // When Apollo returned ZERO people for a DK SMB (common — Apollo's DK
-  // coverage is bad), hit Full Enrich's people-search to discover names
-  // + titles + LinkedIn URLs at zero credit cost. Stage 2 below then
-  // picks the top one and calls Contact Enrich (paid) for the phone.
-  if (apolloContacts.length === 0 && isFullEnrichConfigured()) {
-    const domain = (company && company.domain) || lead.web || lead.website || "";
-    if (domain) {
+  // ─── STAGE 1: Full Enrich People Search (FREE, primary) ──────────────
+  if (workingContacts.length === 0 && isFullEnrichConfigured() && domain) {
+    try {
       const found = await fullEnrichPeopleSearch(domain, { limit: 5 });
-      if (found.length > 0) {
-        // Convert FE People Search results into Apollo-shaped contacts so
-        // the downstream code (Stage 2, cockpit detail panel, Twenty push)
-        // doesn't care which discovery source the names came from.
-        apolloContacts = found.map((p) => ({
+      if (Array.isArray(found) && found.length > 0) {
+        workingContacts = found.map((p) => ({
           name: p.full_name,
           first_name: p.first_name,
           last_name: p.last_name,
           title: p.title,
           seniority: p.seniority,
           country: p.country_code,
-          linkedin: p.company_linkedin_url, // company LinkedIn (no person URL yet from search)
+          linkedin: p.company_linkedin_url,
           phone: "",
           email: "",
           source_discovery: "fullenrich-search",
           _fe_id: p.fe_id,
         }));
-        lead.contacts = apolloContacts;
         lead.fullenrich_search_at = new Date().toISOString();
       }
+    } catch (_) { /* fall through to Apollo */ }
+  }
+
+  // ─── STAGE 1b: Apollo fallback (when FE returned 0) ──────────────────
+  // Apollo still has unique value for non-DK SMB and larger companies
+  // where FE's index is thin. Only fires when FE found nothing.
+  if (workingContacts.length === 0 && isApolloConfigured()) {
+    try {
+      const r = await enrichWithApollo({
+        name: lead.name,
+        domain: lead.web || lead.website,
+      });
+      workingContacts = r.contacts || [];
+      company = r.company || company;
+      if (company) lead.apollo_company = company;
+      lead.apollo_enriched_at = new Date().toISOString();
+    } catch (e) {
+      if (e && e.code === "APOLLO_CAP_REACHED") {
+        return res.status(429).json({ error: "Apollo dagsbudget brugt op", code: "APOLLO_CAP_REACHED", spent: e.spent, cap: e.cap });
+      }
+      // Don't 502 if Apollo fails — we may still have contacts from FE
+      console.warn("[reveal-direct-dial] Apollo fallback failed:", e.message);
     }
   }
+
+  if (workingContacts.length === 0) {
+    return res.status(404).json({ error: "Ingen beslutningstagere fundet via Full Enrich eller Apollo" });
+  }
+  lead.contacts = workingContacts;
+  let apolloContacts = workingContacts; // keep var name for downstream Stage 2 code below
 
   let directDial = (apolloContacts.find((c) => c.phone) || {}).phone || "";
   let fullEnrichUsed = false;
@@ -7669,6 +7780,51 @@ const brandFromApolloName = brandForMetaAdsSearch;
 // the two for business accounts and most use the same handle; if we
 // hit the rare exception, the link 404s gracefully. Returns "" when no
 // Facebook URL is available.
+// Fetch the lead's website and parse Facebook / Instagram / LinkedIn URLs
+// from the HTML. Looks at og:url meta tags + any <a href> pointing at the
+// usual social-network domains. Cheap (~1-3s/site) and runs at intake so
+// the cockpit always shows social-research links the SDR can use mid-call.
+// Returns {} on any failure — intake must not block on website downtime.
+async function fetchWebsiteSocials(domain, opts = {}) {
+  if (!domain) return {};
+  const timeoutMs = opts.timeoutMs || 5000;
+  const url = String(domain).startsWith("http") ? String(domain) : "https://" + domain;
+  const out = { facebook_url: "", instagram_url: "", linkedin_url: "" };
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    const r = await fetch(url, {
+      signal: ctl.signal,
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; VedioLeads/1.0; +https://vedio.dk)",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+      },
+    }).catch(() => null);
+    clearTimeout(timer);
+    if (!r || !r.ok) return out;
+    const ct = r.headers.get("content-type") || "";
+    if (!ct.includes("html")) return out;
+    const html = (await r.text().catch(() => "")).slice(0, 500_000); // cap at ~500KB
+    const findFirst = (re) => {
+      const m = html.match(re);
+      if (!m) return "";
+      return m[0].replace(/[?#].*$/, "").replace(/\/+$/, "");
+    };
+    out.facebook_url = findFirst(/https?:\/\/(?:www\.|m\.|business\.|da-dk\.)?facebook\.com\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]*)?/i);
+    out.instagram_url = findFirst(/https?:\/\/(?:www\.)?instagram\.com\/[A-Za-z0-9._-]+/i);
+    out.linkedin_url = findFirst(/https?:\/\/(?:www\.|dk\.)?linkedin\.com\/company\/[A-Za-z0-9._-]+/i);
+    // Strip obvious non-page Facebook URLs (share dialogs, login redirects, tracking pixels)
+    if (/\/(?:sharer|login|dialog|tr|plugins|l\.php|recover)/i.test(out.facebook_url)) out.facebook_url = "";
+    // Derive Instagram from Facebook handle if site has FB but not IG
+    if (out.facebook_url && !out.instagram_url) {
+      const ig = instagramFromFacebook(out.facebook_url);
+      if (ig) out.instagram_url = ig;
+    }
+  } catch (_) { /* silent — intake must not block on website availability */ }
+  return out;
+}
+
 function instagramFromFacebook(fbUrl) {
   if (!fbUrl) return "";
   const m = String(fbUrl).match(/facebook\.com\/(?:pages\/[^/]+\/)?([^/?#]+)/i);
