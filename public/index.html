@@ -8868,7 +8868,7 @@ function renderCockpitDetail(c){
                 return '';
               })()}
             </div>
-            <h2 style="margin:0;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.6px;line-height:1.15">${e(c.name)}</h2>
+            <h2 style="margin:0;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.6px;line-height:1.15;display:flex;align-items:center;gap:8px">${e(c.name)}<button onclick="openLeadFieldsEditor('${e(c.cvr||'')}','name')" title="Rediger virksomhedsnavn" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:15px;padding:0 2px;line-height:1;transition:color 0.12s" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button></h2>
             ${(()=>{
               // CVR row — prominent for real 8-digit Danish CVRs, hidden
               // for synthetic IDs (meta-{pageId}, gmaps-{hash}, linkedin-
@@ -8892,11 +8892,17 @@ function renderCockpitDetail(c){
         </div>
       </div>
 
-      ${aco && (aco.shortDescription||aco.growth12Mo||aco.technologyNames?.length||aco.latestFundingStage)?`
-      <!-- Talking-points card — Apollo-derived context for the call -->
-      <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px">
-        <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px">Talking points</div>
-        ${aco.shortDescription?`<div style="font-size:12.5px;color:var(--w80);line-height:1.55;margin-bottom:10px">${e(trunc(aco.shortDescription,260))}</div>`:''}
+      ${(()=>{
+        // Talking points — SDR-edited (c.description) wins over Apollo's
+        // blurb. Card always renders so the ✎ icon at the title is reachable
+        // even when empty (placeholder invites SDR to fill it in mid-call).
+        const sdrDesc = (c.description||'').toString().trim();
+        const apolloDesc = (aco && aco.shortDescription||'').toString().trim();
+        const desc = sdrDesc || apolloDesc;
+        const isSdr = !!sdrDesc;
+        return `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:14px">
+        <div style="font-size:10.5px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span>Talking points</span><button onclick="openLeadFieldsEditor('${e(c.cvr||'')}','description')" title="Rediger talking points" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:12px;padding:0 2px;line-height:1;transition:color 0.12s" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button>${isSdr?'<span style="font-size:9.5px;font-weight:700;color:#c4b5fd;background:rgba(124,58,237,0.16);border:1px solid rgba(124,58,237,0.30);padding:1px 6px;border-radius:5px;letter-spacing:0.3px;margin-left:4px">SDR</span>':''}</div>
+        ${desc?`<div style="font-size:12.5px;color:var(--w80);line-height:1.55;margin-bottom:10px;white-space:pre-wrap">${e(desc.length>600?desc.slice(0,600)+'…':desc)}</div>`:`<div style="font-size:12px;color:var(--w35);font-style:italic;line-height:1.5;margin-bottom:10px;padding:8px 0">Klik ✎ for at tilføje talking points — vinkel, USPs, smerter, tidligere kontakt.</div>`}
         <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:${aco.technologyNames?.length||aco.keywords?.length?'10px':'0'}">
           ${growthPill(aco.growth6Mo,'Vækst 6 mdr')}
           ${growthPill(aco.growth12Mo,'Vækst 12 mdr')}
@@ -8929,7 +8935,8 @@ function renderCockpitDetail(c){
           ${(c.meta_ads_active_now||c.meta_ads_recent90d)?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.12);color:#fb923c;font-size:10.5px;font-weight:700;border:1px solid rgba(251,146,60,0.25)" title="Senest set i Meta Ad Library: ${c.meta_ads_active_now||0} aktive lige nu · ${c.meta_ads_recent90d||0} kørte sidste 90 dage">🎯 ${c.meta_ads_active_now||0} aktive · ${c.meta_ads_recent90d||0} sidste 90 dage</span>`:''}
           ${c.linkedin_ad_url?`<a href="${e(c.linkedin_ad_url)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(10,102,194,0.15);color:#60a5fa;font-size:10.5px;font-weight:700;border:1px solid rgba(10,102,194,0.3);text-decoration:none" title="Se den specifikke LinkedIn-ad de kører nu">💼 Se LinkedIn-ad ↗</a>`:''}
         </div>
-      </div>`:''}
+      </div>`;
+      })()}
 
       <!-- Switchboard + decision-makers card -->
       <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:16px 20px;margin-bottom:18px">
