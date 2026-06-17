@@ -833,6 +833,10 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>
         Oversight
       </a>
+      <a id="nv-ab" onclick="sv('admin-bulk')">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="13" cy="4" r="1.2" fill="currentColor"/><circle cx="13" cy="8" r="1.2" fill="currentColor"/><circle cx="13" cy="12" r="1.2" fill="currentColor"/></svg>
+        Bulk operations
+      </a>
     </div>
   </nav>
 
@@ -1260,6 +1264,19 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
         <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">SDR-aktivitet, pipeline health og omkostnings-overblik. Data trukket fra leads-tabellen — server-side credit-tracking kommer i næste runde.</p>
       </div>
       <div id="admin-oversight-body"></div>
+    </div>
+  </div>
+
+  <!-- ADMIN BULK OPERATIONS PAGE — branded UI for the curl-only
+       /api/admin/* endpoints. Each card = one operation with confirm. -->
+  <div id="admin-bulk-page" style="display:none;flex:1;overflow-y:auto;height:100%;background:var(--dark)">
+    <div style="max-width:1100px;margin:0 auto;padding:28px 24px">
+      <div style="margin-bottom:20px">
+        <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">🛡 Admin</div>
+        <h2 style="font-size:26px;font-weight:800;color:#fff;margin:0 0 4px;letter-spacing:-0.5px">Bulk operations</h2>
+        <p style="font-size:13px;color:var(--w55);margin:0;line-height:1.5;max-width:680px">Cleanup + backfill tasks der tidligere kun kunne køres via curl. Hver handling viser hvor mange leads den påvirker før den udfører.</p>
+      </div>
+      <div id="admin-bulk-body"></div>
     </div>
   </div>
 
@@ -3165,7 +3182,161 @@ function renderAdminOversightPage(){
     </div>
 
     <div style="background:var(--w04);border:1px dashed var(--w08);border-radius:10px;padding:14px 18px;font-size:11.5px;color:var(--w55);line-height:1.6">
-      <strong style="color:var(--w80)">Roadmap:</strong> server-side credit tracking (live FE / Lusha / Apollo balance), per-SDR breakdown, bulk-actions UI (strip non-DK phones, archive by source/criteria), ICP gate controls (live sliders), brugerstyring.
+      <strong style="color:var(--w80)">Roadmap:</strong> server-side credit tracking (live FE / Lusha / Apollo balance), ICP gate controls (live sliders), brugerstyring.
+    </div>
+  `;
+}
+
+// Admin bulk-operations page — branded UI for the curl-only /api/admin/*
+// endpoints. Each card is one operation. Destructive ops route through
+// confirmDestructive so admin can't accidentally archive everything.
+async function adminBulkRun(opts){
+  const resultEl = document.getElementById('admin-bulk-result');
+  if (resultEl) resultEl.innerHTML = `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:12px 16px;font-size:12.5px;color:var(--w80)"><span class="search-spinner" style="display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:middle"></span>${e(opts.label)}…</div>`;
+  try {
+    const r = await fetch(opts.url, { method: 'POST', headers: { ...ah(), 'Content-Type': 'application/json' } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (resultEl) resultEl.innerHTML = `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.30);border-radius:10px;padding:12px 16px;font-size:12.5px;color:#fca5a5"><strong>Fejl (${r.status}):</strong> ${e(d.error || 'ukendt')}</div>`;
+      return;
+    }
+    if (resultEl) resultEl.innerHTML = `<div style="background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.30);border-radius:10px;padding:12px 16px;font-size:12.5px;color:#fff"><strong style="color:#6ee7b7">✓ ${e(opts.label)} udført.</strong><pre style="margin:8px 0 0;font-size:11px;color:var(--w80);background:var(--w04);padding:10px;border-radius:7px;overflow-x:auto;max-height:240px">${e(JSON.stringify(d.stats || d, null, 2))}</pre></div>`;
+  } catch (ex) {
+    if (resultEl) resultEl.innerHTML = `<div style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.30);border-radius:10px;padding:12px 16px;font-size:12.5px;color:#fca5a5">Netværksfejl: ${e(ex.message)}</div>`;
+  }
+}
+async function adminBulkRunGuarded(opts){
+  const ok = await confirmDestructive({
+    title: opts.confirmTitle || `Kør "${opts.label}"?`,
+    message: opts.confirmMessage || 'Denne handling påvirker leads-databasen. Sikker?',
+    confirmLabel: opts.confirmLabel || '▶ Kør',
+  });
+  if (!ok) return;
+  await adminBulkRun(opts);
+}
+function adminBulkRunStripNonDk(){
+  return adminBulkRunGuarded({
+    label: 'Strip non-DK phones',
+    url: '/api/admin/strip-non-dk-phones',
+    confirmTitle: 'Fjern alle ikke-DK telefonnumre?',
+    confirmMessage: 'Alle telefonnumre der ikke starter med +45 / 45 / 8-cifret DK bliver fjernet. Påvirker ALLE SDRs. Ingen leads slettes — kun phone-feltet ryddes på berørte rækker.',
+    confirmLabel: '🗑 Ja, fjern',
+  });
+}
+function adminBulkArchiveBySource(){
+  const prefix = (document.getElementById('ab-src-prefix')?.value || '').trim();
+  const reason = (document.getElementById('ab-src-reason')?.value || 'Bulk-arkiveret af admin').trim();
+  if (!prefix) { showToast('Indtast source-prefix'); return; }
+  return adminBulkRunGuarded({
+    label: `Archive by source: ${prefix}`,
+    url: `/api/admin/archive-by-source?source_prefix=${encodeURIComponent(prefix)}&reason=${encodeURIComponent(reason)}`,
+    confirmTitle: `Arkivér ALLE leads med source "${prefix}"?`,
+    confirmMessage: `Alle aktive leads hvor source starter med "${prefix}" markeres som ikke-relevante. Kan genoprettes via "Bulk restore" eller per-lead.\n\nGrund: ${reason}`,
+    confirmLabel: '🗑 Ja, arkivér',
+  });
+}
+function adminBulkArchiveByCvrs(){
+  const csv = (document.getElementById('ab-cvr-list')?.value || '').trim();
+  const reason = (document.getElementById('ab-cvr-reason')?.value || 'Bulk-arkiveret af admin').trim();
+  if (!csv) { showToast('Indsæt CVR-liste'); return; }
+  const cvrs = csv.split(/[\s,;]+/).filter(Boolean).join(',');
+  return adminBulkRunGuarded({
+    label: `Archive ${cvrs.split(',').length} CVRs`,
+    url: `/api/admin/archive-by-cvrs?cvrs=${encodeURIComponent(cvrs)}&reason=${encodeURIComponent(reason)}`,
+    confirmTitle: `Arkivér ${cvrs.split(',').length} CVRs?`,
+    confirmMessage: `De angivne CVRs markeres som ikke-relevante.\n\nGrund: ${reason}`,
+    confirmLabel: '🗑 Ja, arkivér',
+  });
+}
+function adminBulkBackfillContacts(){
+  return adminBulkRunGuarded({
+    label: 'Backfill contacts (Apollo + FE + Lusha)',
+    url: '/api/admin/backfill-contacts',
+    confirmTitle: 'Backfill contacts på leads uden contacts?',
+    confirmMessage: 'Kører Apollo + Full Enrich + Lusha på leads der mangler beslutningstagere. KAN KOSTE PENGE — afhænger af pool-størrelse.',
+    confirmLabel: '▶ Ja, kør',
+  });
+}
+function adminBulkDfVerifyUnknowns(){
+  return adminBulkRunGuarded({
+    label: 'Datafordeler-verify leads uden CVR',
+    url: '/api/admin/df-verify-unknowns',
+    confirmTitle: 'Verificér ukendte leads mod Datafordeler?',
+    confirmMessage: 'Slår leads op med syntetisk CVR (storeleads-X, meta-X) mod Datafordeler og opdaterer med rigtig CVR + firma-data. Gratis. Tager 2-10 minutter afhængigt af pool-størrelse.',
+    confirmLabel: '▶ Ja, kør',
+  });
+}
+function adminBulkBackfillCvr(){
+  return adminBulkRunGuarded({
+    label: 'Backfill CVR via Datafordeler navne-søgning',
+    url: '/api/admin/backfill-cvr',
+    confirmTitle: 'Backfill CVR via Datafordeler?',
+    confirmMessage: 'Datafordeler navne-søgning på leads uden rigtig CVR. Gratis. Køres allerede automatisk via daglig cron — kør kun manuelt hvis du har lige importeret en stor batch.',
+    confirmLabel: '▶ Ja, kør',
+  });
+}
+function renderAdminBulkPage(){
+  const el = document.getElementById('admin-bulk-body');
+  if (!el) return;
+  const card = (icon, title, desc, body) => `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:18px 20px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:18px">${icon}</span>
+      <h4 style="margin:0;font-size:14.5px;font-weight:800;color:#fff">${title}</h4>
+    </div>
+    <p style="margin:0 0 12px;font-size:12px;color:var(--w55);line-height:1.55">${desc}</p>
+    ${body}
+  </div>`;
+  el.innerHTML = `
+    <div id="admin-bulk-result" style="margin-bottom:18px">
+      <div style="background:var(--w04);border:1px dashed var(--w08);border-radius:10px;padding:11px 16px;font-size:11.5px;color:var(--w35);font-style:italic">Result-output vises her efter du kører en handling.</div>
+    </div>
+
+    <div style="font-size:11px;font-weight:800;color:var(--w55);letter-spacing:1.2px;text-transform:uppercase;margin:6px 0 10px">🛡 Cleanup (sikker — kan reverteres)</div>
+    ${card('📞', 'Strip non-DK telefonnumre',
+      'Fjerner alle ikke-DK telefonnumre (Apollo returnerer nogle gange US/foreign numre for danske kontakter). Vi ringer kun til +45-numre.',
+      `<button onclick="adminBulkRunStripNonDk()" style="background:rgba(248,113,113,0.14);border:1px solid rgba(248,113,113,0.32);border-radius:8px;padding:8px 14px;color:#fca5a5;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">🗑 Kør strip</button>`)}
+
+    <div style="font-size:11px;font-weight:800;color:var(--w55);letter-spacing:1.2px;text-transform:uppercase;margin:18px 0 10px">📦 Bulk arkivering</div>
+    ${card('🗂', 'Arkivér leads efter source',
+      'Markerer alle aktive leads hvis source matcher prefixet som ikke-relevante. Brug fx når en source går dårligt. Kan genoprettes via "Bulk restore" i Leadlist.',
+      `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:180px">
+          <label style="display:block;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:var(--w55);margin-bottom:4px">Source-prefix</label>
+          <input id="ab-src-prefix" placeholder="fx storeleads, branche-walk-, gmaps" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:7px;padding:8px 10px;color:#fff;font-family:Outfit,sans-serif;font-size:12px;outline:none;box-sizing:border-box">
+        </div>
+        <div style="flex:1;min-width:180px">
+          <label style="display:block;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:var(--w55);margin-bottom:4px">Arkiverings-grund</label>
+          <input id="ab-src-reason" placeholder="Source udfases" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:7px;padding:8px 10px;color:#fff;font-family:Outfit,sans-serif;font-size:12px;outline:none;box-sizing:border-box">
+        </div>
+        <button onclick="adminBulkArchiveBySource()" style="background:rgba(248,113,113,0.14);border:1px solid rgba(248,113,113,0.32);border-radius:8px;padding:8px 14px;color:#fca5a5;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer;align-self:flex-end">🗑 Arkivér</button>
+      </div>`)}
+    ${card('📋', 'Arkivér specifikke CVRs',
+      'Indsæt en liste af CVRs (en pr. linje eller komma-separeret). Brug fx til at fjerne konkurrenter eller eksisterende kunder.',
+      `<div>
+        <label style="display:block;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:var(--w55);margin-bottom:4px">CVRs</label>
+        <textarea id="ab-cvr-list" rows="4" placeholder="12345678&#10;87654321&#10;..." style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:7px;padding:8px 10px;color:#fff;font-family:monospace;font-size:12px;outline:none;box-sizing:border-box;resize:vertical;min-height:80px"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:flex-end">
+          <div style="flex:1">
+            <label style="display:block;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:var(--w55);margin-bottom:4px">Grund</label>
+            <input id="ab-cvr-reason" placeholder="Konkurrent / For lille / Allerede kunde" style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:7px;padding:8px 10px;color:#fff;font-family:Outfit,sans-serif;font-size:12px;outline:none;box-sizing:border-box">
+          </div>
+          <button onclick="adminBulkArchiveByCvrs()" style="background:rgba(248,113,113,0.14);border:1px solid rgba(248,113,113,0.32);border-radius:8px;padding:8px 14px;color:#fca5a5;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">🗑 Arkivér</button>
+        </div>
+      </div>`)}
+
+    <div style="font-size:11px;font-weight:800;color:var(--w55);letter-spacing:1.2px;text-transform:uppercase;margin:18px 0 10px">🔁 Backfill / Berigelse</div>
+    ${card('🏛', 'Datafordeler-verify ukendte leads',
+      'Slår leads med syntetisk CVR (storeleads-X, meta-X) op i Datafordeler og opdaterer med rigtig CVR + firmaoplysninger. Gratis.',
+      `<button onclick="adminBulkDfVerifyUnknowns()" style="background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.32);border-radius:8px;padding:8px 14px;color:#6ee7b7;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">▶ Kør verify</button>`)}
+    ${card('📛', 'Backfill CVR via navne-søgning',
+      'Datafordeler navne-søgning på leads uden rigtig CVR. Gratis. Køres allerede automatisk via daglig cron — kør kun manuelt efter en stor import.',
+      `<button onclick="adminBulkBackfillCvr()" style="background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.32);border-radius:8px;padding:8px 14px;color:#6ee7b7;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">▶ Kør backfill</button>`)}
+    ${card('👥', 'Backfill contacts (KOSTER credits)',
+      'Kører Apollo + Full Enrich + Lusha på alle aktive leads der mangler beslutningstagere. KAN KOSTE PENGE — Lusha + FE charger per success. Brug kun før en kampagne hvor du vil kit hele pool ud.',
+      `<button onclick="adminBulkBackfillContacts()" style="background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.32);border-radius:8px;padding:8px 14px;color:#fcd34d;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">⚠ Kør (koster credits)</button>`)}
+
+    <div style="background:var(--w04);border:1px dashed var(--w08);border-radius:10px;padding:14px 18px;font-size:11.5px;color:var(--w55);line-height:1.6;margin-top:14px">
+      <strong style="color:var(--w80)">Bemærk:</strong> alle handlinger virker på <em>alle SDRs' data</em> (admin-scope). Bulk-arkivering kan reverseres via "Bulk restore" i Leadlist.
     </div>
   `;
 }
@@ -10424,6 +10595,7 @@ function sv(v){
   document.getElementById('nv-cl')?.classList.toggle('on',v==='calling-list');
   document.getElementById('nv-lb')?.classList.toggle('on',v==='list-builder');
   document.getElementById('nv-ao')?.classList.toggle('on',v==='admin-oversight');
+  document.getElementById('nv-ab')?.classList.toggle('on',v==='admin-bulk');
 
   selCo=null;hdDp();ckd.clear();upSel();
   const bw=document.querySelector('.body-wrap');
@@ -10441,6 +10613,7 @@ function sv(v){
   const msPage=document.getElementById('meta-scraper-page');
   const lbPage=document.getElementById('list-builder-page');
   const aoPage=document.getElementById('admin-oversight-page');
+  const abPage=document.getElementById('admin-bulk-page');
 
   // Hide everything first
   if(v!=='autodialer' && typeof stopDashAutoRefresh==='function') stopDashAutoRefresh();
@@ -10461,6 +10634,7 @@ function sv(v){
   if(msPage)msPage.style.display='none';
   if(lbPage)lbPage.style.display='none';
   if(aoPage)aoPage.style.display='none';
+  if(abPage)abPage.style.display='none';
 
   if(v==='search'||v==='leads'){
     bw.style.display='';tb.style.display='';if(sb)sb.style.display='';if(selb)selb.style.display='';
@@ -10526,6 +10700,9 @@ function sv(v){
   } else if(v==='admin-oversight'){
     if(aoPage){aoPage.style.display='flex';aoPage.style.flexDirection='column';}
     if(typeof renderAdminOversightPage==='function') renderAdminOversightPage();
+  } else if(v==='admin-bulk'){
+    if(abPage){abPage.style.display='flex';abPage.style.flexDirection='column';}
+    if(typeof renderAdminBulkPage==='function') renderAdminBulkPage();
   }
   _prevView=v;
 }
