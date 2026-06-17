@@ -827,6 +827,8 @@ tr.chk td{background:rgba(124,58,237,0.08) !important}
          Toggled by applyAdminVisibility() after loadUserState. -->
     <div id="sb-admin-section" style="display:none">
       <div style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:1px;padding:14px 18px 6px">Admin</div>
+      <!-- Admin/SDR view toggle — populated by applyAdminVisibility() -->
+      <div id="admin-mode-toggle"></div>
       <a id="nv-ao" onclick="sv('admin-oversight')">
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>
         Oversight
@@ -1610,7 +1612,7 @@ async function doLogin(){
         const d=await r.json();
         authToken=d.token;currentUser=d.user;
         localStorage.setItem('vl_token',authToken);
-        showApp();await loadUserState();applyAdminVisibility();sv('discovery');
+        showApp();await loadUserState();applyAdminVisibility();sv(defaultLandingView());
         setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
         checkLinkedinLookupParam();
         return;
@@ -1792,7 +1794,7 @@ async function loadUserState(){
           showApp();
           await loadUserState();
           applyAdminVisibility();
-          sv('discovery');
+          sv(defaultLandingView());
           setTimeout(()=>{
             ['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
           },80);
@@ -2916,9 +2918,50 @@ function renderDashboardCtas(){
 // leads array (no separate API call) so it always reflects the same
 // data the SDR sees. Sections: KPI tiles, 7-day activity, source mix,
 // pipeline funnel, estimated cost burn.
+//
+// Admin mode toggle: when an admin user logs in, window._adminView=true
+// from the server. They additionally have a CLIENT-SIDE "admin mode"
+// flag that controls whether the UI surfaces governance overlays
+// (owner column on Leadlist, per-SDR breakdown on Oversight) or
+// presents the app exactly as an SDR would see it. Useful when admin
+// wants to triage hands-on without aggregated data getting in the way.
+function getAdminMode(){
+  if (window._adminView !== true) return false;
+  try { const v = localStorage.getItem('vl_admin_mode'); return v === null ? true : v === '1'; }
+  catch { return true; }
+}
+function setAdminMode(on){
+  try { localStorage.setItem('vl_admin_mode', on ? '1' : '0'); } catch {}
+  window._adminMode = on;
+}
+function toggleAdminMode(){
+  setAdminMode(!getAdminMode());
+  applyAdminVisibility();
+  // Land on the appropriate default for the new mode
+  sv(getAdminMode() ? 'admin-oversight' : 'discovery');
+}
+function defaultLandingView(){
+  return (window._adminView === true && getAdminMode()) ? 'admin-oversight' : 'discovery';
+}
 function applyAdminVisibility(){
+  // Sync the cached client-side flag from localStorage (used by render
+  // code throughout to gate owner column, per-SDR card, etc).
+  window._adminMode = getAdminMode();
   const sec = document.getElementById('sb-admin-section');
   if (sec) sec.style.display = window._adminView === true ? '' : 'none';
+  const tog = document.getElementById('admin-mode-toggle');
+  if (tog && window._adminView === true) {
+    const adm = getAdminMode();
+    tog.innerHTML = `<div onclick="toggleAdminMode()" title="Skift mellem admin-overblik og SDR-arbejdsflow" style="margin:4px 12px 8px;padding:7px 10px;display:flex;align-items:center;gap:8px;background:var(--w04);border:1px solid var(--w08);border-radius:8px;cursor:pointer;transition:border-color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.4)';this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.borderColor='var(--w08)';this.style.background='var(--w04)'">
+      <div style="width:32px;height:18px;border-radius:10px;background:${adm?'rgba(124,58,237,0.5)':'var(--w08)'};position:relative;flex-shrink:0;transition:background 0.18s">
+        <div style="position:absolute;top:1px;left:${adm?'15px':'1px'};width:16px;height:16px;border-radius:50%;background:${adm?'#c4b5fd':'var(--w55)'};transition:left 0.18s,background 0.18s"></div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11.5px;font-weight:800;color:#fff;letter-spacing:0.2px">${adm?'👤 Admin-mode':'🎯 SDR view'}</div>
+        <div style="font-size:9.5px;color:var(--w55);font-weight:600">${adm?'governance + alle SDR-leads':'arbejder som en SDR'}</div>
+      </div>
+    </div>`;
+  }
 }
 function renderAdminOversightPage(){
   const el = document.getElementById('admin-oversight-body');
@@ -3061,6 +3104,51 @@ function renderAdminOversightPage(){
         }
       </div>
     </div>
+
+    <!-- Per-SDR breakdown -->
+    ${(()=>{
+      // Group leads by _owner (set server-side when req.userId === 'admin').
+      // Each SDR gets a row with their counts; admin's own leads bucket
+      // separately. Skips rendering if all leads share the same _owner
+      // (i.e. no actual multi-user data to show).
+      const byOwner = {};
+      for (const l of all) {
+        const oid = l._owner || '?';
+        if (!byOwner[oid]) byOwner[oid] = { id: oid, name: l._ownerName || oid, leads: [] };
+        byOwner[oid].leads.push(l);
+      }
+      const owners = Object.values(byOwner).sort((a,b) => b.leads.length - a.leads.length);
+      if (owners.length <= 1) return '';
+      const row = (o) => {
+        const oActive = o.leads.filter(l => l.lastAction !== 'not-relevant' && !l.twenty_opportunity_id);
+        const oCalledWeek = o.leads.filter(l => l.lastCallAt && new Date(l.lastCallAt).getTime() >= wkAgo).length;
+        const oInterested = o.leads.filter(l => l.lastAction === 'interested' && l.lastCallAt && new Date(l.lastCallAt).getTime() >= wkAgo).length;
+        const oConv = oCalledWeek > 0 ? Math.round(100 * oInterested / oCalledWeek) : 0;
+        const oPushed = o.leads.filter(l => l.twenty_opportunity_id).length;
+        return `<tr style="border-bottom:1px solid var(--w04)">
+          <td style="padding:9px 12px;color:#fff;font-weight:700;font-size:12.5px">👤 ${e(o.name)}</td>
+          <td style="padding:9px 12px;text-align:right;color:var(--w80);font-family:monospace;font-size:12px">${oActive.length}<span style="color:var(--w35);font-size:10px;margin-left:4px">/ ${o.leads.length}</span></td>
+          <td style="padding:9px 12px;text-align:right;color:${oCalledWeek>0?'#c4b5fd':'var(--w35)'};font-family:monospace;font-weight:700;font-size:12px">${oCalledWeek}</td>
+          <td style="padding:9px 12px;text-align:right;color:${oInterested>0?'#6ee7b7':'var(--w35)'};font-family:monospace;font-weight:700;font-size:12px">${oInterested}</td>
+          <td style="padding:9px 12px;text-align:right;color:${oConv>=10?'#6ee7b7':oConv>0?'#fcd34d':'var(--w35)'};font-family:monospace;font-weight:700;font-size:12px">${oConv}%</td>
+          <td style="padding:9px 12px;text-align:right;color:${oPushed>0?'#60a5fa':'var(--w35)'};font-family:monospace;font-weight:700;font-size:12px">${oPushed}</td>
+        </tr>`;
+      };
+      return `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:18px 20px;margin-bottom:20px">
+        <div style="font-size:11px;font-weight:800;color:var(--w55);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:12px">👥 Per SDR (sidste 7 dage)</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid var(--w08)">
+            <th style="text-align:left;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">SDR</th>
+            <th style="text-align:right;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Active / Total</th>
+            <th style="text-align:right;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Opkald</th>
+            <th style="text-align:right;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Interesseret</th>
+            <th style="text-align:right;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">Conv %</th>
+            <th style="text-align:right;padding:7px 12px;font-size:10px;font-weight:800;color:var(--w35);text-transform:uppercase;letter-spacing:0.6px">→ Twenty</th>
+          </tr></thead>
+          <tbody>${owners.map(row).join('')}</tbody>
+        </table>
+      </div>`;
+    })()}
 
     <!-- Pipeline funnel -->
     <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:18px 20px;margin-bottom:20px">
@@ -6390,7 +6478,7 @@ function renderAutodialerPage(){
           return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.78':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}${isChecked?';background:rgba(124,58,237,0.10)':''}${dimRow}" ${showArchive?'':`onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             ${checkboxCell}
             <td style="padding:10px 8px 10px ${showCheckbox?'4px':'16px'};font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${showArchive?'':'<span style="color:var(--w35);cursor:grab;margin-right:4px" title="Træk for at omarrangere">⠿</span>'}${i+1}</td>
-            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${nicheChip(l)}${inListChip(l)}${adBadge?' '+adBadge:''}${socialIcons}</td>
+            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${nicheChip(l)}${inListChip(l)}${(window._adminMode && l._ownerName) ? `<span title="Ejer: ${e(l._ownerName)}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;background:rgba(96,165,250,0.14);color:#93c5fd;border:1px solid rgba(96,165,250,0.28);letter-spacing:0.3px;vertical-align:middle">👤 ${e(l._ownerName)}</span>` : ''}${adBadge?' '+adBadge:''}${socialIcons}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${dispCell}</td>
             <td style="padding:10px 14px;text-align:right">${lastCell}</td>
