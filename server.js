@@ -6135,6 +6135,50 @@ async function apolloSearchPeople({ name, domain, organizationId }) {
   return d.people || [];
 }
 
+// Apollo /people/match BY NAME — looks up a single person from name + company
+// domain. Returns the matched person (Apollo's full schema) or null when
+// Apollo can't find a confident match. Used to enrich a contact discovered
+// elsewhere (e.g. via FE People Search, which doesn't return per-person
+// LinkedIn URLs) with their LinkedIn URL + extra firmographic context.
+//
+// Costs 1 Apollo credit on success. Honors the daily cap.
+async function apolloFindPersonByName(firstName, lastName, opts = {}) {
+  if (!firstName || !lastName) return null;
+  const domain = opts.domain || '';
+  const orgName = opts.organizationName || '';
+  if (!domain && !orgName) return null;
+  const spendState = loadApolloSpend();
+  if (spendState.spent >= APOLLO_DAILY_CAP) {
+    throw new ApolloCapReachedError(spendState.spent, APOLLO_DAILY_CAP);
+  }
+  const body = { first_name: firstName, last_name: lastName, reveal_personal_emails: false };
+  if (domain) body.domain = domain;
+  if (orgName) body.organization_name = orgName;
+  const r = await fetch(`${APOLLO_API_BASE}/people/match`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': process.env.APOLLO_API_KEY },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => '');
+    if (isApolloCreditExhaustedResponse(r.status, text)) {
+      setApolloExhausted(text.slice(0, 200));
+      throw new ApolloCreditExhaustedError(text.slice(0, 200));
+    }
+    // 404 / 422 = no match; not an error, just nothing to enrich with
+    if (r.status === 404 || r.status === 422) return null;
+    throw new Error(`Apollo match-by-name ${r.status}: ${text.slice(0, 200)}`);
+  }
+  clearApolloExhausted();
+  const d = await r.json();
+  // Apollo only bills when person was found (non-empty match)
+  if (d && d.person) {
+    incrementApolloSpend(1);
+    return d.person;
+  }
+  return null;
+}
+
 async function apolloMatchPerson(personId) {
   // Pre-flight cap check — never make the API call (and burn the credit)
   // if today's budget is already spent. Throws a typed sentinel so the
@@ -7427,6 +7471,49 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
   let directDial = (apolloContacts.find((c) => c.phone) || {}).phone || "";
   let fullEnrichUsed = false;
   let fullEnrichHit = false;
+
+  // ─── STAGE 1.7: Enrich top contact with LinkedIn URL via Apollo ───────
+  // Most contacts now come from FE People Search, which doesn't return
+  // per-person LinkedIn URLs (only company-level). One Apollo /people/match
+  // by name+domain fixes that → 10-60% better FE Contact Enrich hit rate,
+  // better Lusha hit rate, and a clickable LinkedIn for the SDR. Cost:
+  // 1 Apollo credit per lead where the top contact lacks a LI URL.
+  if (!directDial) {
+    const topForEnrich = await pickTopContactForFullEnrich(apolloContacts);
+    const hasLi = topForEnrich && (topForEnrich.linkedin || topForEnrich.linkedinUrl);
+    const enrichDomain = (company && company.domain) || (lead.web || lead.website || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    if (topForEnrich && topForEnrich.name && !hasLi && enrichDomain && isApolloConfigured()) {
+      const [fn, ...rn] = String(topForEnrich.name).trim().split(/\s+/);
+      const ln = rn.join(" ");
+      if (fn && ln) {
+        try {
+          const matched = await apolloFindPersonByName(fn, ln, { domain: enrichDomain, organizationName: lead.name });
+          if (matched) {
+            const liUrl = matched.linkedin_url || (matched.person && matched.person.linkedin_url) || "";
+            const idx = apolloContacts.findIndex((c) => c === topForEnrich);
+            if (idx >= 0 && liUrl) {
+              apolloContacts[idx] = {
+                ...topForEnrich,
+                linkedin: liUrl,
+                linkedinUrl: liUrl,
+                title: topForEnrich.title || matched.title || "",
+                seniority: topForEnrich.seniority || matched.seniority || "",
+                apollo_id: matched.id || matched.apollo_id || "",
+              };
+              lead.contacts = apolloContacts;
+            }
+          }
+        } catch (e) {
+          if (e && e.code === "APOLLO_CAP_REACHED") {
+            // Don't fail the whole reveal — FE/Lusha can still work without LI URL
+            console.warn("[reveal-direct-dial/apollo-li-enrich] cap reached, continuing without LI URL");
+          } else {
+            console.warn("[reveal-direct-dial/apollo-li-enrich]", lead.cvr, e.message);
+          }
+        }
+      }
+    }
+  }
 
   // ─── STAGE 2: Full Enrich fallback for the top contact ───────────────
   if (!directDial && isFullEnrichConfigured()) {
