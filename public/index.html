@@ -8390,7 +8390,12 @@ function renderCockpitDetail(c){
           <div style="font-size:11.5px;color:var(--w55);line-height:1.55;margin-bottom:14px;max-width:440px;margin-left:auto;margin-right:auto">Klik for at lade Apollo + Full Enrich finde navne, titler og direkte telefonnumre på beslutningstagerne. ~60-90 sek per lead · ~10 credits hvis et nummer findes (~$0.60).</div>
           <button onclick="enrichLeadWithKaspr('${e(c.cvr||'')}','cockpit')" class="btn-start-call" style="border-radius:10px;padding:11px 22px;font-size:13.5px">🔍 Find beslutningstagere</button>
           <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--w08);font-size:10.5px;color:var(--w35);text-align:left">
-            <div style="margin-bottom:6px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase">Eller tilføj selv via LinkedIn URL</div>
+            <div style="margin-bottom:6px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase">Eller søg selv</div>
+            <div style="display:flex;gap:6px;margin-bottom:10px">
+              <button onclick="openLinkedinSearchForCompany('${e(c.name||'')}')" style="flex:1;background:rgba(10,102,194,0.18);color:#7cb8ff;border:1px solid rgba(10,102,194,0.35);border-radius:8px;padding:7px 10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Åbn Google → site:linkedin.com/in for denne virksomhed">🔗 Søg LinkedIn</button>
+              <button onclick="openGoogleSearchForCompany('${e(c.name||'')}')" style="flex:1;background:rgba(234,179,8,0.18);color:#fde047;border:1px solid rgba(234,179,8,0.35);border-radius:8px;padding:7px 10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif" title="Bred Google-søgning efter beslutningstagere i denne virksomhed">🌐 Søg Google</button>
+            </div>
+            <div style="margin-bottom:6px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase">Eller paste LinkedIn URL direkte</div>
             <div style="display:flex;gap:6px">
               <input id="cockpit-li-input-${e(c.cvr||'')}" type="url" placeholder="https://linkedin.com/in/..." style="flex:1;background:var(--w04);border:1px solid var(--w08);border-radius:8px;color:#fff;padding:7px 10px;font-size:11.5px;font-family:'Outfit',sans-serif;outline:none">
               <button onclick="cockpitAddContactFromLinkedin('${e(c.cvr||'')}')" style="background:rgba(124,58,237,0.18);color:#c4b5fd;border:1px solid rgba(124,58,237,0.35);border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">+ Tilføj</button>
@@ -8686,6 +8691,25 @@ async function enrichLeadWithKaspr(cvr, context){
 // found one via their own research. Hits the existing
 // /api/apollo/lookup-linkedin endpoint (1 Apollo credit, 30d cache),
 // appends the result to the lead's contacts, and re-renders.
+// Manual fallback search shortcuts — fired from the cockpit empty-contacts
+// state when automated enrichment found nothing. Opens Google searches
+// scoped to LinkedIn or general web in a new tab. SDR uses their logged-in
+// LinkedIn session in the new tab to verify + grab the right /in/ URL,
+// then comes back and pastes it into the cockpit input.
+function openLinkedinSearchForCompany(company) {
+  if (!company) { showToast('Mangler firmanavn'); return; }
+  // Bias toward decision-maker titles in DK + EN
+  const roles = 'CEO OR direktør OR founder OR stifter OR indehaver OR marketing OR ejer';
+  const q = encodeURIComponent(`site:linkedin.com/in "${company}" (${roles})`);
+  window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener');
+}
+function openGoogleSearchForCompany(company) {
+  if (!company) { showToast('Mangler firmanavn'); return; }
+  const roles = 'CEO OR direktør OR founder OR stifter OR marketing OR ejer';
+  const q = encodeURIComponent(`"${company}" (${roles}) Denmark`);
+  window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener');
+}
+
 async function cockpitAddContactFromLinkedin(cvr) {
   if (!cvr) return;
   const input = document.getElementById('cockpit-li-input-' + cvr);

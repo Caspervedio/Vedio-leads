@@ -4081,6 +4081,100 @@ async function callGemini(prompt) {
   }
 }
 
+// Gemini variant that uses Google Search grounding instead of responseMimeType
+// JSON. Used when we need Gemini to look things up on the web (LinkedIn
+// snippets, news mentions, etc). The two modes are mutually exclusive —
+// generationConfig.responseMimeType:'application/json' conflicts with tools.
+// We instead ask the prompt to return JSON inline + parse it ourselves.
+async function callGeminiWithSearch(prompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
+    })
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message || 'Gemini API error');
+  const candidate = data.candidates?.[0];
+  if (!candidate) throw new Error('Gemini returned no candidates');
+  const parts = candidate.content?.parts || [];
+  let text = parts.filter(p => p.text && !p.thought).map(p => p.text).join('\n');
+  if (!text) text = parts.map(p => p.text || '').join('\n');
+  return { text, grounding: candidate.groundingMetadata || null };
+}
+
+// Stage 1.5 fallback: use Gemini + Google Search grounding to find named
+// decision-makers on LinkedIn when Stage 0 (website extract) and Stage 1
+// (FE People Search) both returned nothing. Reads Google's indexed LI
+// snippets — current data is 1-3 months stale, so each result gets
+// confidence='low' so the SDR knows to verify before calling.
+//
+// Cost: ~$0.02-0.04 per call (grounded search adds tokens). Only fires
+// on the ~10-20% of leads with no other contact data.
+async function geminiSearchLinkedinForCompany(companyName, domain) {
+  if (!process.env.GEMINI_API_KEY) return [];
+  if (!companyName) return [];
+  const prompt = `Find named senior decision-makers currently working at the Danish company "${companyName}" (website: ${domain || 'unknown'}).
+
+Use Google Search to find their public LinkedIn profiles. Focus on roles that buy B2B marketing / SaaS / agency services:
+- Owner / Founder / Stifter / Indehaver
+- CEO / Direktør / Adm. direktør
+- CMO / Marketing Director / Marketing Manager / Head of Marketing
+- E-commerce Manager / Digital Marketing Lead
+- Sales / Growth Lead
+
+STRICT RULES:
+1. Only include people whose CURRENT job is at "${companyName}" specifically — NOT a similar-named different company, NOT a former employee.
+2. Only include people whose LinkedIn URL you actually saw in search results — do NOT construct or guess URLs.
+3. The source_snippet must be the actual Google SERP snippet text where you found this person.
+4. If unsure, exclude them. We'd rather have 0 false positives than 1 wrong contact.
+
+Output STRICTLY this JSON shape, no markdown, no other text:
+{ "people": [{ "name": "...", "title": "...", "linkedin_url": "https://www.linkedin.com/in/...", "source_snippet": "...", "confidence": "high|medium|low" }] }
+
+If no confident matches: { "people": [] }`;
+
+  let result;
+  try {
+    result = await callGeminiWithSearch(prompt);
+  } catch (e) {
+    console.warn('[gemini-search]', companyName, 'call failed:', e.message);
+    return [];
+  }
+  let people = [];
+  try {
+    const text = result.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return [];
+    const fixed = jsonMatch[0].replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+    const parsed = JSON.parse(fixed);
+    people = Array.isArray(parsed.people) ? parsed.people : [];
+  } catch (_) { return []; }
+  console.log(`[gemini-search] ${companyName} returned ${people.length} candidates`);
+  return people
+    .filter(p => p && typeof p.name === 'string' && p.name.length >= 3 && p.name.length <= 80)
+    .filter(p => p.linkedin_url && /linkedin\.com\/in\//i.test(p.linkedin_url))
+    .map(p => ({
+      name: String(p.name).trim(),
+      title: String(p.title || '').trim(),
+      linkedin: String(p.linkedin_url).trim(),
+      linkedinUrl: String(p.linkedin_url).trim(),
+      source_snippet: String(p.source_snippet || '').slice(0, 300),
+      confidence: ['high', 'medium', 'low'].includes(p.confidence) ? p.confidence : 'low',
+      is_decision_maker: true,
+      source_discovery: 'gemini-google-search',
+      needs_verification: true, // SDR should verify on LI before calling
+      phone: '',
+      email: '',
+    }));
+}
+
 // Strip HTML to plain text — keeps token cost down before sending to Gemini.
 // Drops scripts, styles, and HTML tags. Preserves human-readable text.
 function htmlToText(html) {
@@ -7012,10 +7106,26 @@ async function intakeEnrichLead(lead) {
   // Merge: Gemini-discovered names take priority (source-cited, higher
   // confidence). De-dupe FE results by lowercased name match.
   const seenNames = new Set(geminiContacts.map((c) => c.name.toLowerCase()));
-  const merged = [
+  let merged = [
     ...geminiContacts,
     ...feContacts.filter((c) => c.name && !seenNames.has(c.name.toLowerCase())),
   ];
+
+  // Stage 1.5: if Stages 0 + 1 BOTH came up empty, try Gemini + Google
+  // Search grounding to find LinkedIn snippets. Last-ditch automated
+  // fallback before the SDR has to research manually. Results get a
+  // "needs_verification" flag because Google's LI snippets can be stale.
+  if (merged.length === 0 && domain) {
+    try {
+      const searched = await geminiSearchLinkedinForCompany(lead.name, domain);
+      if (Array.isArray(searched) && searched.length > 0) {
+        merged = searched;
+        lead.gemini_search_at = new Date().toISOString();
+        stats.gemini_search_used = true;
+      }
+    } catch (_) {}
+  }
+
   if (merged.length > 0 && (!Array.isArray(lead.contacts) || lead.contacts.length === 0)) {
     lead.contacts = merged;
     stats.contacts = merged.length;
@@ -7201,9 +7311,24 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
     } catch (_) { /* fall through to Apollo */ }
   }
 
-  // ─── STAGE 1b: Apollo fallback (when FE returned 0) ──────────────────
+  // ─── STAGE 1.5: Gemini + Google Search LinkedIn lookup ──────────────
+  // Fires only when Stages 0 + 1 both returned 0. Reads Google's indexed
+  // LinkedIn snippets to find named people. Stale data risk → contacts
+  // get needs_verification=true so the cockpit UI shows a warning badge.
+  if (workingContacts.length === 0 && domain && process.env.GEMINI_API_KEY) {
+    try {
+      const searched = await geminiSearchLinkedinForCompany(lead.name, domain);
+      if (Array.isArray(searched) && searched.length > 0) {
+        workingContacts = searched;
+        lead.gemini_search_at = new Date().toISOString();
+      }
+    } catch (_) {}
+  }
+
+  // ─── STAGE 1b: Apollo fallback (last resort) ────────────────────────
   // Apollo still has unique value for non-DK SMB and larger companies
-  // where FE's index is thin. Only fires when FE found nothing.
+  // where every other source's index is thin. Only fires when ALL above
+  // returned nothing.
   if (workingContacts.length === 0 && isApolloConfigured()) {
     try {
       const r = await enrichWithApollo({
