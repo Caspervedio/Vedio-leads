@@ -8334,6 +8334,31 @@ function renderCockpitDetail(c){
     const m=map[s]||{lbl:s,bg:'var(--w04)',fg:'var(--w55)'};
     return `<span style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:${m.bg};color:${m.fg};font-weight:800;letter-spacing:0.3px;text-transform:uppercase">${m.lbl}</span>`;
   };
+  // Discovery-source chip — tells SDR where this contact came from so
+  // they know how much to trust it. Gemini-website is source-cited
+  // (highest trust). Gemini-google-search is SERP-derived (stale risk,
+  // amber warning). FE/Apollo are vendor-DB (medium trust). Hover shows
+  // detail + source URL link when present.
+  const discoverySourceChip=(p)=>{
+    const src=p.source_discovery||'';
+    if(!src) return '';
+    const map={
+      'gemini-website':{lbl:'🤖 Hjemmeside',bg:'rgba(52,211,153,0.14)',fg:'#6ee7b7',title:'Fundet på virksomhedens hjemmeside — høj tillid, kilde-citeret'},
+      'fullenrich-search':{lbl:'📇 Full Enrich',bg:'rgba(96,165,250,0.14)',fg:'#93c5fd',title:'Fundet i Full Enrich-indekset'},
+      'gemini-google-search':{lbl:'🔎 LI-snippet',bg:'rgba(251,191,36,0.16)',fg:'#fcd34d',title:'Fundet via Google → LinkedIn snippet. Verificér på LinkedIn før opkald — data kan være 1-3 mdr gammel.'},
+      'manual-linkedin-url':{lbl:'🔗 Manuel',bg:'rgba(124,58,237,0.16)',fg:'#c4b5fd',title:'Tilføjet manuelt via LinkedIn-URL'},
+    };
+    const m=map[src];
+    if(!m) return '';
+    const link=p.source_url?`<a href="${e(p.source_url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;border-bottom:1px dashed currentColor" title="Åbn kilden i ny fane" onclick="event.stopPropagation()">${m.lbl}</a>`:m.lbl;
+    return `<span title="${e(m.title)}" style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:${m.bg};color:${m.fg};font-weight:800;letter-spacing:0.3px">${link}</span>`;
+  };
+  // Verification-warning chip — only on contacts that need manual sanity
+  // check before calling (currently: SERP-derived contacts from Stage 1.5).
+  const verifyWarnChip=(p)=>{
+    if(!p.needs_verification) return '';
+    return `<span title="Verificér på LinkedIn at personen stadig arbejder her — data fra Google-snippet, kan være 1-3 mdr gammel" style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(251,113,133,0.16);color:#fda4af;font-weight:800;letter-spacing:0.3px">⚠ Verificér</span>`;
+  };
   // Email status pill — verified vs catchall vs unavailable
   const emailPill=(em,status,catchall)=>{
     if(!em) return '<span style="font-size:11px;color:var(--w35)">— ingen email</span>';
@@ -8449,6 +8474,8 @@ function renderCockpitDetail(c){
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px">
                 <span style="font-size:13.5px;font-weight:800;color:#fff">${e(p.name)}</span>
                 ${seniorityChip(p.seniority)}
+                ${discoverySourceChip(p)}
+                ${verifyWarnChip(p)}
               </div>
               <div style="font-size:11.5px;color:var(--w80);margin-bottom:4px">${e(p.title||'—')}</div>
               ${p.headline&&p.headline!==p.title?`<div style="font-size:11px;color:var(--w55);font-style:italic;margin-bottom:6px">"${e(trunc(p.headline,120))}"</div>`:''}
