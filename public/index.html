@@ -7744,10 +7744,17 @@ function openCockpit(forceCvr){
   }
   if(base.length===0){showToast('Ingen leads klar — tilføj eller vent på callbacks');return;}
   _cockpit.queue=base;
-  // Resume at last viewed lead if we have history; else start at 0.
-  const lastCvr=_cockpit.history[_cockpit.history.length-1];
-  const resumeIdx=lastCvr?_cockpit.queue.findIndex(l=>l.cvr===lastCvr):-1;
-  _cockpit.idx=resumeIdx>=0?resumeIdx:0;
+  // Cockpit position priority:
+  //   1. forceCvr — SDR explicitly clicked a specific lead, always land on it
+  //   2. last viewed lead from history — resume after closing/re-opening
+  //   3. position 0 — fresh start
+  let openIdx = -1;
+  if (forceCvr) openIdx = _cockpit.queue.findIndex(l => l.cvr === forceCvr);
+  if (openIdx < 0) {
+    const lastCvr = _cockpit.history[_cockpit.history.length-1];
+    openIdx = lastCvr ? _cockpit.queue.findIndex(l => l.cvr === lastCvr) : -1;
+  }
+  _cockpit.idx = openIdx >= 0 ? openIdx : 0;
   _cockpit.leadEnteredAt = Date.now();        // start view-timer for first lead
   _cockpit.open=true;
   // Session stats — counts dispositions for the post-call summary banner
