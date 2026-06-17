@@ -4157,6 +4157,7 @@ async function geminiExtractDecisionMakers(domain, companyName) {
   if (!process.env.GEMINI_API_KEY) return [];
   if (!domain) return [];
   const pages = await fetchTeamPageCandidates(domain);
+  console.log(`[gemini-extract] ${domain} fetched ${pages.length} pages: ${pages.map(p => p.url).join(', ')}`);
   if (pages.length === 0) return [];
   // Combine all page text into one labeled block. Total ~5-30KB.
   const corpus = pages.map((p, i) => `--- PAGE ${i + 1}: ${p.url} ---\n${p.text}`).join('\n\n');
@@ -4189,10 +4190,11 @@ ${corpus}`;
   try {
     result = await callGemini(prompt);
   } catch (e) {
-    console.warn('[gemini-extract]', domain, e.message);
+    console.warn('[gemini-extract]', domain, 'call failed:', e.message);
     return [];
   }
   const people = Array.isArray(result && result.people) ? result.people : [];
+  console.log(`[gemini-extract] ${domain} returned ${people.length} raw people`);
   // Validate: every returned name must appear in the source corpus.
   // Drops hallucinations + names from prompt injection attempts.
   const corpusLower = corpus.toLowerCase();
@@ -6953,7 +6955,9 @@ async function intakeEnrichLead(lead) {
   let geminiContacts = [];
   try {
     if (domain) {
+      console.log(`[intake-enrich] gemini attempt: ${lead.cvr} domain=${domain}`);
       const found = await geminiExtractDecisionMakers(domain, lead.name);
+      console.log(`[intake-enrich] gemini result: ${lead.cvr} found=${found && found.length}`);
       if (Array.isArray(found) && found.length > 0) {
         // Sort decision-makers first, then by confidence
         const confRank = { high: 0, medium: 1, low: 2 };
