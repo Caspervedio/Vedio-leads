@@ -8744,21 +8744,60 @@ async function _cockpitAutoReveal(cvr) {
 
 function renderCockpitQueue(){
   const wrap=document.getElementById('cockpit-queue');if(!wrap)return;
-  wrap.innerHTML=_cockpit.queue.map((l,i)=>{
-    const active=i===_cockpit.idx;
-    const last=l.lastAction;
-    const lastChip=last?`<span style="font-size:9px;padding:1px 5px;border-radius:8px;background:${lastActionColor(last,'bg')};color:${lastActionColor(last,'fg')};font-weight:700">${lastActionLabel(last)}</span>`:'';
-    return `<div onclick="cockpitJump(${i})" style="padding:10px 14px;border-bottom:1px solid var(--w04);cursor:pointer;display:flex;flex-direction:column;gap:3px;${active?'background:rgba(124,58,237,0.15);border-left:3px solid var(--purple);padding-left:11px':''}">
-      <div style="display:flex;align-items:center;gap:6px">
-        ${active?'<span style="color:var(--purple-light)">▶</span>':''}
-        <span style="font-size:12.5px;font-weight:700;color:${active?'#fff':'var(--w80)'};line-height:1.2;flex:1">${e(trunc(l.name,28))}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--w35)">
-        <span style="font-family:monospace">${l.cvr}</span>
-        ${lastChip}
-      </div>
-    </div>`;
-  }).join('');
+  // Search filter — narrows the queue rail to leads matching by name,
+  // CVR, or contact name. Lets the SDR jump to a specific lead inside
+  // a large calling list without scrolling. Preserves _cockpit.idx so
+  // the active lead stays highlighted even when filtered out (user
+  // sees "(skjult af søgning)" + clear button).
+  if (typeof _cockpit.queueFilter !== 'string') _cockpit.queueFilter = '';
+  const q = _cockpit.queueFilter.toLowerCase().trim();
+  const items = _cockpit.queue.map((l, i) => ({ l, i })).filter(({ l }) => {
+    if (!q) return true;
+    const hay = [l.name, l.cvr, (l.contacts||[]).map(c => c.name||'').join(' ')].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  const searchBox = `<div style="position:sticky;top:0;background:var(--dark2);border-bottom:1px solid var(--w08);padding:10px 12px;z-index:2">
+    <div style="position:relative">
+      <span style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--w35);font-size:12px;pointer-events:none">🔍</span>
+      <input id="cockpit-q-search" type="text" value="${e(_cockpit.queueFilter)}" placeholder="Søg i kø… (navn, CVR, kontakt)" autocomplete="off"
+             oninput="cockpitSetQueueFilter(this.value)"
+             onkeydown="if(event.key==='Escape'){cockpitSetQueueFilter('');this.blur();}"
+             style="width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:7px;padding:6px 28px 6px 28px;color:#fff;font-family:Outfit,sans-serif;font-size:11.5px;outline:none;box-sizing:border-box;transition:border-color 0.12s"
+             onfocus="this.style.borderColor='rgba(124,58,237,0.5)'" onblur="this.style.borderColor='var(--w08)'">
+      ${_cockpit.queueFilter ? `<button onclick="cockpitSetQueueFilter('')" title="Ryd søgning" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:var(--w55);cursor:pointer;font-size:13px;padding:0 4px;line-height:1">✕</button>` : ''}
+    </div>
+    ${q ? `<div style="margin-top:6px;font-size:10px;color:var(--w35)">${items.length} af ${_cockpit.queue.length} i køen</div>` : ''}
+  </div>`;
+  const list = items.length > 0
+    ? items.map(({ l, i }) => {
+        const active = i === _cockpit.idx;
+        const last = l.lastAction;
+        const lastChip = last ? `<span style="font-size:9px;padding:1px 5px;border-radius:8px;background:${lastActionColor(last,'bg')};color:${lastActionColor(last,'fg')};font-weight:700">${lastActionLabel(last)}</span>` : '';
+        return `<div onclick="cockpitJump(${i})" style="padding:10px 14px;border-bottom:1px solid var(--w04);cursor:pointer;display:flex;flex-direction:column;gap:3px;${active?'background:rgba(124,58,237,0.15);border-left:3px solid var(--purple);padding-left:11px':''}">
+          <div style="display:flex;align-items:center;gap:6px">
+            ${active?'<span style="color:var(--purple-light)">▶</span>':''}
+            <span style="font-size:12.5px;font-weight:700;color:${active?'#fff':'var(--w80)'};line-height:1.2;flex:1">${e(trunc(l.name,28))}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--w35)">
+            <span style="font-family:monospace">${l.cvr}</span>
+            ${lastChip}
+          </div>
+        </div>`;
+      }).join('')
+    : `<div style="padding:32px 18px;text-align:center;font-size:11.5px;color:var(--w55);font-style:italic">Ingen match for "${e(_cockpit.queueFilter)}"</div>`;
+  wrap.innerHTML = searchBox + list;
+  // Preserve focus + cursor across re-renders (input gets rebuilt every keystroke)
+  if (q) {
+    const inp = document.getElementById('cockpit-q-search');
+    if (inp && document.activeElement !== inp) {
+      inp.focus();
+      try { inp.setSelectionRange(q.length, q.length); } catch(_) {}
+    }
+  }
+}
+function cockpitSetQueueFilter(q){
+  _cockpit.queueFilter = q || '';
+  renderCockpitQueue();
 }
 
 function lastActionLabel(a){return{'interested':'✓ Interesseret','follow-up':'📅 Follow-up planlagt','sms':'💬 Sendt SMS','no-answer':'✕ Ingen svar','not-relevant':'– Ikke relevant'}[a]||a;}
