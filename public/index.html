@@ -6391,9 +6391,11 @@ function openLeadInspector(cvr){
 
   titleEl.textContent = lead.name || lead.cvr || '—';
 
-  // Build the body content. Modeled after the cockpit detail panel but
-  // stripped of calling-mode pieces (no disposition grid, no gatekeeper
-  // scripts, no talking-points autosuggest).
+  // 2026-06-17: rewrote the inspector to match the cockpit detail panel —
+  // rich contact cards, quick-links bar, talking points, enrichment
+  // trigger + delete action. The Leadlist is the workbench, so the SDR
+  // needs as much info here as in the cockpit (just minus the calling-
+  // mode pieces: disposition grid, gatekeeper script library).
   const ac = lead.apollo_company || {};
   const phone = lead.phone || lead.ph || '';
   const website = lead.web || ac.websiteUrl || ac.domain || '';
@@ -6410,6 +6412,54 @@ function openLeadInspector(cvr){
     ${body}
   </div>`;
 
+  // Inline helper chips — duplicated from the cockpit's nested helpers
+  // (they're scoped inside renderCockpitDetail). Refactor opportunity:
+  // hoist these to a shared module if more views need them.
+  const _senChip = (s) => {
+    if (!s) return '';
+    const m = {c_suite:{l:'C-suite',bg:'rgba(52,211,153,0.18)',fg:'#34d399'},founder:{l:'Founder',bg:'rgba(124,58,237,0.18)',fg:'#c4b5fd'},owner:{l:'Owner',bg:'rgba(124,58,237,0.18)',fg:'#c4b5fd'},vp:{l:'VP',bg:'rgba(96,165,250,0.18)',fg:'#60a5fa'},director:{l:'Director',bg:'rgba(96,165,250,0.15)',fg:'#93c5fd'},head:{l:'Head',bg:'rgba(167,139,250,0.18)',fg:'#a78bfa'},manager:{l:'Manager',bg:'rgba(148,163,184,0.15)',fg:'#94a3b8'}}[s] || {l:s,bg:'var(--w04)',fg:'var(--w55)'};
+    return `<span style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:${m.bg};color:${m.fg};font-weight:800;letter-spacing:0.3px;text-transform:uppercase">${m.l}</span>`;
+  };
+  const _srcChip = (p) => {
+    const m = {'gemini-website':{l:'🤖 Hjemmeside',bg:'rgba(52,211,153,0.14)',fg:'#6ee7b7'},'fullenrich-search':{l:'📇 Full Enrich',bg:'rgba(96,165,250,0.14)',fg:'#93c5fd'},'gemini-google-search':{l:'🔎 LI-snippet',bg:'rgba(251,191,36,0.16)',fg:'#fcd34d'},'manual-linkedin-url':{l:'🔗 Manuel',bg:'rgba(124,58,237,0.16)',fg:'#c4b5fd'}}[p.source_discovery];
+    if (!m) return '';
+    const inner = p.source_url ? `<a href="${e(p.source_url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;border-bottom:1px dashed currentColor" onclick="event.stopPropagation()">${m.l}</a>` : m.l;
+    return `<span style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:${m.bg};color:${m.fg};font-weight:800;letter-spacing:0.3px">${inner}</span>`;
+  };
+  const _verifyChip = (p) => p.needs_verification ? `<span title="Verificér på LinkedIn — data fra Google-snippet kan være 1-3 mdr gammel" style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(251,113,133,0.16);color:#fda4af;font-weight:800;letter-spacing:0.3px">⚠ Verificér</span>` : '';
+
+  // Rich contact card — matches the cockpit layout (avatar + name + chips
+  // + title + phone with source pill + LinkedIn + email + location).
+  const richContactCard = (c) => {
+    const initial = (c.name || '?').trim()[0].toUpperCase();
+    const phones = Array.isArray(c.phones) && c.phones.length > 0 ? c.phones : (c.phone ? [{number:c.phone, type:c.phoneType||'work', typeLabel:c.phoneTypeLabel||'Telefon'}] : []);
+    const phoneHtml = phones.map(ph => {
+      const isDirect = ph.type==='mobile'||ph.type==='direct'||ph.type==='work_direct';
+      const badge = isDirect
+        ? `<span style="background:rgba(52,211,153,0.18);color:#6ee7b7;border:1px solid rgba(52,211,153,0.35);padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:700;margin-left:4px">✓ ${e(ph.typeLabel||'Mobil')}</span>`
+        : `<span style="color:var(--w35);font-size:10px;margin-left:4px">${e(ph.typeLabel||'')}</span>`;
+      return `<div style="margin-top:3px"><a href="javascript:void(0)" onclick="ringNow('${e(ph.number)}','${e(lead.cvr||'')}','${e(c.name||'')}')" style="color:#c4b5fd;text-decoration:none;font-family:monospace;font-size:11.5px">📞 ${e(ph.number)}</a>${badge}</div>`;
+    }).join('');
+    return `<div style="display:flex;align-items:flex-start;gap:10px;background:var(--w04);border:1px solid var(--w08);border-radius:11px;padding:10px 12px;margin-bottom:7px">
+      <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:14px;flex-shrink:0">${e(initial)}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
+          <span style="font-size:13px;font-weight:800;color:#fff">${e(c.name||'?')}</span>
+          ${_senChip(c.seniority)}
+          ${_srcChip(c)}
+          ${_verifyChip(c)}
+        </div>
+        ${c.title?`<div style="font-size:11.5px;color:var(--w80);margin-bottom:3px">${e(c.title)}</div>`:''}
+        <div style="font-size:11px;color:var(--w55);line-height:1.5">
+          ${c.email?`<div>✉️ <a href="mailto:${e(c.email)}" style="color:#60a5fa;text-decoration:none">${e(c.email)}</a></div>`:''}
+          ${phoneHtml}
+          ${c.linkedin||c.linkedinUrl?`<div style="margin-top:3px"><a href="${e(c.linkedin||c.linkedinUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a></div>`:''}
+          ${c.location?`<div style="margin-top:3px;color:var(--w35)">📍 ${e(c.location)}</div>`:''}
+        </div>
+      </div>
+    </div>`;
+  };
+
   const phoneRow = phone
     ? `<div style="display:flex;align-items:center;gap:10px;background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:10px 14px">
         <button onclick="ringNow('${e(phone)}','${e(lead.cvr||'')}','${e(lead.name||'')}')" title="Ring (tel: deeplink)" style="all:unset;cursor:pointer;font-family:monospace;font-size:14px;font-weight:700;color:#c4b5fd">📞 ${e(phone)}</button>
@@ -6420,14 +6470,42 @@ function openLeadInspector(cvr){
         <button onclick="adEditPhone('${e(lead.cvr)}')" style="margin-left:auto;background:transparent;border:1px solid rgba(252,165,165,0.35);border-radius:7px;padding:5px 10px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11px;cursor:pointer">+ Tilføj</button>
       </div>`;
 
+  // Quick-links bar — Website / LinkedIn / Meta Ads / Instagram / Facebook
+  const linkChip = (icon, label, url, color) => url
+    ? `<a href="${e(url)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;background:${color}14;border:1px solid ${color}40;border-radius:8px;padding:5px 10px;color:${color};text-decoration:none;font-size:11.5px;font-weight:700">${icon} ${label} ↗</a>`
+    : '';
+  const quickLinks = [
+    linkChip('🌐', 'Website',     websiteClean ? (website.startsWith('http')?website:'https://'+website) : '', '#60a5fa'),
+    linkChip('🔗', 'LinkedIn',    lead.linkedin_url || ac.linkedinUrl || '', '#0a66c2'),
+    linkChip('📘', 'Facebook',    lead.facebook_url || ac.facebookUrl || '', '#1877f2'),
+    linkChip('📷', 'Instagram',   lead.instagram_url || '', '#e1306c'),
+    linkChip('🎯', 'Meta Ads',    lead.ad_library_url || (lead.name ? `https://www.facebook.com/ads/library/?active_status=all&country=DK&q=${encodeURIComponent(lead.name)}` : ''), '#fb923c'),
+  ].filter(Boolean).join(' ');
+
+  // Beslutningstagere section: rich cards if we have any, otherwise the
+  // same enrichment-CTA card the cockpit shows.
   const contactsHtml = contacts.length > 0
-    ? contacts.slice(0, 4).map(c => `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:9px;padding:9px 12px;margin-bottom:6px">
-        <div style="font-size:13px;font-weight:700;color:#fff">${e(c.name||'?')}</div>
-        ${c.title?`<div style="font-size:11px;color:var(--w55)">${e(c.title)}</div>`:''}
-        ${c.phone?`<button onclick="ringNow('${e(c.phone)}','${e(lead.cvr||'')}','${e(c.name||'')}')" style="all:unset;cursor:pointer;font-family:monospace;font-size:12px;color:#c4b5fd;margin-top:4px;display:inline-block">📞 ${e(c.phone)}</button>`:''}
-        ${c.email?`<div style="font-size:11px;color:var(--w80);margin-top:3px"><a href="mailto:${e(c.email)}" style="color:#60a5fa;text-decoration:none">${e(c.email)}</a></div>`:''}
-      </div>`).join('')
-    : `<div style="font-size:12px;color:var(--w55);font-style:italic;padding:8px 0">Ingen beslutningstagere fundet endnu. Åbn cockpittet og klik <strong style="color:#fff">"Find beslutningstagere"</strong> for at lade Apollo + Full Enrich søge (~$0.60 per fundet nummer).</div>`;
+    ? contacts.slice(0, 5).map(richContactCard).join('')
+    : `<div style="background:linear-gradient(135deg,rgba(124,58,237,0.10),rgba(124,58,237,0.02));border:1px solid rgba(124,58,237,0.30);border-radius:11px;padding:18px;text-align:center">
+        <div style="font-size:22px;line-height:1;margin-bottom:7px">🔍</div>
+        <div style="font-size:13.5px;font-weight:800;color:#fff;margin-bottom:5px">Ingen beslutningstagere fundet endnu</div>
+        <div style="font-size:11.5px;color:var(--w55);line-height:1.5;margin-bottom:12px">Klik for at lade Gemini + Full Enrich + Apollo søge. ~60-90 sek · ~$0.05 hvis et navn findes, +$0.60 hvis et nummer findes.</div>
+        <button onclick="inspectorRunEnrichment('${e(lead.cvr||'')}')" class="btn-start-call" style="border-radius:9px;padding:10px 18px;font-size:12.5px">🔍 Find beslutningstagere</button>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--w08);font-size:10.5px;color:var(--w35);text-align:left">
+          <div style="margin-bottom:5px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase">Eller søg selv</div>
+          <div style="display:flex;gap:6px">
+            <button onclick="openLinkedinSearchForCompany('${e(lead.name||'')}')" style="flex:1;background:rgba(10,102,194,0.18);color:#7cb8ff;border:1px solid rgba(10,102,194,0.35);border-radius:7px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">🔗 LinkedIn</button>
+            <button onclick="openGoogleSearchForCompany('${e(lead.name||'')}')" style="flex:1;background:rgba(234,179,8,0.18);color:#fde047;border:1px solid rgba(234,179,8,0.35);border-radius:7px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif">🌐 Google</button>
+          </div>
+        </div>
+      </div>`;
+
+  // Talking points — Apollo's long_description on the company. Only shown
+  // when present + non-trivial so we don't waste vertical space.
+  const description = (ac.shortDescription || ac.longDescription || '').toString().trim();
+  const talkingPoints = description && description.length > 40
+    ? section('Talking points', `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--w80);line-height:1.55">${e(description.length > 360 ? description.slice(0, 360)+'…' : description)}</div>`)
+    : '';
 
   const listOptions = lists.map(l => {
     const isCurrent = l.id === currentListId;
@@ -6435,12 +6513,13 @@ function openLeadInspector(cvr){
   }).join(' ');
 
   bodyEl.innerHTML = `
-    ${section('Telefon', phoneRow)}
     ${section('Firma', `<div style="font-size:12.5px;color:var(--w80);line-height:1.7">
         <div>${ac.estimatedEmployees ? `<strong>${ac.estimatedEmployees}</strong> ansatte · ` : ''}${e(ac.industry || lead.ind || lead.branche || '')}${ac.city || lead.city ? ` · ${e(ac.city || lead.city)}` : ''}</div>
-        ${websiteClean?`<div>🌐 <a href="${e(website.startsWith('http')?website:'https://'+website)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">${e(websiteClean)}</a></div>`:''}
         <div style="color:var(--w35);font-size:11px;margin-top:4px">CVR <strong style="color:var(--w55);font-family:monospace">${e(lead.cvr||'—')}</strong> · ${e(sourceLbl)} · tilføjet ${e(addedAt)}</div>
       </div>`)}
+    ${quickLinks ? section('Links', `<div style="display:flex;flex-wrap:wrap;gap:6px">${quickLinks}</div>`) : ''}
+    ${section('Hovednummer', phoneRow)}
+    ${talkingPoints}
     ${section('Beslutningstagere', contactsHtml)}
     ${section('Ring-liste', currentList
         ? `<div style="background:rgba(124,58,237,0.10);border:1px solid rgba(124,58,237,0.35);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
@@ -6453,7 +6532,9 @@ function openLeadInspector(cvr){
            <div style="display:flex;flex-wrap:wrap;gap:6px">${listOptions}</div>`
     )}
     ${section('Hurtige handlinger', `<div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${contacts.length === 0 ? '' : `<button onclick="inspectorRunEnrichment('${e(lead.cvr)}')" style="background:rgba(124,58,237,0.14);border:1px solid rgba(124,58,237,0.35);border-radius:8px;padding:8px 14px;color:#c4b5fd;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer">🔄 Berig igen</button>`}
       ${lead.lastAction !== 'not-relevant' ? `<button onclick="inspectorArchive('${e(lead.cvr)}')" style="background:rgba(248,113,113,0.10);border:1px solid rgba(248,113,113,0.30);border-radius:8px;padding:8px 14px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer">✕ Arkivér</button>` : ''}
+      <button onclick="inspectorDelete('${e(lead.cvr)}')" title="Slet leadet permanent (kan ikke fortrydes)" style="background:rgba(220,38,38,0.10);border:1px solid rgba(220,38,38,0.35);border-radius:8px;padding:8px 14px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer">🗑 Slet</button>
       ${lead.twenty_url ? `<a href="${e(lead.twenty_url)}" target="_blank" rel="noopener" style="background:rgba(96,165,250,0.12);border:1px solid rgba(96,165,250,0.3);border-radius:8px;padding:8px 14px;color:#60a5fa;font-family:'Outfit',sans-serif;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none">→ Åbn i Twenty</a>` : ''}
     </div>`)}
   `;
@@ -6506,6 +6587,53 @@ async function inspectorArchive(cvr){
   // Reuse the existing archive-reason modal so the audit trail captures WHY.
   closeLeadInspector();
   if (typeof adArchiveLead === 'function') adArchiveLead(cvr);
+}
+
+// Run the full enrichment pipeline (Gemini + FE + Apollo + Lusha) on this
+// lead from inside the inspector. Same backend endpoint the cockpit uses;
+// just wired here so the SDR doesn't have to open the cockpit to trigger
+// it. Re-renders the inspector when done so they see fresh contacts.
+async function inspectorRunEnrichment(cvr){
+  if (!cvr) return;
+  if (typeof enrichLeadWithKaspr === 'function') {
+    // enrichLeadWithKaspr already shows the spinner + toasts + auto-refreshes
+    // the lead in `leads[]`. We piggy-back on it and re-open the inspector
+    // afterward so the SDR stays in the same view.
+    showToast('🔍 Søger beslutningstagere…');
+    await enrichLeadWithKaspr(cvr, 'inspector');
+    // Re-render the inspector on the freshly enriched lead
+    setTimeout(() => openLeadInspector(cvr), 200);
+  }
+}
+
+// Permanent delete — goes through the branded confirm modal (matches the
+// calling-list delete UX) because this is irreversible. ARCHIVE is the
+// soft-delete path; this is for true junk that should never come back.
+async function inspectorDelete(cvr){
+  const lead = (leads||[]).find(l => l.cvr === cvr);
+  if (!lead) return;
+  const ok = await confirmDestructive({
+    title: `Slet "${lead.name || cvr}" permanent?`,
+    message: `Dette sletter leadet HELT — fra Leadlist, ring-lister, og fra databasen. Kan ikke fortrydes.\n\nHvis du blot vil have det ud af køen, brug "Arkivér" i stedet.`,
+    confirmLabel: '🗑 Ja, slet permanent',
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/api/leads/${encodeURIComponent(cvr)}`, {
+      method: 'DELETE',
+      headers: { ...ah() },
+    });
+    if (!r.ok) { showToast('Fejl: kunne ikke slette ('+r.status+')'); return; }
+    // Drop from local state so the row disappears without a full reload
+    const idx = (leads||[]).findIndex(l => l.cvr === cvr);
+    if (idx >= 0) leads.splice(idx, 1);
+    closeLeadInspector();
+    showToast(`✕ "${lead.name || cvr}" slettet`);
+    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+    if (typeof renderCallingListPage === 'function') renderCallingListPage();
+  } catch (e) {
+    showToast('Fejl: ' + e.message);
+  }
 }
 
 // ─── One-shot Leadlist → Calling list migration ────────────────────────
