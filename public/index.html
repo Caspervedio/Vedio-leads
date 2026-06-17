@@ -2841,9 +2841,26 @@ function renderDashboardLeadStatus(){
     ${sub?`<div style="font-size:11px;color:var(--w55);margin-top:2px">${sub}</div>`:''}
   </div>`;
 
+  // Enrichment coverage — % of leads the intake worker has processed +
+  // % with named decision-maker contacts. Lets Casper see at a glance
+  // how much of the pool is "ready" for outreach.
+  const active = all.filter(l => l.lastAction !== 'not-relevant' && !isTwentyPushed(l));
+  const enriched = active.filter(l => l.intake_enriched_at);
+  const withContacts = active.filter(l => Array.isArray(l.contacts) && l.contacts.length > 0);
+  const enrichedPct = active.length > 0 ? Math.round(100*enriched.length/active.length) : 0;
+  const contactsPct = active.length > 0 ? Math.round(100*withContacts.length/active.length) : 0;
+
   el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
     ${tile('Leads i værktøjet', all.length.toLocaleString('da-DK'),
            'i hele Leadlist', null, "sv('autodialer')")}
+    ${tile('Berigede', `${enrichedPct}%`,
+           `${enriched.length.toLocaleString('da-DK')} / ${active.length.toLocaleString('da-DK')} klar`,
+           enrichedPct>=80?'#6ee7b7':enrichedPct>=50?'#fcd34d':'var(--w55)',
+           null)}
+    ${tile('Med kontakt', `${contactsPct}%`,
+           `${withContacts.length.toLocaleString('da-DK')} med navne på beslutningstagere`,
+           contactsPct>=60?'#6ee7b7':contactsPct>=30?'#fcd34d':'var(--w55)',
+           null)}
     ${tile('I ring-lister', inLists.length.toLocaleString('da-DK'),
            inLists.length>0?`af ${all.length} total`:'tilføj fra Leadlist',
            inLists.length>0?'var(--purple-light)':'var(--w55)',
