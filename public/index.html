@@ -1580,7 +1580,7 @@ async function doLogin(){
         const d=await r.json();
         authToken=d.token;currentUser=d.user;
         localStorage.setItem('vl_token',authToken);
-        showApp();await loadUserState();sv('autodialer');
+        showApp();await loadUserState();sv('discovery');
         setTimeout(()=>{['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});},80);
         checkLinkedinLookupParam();
         return;
@@ -1761,7 +1761,7 @@ async function loadUserState(){
           currentUser=await me.json();
           showApp();
           await loadUserState();
-          sv('autodialer');
+          sv('discovery');
           setTimeout(()=>{
             ['qs'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',debounce(applyF,350));});
           },80);
@@ -2855,39 +2855,13 @@ function renderDashboardLeadStatus(){
   </div>`;
 }
 
-// Dashboard quick-CTAs — the "what's next" buttons. Two primary jumps:
-// open the Calling list to start working, or open the Leadlist to triage.
+// Dashboard "Næste skridt" CTAs — REMOVED 2026-06-17 per user request.
+// The Calling-list and Leadlist navigation is already in the sidebar;
+// the bottom banner was visual noise. Kept the function as a no-op so
+// any existing callers don't break.
 function renderDashboardCtas(){
   const el = document.getElementById('dashboard-ctas');
-  if (!el) return;
-  const all = leads || [];
-  const inLists = all.filter(l => !!l.calling_list_id);
-  const isTwentyPushed = (l) => !!l.twenty_opportunity_id;
-  const readyToCall = inLists.filter(l =>
-    l.lastAction !== 'not-relevant' &&
-    !isTwentyPushed(l) &&
-    !!(l.phone || l.ph || '').toString().trim()
-  );
-
-  // Surface the next-action choice without making the SDR think. If
-  // there are leads ready to call, Calling list is the primary CTA;
-  // if the calling lists are empty, push toward the Leadlist (triage).
-  const hasReady = readyToCall.length > 0;
-  const primaryLabel = hasReady ? `📞 Åbn Calling list (${readyToCall.length} klar)` : '📋 Browse Leadlist';
-  const primaryAction = hasReady ? "sv('calling-list')" : "sv('autodialer')";
-  const secondaryLabel = hasReady ? '📋 Browse Leadlist' : '📞 Åbn Calling list';
-  const secondaryAction = hasReady ? "sv('autodialer')" : "sv('calling-list')";
-
-  el.innerHTML = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:linear-gradient(135deg,rgba(124,58,237,0.08),rgba(124,58,237,0.02));border:1px solid var(--w08);border-radius:14px;padding:18px 22px">
-    <div style="flex:1;min-width:200px">
-      <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px">Næste skridt</div>
-      <div style="font-size:13.5px;color:var(--w80);line-height:1.5">${hasReady
-        ? `Du har <strong style="color:#fff">${readyToCall.length} leads</strong> klar til opkald i dine ring-lister.`
-        : `Ingen leads er klar lige nu. Gå til Leadlist, marker leads, og send dem til en ring-liste.`}</div>
-    </div>
-    <button onclick="${primaryAction}" class="btn-start-call" style="border-radius:10px;padding:11px 22px;font-size:13.5px">${primaryLabel}</button>
-    <button onclick="${secondaryAction}" style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:11px 22px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:border-color 0.12s,color 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.4)';this.style.color='#fff'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)'">${secondaryLabel}</button>
-  </div>`;
+  if (el) el.innerHTML = '';
 }
 
 // Recently added leads widget — shows last 48h of intake on the
