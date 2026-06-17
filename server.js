@@ -6676,6 +6676,76 @@ async function fullEnrichWaitForResult(jobId, opts = {}) {
 
 // Convenience: synchronously enrich a single contact (submit + poll).
 // Returns the contact_info object from the response data[0], or null.
+// Lusha v2 /person — third-stage phone-reveal fallback. Fires only when
+// Apollo (Stage 1) AND Full Enrich Contact Enrich (Stage 2) both missed.
+// Lusha specializes in mobile direct dials and often hits where FE misses
+// — verified on Findforsikring.dk 2026-06-17 (CEO mobile not in FE).
+//
+// Cost: ~$0.20-0.40 per successful lookup (one credit per /person hit).
+// Auth header: api_key (lowercase, custom header — NOT Authorization Bearer).
+// Past gotcha (memory note #100): v2 /person requires name + company,
+// linkedin_url alone returns 400. We pass linkedin_url anyway as an extra
+// hint when available, but always include name + company.
+function isLushaConfigured() {
+  return !!process.env.LUSHA_API_KEY;
+}
+async function lushaLookupContact(opts) {
+  const apiKey = process.env.LUSHA_API_KEY;
+  if (!apiKey) throw new Error("LUSHA_API_KEY not configured");
+  const { firstName, lastName, companyName, linkedinUrl, timeoutMs = 15_000 } = opts || {};
+  if (!firstName || !lastName || !companyName) return null;
+  const body = { firstName, lastName, companyName };
+  if (linkedinUrl) body.linkedinUrl = linkedinUrl;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let r;
+  try {
+    r = await fetch("https://api.lusha.com/v2/person", {
+      method: "POST",
+      signal: ctl.signal,
+      headers: { "api_key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } finally { clearTimeout(timer); }
+  if (r.status === 404) return null; // Lusha has no match — normal
+  if (r.status === 401) throw new Error("Lusha auth failed — check LUSHA_API_KEY");
+  if (r.status === 429) throw new Error("Lusha rate-limited or out of credits");
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Lusha ${r.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await r.json().catch(() => null);
+  const person = data && (data.data || data);
+  if (!person) return null;
+  // DK-only phone filter — we never call non-DK numbers (hard rule).
+  const phones = Array.isArray(person.phoneNumbers) ? person.phoneNumbers : [];
+  const dkPhones = phones.filter((p) => {
+    const num = String(p.internationalNumber || p.number || "").replace(/[^0-9+]/g, "");
+    return num.startsWith("+45");
+  });
+  // Mobile-first sort — direct mobiles convert way better than office DIDs.
+  dkPhones.sort((a, b) => {
+    const am = (a.phoneType || a.type || "").toLowerCase() === "mobile" ? 0 : 1;
+    const bm = (b.phoneType || b.type || "").toLowerCase() === "mobile" ? 0 : 1;
+    return am - bm;
+  });
+  const emails = Array.isArray(person.emailAddresses) ? person.emailAddresses : [];
+  const workEmail = (emails.find((x) => String(x.emailType || x.type || "").toLowerCase() === "work") || emails[0] || {}).email || "";
+  return {
+    fullName: person.fullName || `${firstName} ${lastName}`,
+    phones: dkPhones.map((p) => {
+      const isMobile = (p.phoneType || p.type || "").toLowerCase() === "mobile";
+      return {
+        number: p.internationalNumber || p.number,
+        type: isMobile ? "mobile" : "work",
+        typeLabel: isMobile ? "Direkte mobil (Lusha)" : "Direkte (Lusha)",
+      };
+    }),
+    phone: (dkPhones[0] && (dkPhones[0].internationalNumber || dkPhones[0].number)) || "",
+    email: workEmail,
+  };
+}
+
 async function fullEnrichLookupOne(contact, opts = {}) {
   const jobId = await fullEnrichSubmitBatch([contact], { name: opts.name });
   if (!jobId) return null;
@@ -7403,12 +7473,56 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
     }
   }
 
+  // ─── STAGE 3: Lusha fallback (FE Contact Enrich whiff) ──────────────
+  // Re-added 2026-06-17 after Findforsikring.dk test: FE returned the CEO
+  // name + LinkedIn but no phone; Lusha found the direct mobile. Fires
+  // ONLY when Stage 2 also missed, so cost stays bounded to ~$0.30 per
+  // FE miss (~20% of leads with a known contact).
+  let lushaUsed = false;
+  let lushaHit = false;
+  if (!directDial && isLushaConfigured()) {
+    const top = await pickTopContactForFullEnrich(apolloContacts);
+    if (top && top.name) {
+      const [firstName, ...rest] = String(top.name).trim().split(/\s+/);
+      const lastName = rest.join(" ");
+      if (firstName && lastName) {
+        try {
+          lushaUsed = true;
+          const result = await lushaLookupContact({
+            firstName,
+            lastName,
+            companyName: lead.name,
+            linkedinUrl: top.linkedin || top.linkedinUrl || "",
+            timeoutMs: 15_000,
+          });
+          if (result && result.phone) {
+            directDial = result.phone;
+            const idx = apolloContacts.findIndex((c) => c === top);
+            if (idx >= 0) {
+              apolloContacts[idx] = {
+                ...top,
+                phone: result.phone,
+                phones: result.phones,
+                email: result.email || top.email,
+                source_phone: "lusha",
+              };
+              lead.contacts = apolloContacts;
+            }
+            lushaHit = true;
+          }
+        } catch (e) {
+          console.warn("[reveal-direct-dial/lusha]", lead.cvr, e.message);
+        }
+      }
+    }
+  }
+
   if (directDial) {
     lead.phone = directDial;
     lead.ph = directDial;
     lead.phone_missing = false;
     lead.phone_recovered_at = new Date().toISOString();
-    lead.phone_recovered_source = fullEnrichHit ? "fullenrich" : "apollo";
+    lead.phone_recovered_source = lushaHit ? "lusha" : (fullEnrichHit ? "fullenrich" : "apollo");
   }
   saveUserData(req.userId, ud);
   return res.json({
@@ -7416,8 +7530,9 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
     contacts: apolloContacts,
     company,
     phone: directDial || null,
-    source: fullEnrichHit ? "apollo+fullenrich" : "apollo",
+    source: lushaHit ? "apollo+fullenrich+lusha" : (fullEnrichHit ? "apollo+fullenrich" : "apollo"),
     fullenrich: { used: fullEnrichUsed, hit: fullEnrichHit },
+    lusha: { used: lushaUsed, hit: lushaHit },
   });
 });
 
@@ -7552,6 +7667,45 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
         }
       } catch (e) {
         console.warn("[apollo/lookup-linkedin] full-enrich fallback failed:", e.message);
+      }
+    }
+
+    // ─── STAGE 3: Lusha fallback (FE also missed) ─────────────────────
+    // Last automatic stop before SDR has to research manually. Lusha v2
+    // /person needs name + company, so we only try when both are known.
+    if ((contact.phones || []).length === 0 && isLushaConfigured() && contact.name) {
+      const [firstName, ...rest] = String(contact.name).trim().split(/\s+/);
+      const lastName = rest.join(" ");
+      const lushaCompany = (company && (company.name || company.organization_name))
+        || (scrapedCompany && scrapedCompany.name)
+        || (contact.organization && contact.organization.name)
+        || "";
+      if (firstName && lastName && lushaCompany) {
+        try {
+          const lushaResult = await lushaLookupContact({
+            firstName,
+            lastName,
+            companyName: lushaCompany,
+            linkedinUrl: url,
+            timeoutMs: 15_000,
+          });
+          if (lushaResult && lushaResult.phone) {
+            contact.phones = contact.phones || [];
+            for (const p of lushaResult.phones) {
+              contact.phones.push({ ...p, status: "verified", position: 0 });
+            }
+            if (!contact.phone) {
+              contact.phone = lushaResult.phone;
+              contact.phoneType = lushaResult.phones[0]?.type || "mobile";
+              contact.phoneTypeLabel = lushaResult.phones[0]?.typeLabel || "Direkte mobil (Lusha)";
+              contact.source_phone = "lusha";
+            }
+            if (lushaResult.email && !contact.email) contact.email = lushaResult.email;
+            dataSources.push("lusha");
+          }
+        } catch (e) {
+          console.warn("[apollo/lookup-linkedin] lusha fallback failed:", e.message);
+        }
       }
     }
 
