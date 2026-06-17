@@ -5389,7 +5389,7 @@ async function gmAddAllMatched(){
 // list they want to dial, sees a summary of the queue, and starts the
 // cockpit with one click. The cockpit overlay is unchanged underneath.
 // Autodialer state — sort + source filter so the queue isn't random.
-if(typeof _adState==='undefined') var _adState={ sort:'added', sourceFilter:'all', stackFilter:'', categoryFilter:'all', searchQ:'' };
+if(typeof _adState==='undefined') var _adState={ sort:'added', sourceFilter:'all', stackFilter:'', categoryFilter:'all', searchQ:'', hideInLists:true };
 
 // ─── CALLING LIST — named lead-lists the SDR works through ────────────
 // Two concepts:
@@ -5445,6 +5445,31 @@ function leadCategory(l){
     if(SERV.includes(code)) return 'service';
   }
   return 'unknown';
+}
+
+// Niche chip — small color-coded badge that goes next to the lead name
+// in the Leadlist table. Tells the SDR at a glance whether this lead is
+// e-commerce vs service vs unknown. Chip colors match the category-filter
+// chips at the top of the page for visual consistency.
+function nicheChip(l){
+  const cat = leadCategory(l);
+  if (cat === 'ecom')    return `<span title="E-commerce" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;background:rgba(124,58,237,0.14);color:#c4b5fd;border:1px solid rgba(124,58,237,0.28);letter-spacing:0.3px;vertical-align:middle">🛍 E-com</span>`;
+  if (cat === 'service') return `<span title="Service" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;background:rgba(52,211,153,0.14);color:#6ee7b7;border:1px solid rgba(52,211,153,0.28);letter-spacing:0.3px;vertical-align:middle">🏢 Service</span>`;
+  return '';
+}
+
+// Chip shown when a lead is already on a named calling list — visible
+// only when the "Skjul leads i ring-lister" toggle is OFF. Helps the
+// SDR see at a glance that this lead is already triaged elsewhere.
+function inListChip(l){
+  if (!l || !l.calling_list_id) return '';
+  let listName = '';
+  try {
+    const lists = (typeof loadCallingLists === 'function') ? loadCallingLists() : [];
+    const m = lists.find(x => x.id === l.calling_list_id);
+    listName = m ? (m.name || m.label || l.calling_list_id) : l.calling_list_id;
+  } catch (_) { listName = l.calling_list_id; }
+  return `<span title="Allerede tilføjet til ring-liste: ${e(listName)}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;background:rgba(251,191,36,0.14);color:#fcd34d;border:1px solid rgba(251,191,36,0.28);letter-spacing:0.3px;vertical-align:middle">🎯 ${e(listName).slice(0,20)}</span>`;
 }
 
 function renderAutodialerPage(){
@@ -5529,6 +5554,14 @@ function renderAutodialerPage(){
   if(_adState.categoryFilter && _adState.categoryFilter !== 'all'){
     filtered = filtered.filter(l => leadCategory(l) === _adState.categoryFilter);
   }
+  // Hide leads already added to a calling list (toggled by SDR, default ON).
+  // Keeps the Leadlist focused on "what's still untriaged" without losing
+  // the master-view escape hatch — flipping the toggle off shows them
+  // back with an amber "🎯 list-name" chip on each row.
+  // Only applies in the active queue view (not archive / twenty-pushed etc).
+  if(_adState.hideInLists && !showArchive && !showTwentyPushed && !showPhoneMissing && !showEnriching && !showMaybeRelevant){
+    filtered = filtered.filter(l => !l.calling_list_id);
+  }
   // Apply tech-stack filter (set by Tech Stack Scanner page)
   if(_adState.stackFilter){
     filtered=filtered.filter(l=>Array.isArray(l.techStack)&&l.techStack.includes(_adState.stackFilter));
@@ -5600,6 +5633,16 @@ function renderAutodialerPage(){
     filtered.sort((a,b)=>String(b.addedAt||'').localeCompare(String(a.addedAt||'')));
   } else if(_adState.sort==='name'){
     filtered.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  } else if(_adState.sort==='niche'){
+    // Group by niche: e-com first, then service, then unknown. Within each
+    // niche, keep priority order so the strongest leads bubble to the top
+    // of each group rather than alphabetically.
+    const nicheRank = (l)=>{const c=leadCategory(l);return c==='ecom'?0:c==='service'?1:2;};
+    filtered.sort((a,b)=>{
+      const dn = nicheRank(a) - nicheRank(b);
+      if (dn !== 0) return dn;
+      return priority(b) - priority(a);
+    });
   }
   // ─── Session stats — bucketed by time window ─────────────────────────
   // Today = since LOCAL midnight (00:00 today → now). Operator explicitly
@@ -5925,8 +5968,13 @@ function renderAutodialerPage(){
         <option value="ads" ${_adState.sort==='ads'?'selected':''}>Flest ads</option>
         <option value="added" ${_adState.sort==='added'?'selected':''}>Senest tilføjet</option>
         <option value="name" ${_adState.sort==='name'?'selected':''}>Navn (A-Å)</option>
+        <option value="niche" ${_adState.sort==='niche'?'selected':''}>Branche (e-com → service)</option>
         <option value="manual" ${_adState.sort==='manual'?'selected':''}>Manuel (træk)</option>
       </select>
+      <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--w55);font-family:'Outfit',sans-serif;padding-left:10px;border-left:1px solid var(--w08);margin-left:4px" title="Skjul leads der allerede er på en ring-liste — slå fra for at se hele oversigten">
+        <input type="checkbox" ${_adState.hideInLists?'checked':''} onchange="_adState.hideInLists=this.checked;renderAutodialerPage()" style="width:14px;height:14px;cursor:pointer;accent-color:#a78bfa">
+        Skjul leads i ring-lister
+      </label>
     </div>
     <!-- Search row — sits directly under Kategori + Kilde filters so the
          SDR can scope the queue down further by free text after picking
@@ -6103,10 +6151,14 @@ function renderAutodialerPage(){
           const checkboxCell = showCheckbox
             ? `<td style="padding:10px 4px 10px 14px;width:34px"><input type="checkbox" data-cvr="${e(l.cvr)}" ${isChecked?'checked':''} onclick="event.stopPropagation();adToggleSelected('${e(l.cvr)}',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#a78bfa"></td>`
             : '';
-          return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.78':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}${isChecked?';background:rgba(124,58,237,0.10)':''}" ${showArchive?'':`onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
+          // Dim leads already on a calling list when the hide-toggle is OFF
+          // (i.e. SDR explicitly chose to see them in the master view).
+          const isInList = !!l.calling_list_id;
+          const dimRow = isInList && !_adState.hideInLists && !showArchive && !showTwentyPushed ? ';opacity:0.55' : '';
+          return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.78':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}${isChecked?';background:rgba(124,58,237,0.10)':''}${dimRow}" ${showArchive?'':`onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             ${checkboxCell}
             <td style="padding:10px 8px 10px ${showCheckbox?'4px':'16px'};font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${showArchive?'':'<span style="color:var(--w35);cursor:grab;margin-right:4px" title="Træk for at omarrangere">⠿</span>'}${i+1}</td>
-            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${adBadge?' '+adBadge:''}${socialIcons}</td>
+            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${nicheChip(l)}${inListChip(l)}${adBadge?' '+adBadge:''}${socialIcons}</td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${dispCell}</td>
             <td style="padding:10px 14px;text-align:right">${lastCell}</td>
