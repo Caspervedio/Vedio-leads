@@ -6441,8 +6441,11 @@ function openLeadInspector(cvr){
   const sourceLbl = (lead.source || 'manual').replace(/^branche-walk-/, 'branche-walk · ');
   const addedAt = lead.addedAt ? new Date(lead.addedAt).toLocaleString('da-DK', { dateStyle:'medium', timeStyle:'short' }) : '—';
 
-  const section = (lbl, body) => `<div style="margin-bottom:18px">
-    <div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35);margin-bottom:8px">${lbl}</div>
+  const section = (lbl, body, editAction) => `<div style="margin-bottom:18px">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+      <span>${lbl}</span>
+      ${editAction ? `<button onclick="${editAction}" title="Rediger" style="background:transparent;border:0;color:var(--w35);cursor:pointer;font-size:12px;padding:0 2px;line-height:1;transition:color 0.12s" onmouseover="this.style.color='#c4b5fd'" onmouseout="this.style.color='var(--w35)'">✎</button>` : ''}
+    </div>
     ${body}
   </div>`;
 
@@ -6539,12 +6542,17 @@ function openLeadInspector(cvr){
         </div>
       </div>`;
 
-  // Talking points — Apollo's long_description on the company. Only shown
-  // when present + non-trivial so we don't waste vertical space.
-  const description = (ac.shortDescription || ac.longDescription || '').toString().trim();
-  const talkingPoints = description && description.length > 40
-    ? section('Talking points', `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--w80);line-height:1.55">${e(description.length > 360 ? description.slice(0, 360)+'…' : description)}</div>`)
-    : '';
+  // Talking points — SDR-editable layer (lead.description) takes priority
+  // over Apollo's auto-generated blurb. Always shown so the ✎ icon at the
+  // title is reachable even when empty (placeholder invites SDR to fill it).
+  const sdrDesc = (lead.description || '').toString().trim();
+  const apolloDesc = (ac.shortDescription || ac.longDescription || '').toString().trim();
+  const description = sdrDesc || apolloDesc;
+  const isSdrEdited = !!sdrDesc;
+  const talkingPointsBody = description
+    ? `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--w80);line-height:1.55;white-space:pre-wrap">${e(description.length > 600 ? description.slice(0, 600)+'…' : description)}${isSdrEdited ? '<span style="display:inline-block;margin-left:6px;font-size:9.5px;font-weight:700;color:#c4b5fd;background:rgba(124,58,237,0.16);border:1px solid rgba(124,58,237,0.30);padding:1px 6px;border-radius:5px;letter-spacing:0.3px;vertical-align:middle">SDR</span>' : ''}</div>`
+    : `<div style="background:var(--w04);border:1px dashed var(--w08);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--w35);font-style:italic">Klik ✎ for at tilføje talking points — angreb, USPs, smerter, tidligere kontakt.</div>`;
+  const talkingPoints = section('Talking points', talkingPointsBody, `openLeadFieldsEditor('${e(lead.cvr||'')}', 'description')`);
 
   const listOptions = lists.map(l => {
     const isCurrent = l.id === currentListId;
@@ -6553,10 +6561,14 @@ function openLeadInspector(cvr){
 
   bodyEl.innerHTML = `
     ${section('Firma', `<div style="font-size:12.5px;color:var(--w80);line-height:1.7">
+        <div style="font-size:14px;font-weight:800;color:#fff;margin-bottom:2px">${e(lead.name||'—')}</div>
         <div>${ac.estimatedEmployees ? `<strong>${ac.estimatedEmployees}</strong> ansatte · ` : ''}${e(ac.industry || lead.ind || lead.branche || '')}${ac.city || lead.city ? ` · ${e(ac.city || lead.city)}` : ''}</div>
         <div style="color:var(--w35);font-size:11px;margin-top:4px">CVR <strong style="color:var(--w55);font-family:monospace">${e(lead.cvr||'—')}</strong> · ${e(sourceLbl)} · tilføjet ${e(addedAt)}</div>
-      </div>`)}
-    ${section('Links', `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${quickLinks}<button onclick="openLinksEditor('${e(lead.cvr||'')}')" title="${quickLinks ? 'Ret eller tilføj links' : 'Tilføj links'}" style="display:inline-flex;align-items:center;gap:4px;background:transparent;border:1px dashed rgba(124,58,237,0.45);border-radius:8px;padding:5px 10px;color:#c4b5fd;font-family:Outfit,sans-serif;font-size:11.5px;font-weight:700;cursor:pointer;transition:background 0.12s,border-color 0.12s" onmouseover="this.style.background='rgba(124,58,237,0.10)';this.style.borderColor='rgba(124,58,237,0.7)'" onmouseout="this.style.background='transparent';this.style.borderColor='rgba(124,58,237,0.45)'">${quickLinks ? '✎ Ret links' : '+ Tilføj links'}</button></div>`)}
+      </div>`, `openLeadFieldsEditor('${e(lead.cvr||'')}', 'name')`)}
+    ${section('Links', quickLinks
+        ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${quickLinks}</div>`
+        : `<div style="font-size:12px;color:var(--w35);font-style:italic;padding:6px 0">Ingen links endnu — klik ✎ for at tilføje.</div>`,
+        `openLinksEditor('${e(lead.cvr||'')}')`)}
     ${section('Hovednummer', phoneRow)}
     ${talkingPoints}
     ${section('Beslutningstagere', contactsHtml)}
@@ -7133,6 +7145,71 @@ async function deleteContact(cvr, contactIdx) {
     if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit();
     const inspectorBg = document.getElementById('lead-inspector-bg');
     if (inspectorBg && inspectorBg.style.display === 'block') openLeadInspector(cvr);
+  } catch (ex) { showToast('Fejl: ' + ex.message); }
+}
+
+// Lead fields editor — name + free-text description (talking points).
+// The description is an SDR-editable layer that overrides Apollo's auto-
+// generated company blurb. Lets the SDR jot down what they want ready
+// when calling: angle, USPs, pain points, prior touchpoints, etc.
+function openLeadFieldsEditor(cvr, focus) {
+  const lead = (leads||[]).find(l => l.cvr === cvr);
+  if (!lead) { showToast('Lead ikke fundet'); return; }
+  const prev = document.getElementById('lead-fields-bg');
+  if (prev) prev.remove();
+  const ac = lead.apollo_company || {};
+  const currentDesc = (lead.description || ac.shortDescription || ac.longDescription || '').toString().trim();
+  const bg = document.createElement('div');
+  bg.id = 'lead-fields-bg';
+  bg.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(0,0,0,0.6);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;font-family:Outfit,sans-serif';
+  const close = () => { document.removeEventListener('keydown', escHandler); bg.remove(); };
+  const escHandler = (ev) => { if (ev.key === 'Escape') close(); };
+  bg.onclick = (ev) => { if (ev.target === bg) close(); };
+  document.addEventListener('keydown', escHandler);
+  const fieldStyle = 'width:100%;background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:9px 12px;color:#fff;font-family:Outfit,sans-serif;font-size:13px;outline:none;box-sizing:border-box;margin-bottom:12px;transition:border-color 0.12s';
+  const labelStyle = 'display:block;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;color:var(--w55);margin-bottom:4px;margin-top:2px';
+  bg.innerHTML = `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;padding:22px 24px;width:560px;max-width:92vw;box-shadow:0 18px 48px rgba(0,0,0,0.5);max-height:90vh;overflow-y:auto">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--purple-light);margin-bottom:6px">📝 Lead-detaljer</div>
+    <h3 style="margin:0 0 4px;font-size:18px;color:#fff;font-weight:800">Rediger lead</h3>
+    <p style="margin:0 0 18px;font-size:12.5px;color:var(--w55);line-height:1.5">Justér virksomhedsnavnet (vises overalt) og skriv dine egne talking points.</p>
+    <label style="${labelStyle}">Virksomhedsnavn <span style="color:#fca5a5">*</span></label>
+    <input id="lf-name" value="${e(lead.name||'')}" placeholder="Firmanavn A/S" style="${fieldStyle}">
+    <label style="${labelStyle}">Talking points / beskrivelse</label>
+    <textarea id="lf-description" rows="7" placeholder="Hvad gør virksomheden? Vinkel — USPs, smerter, observationer. Personlige noter til SDR-samtalen…" style="${fieldStyle};min-height:140px;resize:vertical;font-family:Outfit,sans-serif;line-height:1.55">${e(currentDesc)}</textarea>
+    <div style="font-size:10.5px;color:var(--w35);margin-top:-4px;margin-bottom:14px;line-height:1.45;font-style:italic">Tip: Skriv hvad du vil have klar når du ringer. Dette overskriver Apollo's auto-genererede beskrivelse.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+      <button onclick="document.getElementById('lead-fields-bg').remove()" style="background:transparent;border:1px solid var(--w08);border-radius:9px;padding:10px 16px;color:var(--w80);font-family:Outfit,sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">Annuller</button>
+      <button onclick="saveLeadFields('${e(cvr)}')" class="btn-start-call" style="border-radius:9px;padding:10px 22px;font-size:13px;animation:none">💾 Gem</button>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  setTimeout(() => {
+    const target = focus === 'description' ? 'lf-description' : 'lf-name';
+    document.getElementById(target)?.focus();
+  }, 50);
+}
+async function saveLeadFields(cvr) {
+  const name = (document.getElementById('lf-name')?.value || '').trim();
+  if (!name) { showToast('Navn er påkrævet'); return; }
+  const description = (document.getElementById('lf-description')?.value || '').trim();
+  const lead = (leads||[]).find(l => l.cvr === cvr);
+  if (!lead) return;
+  try {
+    const r = await fetch('/api/leads/' + encodeURIComponent(cvr), {
+      method: 'PATCH',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description }),
+    });
+    if (!r.ok) { showToast('Fejl: kunne ikke gemme ('+r.status+')'); return; }
+    lead.name = name;
+    lead.description = description;
+    document.getElementById('lead-fields-bg')?.remove();
+    showToast('✓ Lead opdateret');
+    if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit();
+    const inspectorBg = document.getElementById('lead-inspector-bg');
+    if (inspectorBg && inspectorBg.style.display === 'block') openLeadInspector(cvr);
+    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+    if (typeof renderCallingListPage === 'function') renderCallingListPage();
   } catch (ex) { showToast('Fejl: ' + ex.message); }
 }
 
