@@ -6738,7 +6738,12 @@ async function callingListDeleteById(id){
   const list = lists.find(l => l.id === id);
   if (!list) return;
   const inList = (leads||[]).filter(x => x.calling_list_id === id);
-  if (!confirm(`Slet ring-listen "${list.name}"?\n\n${inList.length} leads sendes tilbage til Leadlist (ingen leads slettes).`)) return;
+  const ok = await confirmDestructive({
+    title: `Slet ring-listen "${list.name}"?`,
+    message: `${inList.length} leads sendes tilbage til Leadlist. Ingen leads bliver slettet — kun selve listen forsvinder.`,
+    confirmLabel: '🗑 Ja, slet listen',
+  });
+  if (!ok) return;
   await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
     method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ calling_list_id: null }),
@@ -6798,6 +6803,51 @@ function _submitNewList(){
   showToast(`✓ Listen "${name}" oprettet`);
   renderCallingListPage();
 }
+
+// Branded destructive-action confirmation modal. Replaces the browser's
+// native confirm() dialog (which looks alien on the dark theme + can
+// be suppressed by some browser configs). Returns a Promise<boolean>:
+// true = user confirmed, false = cancelled / clicked outside / Esc.
+// Usage:
+//   const ok = await confirmDestructive({
+//     title: 'Slet "X"?', message: 'Beskeden...',
+//     confirmLabel: '🗑 Ja, slet'
+//   });
+//   if (!ok) return;
+function confirmDestructive(opts) {
+  return new Promise((resolve) => {
+    const title = (opts && opts.title) || 'Er du sikker?';
+    const message = (opts && opts.message) || '';
+    const confirmLabel = (opts && opts.confirmLabel) || '🗑 Slet';
+    const cancelLabel = (opts && opts.cancelLabel) || 'Annuller';
+    const bg = document.createElement('div');
+    bg.id = 'confirm-destructive-modal-bg';
+    bg.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(0,0,0,0.6);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;font-family:\'Outfit\',sans-serif';
+    let done = false;
+    const close = (result) => {
+      if (done) return; done = true;
+      document.removeEventListener('keydown', escHandler);
+      bg.remove();
+      resolve(result);
+    };
+    const escHandler = (ev) => { if (ev.key === 'Escape') close(false); if (ev.key === 'Enter') close(true); };
+    bg.onclick = (ev) => { if (ev.target === bg) close(false); };
+    bg.innerHTML = `<div style="background:var(--dark2);border:1px solid rgba(248,113,113,0.30);border-radius:14px;padding:22px 24px;width:460px;max-width:92vw;box-shadow:0 18px 48px rgba(0,0,0,0.5)">
+      <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fca5a5;margin-bottom:6px">⚠️ Bekræft</div>
+      <h3 style="margin:0 0 10px;font-size:17px;color:#fff;font-weight:800;line-height:1.35">${e(title)}</h3>
+      <p style="margin:0 0 20px;font-size:13px;color:var(--w80);line-height:1.55;white-space:pre-line">${e(message)}</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="cd-cancel" style="background:transparent;border:1px solid var(--w08);border-radius:9px;padding:10px 16px;color:var(--w80);font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer;transition:border-color 0.12s,color 0.12s" onmouseover="this.style.borderColor='var(--w35)';this.style.color='#fff'" onmouseout="this.style.borderColor='var(--w08)';this.style.color='var(--w80)'">${e(cancelLabel)}</button>
+        <button id="cd-confirm" style="background:linear-gradient(135deg,#dc2626,#b91c1c);border:0;border-radius:9px;padding:10px 18px;color:#fff;font-family:'Outfit',sans-serif;font-size:12.5px;font-weight:800;cursor:pointer;box-shadow:0 2px 8px rgba(220,38,38,0.35)">${e(confirmLabel)}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bg);
+    bg.querySelector('#cd-cancel').onclick = () => close(false);
+    bg.querySelector('#cd-confirm').onclick = () => close(true);
+    document.addEventListener('keydown', escHandler);
+    setTimeout(() => bg.querySelector('#cd-cancel')?.focus(), 50);
+  });
+}
 function callingListRenameActive(){
   const id = getActiveCallingListId();
   const lists = loadCallingLists();
@@ -6815,7 +6865,12 @@ async function callingListDeleteActive(){
   const list = lists.find(l => l.id === id);
   if (!list) return;
   const inList = (leads||[]).filter(x => x.calling_list_id === id);
-  if (!confirm(`Slet ring-listen "${list.name}"?\n\n${inList.length} leads sendes tilbage til Prelist (calling_list_id ryddes — ingen leads slettes).`)) return;
+  const ok = await confirmDestructive({
+    title: `Slet ring-listen "${list.name}"?`,
+    message: `${inList.length} leads sendes tilbage til Leadlist. Ingen leads bliver slettet — kun selve listen forsvinder.`,
+    confirmLabel: '🗑 Ja, slet listen',
+  });
+  if (!ok) return;
   // Unassign leads first so they reappear in Prelist.
   await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
     method: 'PATCH',
@@ -6975,7 +7030,12 @@ async function cockpitDeleteActiveList(){
   const list = lists.find(l => l.id === id);
   if (!list) return;
   const inList = (leads||[]).filter(x => x.calling_list_id === id);
-  if (!confirm(`Slet ring-listen "${list.name}"?\n\n${inList.length} leads sendes tilbage til Leadlist (ingen leads slettes).`)) return;
+  const ok = await confirmDestructive({
+    title: `Slet ring-listen "${list.name}"?`,
+    message: `${inList.length} leads sendes tilbage til Leadlist. Ingen leads bliver slettet — kun selve listen forsvinder.`,
+    confirmLabel: '🗑 Ja, slet listen',
+  });
+  if (!ok) return;
   await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
     method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ calling_list_id: null }),
@@ -10245,7 +10305,14 @@ function togNL(id='nli',disp='block'){
   };}
 }
 async function delList(id){
-  if(!confirm('Slet listen?'))return;
+  const list = (lists||[]).find(l => l.id === id);
+  const inList = (leads||[]).filter(l => l.listId === id);
+  const ok = await confirmDestructive({
+    title: `Slet listen "${list?.name || id}"?`,
+    message: `${inList.length} leads flyttes til "Uden gruppe". Selve leads slettes ikke.`,
+    confirmLabel: '🗑 Ja, slet listen',
+  });
+  if (!ok) return;
   lists=lists.filter(l=>l.id!==id);leads=leads.map(l=>l.listId===id?{...l,listId:'ungrouped'}:l);
   if(aList===id)aList='all';await save();rSB();if(aView==='leads')render();
 }
