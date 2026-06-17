@@ -6857,7 +6857,9 @@ function _renderCallingListPageImpl(){
         <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
         <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
         <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.45;animation:none':''}">▶ Start opkald</button>
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;flex-shrink:0"><path d="M3 5l4 4 4-4"/></svg>
+        <button onclick="event.stopPropagation();callingListToggleExpand('${e(s.id)}')" title="${isExpanded?'Skjul leads':'Vis leads'}" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:8px 10px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.borderColor='var(--w08)';this.style.background='transparent'">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;display:block"><path d="M3 5l4 4 4-4"/></svg>
+        </button>
       </div>
       ${isExpanded ? `<div style="border-top:1px solid var(--w08)">${renderLeadTable(s)}</div>` : ''}
     </div>`;
