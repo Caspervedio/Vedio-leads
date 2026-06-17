@@ -6661,8 +6661,10 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
     return res.status(503).json({ error: "STORELEADS_API_KEY not configured" });
   }
   const TARGET_USER = (req.query.userId || "u1").toString();
-  // Per-run: pull N fresh domains per platform. 30 × 2 = 60 candidates
-  // per run, after DF-verify drops we expect 20-40 saved leads.
+  // Per-run: pull N fresh domains per platform. Default 30, now scheduled
+  // at 60 → 60 × 2 = 120 candidates per run, expect 30-60 saved leads
+  // after DF-verify + dedup drops. Cloud Run timeout is 1200s, so plenty
+  // of headroom for the inline Datafordeler verify loop.
   const PER_PLATFORM = Math.max(5, Math.min(100, Number(req.query.per_platform) || 30));
   const stats = {
     perPlatform: {},
@@ -6681,7 +6683,7 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   for (const platform of STORELEADS_PLATFORMS) {
     const pStats = { fetched: 0, saved: 0, dfMatched: 0 };
     let cursor = state.platformCursors[platform] || null;
-    let pageSize = Math.min(50, PER_PLATFORM);
+    let pageSize = Math.min(100, PER_PLATFORM);
     try {
       const page = await storeLeadsSearchDomains(platform, { pageSize, cursor });
       const domains = page.domains || [];
