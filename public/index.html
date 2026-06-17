@@ -6087,9 +6087,23 @@ function renderAutodialerPage(){
   }
 
   const headerLabel = showTwentyPushed ? 'Twenty-backlog (AE ejer)' : (showArchive ? 'Arkiv' : 'Liste');
+  // Select-all state — checked when EVERY visible row is selected, partial
+  // (indeterminate) otherwise, unchecked when none. Clicking flips:
+  //   none → all  · all → none · partial → all (one-click upgrade)
+  const visibleCvrs = preview.map(l => l.cvr);
+  const selectedVisible = visibleCvrs.filter(cvr => _adSelected.has(cvr)).length;
+  const allChecked = visibleCvrs.length > 0 && selectedVisible === visibleCvrs.length;
+  const someChecked = selectedVisible > 0 && !allChecked;
+  const showSelectAll = !showArchive && !showTwentyPushed && visibleCvrs.length > 0;
   queueEl.innerHTML=`<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
     <div style="padding:12px 16px;border-bottom:1px solid var(--w08);display:flex;align-items:center;justify-content:space-between;gap:10px">
-      <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">${headerLabel} · ${preview.length === filtered.length ? `${filtered.length} leads` : `viser ${preview.length} af ${filtered.length}`}</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        ${showSelectAll ? `<label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none" title="Vælg/fravælg alle synlige leads">
+          <input id="ad-select-all" type="checkbox" ${allChecked?'checked':''} onclick="adToggleSelectAllVisible(this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:#a78bfa">
+          <span style="font-size:11px;color:${selectedVisible>0?'#c4b5fd':'var(--w55)'};font-weight:700;letter-spacing:0.3px">${selectedVisible>0 ? `${selectedVisible} valgt` : 'Vælg alle'}</span>
+        </label><span style="color:var(--w08)">|</span>` : ''}
+        <div style="font-size:11px;color:var(--w35);font-weight:800;letter-spacing:1px;text-transform:uppercase">${headerLabel} · ${preview.length === filtered.length ? `${filtered.length} leads` : `viser ${preview.length} af ${filtered.length}`}</div>
+      </div>
       ${showArchive
         ? `<div style="display:flex;align-items:center;gap:10px">
              <span style="font-size:11px;color:var(--w55);font-style:italic">eller bulk-genopret hele listen</span>
@@ -6251,6 +6265,19 @@ function adSelectAllVisible(){
   // the set matches what the SDR sees, not the unfiltered `leads` array.
   const boxes = document.querySelectorAll('#ad-queue input[type="checkbox"][data-cvr]');
   for (const b of boxes) _adSelected.add(b.getAttribute('data-cvr'));
+  renderAutodialerPage();
+}
+// Header "select all" toggle — checked = add all visible CVRs to the
+// selection set, unchecked = remove them. Operates on what's RENDERED
+// (filtered view), not the full leads[] array, so a search-narrowed
+// list "select all" only grabs the visible matches.
+function adToggleSelectAllVisible(checked){
+  const boxes = document.querySelectorAll('#ad-queue input[type="checkbox"][data-cvr]');
+  if (checked) {
+    for (const b of boxes) _adSelected.add(b.getAttribute('data-cvr'));
+  } else {
+    for (const b of boxes) _adSelected.delete(b.getAttribute('data-cvr'));
+  }
   renderAutodialerPage();
 }
 // Open a modal listing the existing calling lists + a "+ Ny liste" inline.
