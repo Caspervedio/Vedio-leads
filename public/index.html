@@ -174,6 +174,13 @@ body{font-family:'Outfit',system-ui,-apple-system,sans-serif;font-size:13px;font
    instead of competing with it for horizontal space. .tw still fills the
    leftover height via flex:1. */
 .body-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+/* Hide all main content until sv() has positively decided what view to
+   show. Without this, the brief window between showApp() and sv() lets
+   the legacy CVR-search table flash for 2-3 sec (especially on slow
+   /api/leads fetches). visibility:hidden keeps the layout reserved so
+   there's no reflow jump when the dashboard appears.
+   sv() adds .app-ready to <body> on its first call. */
+body:not(.app-ready) main.main{visibility:hidden}
 .tw{flex:1;overflow:auto;min-height:0}
 
 /* TABLE */
@@ -9769,6 +9776,10 @@ function setDiscoveryHeader(mode){
 
 function sv(v){
   aView=v;
+  // First-call init flag — unhides <main> (it's hidden by default via the
+  // body:not(.app-ready) CSS rule). Prevents the legacy CVR-search table
+  // from flashing in the gap between showApp() and the first sv() call.
+  document.body.classList.add('app-ready');
   // Sync the collapsible "Eksperimentelle" section — force-open when the
   // SDR navigates into one of its agents so the active highlight stays
   // visible. Restore last-saved state otherwise.
