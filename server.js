@@ -7220,7 +7220,13 @@ async function intakeEnrichLead(lead) {
   try {
     const enoughFromGemini = geminiContacts.filter((c) => c.is_decision_maker).length >= 3;
     if (domain && isFullEnrichConfigured() && !enoughFromGemini) {
-      const found = await fullEnrichPeopleSearch(domain, { limit: 5, timeoutMs: 8000 });
+      // limit:1 not 5 — auto-discovery only persists the TOP candidate to
+      // lead.contacts. If the top match is wrong, the SDR uses the
+      // "+ Tilføj LinkedIn URL" paste flow to swap. Cuts visual clutter
+      // + signals which candidate to focus on. Cost stays the same (FE
+      // People Search is FREE regardless of limit), but the UI is way
+      // cleaner — 5 named people per lead was mostly noise.
+      const found = await fullEnrichPeopleSearch(domain, { limit: 1, timeoutMs: 8000 });
       if (Array.isArray(found) && found.length > 0) {
         feContacts = found.map((p) => ({
           name: p.full_name,
@@ -7241,12 +7247,18 @@ async function intakeEnrichLead(lead) {
   } catch (_) {}
 
   // Merge: Gemini-discovered names take priority (source-cited, higher
-  // confidence). De-dupe FE results by lowercased name match.
+  // confidence). De-dupe FE results by lowercased name match. Then SLICE
+  // to top 1 — auto-discovery only commits the best candidate. If wrong,
+  // the SDR uses the always-visible "+ Tilføj LinkedIn URL" paste flow.
+  // 5 named people per lead was mostly noise; one focused decision-maker
+  // is cleaner + the rest of the discovered data isn't lost (Gemini's
+  // raw return is still in memory if we ever want to surface "show
+  // alternative candidates" later).
   const seenNames = new Set(geminiContacts.map((c) => c.name.toLowerCase()));
   let merged = [
     ...geminiContacts,
     ...feContacts.filter((c) => c.name && !seenNames.has(c.name.toLowerCase())),
-  ];
+  ].slice(0, 1);
 
   // Stage 1.5: if Stages 0 + 1 BOTH came up empty, try Gemini + Google
   // Search grounding to find LinkedIn snippets. Last-ditch automated
@@ -7256,7 +7268,7 @@ async function intakeEnrichLead(lead) {
     try {
       const searched = await geminiSearchLinkedinForCompany(lead.name, domain);
       if (Array.isArray(searched) && searched.length > 0) {
-        merged = searched;
+        merged = searched.slice(0, 1);
         lead.gemini_search_at = new Date().toISOString();
         stats.gemini_search_used = true;
       }
@@ -7421,10 +7433,12 @@ app.post("/api/contact/reveal-direct-dial/:cvr", authMiddleware, async (req, res
   // ─── STAGE 1: Full Enrich People Search (FREE, primary) ──────────────
   // Adds breadth beyond what Gemini found on the website. Skipped if
   // Gemini already returned 3+ decision-makers.
-  const enoughFromGemini = workingContacts.filter((c) => c.is_decision_maker).length >= 3;
+  const enoughFromGemini = workingContacts.filter((c) => c.is_decision_maker).length >= 1;
   if (workingContacts.length === 0 && !enoughFromGemini && isFullEnrichConfigured() && domain) {
     try {
-      const found = await fullEnrichPeopleSearch(domain, { limit: 5 });
+      // limit:1 — top match only. SDR uses the always-visible LinkedIn
+      // URL paste flow to swap if the auto-discovered person is wrong.
+      const found = await fullEnrichPeopleSearch(domain, { limit: 1 });
       if (Array.isArray(found) && found.length > 0) {
         const seen = new Set(workingContacts.map((c) => (c.name || '').toLowerCase()));
         const feContacts = found
