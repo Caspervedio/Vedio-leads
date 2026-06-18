@@ -7980,7 +7980,7 @@ async function cockpitDeleteActiveList(){
 // Drilldown — clicked-on-a-number opens this modal with the actual leads
 // behind that count. metricId: dialed/interested/follow_up/sms/no_answer/
 // not_relevant/twentyPushed. scope: today/week/all.
-function openActivityDrilldown(metricId, scope){
+function openActivityDrilldown(metricId, scope, dayKey){
   // Reproduce the same scope-membership logic the counter uses
   const now = Date.now();
   const startOfTodayLocal = new Date(); startOfTodayLocal.setHours(0,0,0,0);
@@ -8033,6 +8033,38 @@ function openActivityDrilldown(metricId, scope){
               : metricId === 'twentyPushed' ? 'twenty_pushed_at'
               : 'lastDispositionAt';
   matched.sort((a,b)=>String(b[tsKey]||b.lastCallAt||'').localeCompare(String(a[tsKey]||a.lastCallAt||'')));
+  // Daily breakdown — only computed for week scope. Buckets the matched
+  // leads by the local-time day of their relevant timestamp. Used to
+  // show "Mandag · 4 · Tirsdag · 7 · ..." above the lead list so admin
+  // can see distribution + filter to a specific day.
+  const dayKeyOf = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    // Local-date key YYYY-MM-DD so timezones don't shift weekday assignment
+    const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,'0'); const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  };
+  const dailyBuckets = [];
+  if (scope === 'week') {
+    // Build 7 contiguous days back from today (local).
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - i);
+      const key = dayKeyOf(d.toISOString());
+      const wdShort = d.toLocaleDateString('da-DK', { weekday: 'short' }).replace(/\.$/, '');
+      const dayLabel = d.toLocaleDateString('da-DK', { day: '2-digit', month: 'short' });
+      dailyBuckets.push({ key, label: `${wdShort.charAt(0).toUpperCase()+wdShort.slice(1)} ${dayLabel}`, count: 0, date: d });
+    }
+    const idx = Object.fromEntries(dailyBuckets.map((b,i) => [b.key, i]));
+    for (const l of matched) {
+      const k = dayKeyOf(l[tsKey] || l.lastCallAt);
+      if (k && idx[k] !== undefined) dailyBuckets[idx[k]].count++;
+    }
+  }
+  // Apply day filter if the user clicked a specific day in the breakdown.
+  const matchedFiltered = (scope === 'week' && dayKey)
+    ? matched.filter(l => dayKeyOf(l[tsKey] || l.lastCallAt) === dayKey)
+    : matched;
   // Labels
   const metricLabels = {
     dialed:'📞 Ringet', interested:'✓ Interesseret', follow_up:'📅 Follow-up planlagt',
@@ -8058,14 +8090,37 @@ function openActivityDrilldown(metricId, scope){
       return d.toLocaleDateString('da-DK',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit'});
     } catch{ return iso; }
   };
+  // Daily-breakdown header — only rendered when scope==='week'. Each
+  // row is clickable to filter the leads list to just that day.
+  const dailyBreakdownHtml = scope === 'week' ? `
+    <div style="background:var(--dark2);border:1px solid var(--w08);border-radius:9px;padding:10px 12px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--w35)">📊 Per dag</div>
+        ${dayKey ? `<button onclick="openActivityDrilldown('${metricId}','week')" style="background:rgba(124,58,237,0.18);border:1px solid rgba(124,58,237,0.35);border-radius:6px;padding:3px 9px;color:#c4b5fd;font-size:10.5px;font-weight:700;cursor:pointer;font-family:Outfit,sans-serif">← Alle dage</button>` : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">
+        ${dailyBuckets.map(b => {
+          const active = dayKey === b.key;
+          const isToday = b.key === dayKeyOf(new Date().toISOString());
+          const clickable = b.count > 0;
+          return `<button ${clickable ? `onclick="openActivityDrilldown('${metricId}','week','${b.key}')"` : ''} style="background:${active ? 'rgba(124,58,237,0.22)' : 'var(--w04)'};border:1px solid ${active ? 'rgba(124,58,237,0.55)' : 'var(--w08)'};border-radius:7px;padding:8px 4px;${clickable ? 'cursor:pointer' : 'cursor:default;opacity:0.55'};text-align:center;font-family:Outfit,sans-serif;transition:border-color 0.12s,background 0.12s" ${clickable ? `onmouseover="if(!${active}){this.style.borderColor='rgba(124,58,237,0.4)';this.style.background='rgba(124,58,237,0.10)'}" onmouseout="if(!${active}){this.style.borderColor='var(--w08)';this.style.background='var(--w04)'}"` : ''}>
+            <div style="font-size:9.5px;font-weight:700;color:${active ? '#c4b5fd' : 'var(--w55)'};letter-spacing:0.3px;text-transform:uppercase;margin-bottom:3px">${e(b.label)}${isToday ? ' ●' : ''}</div>
+            <div style="font-size:16px;font-weight:900;color:${b.count > 0 ? (active ? '#fff' : 'var(--w80)') : 'var(--w35)'};letter-spacing:-0.5px;font-variant-numeric:tabular-nums">${b.count}</div>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
+  ` : '';
+  const filterChip = dayKey ? ` · <span style="color:#c4b5fd;font-weight:700">${e((dailyBuckets.find(b=>b.key===dayKey)||{}).label || dayKey)}</span>` : '';
   bg.innerHTML = `<div class="modal" style="width:720px;max-height:82vh;display:flex;flex-direction:column;padding:22px 24px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <h3 style="margin:0;font-size:16px;color:#fff">${title}</h3>
+      <h3 style="margin:0;font-size:16px;color:#fff">${title}${filterChip}</h3>
       <button onclick="document.getElementById('activity-drill-modal').remove()" style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:6px 12px;color:var(--w80);font-size:12px;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif">Luk</button>
     </div>
-    <div style="font-size:11.5px;color:var(--w55);margin-bottom:12px">${matched.length} ${matched.length === 1 ? 'lead' : 'leads'}</div>
+    ${dailyBreakdownHtml}
+    <div style="font-size:11.5px;color:var(--w55);margin-bottom:12px">${matchedFiltered.length} ${matchedFiltered.length === 1 ? 'lead' : 'leads'}${(scope==='week' && !dayKey) ? ' (alle 7 dage)' : ''}</div>
     <div style="overflow-y:auto;flex:1">
-      ${matched.length === 0 ? `<div style="text-align:center;color:var(--w55);padding:30px;font-size:13px">Ingen leads matcher</div>` : `
+      ${matchedFiltered.length === 0 ? `<div style="text-align:center;color:var(--w55);padding:30px;font-size:13px">Ingen leads matcher</div>` : `
       <table style="width:100%;border-collapse:collapse;font-size:12.5px">
         <thead><tr style="position:sticky;top:0;background:var(--dark2)">
           <th style="text-align:left;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Lead</th>
@@ -8075,7 +8130,7 @@ function openActivityDrilldown(metricId, scope){
           <th style="text-align:right;padding:8px 10px;font-size:10px;color:var(--w55);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--w08)">Tidspunkt</th>
         </tr></thead>
         <tbody>
-          ${matched.map(l => {
+          ${matchedFiltered.map(l => {
             const ph = l.phone || l.ph || '';
             const ts = l[tsKey] || l.lastCallAt;
             const da = l.lastAction || '';
