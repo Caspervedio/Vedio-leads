@@ -7056,9 +7056,21 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
         const merchantName = (dom.merchant_name || dom.title || domain).trim();
         if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
 
-        // Datafordeler verify by merchant_name — gives us real CVR + phone
+        // Datafordeler verify by merchant_name — gives us real CVR + phone.
+        // Wrapped in a 3s timeout race: when DF is slow/down (their
+        // GraphQL service has a 60s internal timeout that we'd hit every
+        // candidate), we drop through with df=null and save the lead
+        // using StoreLeads-native fields. The "DF verify unknowns" admin
+        // bulk-op (or the daily backfill-cvr cron) can backfill CVRs
+        // later when DF is healthy. Keeps storeleads producing during
+        // DF outages.
         let df = null;
-        try { df = await tryDfVerifyDkCompany(merchantName); } catch (_) {}
+        try {
+          df = await Promise.race([
+            tryDfVerifyDkCompany(merchantName),
+            new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+          ]);
+        } catch (_) {}
 
         try {
           // Dedupe by domain, by real CVR (if DF found one), and by name.
@@ -10081,51 +10093,36 @@ const BRANCHE_WALK_STATE_FILE = path.join(DATA_DIR, "discovery", "branche_walk_d
 // Result: queue drops from ~155 branche-walk noise → ~50 quality leads
 // per day, all from industries that demonstrably advertise.
 const BRANCHE_WALK_CODES = [
-  // Food + hospitality (high Meta-ad activity, especially restaurants
-  // with delivery + cafes/hotels with seasonal campaigns)
+  // SERVICE / PHYSICAL businesses only — see 2026-06-18 cleanup below.
+  // E-commerce DB07 codes (479110, 478990, 477110, 477210, 475100, etc.)
+  // dropped because StoreLeads covers DK webshops natively with way
+  // better signal: actual active shops with traffic + tech stack +
+  // estimated revenue. Datafordeler just lists every CVR registered
+  // under those codes — many are dormant or no real shop.
+  //
+  // Branche-walk now serves the part StoreLeads CAN'T do: service
+  // businesses, physical-only shops, agencies, hospitality.
+  //
+  // Food + hospitality
   { code: "561010", label: "Restauranter"      },
   { code: "563000", label: "Cafeer"            },
   { code: "472100", label: "Bagerier"          },
   { code: "551110", label: "Hoteller"          },
-  // Beauty (commercial-scale clinics only; skipped Frisør + Wellness
-  // which skew tiny). Skønhedsklinikker advertise aesthetic treatments.
+  // Beauty
   { code: "960220", label: "Skønhedsklinik"    },
-  // Fitness (commercial gym chains, NOT amateur sports clubs)
+  { code: "961040", label: "Wellness/skønhed"  },
+  // Fitness
   { code: "931300", label: "Fitnesscenter"     },
-  // Retail (consumer-facing — heavy paid social)
-  { code: "477110", label: "Tøjbutik"          },
-  { code: "477210", label: "Skobutik"          },
-  { code: "475100", label: "Møbler"            },
-  // Removed 477820 (mis-labeled "Interiør"; DB07 477820 is actually
-  // "Detailhandel med fotografisk udstyr" → photo studios + film shops.
-  // 100 of 101 leads from this code today were small photo studios
-  // that don't run Meta ads. Use 4759* if we want real interior shops.)
-  // E-commerce — strongest signal in the rotation. Internet retail by
-  // definition needs paid acquisition.
-  { code: "479110", label: "Detailhandel internet" },
-  { code: "478990", label: "Anden detailhandel"    },
-  // Pro services with high marketing intent. Marketing-bureau is our
-  // own ICP — they sell the service we sell.
+  // Physical-shop retail (NOT e-commerce — these have showrooms /
+  // eye exams / on-premise service)
+  { code: "477800", label: "Optikere"          },
+  // Pro services + agencies (our own ICP — they sell the service we
+  // sell, frequent ad-buyers)
   { code: "731000", label: "Marketing-bureau"  },
   { code: "741010", label: "Design/web"        },
   { code: "683210", label: "Ejendomsmægler"    },
   { code: "791100", label: "Rejsebureau"       },
-  // Optics — chain stores advertise heavily
-  { code: "477800", label: "Optikere"          },
-  // Phase 1 expansion (2026-06-16): more ICP-relevant DB07 codes for
-  // DK SMBs that buy paid acquisition / video. Each surfaces 500-3000
-  // companies in Datafordeler; combined with Meta Ad Library scoring,
-  // we get a wider net of marketing-active candidates.
-  { code: "475250", label: "Belysning"         },
-  { code: "475440", label: "Glas/keramik"      },
-  { code: "476420", label: "Sport"             },
-  { code: "476500", label: "Spil/legetøj"      },
-  { code: "477630", label: "Blomster"          },
-  { code: "477640", label: "Dyr/foder"         },
-  { code: "477990", label: "Anden detail"      },
-  { code: "563000", label: "Caféer/cafeterier" },
   { code: "742010", label: "Fotograf-erhverv"  },
-  { code: "961040", label: "Wellness/skønhed"  },
 ];
 
 // Marketing-tech regex applied to Apollo's technology_names list.
