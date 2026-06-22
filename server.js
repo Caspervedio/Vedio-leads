@@ -8551,19 +8551,22 @@ async function fetchFacebookPageId(facebookUrl, opts = {}) {
     }).catch(() => null);
     clearTimeout(timer);
     if (!r || !r.ok) return '';
-    const html = (await r.text().catch(() => '')).slice(0, 500_000);
-    // Patterns ordered by reliability — meta tags first (stable across
-    // FB redesigns), then JSON embeds, then URL patterns.
+    const html = await r.text().catch(() => '');
+    // Patterns verified 2026-06-22 against fusion.dk, cotonshoppen.dk,
+    // VisitOdense, denlillefederestaurant, OsteoDanmark-Aalborg —
+    // 5/5 resolved via al:ios:url → fb://profile/X. FB uses /profile/X
+    // for EVERYTHING (including business pages), not /page/?id=X like
+    // older docs suggest. Don't slice the HTML — al:* meta tags can sit
+    // outside the first 500KB on heavy pages.
     const patterns = [
+      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i,
+      /<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i,
+      // Fallbacks for FB embed variations we haven't observed but may exist
+      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/(\d+)["']/i,
       /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/?\?id=(\d+)/i,
-      /<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/page\/?\?id=(\d+)/i,
-      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/(\d+)/i,
-      /"profileId":"(\d{8,})"/,
-      /"pageID":"(\d{8,})"/,
-      /"page_id":"(\d{8,})"/,
-      /"entity_id":"(\d{8,})"/,
-      /\/pages\/[^/]+\/(\d{8,})/,
-      /content=["']fb:\/\/page\/(\d{8,})/i,
+      /"profileId":"(\d{10,})"/,
+      /"pageID":"(\d{10,})"/,
+      /"page_id":"(\d{10,})"/,
     ];
     for (const p of patterns) {
       const m = html.match(p);
