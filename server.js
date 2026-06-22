@@ -11958,6 +11958,11 @@ async function runBackfillMetaAds(req, res) {
   // before committing to the full backlog spend.
   const onlyCvr = String(req.query.cvr || "").trim();
   const limit = Number(req.query.limit) || 0;
+  // ?missingPageId=1 → ignore the 14-day skip guard for leads marked
+  // advertising but missing facebook_page_id (legacy discovery path
+  // didn't capture page_id). Catches the existing pool of ~60 advertising
+  // leads where the keyword-search URL is still the only Ad Library link.
+  const onlyMissingPageId = req.query.missingPageId === "1";
   for (const f of fs.readdirSync(DATA_DIR)) {
     if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
     const userId = f.slice("data_".length, -".json".length);
@@ -11967,9 +11972,16 @@ async function runBackfillMetaAds(req, res) {
       if (!lead || !lead.name) return false;
       if (lead.lastAction === "not-relevant") return false;
       if (lead.twenty_opportunity_id) return false;
+      if (onlyCvr && lead.cvr !== onlyCvr) return false;
+      if (onlyMissingPageId) {
+        // Catch-up path: only advertising leads missing page_id, regardless
+        // of when meta_verified_at was last stamped.
+        if (!lead.meta_verified_active) return false;
+        if (lead.facebook_page_id) return false;
+        return true;
+      }
       const t = lead.meta_verified_at ? new Date(lead.meta_verified_at).getTime() : 0;
       if (t && t > cutoff) { stats.skippedRecent++; return false; }
-      if (onlyCvr && lead.cvr !== onlyCvr) return false;
       return true;
     });
     if (limit > 0) targets = targets.slice(0, limit);
