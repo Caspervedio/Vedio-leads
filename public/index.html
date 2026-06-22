@@ -9265,14 +9265,69 @@ function renderCockpitQueue(){
   // the active lead stays highlighted even when filtered out (user
   // sees "(skjult af søgning)" + clear button).
   if (typeof _cockpit.queueFilter !== 'string') _cockpit.queueFilter = '';
+  // Sort selection — persists across cockpit-opens via localStorage.
+  // Default 'priority' keeps the original queue order (info-rich + ICP
+  // + ads first). Other options reshape the rail for different work modes.
+  if (typeof _cockpit.queueSort !== 'string') {
+    try { _cockpit.queueSort = localStorage.getItem('vl_cockpit_queue_sort') || 'priority'; }
+    catch { _cockpit.queueSort = 'priority'; }
+  }
   const q = _cockpit.queueFilter.toLowerCase().trim();
-  const items = _cockpit.queue.map((l, i) => ({ l, i })).filter(({ l }) => {
+  // Build view items with original index preserved — cockpitJump uses
+  // the index INTO _cockpit.queue (not the visible position), so we
+  // never lose the active lead's identity across re-sorts.
+  let items = _cockpit.queue.map((l, i) => ({ l, i })).filter(({ l }) => {
     if (!q) return true;
     const hay = [l.name, l.cvr, (l.contacts||[]).map(c => c.name||'').join(' ')].join(' ').toLowerCase();
     return hay.includes(q);
   });
+  // Apply sort to the visible view (without mutating _cockpit.queue).
+  const now = Date.now();
+  const tsOf = (iso) => iso ? new Date(iso).getTime() : 0;
+  const dispoRank = { 'interested':1, 'follow-up':2, 'sms':3, 'no-answer':4, 'not-relevant':9 };
+  if (_cockpit.queueSort === 'callback') {
+    // Due callbacks first (callback_at <= now, ascending), then future
+    // callbacks, then leads without callback at the bottom.
+    items.sort((a, b) => {
+      const ca = tsOf(a.l.callback_at); const cb = tsOf(b.l.callback_at);
+      if (!ca && !cb) return a.i - b.i;
+      if (!ca) return 1; if (!cb) return -1;
+      const ad = ca <= now ? 0 : 1; const bd = cb <= now ? 0 : 1;
+      if (ad !== bd) return ad - bd;
+      return ca - cb;
+    });
+  } else if (_cockpit.queueSort === 'disposition') {
+    // Leads with a disposition at top (sorted by interested → follow-up
+    // → sms → no-answer → not-relevant), most-recent disposition first
+    // within each tier. Untouched leads at the bottom in original order.
+    items.sort((a, b) => {
+      const ra = a.l.lastAction ? (dispoRank[a.l.lastAction] || 8) : 99;
+      const rb = b.l.lastAction ? (dispoRank[b.l.lastAction] || 8) : 99;
+      if (ra !== rb) return ra - rb;
+      const ta = tsOf(a.l.lastDispositionAt || a.l.lastCallAt);
+      const tb = tsOf(b.l.lastDispositionAt || b.l.lastCallAt);
+      if (tb !== ta) return tb - ta;
+      return a.i - b.i;
+    });
+  } else if (_cockpit.queueSort === 'untouched') {
+    // Fresh leads first (no lastAction), then by name. Useful when SDR
+    // wants to clear new leads before revisiting touched ones.
+    items.sort((a, b) => {
+      const ua = a.l.lastAction ? 1 : 0; const ub = b.l.lastAction ? 1 : 0;
+      if (ua !== ub) return ua - ub;
+      return String(a.l.name||'').localeCompare(String(b.l.name||''));
+    });
+  } else if (_cockpit.queueSort === 'name') {
+    items.sort((a, b) => String(a.l.name||'').localeCompare(String(b.l.name||'')));
+  }
+  // else 'priority' → leave items in _cockpit.queue order (priority sort
+  // already applied when the queue was built at openCockpit-time).
+  const sortLabel = {
+    'priority':'Prioritet','callback':'Callback først','disposition':'Disposition først',
+    'untouched':'Aldrig ringet først','name':'Navn (A-Å)',
+  }[_cockpit.queueSort] || 'Prioritet';
   const searchBox = `<div style="position:sticky;top:0;background:var(--dark2);border-bottom:1px solid var(--w08);padding:10px 12px;z-index:2">
-    <div style="position:relative">
+    <div style="position:relative;margin-bottom:8px">
       <span style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--w35);font-size:12px;pointer-events:none">🔍</span>
       <input id="cockpit-q-search" type="text" value="${e(_cockpit.queueFilter)}" placeholder="Søg i kø… (navn, CVR, kontakt)" autocomplete="off"
              oninput="cockpitSetQueueFilter(this.value)"
@@ -9281,7 +9336,17 @@ function renderCockpitQueue(){
              onfocus="this.style.borderColor='rgba(124,58,237,0.5)'" onblur="this.style.borderColor='var(--w08)'">
       ${_cockpit.queueFilter ? `<button onclick="cockpitSetQueueFilter('')" title="Ryd søgning" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:var(--w55);cursor:pointer;font-size:13px;padding:0 4px;line-height:1">✕</button>` : ''}
     </div>
-    ${q ? `<div style="margin-top:6px;font-size:10px;color:var(--w35)">${items.length} af ${_cockpit.queue.length} i køen</div>` : ''}
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:9.5px;color:var(--w35);font-weight:700;letter-spacing:0.6px;text-transform:uppercase">Sortér</span>
+      <select onchange="cockpitSetQueueSort(this.value)" style="flex:1;background:var(--w04);border:1px solid var(--w08);border-radius:6px;color:#fff;padding:4px 6px;font-family:Outfit,sans-serif;font-size:11px;outline:none;cursor:pointer">
+        <option value="priority" ${_cockpit.queueSort==='priority'?'selected':''}>Prioritet (info først)</option>
+        <option value="callback" ${_cockpit.queueSort==='callback'?'selected':''}>Callback først</option>
+        <option value="disposition" ${_cockpit.queueSort==='disposition'?'selected':''}>Disposition først</option>
+        <option value="untouched" ${_cockpit.queueSort==='untouched'?'selected':''}>Aldrig ringet først</option>
+        <option value="name" ${_cockpit.queueSort==='name'?'selected':''}>Navn (A-Å)</option>
+      </select>
+    </div>
+    ${q ? `<div style="margin-top:6px;font-size:10px;color:var(--w35)">${items.length} af ${_cockpit.queue.length} i køen · ${sortLabel}</div>` : ''}
   </div>`;
   const list = items.length > 0
     ? items.map(({ l, i }) => {
@@ -9312,6 +9377,11 @@ function renderCockpitQueue(){
 }
 function cockpitSetQueueFilter(q){
   _cockpit.queueFilter = q || '';
+  renderCockpitQueue();
+}
+function cockpitSetQueueSort(s){
+  _cockpit.queueSort = s || 'priority';
+  try { localStorage.setItem('vl_cockpit_queue_sort', _cockpit.queueSort); } catch {}
   renderCockpitQueue();
 }
 
