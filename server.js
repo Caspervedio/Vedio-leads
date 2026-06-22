@@ -7176,9 +7176,30 @@ async function intakeEnrichLead(lead) {
       if (socials.linkedin_url) { lead.linkedin_url = socials.linkedin_url; stats.socials = true; }
     }
   } catch (_) {}
-  // Ad Library URL is name-keyed (Meta's search), deterministic, always set
+  // Resolve the FB page ID from lead.facebook_url so the Ad Library
+  // link goes to the company's SPECIFIC ads page (?view_all_page_id=X)
+  // instead of a noisy keyword search. Free — direct HTML fetch of the
+  // FB page with Googlebot UA. Stored on lead.facebook_page_id so the
+  // cockpit/inspector deep-links automatically.
   try {
-    if (lead.name) { lead.ad_library_url = buildAdsLibraryUrl(lead.name); stats.ad_library = true; }
+    if (lead.facebook_url && !lead.facebook_page_id) {
+      const pid = await fetchFacebookPageId(lead.facebook_url, { timeoutMs: 4000 });
+      if (pid) {
+        lead.facebook_page_id = pid;
+        stats.fb_page_id = true;
+      }
+    }
+  } catch (_) {}
+  // Ad Library URL — prefer the page-specific deep-link when we have the
+  // numeric page ID, fall back to keyword search by company name.
+  try {
+    if (lead.facebook_page_id) {
+      lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
+      stats.ad_library = true;
+    } else if (lead.name) {
+      lead.ad_library_url = buildAdsLibraryUrl(lead.name);
+      stats.ad_library = true;
+    }
   } catch (_) {}
   // Gemini-grounded extraction from the company's website (about / team /
   // contact pages). Higher-quality than FE's index because every returned
@@ -8496,6 +8517,62 @@ const brandFromApolloName = brandForMetaAdsSearch;
 // usual social-network domains. Cheap (~1-3s/site) and runs at intake so
 // the cockpit always shows social-research links the SDR can use mid-call.
 // Returns {} on any failure — intake must not block on website downtime.
+// Resolve a Facebook page URL (vanity or numeric) to the numeric page ID
+// by fetching the public HTML and parsing the embedded ID. Used to build
+// the page-specific Meta Ad Library deep-link (?view_all_page_id=X) which
+// shows only that company's ads vs. the noisy keyword search.
+//
+// Free + works regardless of ad activity (vs. the Apify Meta Ads check
+// which only captures page_id when the company is currently advertising).
+//
+// Mobile FB (m.facebook.com) has cleaner HTML + more reliable embeds.
+// User-Agent of Googlebot — FB serves a stripped-down crawler-friendly
+// version that's less likely to block + contains the al:ios:url and
+// al:android:url meta tags which carry the page ID in a stable format.
+async function fetchFacebookPageId(facebookUrl, opts = {}) {
+  if (!facebookUrl) return '';
+  const timeoutMs = opts.timeoutMs || 4000;
+  try {
+    const mobileUrl = String(facebookUrl)
+      .replace('://www.facebook.com', '://m.facebook.com')
+      .replace('://facebook.com', '://m.facebook.com');
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    const r = await fetch(mobileUrl, {
+      signal: ctl.signal,
+      redirect: 'follow',
+      headers: {
+        // Googlebot UA — FB serves a crawler-friendly variant with stable
+        // page-ID embeds (the human-version HTML changes weekly + blocks
+        // bots aggressively).
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    }).catch(() => null);
+    clearTimeout(timer);
+    if (!r || !r.ok) return '';
+    const html = (await r.text().catch(() => '')).slice(0, 500_000);
+    // Patterns ordered by reliability — meta tags first (stable across
+    // FB redesigns), then JSON embeds, then URL patterns.
+    const patterns = [
+      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/?\?id=(\d+)/i,
+      /<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/page\/?\?id=(\d+)/i,
+      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/(\d+)/i,
+      /"profileId":"(\d{8,})"/,
+      /"pageID":"(\d{8,})"/,
+      /"page_id":"(\d{8,})"/,
+      /"entity_id":"(\d{8,})"/,
+      /\/pages\/[^/]+\/(\d{8,})/,
+      /content=["']fb:\/\/page\/(\d{8,})/i,
+    ];
+    for (const p of patterns) {
+      const m = html.match(p);
+      if (m && m[1]) return m[1];
+    }
+  } catch (_) { /* silent — intake must not block on FB availability */ }
+  return '';
+}
+
 async function fetchWebsiteSocials(domain, opts = {}) {
   if (!domain) return {};
   const timeoutMs = opts.timeoutMs || 5000;
@@ -11976,6 +12053,58 @@ async function runDfVerifyUnknowns(req, res) {
   res.json({ ok: true, stats, dry: DRY });
 }
 app.post("/api/admin/df-verify-unknowns", authMiddleware, runDfVerifyUnknowns);
+
+// ── Backfill Facebook page IDs ─────────────────────────────────────────
+// Walks all active leads with lead.facebook_url set but no
+// lead.facebook_page_id, resolves the numeric ID via fetchFacebookPageId,
+// and rewrites lead.ad_library_url to the page-specific deep-link.
+//
+// Necessary because intakeEnrichLead's guard skips leads with
+// intake_enriched_at already set — so existing leads don't get the new
+// FB-page-ID extraction retroactively. Admin runs this once after the
+// feature lands to fix the backlog.
+async function runBackfillFbPageIds(req, res) {
+  const viaCron = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
+  if (!viaCron) {
+    if (!req.userId) return res.status(401).json({ error: "Not logged in" });
+    const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+    const me = allUsers.find((u) => u.id === req.userId);
+    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  }
+  const stats = { scanned: 0, resolved: 0, failed: 0, alreadyHadId: 0, noFbUrl: 0 };
+  if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats });
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+    const userId = f.slice("data_".length, -".json".length);
+    if (!userId) continue;
+    const ud = loadUserData(userId);
+    let dirty = false;
+    for (const lead of ud.leads || []) {
+      if (lead.lastAction === "not-relevant") continue;
+      if (lead.twenty_opportunity_id) continue;
+      stats.scanned++;
+      if (!lead.facebook_url) { stats.noFbUrl++; continue; }
+      if (lead.facebook_page_id) { stats.alreadyHadId++; continue; }
+      try {
+        const pid = await fetchFacebookPageId(lead.facebook_url, { timeoutMs: 5000 });
+        if (pid) {
+          lead.facebook_page_id = pid;
+          lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${pid}`;
+          stats.resolved++;
+          dirty = true;
+        } else {
+          stats.failed++;
+        }
+      } catch { stats.failed++; }
+      // Be polite to FB — small delay between requests so we don't get rate-limited
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (dirty) saveUserData(userId, ud);
+  }
+  console.log("[backfill-fb-page-ids] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+}
+app.post("/api/admin/backfill-fb-page-ids", authMiddleware, runBackfillFbPageIds);
 app.post("/api/cron/df-verify-unknowns", (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
