@@ -12123,6 +12123,10 @@ async function runBackfillFbPageIds(req, res) {
   res.json({ ok: true, stats });
 }
 app.post("/api/admin/backfill-fb-page-ids", authMiddleware, runBackfillFbPageIds);
+// Bare cron route (no authMiddleware) so Cloud Scheduler can hit it with
+// x-cron-secret. Mirrors the pattern of /api/cron/archive-by-source etc —
+// authMiddleware otherwise 401s before the handler's cron-secret check runs.
+app.post("/api/cron/backfill-fb-page-ids", runBackfillFbPageIds);
 app.post("/api/cron/df-verify-unknowns", (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
