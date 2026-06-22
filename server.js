@@ -11953,19 +11953,26 @@ async function runBackfillMetaAds(req, res) {
   const stats = { scanned: 0, queued: 0, advertising: 0, pageIdCaptured: 0, errors: 0, skippedRecent: 0 };
   const RECENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - RECENT_WINDOW_MS;
+  // Optional smoketest filters: ?cvr=X (run on one lead) or ?limit=N
+  // (cap how many leads get processed). Used to spot-check the pipeline
+  // before committing to the full backlog spend.
+  const onlyCvr = String(req.query.cvr || "").trim();
+  const limit = Number(req.query.limit) || 0;
   for (const f of fs.readdirSync(DATA_DIR)) {
     if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
     const userId = f.slice("data_".length, -".json".length);
     if (!userId) continue;
     const ud = loadUserData(userId);
-    const targets = (ud.leads || []).filter((lead) => {
+    let targets = (ud.leads || []).filter((lead) => {
       if (!lead || !lead.name) return false;
       if (lead.lastAction === "not-relevant") return false;
       if (lead.twenty_opportunity_id) return false;
       const t = lead.meta_verified_at ? new Date(lead.meta_verified_at).getTime() : 0;
       if (t && t > cutoff) { stats.skippedRecent++; return false; }
+      if (onlyCvr && lead.cvr !== onlyCvr) return false;
       return true;
     });
+    if (limit > 0) targets = targets.slice(0, limit);
     stats.scanned += targets.length;
     // Process 5 at a time so Apify isn't slammed; saveUserData runs after
     // each chunk so partial progress survives a Cloud Run crash.
