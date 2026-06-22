@@ -3275,15 +3275,6 @@ function adminBulkBackfillCvr(){
     confirmLabel: '▶ Ja, kør',
   });
 }
-function adminBulkBackfillFbPageIds(){
-  return adminBulkRunGuarded({
-    label: 'Backfill Facebook page IDs',
-    url: '/api/admin/backfill-fb-page-ids',
-    confirmTitle: 'Backfill Facebook page IDs?',
-    confirmMessage: 'Slår alle leads med Facebook-URL op direkte hos FB og henter den numeriske page ID. Når den er fundet, opdateres lead.ad_library_url til den side-specifikke deep-link (?view_all_page_id=X) — så "Meta Ads Library"-knappen viser KUN dette firmas annoncer, ikke en generisk søgning.\n\nGratis. Tager ~1-2 minutter per 100 leads (500ms pause mellem hvert opslag for at undgå FB rate-limit).',
-    confirmLabel: '▶ Ja, kør backfill',
-  });
-}
 function renderAdminBulkPage(){
   const el = document.getElementById('admin-bulk-body');
   if (!el) return;
@@ -3340,9 +3331,6 @@ function renderAdminBulkPage(){
     ${card('📛', 'Backfill CVR via navne-søgning',
       'Datafordeler navne-søgning på leads uden rigtig CVR. Gratis. Køres allerede automatisk via daglig cron — kør kun manuelt efter en stor import.',
       `<button onclick="adminBulkBackfillCvr()" style="background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.32);border-radius:8px;padding:8px 14px;color:#6ee7b7;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">▶ Kør backfill</button>`)}
-    ${card('🎯', 'Backfill Facebook page IDs',
-      'Slår alle leads med Facebook-URL op direkte hos FB og henter numerisk page ID. Når den er fundet, peger "Meta Ads Library"-linket på den side-specifikke deep-link i stedet for en generisk søgning. Gratis. ~1-2 min per 100 leads.',
-      `<button onclick="adminBulkBackfillFbPageIds()" style="background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.32);border-radius:8px;padding:8px 14px;color:#6ee7b7;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">▶ Kør backfill</button>`)}
     ${card('👥', 'Backfill contacts (KOSTER credits)',
       'Kører Apollo + Full Enrich + Lusha på alle aktive leads der mangler beslutningstagere. KAN KOSTE PENGE — Lusha + FE charger per success. Brug kun før en kampagne hvor du vil kit hele pool ud.',
       `<button onclick="adminBulkBackfillContacts()" style="background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.32);border-radius:8px;padding:8px 14px;color:#fcd34d;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">⚠ Kør (koster credits)</button>`)}

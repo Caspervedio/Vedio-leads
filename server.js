@@ -3227,7 +3227,7 @@ app.delete("/api/leads/:cvr", authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
-app.patch("/api/leads/:cvr", authMiddleware, async (req, res) => {
+app.patch("/api/leads/:cvr", authMiddleware, (req, res) => {
   const d = loadUserData(req.userId);
   const lead = d.leads.find((l) => l.cvr === req.params.cvr);
   if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
@@ -3235,22 +3235,7 @@ app.patch("/api/leads/:cvr", authMiddleware, async (req, res) => {
   const prevAction = lead.lastAction;
   const prevCallbackAt = lead.callback_at;
   const prevPhone = lead.phone || lead.ph || "";
-  const prevFacebookUrl = lead.facebook_url || "";
   Object.assign(lead, req.body);
-  // When SDR pastes/changes a Facebook URL via the links editor, instantly
-  // resolve the numeric page ID + upgrade ad_library_url to the page-
-  // specific deep-link. Same logic as intakeEnrichLead, just on-demand.
-  // ~500ms-3s extra wait but the SDR's next click on "🎯 Meta Ads Library"
-  // hits the right page instead of a noisy keyword search.
-  if (lead.facebook_url && (lead.facebook_url !== prevFacebookUrl || !lead.facebook_page_id)) {
-    try {
-      const pid = await fetchFacebookPageId(lead.facebook_url, { timeoutMs: 6000 });
-      if (pid) {
-        lead.facebook_page_id = pid;
-        lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${pid}`;
-      }
-    } catch { /* non-fatal */ }
-  }
   saveUserData(req.userId, d);
   // Log disposition changes + callback scheduling so admin's activity feed
   // captures every SDR action (calls, dispositions, follow-ups, edits).
@@ -7191,22 +7176,12 @@ async function intakeEnrichLead(lead) {
       if (socials.linkedin_url) { lead.linkedin_url = socials.linkedin_url; stats.socials = true; }
     }
   } catch (_) {}
-  // Resolve the FB page ID from lead.facebook_url so the Ad Library
-  // link goes to the company's SPECIFIC ads page (?view_all_page_id=X)
-  // instead of a noisy keyword search. Free — direct HTML fetch of the
-  // FB page with Googlebot UA. Stored on lead.facebook_page_id so the
-  // cockpit/inspector deep-links automatically.
-  try {
-    if (lead.facebook_url && !lead.facebook_page_id) {
-      const pid = await fetchFacebookPageId(lead.facebook_url, { timeoutMs: 4000 });
-      if (pid) {
-        lead.facebook_page_id = pid;
-        stats.fb_page_id = true;
-      }
-    }
-  } catch (_) {}
-  // Ad Library URL — prefer the page-specific deep-link when we have the
-  // numeric page ID, fall back to keyword search by company name.
+  // Ad Library URL — page-specific deep-link only available when Apify
+  // Meta Ads check has already captured lead.facebook_page_id (see
+  // /api/lead/:cvr/check-meta-ads). At intake time we fall back to the
+  // generic keyword search. (Direct FB scraping from Cloud Run is gated
+  // to login by datacenter-IP geofencing — confirmed via Safari + Chrome
+  // + Googlebot UAs all blocked or empty-shelled in production.)
   try {
     if (lead.facebook_page_id) {
       lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
@@ -8532,65 +8507,6 @@ const brandFromApolloName = brandForMetaAdsSearch;
 // usual social-network domains. Cheap (~1-3s/site) and runs at intake so
 // the cockpit always shows social-research links the SDR can use mid-call.
 // Returns {} on any failure — intake must not block on website downtime.
-// Resolve a Facebook page URL (vanity or numeric) to the numeric page ID
-// by fetching the public HTML and parsing the embedded ID. Used to build
-// the page-specific Meta Ad Library deep-link (?view_all_page_id=X) which
-// shows only that company's ads vs. the noisy keyword search.
-//
-// Free + works regardless of ad activity (vs. the Apify Meta Ads check
-// which only captures page_id when the company is currently advertising).
-//
-// Mobile FB (m.facebook.com) has cleaner HTML + more reliable embeds.
-// User-Agent of Googlebot — FB serves a stripped-down crawler-friendly
-// version that's less likely to block + contains the al:ios:url and
-// al:android:url meta tags which carry the page ID in a stable format.
-async function fetchFacebookPageId(facebookUrl, opts = {}) {
-  if (!facebookUrl) return '';
-  const timeoutMs = opts.timeoutMs || 4000;
-  try {
-    const mobileUrl = String(facebookUrl)
-      .replace('://www.facebook.com', '://m.facebook.com')
-      .replace('://facebook.com', '://m.facebook.com');
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
-    const r = await fetch(mobileUrl, {
-      signal: ctl.signal,
-      redirect: 'follow',
-      headers: {
-        // Googlebot UA — FB serves a crawler-friendly variant with stable
-        // page-ID embeds (the human-version HTML changes weekly + blocks
-        // bots aggressively).
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
-    }).catch(() => null);
-    clearTimeout(timer);
-    if (!r || !r.ok) return '';
-    const html = await r.text().catch(() => '');
-    // Patterns verified 2026-06-22 against fusion.dk, cotonshoppen.dk,
-    // VisitOdense, denlillefederestaurant, OsteoDanmark-Aalborg —
-    // 5/5 resolved via al:ios:url → fb://profile/X. FB uses /profile/X
-    // for EVERYTHING (including business pages), not /page/?id=X like
-    // older docs suggest. Don't slice the HTML — al:* meta tags can sit
-    // outside the first 500KB on heavy pages.
-    const patterns = [
-      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i,
-      /<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i,
-      // Fallbacks for FB embed variations we haven't observed but may exist
-      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/(\d+)["']/i,
-      /<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/page\/?\?id=(\d+)/i,
-      /"profileId":"(\d{10,})"/,
-      /"pageID":"(\d{10,})"/,
-      /"page_id":"(\d{10,})"/,
-    ];
-    for (const p of patterns) {
-      const m = html.match(p);
-      if (m && m[1]) return m[1];
-    }
-  } catch (_) { /* silent — intake must not block on FB availability */ }
-  return '';
-}
-
 async function fetchWebsiteSocials(domain, opts = {}) {
   if (!domain) return {};
   const timeoutMs = opts.timeoutMs || 5000;
@@ -12071,113 +11987,6 @@ async function runDfVerifyUnknowns(req, res) {
   res.json({ ok: true, stats, dry: DRY });
 }
 app.post("/api/admin/df-verify-unknowns", authMiddleware, runDfVerifyUnknowns);
-
-// ── Backfill Facebook page IDs ─────────────────────────────────────────
-// Walks all active leads with lead.facebook_url set but no
-// lead.facebook_page_id, resolves the numeric ID via fetchFacebookPageId,
-// and rewrites lead.ad_library_url to the page-specific deep-link.
-//
-// Necessary because intakeEnrichLead's guard skips leads with
-// intake_enriched_at already set — so existing leads don't get the new
-// FB-page-ID extraction retroactively. Admin runs this once after the
-// feature lands to fix the backlog.
-async function runBackfillFbPageIds(req, res) {
-  const viaCron = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
-  if (!viaCron) {
-    if (!req.userId) return res.status(401).json({ error: "Not logged in" });
-    const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
-    const me = allUsers.find((u) => u.id === req.userId);
-    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
-  }
-  const stats = { scanned: 0, resolved: 0, failed: 0, alreadyHadId: 0, noFbUrl: 0 };
-  if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats });
-  for (const f of fs.readdirSync(DATA_DIR)) {
-    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
-    const userId = f.slice("data_".length, -".json".length);
-    if (!userId) continue;
-    const ud = loadUserData(userId);
-    let dirty = false;
-    for (const lead of ud.leads || []) {
-      if (lead.lastAction === "not-relevant") continue;
-      if (lead.twenty_opportunity_id) continue;
-      stats.scanned++;
-      if (!lead.facebook_url) { stats.noFbUrl++; continue; }
-      if (lead.facebook_page_id) { stats.alreadyHadId++; continue; }
-      try {
-        const pid = await fetchFacebookPageId(lead.facebook_url, { timeoutMs: 5000 });
-        if (pid) {
-          lead.facebook_page_id = pid;
-          lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${pid}`;
-          stats.resolved++;
-          dirty = true;
-        } else {
-          stats.failed++;
-        }
-      } catch { stats.failed++; }
-      // Be polite to FB — small delay between requests so we don't get rate-limited
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    if (dirty) saveUserData(userId, ud);
-  }
-  console.log("[backfill-fb-page-ids] done:", JSON.stringify(stats));
-  res.json({ ok: true, stats });
-}
-app.post("/api/admin/backfill-fb-page-ids", authMiddleware, runBackfillFbPageIds);
-// Bare cron route (no authMiddleware) so Cloud Scheduler can hit it with
-// x-cron-secret. Mirrors the pattern of /api/cron/archive-by-source etc —
-// authMiddleware otherwise 401s before the handler's cron-secret check runs.
-app.post("/api/cron/backfill-fb-page-ids", runBackfillFbPageIds);
-
-// Debug endpoint — fetches a single FB URL from Cloud Run and reports
-// what it actually got back. Used to diagnose why the production
-// backfill returns ~3% success vs 100% locally (Cloud Run egress IP
-// likely being throttled/blocked by FB).
-//
-// Cron-secret protected so only ops can hit it.
-app.get("/api/admin/_debug-fb-fetch", async (req, res) => {
-  const cronOk = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
-  if (!cronOk) return res.status(401).json({ error: "cron-secret required" });
-  const url = String(req.query.url || "");
-  if (!url) return res.status(400).json({ error: "url query param required" });
-  const ua = String(req.query.ua || "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
-  const mobile = url.replace('://www.facebook.com', '://m.facebook.com').replace('://facebook.com', '://m.facebook.com');
-  try {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 10000);
-    const r = await fetch(mobile, {
-      signal: ctl.signal,
-      redirect: 'follow',
-      headers: { 'User-Agent': ua, 'Accept': 'text/html,application/xhtml+xml' },
-    }).catch((e) => ({ _err: e.message }));
-    clearTimeout(timer);
-    if (r._err) return res.json({ ok: false, error: r._err });
-    const html = await r.text().catch(() => '');
-    const headers = {};
-    r.headers.forEach((v, k) => { headers[k] = v; });
-    // Patterns to test against response
-    const iosMatch = html.match(/<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i);
-    const androidMatch = html.match(/<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i);
-    // Extra diagnostic — surface ALL fb:// URIs + long numeric IDs found
-    // so we can see what page-ID format FB is actually serving
-    const fbUris = [...new Set((html.match(/fb:\/\/[^"'\s]{5,80}/g) || []))].slice(0, 10);
-    const longNums = [...new Set((html.match(/\b\d{10,16}\b/g) || []))].slice(0, 8);
-    return res.json({
-      ok: true,
-      finalUrl: r.url,
-      status: r.status,
-      htmlLen: html.length,
-      contentType: r.headers.get('content-type'),
-      iosPageId: iosMatch ? iosMatch[1] : null,
-      androidPageId: androidMatch ? androidMatch[1] : null,
-      fbUris,
-      longNums,
-      headersSample: { 'set-cookie': headers['set-cookie'] ? headers['set-cookie'].slice(0,100) : null, 'x-frame-options': headers['x-frame-options'] },
-      htmlSample: html.slice(0, 500),
-    });
-  } catch (e) {
-    return res.json({ ok: false, error: e.message });
-  }
-});
 app.post("/api/cron/df-verify-unknowns", (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
