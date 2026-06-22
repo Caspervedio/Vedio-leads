@@ -12157,6 +12157,10 @@ app.get("/api/admin/_debug-fb-fetch", async (req, res) => {
     // Patterns to test against response
     const iosMatch = html.match(/<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i);
     const androidMatch = html.match(/<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i);
+    // Extra diagnostic — surface ALL fb:// URIs + long numeric IDs found
+    // so we can see what page-ID format FB is actually serving
+    const fbUris = [...new Set((html.match(/fb:\/\/[^"'\s]{5,80}/g) || []))].slice(0, 10);
+    const longNums = [...new Set((html.match(/\b\d{10,16}\b/g) || []))].slice(0, 8);
     return res.json({
       ok: true,
       finalUrl: r.url,
@@ -12165,6 +12169,8 @@ app.get("/api/admin/_debug-fb-fetch", async (req, res) => {
       contentType: r.headers.get('content-type'),
       iosPageId: iosMatch ? iosMatch[1] : null,
       androidPageId: androidMatch ? androidMatch[1] : null,
+      fbUris,
+      longNums,
       headersSample: { 'set-cookie': headers['set-cookie'] ? headers['set-cookie'].slice(0,100) : null, 'x-frame-options': headers['x-frame-options'] },
       htmlSample: html.slice(0, 500),
     });
