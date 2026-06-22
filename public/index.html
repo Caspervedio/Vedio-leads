@@ -3275,6 +3275,15 @@ function adminBulkBackfillCvr(){
     confirmLabel: '▶ Ja, kør',
   });
 }
+function adminBulkBackfillMetaAds(){
+  return adminBulkRunGuarded({
+    label: 'Backfill Meta Ads check',
+    url: '/api/admin/backfill-meta-ads',
+    confirmTitle: 'Backfill Meta Ads check?',
+    confirmMessage: 'Kører Apify Meta Ads scraper på alle aktive leads. For hver lead:\n\n• Verificerer om firmaet annoncerer på Meta lige nu\n• Fanger Facebook page ID (→ side-specifik Ad Library URL)\n• Stempler ad-aktivitets-tæller på leaden\n\nKOSTER PENGE — Apify ~$0.025 per lead. ~255 leads ≈ $6.40 i værste fald. Springer leads over der er Meta-tjekket inden for sidste 14 dage.\n\nKøres allerede automatisk på alle nye leads ved intake. Kør kun manuelt for at fange backloggen.',
+    confirmLabel: '▶ Ja, kør (koster credits)',
+  });
+}
 function renderAdminBulkPage(){
   const el = document.getElementById('admin-bulk-body');
   if (!el) return;
@@ -3331,6 +3340,9 @@ function renderAdminBulkPage(){
     ${card('📛', 'Backfill CVR via navne-søgning',
       'Datafordeler navne-søgning på leads uden rigtig CVR. Gratis. Køres allerede automatisk via daglig cron — kør kun manuelt efter en stor import.',
       `<button onclick="adminBulkBackfillCvr()" style="background:rgba(52,211,153,0.14);border:1px solid rgba(52,211,153,0.32);border-radius:8px;padding:8px 14px;color:#6ee7b7;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">▶ Kør backfill</button>`)}
+    ${card('🎯', 'Backfill Meta Ads check (~$6 one-time)',
+      'Kører Apify Meta Ads scraper på alle aktive leads. Verificerer ad-aktivitet, fanger Facebook page ID, opdaterer Ad Library URL til side-specifik deep-link. Springer leads over der er Meta-tjekket sidste 14 dage. Køres automatisk på nye leads ved intake — kør kun manuelt for backloggen.',
+      `<button onclick="adminBulkBackfillMetaAds()" style="background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.32);border-radius:8px;padding:8px 14px;color:#fcd34d;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">⚠ Kør (~$6)</button>`)}
     ${card('👥', 'Backfill contacts (KOSTER credits)',
       'Kører Apollo + Full Enrich + Lusha på alle aktive leads der mangler beslutningstagere. KAN KOSTE PENGE — Lusha + FE charger per success. Brug kun før en kampagne hvor du vil kit hele pool ud.',
       `<button onclick="adminBulkBackfillContacts()" style="background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.32);border-radius:8px;padding:8px 14px;color:#fcd34d;font-family:Outfit,sans-serif;font-size:12px;font-weight:700;cursor:pointer">⚠ Kør (koster credits)</button>`)}

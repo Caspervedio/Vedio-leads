@@ -7162,6 +7162,56 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
 // button). Mutates the lead in place. Returns a stats object so the
 // caller can log results. Never throws — each enrichment step is wrapped
 // in try/catch so one failure doesn't drop the others.
+// Runs the Apify Meta Ads check on a single lead and writes the result
+// fields back onto the lead in-place. Same enrichment as the SDR-clicked
+// /api/lead/:cvr/check-meta-ads endpoint, exposed as a helper so intake +
+// backfill can reuse it. Caller is responsible for persisting the lead.
+//
+// Returns: { hit, active_now, recent_90d, total, stats } | null on Apify
+// misconfig (no APIFY_API_TOKEN). Throws on Apify errors so caller can
+// decide whether to swallow them.
+async function enrichLeadWithMetaAds(lead) {
+  if (!lead || !lead.name) return null;
+  if (!process.env.APIFY_API_TOKEN) return null;
+  const { verified, stats } = await verifyCandidatesAgainstMeta(
+    [{ name: lead.name, cvr: lead.cvr }],
+    "cvr",
+  );
+  const checkedAt = new Date().toISOString();
+  if (verified.length > 0) {
+    const v = verified[0];
+    lead.meta_advertiser = true;
+    lead.meta_verified_active = (v.meta_ads_active_now || 0) > 0;
+    lead.meta_verified_at = checkedAt;
+    lead.meta_ads_active_now = v.meta_ads_active_now || 0;
+    lead.meta_ads_recent90d = v.meta_ads_recent90d || 0;
+    lead.meta_ads_total_in_library = v.meta_ads_total || 0;
+    lead.ad_signals = [
+      lead.meta_ads_active_now > 0
+        ? `${lead.meta_ads_active_now} aktive ads på Meta`
+        : `${lead.meta_ads_recent90d} ads sidste 90 dage`,
+    ];
+    if (v.facebook_page_id) {
+      lead.facebook_page_id = String(v.facebook_page_id);
+      lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
+    }
+  } else {
+    // Negative result — stamp so we don't keep retrying on every cockpit
+    // open. Re-checks can still happen via the SDR Tjek Meta Ads button.
+    lead.meta_verified_active = false;
+    lead.meta_verified_at = checkedAt;
+    lead.meta_ads_active_now = 0;
+    lead.meta_ads_recent90d = 0;
+  }
+  return {
+    hit: verified.length > 0,
+    active_now: lead.meta_ads_active_now || 0,
+    recent_90d: lead.meta_ads_recent90d || 0,
+    total: lead.meta_ads_total_in_library || 0,
+    stats,
+  };
+}
+
 async function intakeEnrichLead(lead) {
   const stats = { socials: false, contacts: 0, ad_library: false };
   if (!lead || lead.intake_enriched_at) return stats;
@@ -7176,12 +7226,29 @@ async function intakeEnrichLead(lead) {
       if (socials.linkedin_url) { lead.linkedin_url = socials.linkedin_url; stats.socials = true; }
     }
   } catch (_) {}
-  // Ad Library URL — page-specific deep-link only available when Apify
-  // Meta Ads check has already captured lead.facebook_page_id (see
-  // /api/lead/:cvr/check-meta-ads). At intake time we fall back to the
-  // generic keyword search. (Direct FB scraping from Cloud Run is gated
-  // to login by datacenter-IP geofencing — confirmed via Safari + Chrome
-  // + Googlebot UAs all blocked or empty-shelled in production.)
+  // Auto Meta Ads check — fires Apify facebook-ads-scraper to:
+  //   1. Verify if the company is currently advertising on Meta
+  //   2. Capture facebook_page_id from the matched ad (the page-specific
+  //      Ad Library URL is way more useful than keyword search)
+  //   3. Stamp ad-activity counters on the lead so cockpit shows truth
+  //
+  // Cost: ~$0.025 per lead (Apify $5/1000 dataset items × resultsLimit:5).
+  // At ~19 leads/day intake = ~$0.48/day = ~$14/month. Same actor as the
+  // SDR-triggered Tjek Meta Ads click — just runs automatically now.
+  // Non-fatal: any Apify failure leaves the lead with the keyword-search
+  // fallback URL.
+  try {
+    if (lead.name && process.env.APIFY_API_TOKEN) {
+      await enrichLeadWithMetaAds(lead);
+      stats.meta_checked = true;
+      if (lead.meta_verified_active) stats.meta_advertiser = true;
+      if (lead.facebook_page_id) stats.meta_page_id = true;
+    }
+  } catch (e) {
+    stats.meta_error = e.message;
+  }
+  // Ad Library URL — page-specific deep-link when we captured a page ID,
+  // otherwise fall back to keyword search by company name.
   try {
     if (lead.facebook_page_id) {
       lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
@@ -11835,57 +11902,93 @@ app.post("/api/lead/:cvr/check-meta-ads", authMiddleware, async (req, res) => {
   if (!lead.name) return res.status(400).json({ error: "Lead mangler navn" });
 
   try {
-    const { verified, stats } = await verifyCandidatesAgainstMeta(
-      [{ name: lead.name, cvr: lead.cvr }],
-      "cvr",
-    );
-    // Re-load in case other crons mutated since
+    const result = await enrichLeadWithMetaAds(lead);
+    // Re-load in case other crons mutated since, then merge our changes
+    // back onto the live record before saving.
     const udNow = loadUserData(req.userId);
     const l = (udNow.leads || []).find((x) => x.cvr === cvr);
     if (!l) return res.status(404).json({ error: "Lead forsvandt midt i opslaget" });
-
-    const checkedAt = new Date().toISOString();
-    if (verified.length > 0) {
-      const v = verified[0];
-      l.meta_advertiser = true;
-      l.meta_verified_active = (v.meta_ads_active_now || 0) > 0;
-      l.meta_verified_at = checkedAt;
-      l.meta_ads_active_now = v.meta_ads_active_now || 0;
-      l.meta_ads_recent90d = v.meta_ads_recent90d || 0;
-      l.meta_ads_total_in_library = v.meta_ads_total || 0;
-      l.ad_signals = [
-        l.meta_ads_active_now > 0
-          ? `${l.meta_ads_active_now} aktive ads på Meta`
-          : `${l.meta_ads_recent90d} ads sidste 90 dage`,
-      ];
-      // Page-specific Ad Library URL replaces the generic keyword search
-      // when Apify gave us a page ID. Way higher signal — shows only
-      // THIS company's ads, no noise from similarly-named businesses.
-      if (v.facebook_page_id) {
-        l.facebook_page_id = String(v.facebook_page_id);
-        l.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${l.facebook_page_id}`;
-      }
-    } else {
-      // No ads found — record the negative so cockpit doesn't keep prompting
-      l.meta_verified_active = false;
-      l.meta_verified_at = checkedAt;
-      l.meta_ads_active_now = 0;
-      l.meta_ads_recent90d = 0;
-    }
-    saveUserData(req.userId, udNow);
-    res.json({
-      ok: true,
-      hit: verified.length > 0,
-      active_now: l.meta_ads_active_now || 0,
-      recent_90d: l.meta_ads_recent90d || 0,
-      total: l.meta_ads_total_in_library || 0,
-      stats,
+    Object.assign(l, {
+      meta_advertiser: lead.meta_advertiser,
+      meta_verified_active: lead.meta_verified_active,
+      meta_verified_at: lead.meta_verified_at,
+      meta_ads_active_now: lead.meta_ads_active_now,
+      meta_ads_recent90d: lead.meta_ads_recent90d,
+      meta_ads_total_in_library: lead.meta_ads_total_in_library,
+      ad_signals: lead.ad_signals,
+      facebook_page_id: lead.facebook_page_id,
+      ad_library_url: lead.ad_library_url,
     });
+    saveUserData(req.userId, udNow);
+    res.json({ ok: true, ...result });
   } catch (e) {
     console.warn("[check-meta-ads]", cvr, e.message);
     res.status(502).json({ error: e.message });
   }
 });
+
+// ── Backfill Meta Ads check on existing active leads ──────────────────
+// One-shot bulk op: walks every active lead and runs the same Apify
+// Meta Ads check that intake fires automatically on new leads. Used to
+// catch up the existing pool that landed before intake-time Meta Ads
+// became standard.
+//
+// Filters:
+//   • skip archived (lastAction='not-relevant')
+//   • skip twenty-pushed (already graduated to CRM)
+//   • skip leads where meta_verified_at is fresher than 14 days
+//
+// Concurrency: 5 in parallel (Apify Starter handles this fine). Each
+// lead = one Apify run with resultsLimit:5 = up to 5 dataset items =
+// up to $0.025. For 255 leads worst case = ~$6.40 one-time.
+async function runBackfillMetaAds(req, res) {
+  const viaCron = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
+  if (!viaCron) {
+    if (!req.userId) return res.status(401).json({ error: "Not logged in" });
+    const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
+    const me = allUsers.find((u) => u.id === req.userId);
+    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  }
+  if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "Apify not configured" });
+  const stats = { scanned: 0, queued: 0, advertising: 0, pageIdCaptured: 0, errors: 0, skippedRecent: 0 };
+  const RECENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - RECENT_WINDOW_MS;
+  for (const f of fs.readdirSync(DATA_DIR)) {
+    if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
+    const userId = f.slice("data_".length, -".json".length);
+    if (!userId) continue;
+    const ud = loadUserData(userId);
+    const targets = (ud.leads || []).filter((lead) => {
+      if (!lead || !lead.name) return false;
+      if (lead.lastAction === "not-relevant") return false;
+      if (lead.twenty_opportunity_id) return false;
+      const t = lead.meta_verified_at ? new Date(lead.meta_verified_at).getTime() : 0;
+      if (t && t > cutoff) { stats.skippedRecent++; return false; }
+      return true;
+    });
+    stats.scanned += targets.length;
+    // Process 5 at a time so Apify isn't slammed; saveUserData runs after
+    // each chunk so partial progress survives a Cloud Run crash.
+    const CHUNK = 5;
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const chunk = targets.slice(i, i + CHUNK);
+      const results = await Promise.allSettled(chunk.map((lead) => enrichLeadWithMetaAds(lead)));
+      for (let j = 0; j < results.length; j++) {
+        const r = results[j];
+        stats.queued++;
+        if (r.status === "rejected") { stats.errors++; continue; }
+        const lead = chunk[j];
+        if (lead.meta_verified_active) stats.advertising++;
+        if (lead.facebook_page_id) stats.pageIdCaptured++;
+      }
+      saveUserData(userId, ud);
+    }
+  }
+  console.log("[backfill-meta-ads] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+}
+app.post("/api/admin/backfill-meta-ads", authMiddleware, runBackfillMetaAds);
+app.post("/api/cron/backfill-meta-ads", runBackfillMetaAds);
 
 // ── DF-VERIFY RETROACTIVE for unknowns ─────────────────────────────────
 // Walks active leads with no employee data and runs them through
