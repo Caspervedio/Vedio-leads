@@ -7279,6 +7279,101 @@ async function intakeEnrichLead(lead) {
     lead.contacts = merged;
     stats.contacts = merged.length;
   }
+
+  // ─── PRE-EMPTIVE PHONE REVEAL (high-value leads only) ────────────────
+  // Eliminates the "open lead → click → wait 60-180s for phone" cycle
+  // for the leads SDR is most likely to actually call. Gates on signal-
+  // rich attributes so we don't burn FE/Lusha credits on dormant leads.
+  //
+  // Eligibility — ANY of:
+  //   1. Lead is currently advertising on Meta (verified)
+  //   2. Lead is advertising on LinkedIn (verified)
+  //   3. StoreLeads estimated yearly sales > 2M DKK
+  //   4. Lead came in via meta-ads-discover / linkedin-ads-discover
+  //      (already filtered to advertisers upstream)
+  //
+  // Also requires: 1+ named contact in lead.contacts after merge above.
+  // We need a person to look up phone for.
+  const eligibleForPreReveal = (() => {
+    if (!Array.isArray(lead.contacts) || lead.contacts.length === 0) return false;
+    if (lead.phone_recovered_at) return false; // already revealed
+    if (lead.meta_advertiser === true) return true;
+    if (lead.linkedin_advertiser === true) return true;
+    if (lead.meta_verified_active === true) return true;
+    const yearlySales = Number(lead.storeleads_estimated_sales_yearly) || 0;
+    if (yearlySales > 2_000_000) return true;
+    const src = String(lead.source || '').toLowerCase();
+    if (src.startsWith('meta-ads-discover') || src.startsWith('linkedin-ads-discover')) return true;
+    return false;
+  })();
+  if (eligibleForPreReveal && isFullEnrichConfigured()) {
+    try {
+      const top = lead.contacts[0];
+      // Build the FE Contact Enrich payload — same shape as Stage 2
+      // in /api/contact/reveal-direct-dial. Tries LI URL first if we
+      // have one (boosts hit rate), falls back to name+company+domain.
+      const [firstName, ...rest] = String(top.name || '').trim().split(/\s+/);
+      const lastName = rest.join(' ');
+      const linkedinUrl = top.linkedin || top.linkedinUrl || '';
+      const enrichDomain = (lead.web || lead.website || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+      if (firstName && lastName && (linkedinUrl || enrichDomain)) {
+        const contactPayload = {
+          first_name: firstName,
+          last_name: lastName,
+          company_name: lead.name,
+          domain: enrichDomain,
+        };
+        if (linkedinUrl) contactPayload.linkedin_url = linkedinUrl;
+        const feResult = await fullEnrichLookupOne(contactPayload, { name: 'pre-reveal-' + lead.cvr, timeoutMs: 120_000 });
+        const info = feResult && feResult.contact_info;
+        const fePhone = info && info.most_probable_phone && info.most_probable_phone.number;
+        const feEmail = info && info.most_probable_work_email && info.most_probable_work_email.email;
+        if (fePhone) {
+          // Update top contact with the revealed phone + email
+          lead.contacts[0] = {
+            ...top,
+            phone: fePhone,
+            phones: [{ number: fePhone, type: 'mobile', typeLabel: 'Direkte mobil (Full Enrich)' }],
+            email: feEmail || top.email || '',
+            source_phone: 'fullenrich',
+          };
+          lead.phone = fePhone;
+          lead.ph = fePhone;
+          lead.phone_missing = false;
+          lead.phone_recovered_at = new Date().toISOString();
+          lead.phone_recovered_source = 'fullenrich';
+          stats.pre_revealed = true;
+        } else if (feEmail && !top.email) {
+          lead.contacts[0] = { ...top, email: feEmail };
+        }
+        // Lusha fallback if FE didn't return phone
+        if (!fePhone && isLushaConfigured() && firstName && lastName) {
+          const lushaResult = await lushaLookupContact({
+            firstName, lastName, companyName: lead.name,
+            linkedinUrl, timeoutMs: 15_000,
+          });
+          if (lushaResult && lushaResult.phone) {
+            lead.contacts[0] = {
+              ...lead.contacts[0],
+              phone: lushaResult.phone,
+              phones: lushaResult.phones,
+              email: lushaResult.email || lead.contacts[0].email || '',
+              source_phone: 'lusha',
+            };
+            lead.phone = lushaResult.phone;
+            lead.ph = lushaResult.phone;
+            lead.phone_missing = false;
+            lead.phone_recovered_at = new Date().toISOString();
+            lead.phone_recovered_source = 'lusha';
+            stats.pre_revealed = true;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[intake/pre-reveal]', lead.cvr, e.message);
+    }
+  }
+
   lead.intake_enriched_at = new Date().toISOString();
   return stats;
 }
