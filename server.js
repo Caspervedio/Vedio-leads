@@ -8653,12 +8653,25 @@ async function verifyCandidatesAgainstMeta(candidates, keyField) {
     if (matched.length === 0) { stats.nameMismatch++; continue; }
     const activity = classifyAdActivity(matched);
     if (activity.recent90d === 0) { stats.noAds++; continue; }
+    // Extract the FB page ID from the first matched ad item. The Apify
+    // Meta Ad Library actor returns this in a few different fields
+    // depending on which API path the scrape went through — check all.
+    // We use this to build a page-specific Ad Library URL
+    // (?view_all_page_id=X) which is way higher signal than the generic
+    // keyword search the cockpit links to today.
+    const first = matched[0] || {};
+    const fbPageId = String(
+      first.pageID || first.page_id || first.pageId ||
+      first.snapshot?.page_id || first.snapshot?.pageID ||
+      first.advertiserId || ''
+    ).trim();
     verified.push({
       ...s._cand,
       meta_ads_active_now: activity.activeNow,
       meta_ads_recent90d: activity.recent90d,
       meta_ads_total: activity.total,
       meta_verified_at: checkedAt,
+      facebook_page_id: fbPageId,
     });
   }
   stats.verified = verified.length;
@@ -11834,6 +11847,13 @@ app.post("/api/lead/:cvr/check-meta-ads", authMiddleware, async (req, res) => {
           ? `${l.meta_ads_active_now} aktive ads på Meta`
           : `${l.meta_ads_recent90d} ads sidste 90 dage`,
       ];
+      // Page-specific Ad Library URL replaces the generic keyword search
+      // when Apify gave us a page ID. Way higher signal — shows only
+      // THIS company's ads, no noise from similarly-named businesses.
+      if (v.facebook_page_id) {
+        l.facebook_page_id = String(v.facebook_page_id);
+        l.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${l.facebook_page_id}`;
+      }
     } else {
       // No ads found — record the negative so cockpit doesn't keep prompting
       l.meta_verified_active = false;

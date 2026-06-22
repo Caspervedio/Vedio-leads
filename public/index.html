@@ -3710,8 +3710,22 @@ function renderDiscoveryResults(){
 // same query shape as the META scraper (scripts/discover-ads.js) so SDR
 // sees the exact ads our scrape would consider. country=DK locks us to
 // DK activity only.
-function metaAdsLibUrl(name){
-  const q = encodeURIComponent((name||'').trim());
+// Build Meta Ad Library URL. Prefer the page-specific deep-link when
+// lead.facebook_page_id is set (captured by the Apify Meta Ads check) —
+// shows ONLY that company's ads, no noise. Falls back to a generic
+// keyword search when no page ID is available.
+//
+// Accepts either a string (name) for backwards compatibility or a lead
+// object (preferred — gets the page-ID upgrade automatically).
+function metaAdsLibUrl(nameOrLead){
+  const lead = typeof nameOrLead === 'object' && nameOrLead ? nameOrLead : null;
+  if (lead && lead.facebook_page_id) {
+    return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${encodeURIComponent(lead.facebook_page_id)}`;
+  }
+  // Stored URL on the lead (set by intake or the Apify verify call)
+  if (lead && lead.ad_library_url) return lead.ad_library_url;
+  const name = lead ? (lead.name || '') : (nameOrLead || '');
+  const q = encodeURIComponent(String(name).trim());
   return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${q}&search_type=keyword_unordered`;
 }
 
@@ -6526,7 +6540,7 @@ function renderAutodialerPage(){
                 </div>
                 ${dmStr?`<div style="font-size:11px;color:var(--w80);margin-top:4px">👤 ${dmStr}</div>`:''}
               </div>
-              <a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" title="Bekræft de annoncerer" style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:8px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10.5px;font-weight:800;text-decoration:none;white-space:nowrap">🎯 Se ads</a>
+              <a href="${metaAdsLibUrl(l)}" target="_blank" rel="noopener" title="Bekræft de annoncerer" style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:8px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10.5px;font-weight:800;text-decoration:none;white-space:nowrap">🎯 Se ads</a>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
               <a href="https://www.google.com/search?q=${googleQ}" target="_blank" rel="noopener" style="background:rgba(255,255,255,0.06);border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:#fff;font-size:11px;font-weight:600;text-decoration:none">🔍 Google "${e(trunc(l.name,20))}..." +45</a>
@@ -6626,7 +6640,7 @@ function renderAutodialerPage(){
           const adsCount = l.adsMatched || 0;
           const socialIcons = [
             fbUrl ? `<a href="${e(fbUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook-side" style="font-size:13px;text-decoration:none;color:#60a5fa;margin-left:6px;opacity:0.85" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.85'">📘</a>` : '',
-            adsCount > 0 ? `<a href="${metaAdsLibUrl(l.name)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
+            adsCount > 0 ? `<a href="${metaAdsLibUrl(l)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${adsCount} aktive ads — klik for at se på Meta Ads Library" style="display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:1px 7px;border-radius:9px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10px;font-weight:800;text-decoration:none;letter-spacing:0.3px">🔥 ${adsCount}</a>` : '',
           ].join('');
           // Archive view: replace the action chip with the WHY ("Konkurrent",
           // "For lille", etc) so the ledger is auditable at a glance.
@@ -9554,7 +9568,7 @@ function renderCockpitDetail(c){
             return `<a href="${e(igUrl)}" target="_blank" rel="noopener" style="color:#f472b6;text-decoration:none" title="Best-guess fra Facebook-handle">📷 Instagram ↗</a>`;
           })()}
           <!-- Meta Ads Library — always shown so SDR can verify current ad activity even if our scrape didn't see any. Pre-filled with the company name. -->
-          <a href="${metaAdsLibUrl(c.name||aco.name)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="Åbn Meta Ads Library i ny fane">🎯 Meta Ads Library ↗</a>
+          <a href="${metaAdsLibUrl(c)}" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:none;font-weight:600" title="${c.facebook_page_id?'Side-specifik — viser kun deres ads':'Generisk søgning — kør "Tjek Meta Ads" for præcist link'}">🎯 Meta Ads Library ${c.facebook_page_id?'✓':''}↗</a>
           ${(c.adsMatched||0)>0?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.15);color:#fb923c;font-size:10.5px;font-weight:800;border:1px solid rgba(251,146,60,0.3)" title="META scrape fandt ${c.adsMatched} aktive ads ved seneste run">🔥 ${c.adsMatched} aktive ads</span>`:''}
           ${(c.meta_ads_active_now||c.meta_ads_recent90d)?`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(251,146,60,0.12);color:#fb923c;font-size:10.5px;font-weight:700;border:1px solid rgba(251,146,60,0.25)" title="Senest set i Meta Ad Library: ${c.meta_ads_active_now||0} aktive lige nu · ${c.meta_ads_recent90d||0} kørte sidste 90 dage">🎯 ${c.meta_ads_active_now||0} aktive · ${c.meta_ads_recent90d||0} sidste 90 dage</span>`:''}
           ${c.linkedin_ad_url?`<a href="${e(c.linkedin_ad_url)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:rgba(10,102,194,0.15);color:#60a5fa;font-size:10.5px;font-weight:700;border:1px solid rgba(10,102,194,0.3);text-decoration:none" title="Se den specifikke LinkedIn-ad de kører nu">💼 Se LinkedIn-ad ↗</a>`:''}
