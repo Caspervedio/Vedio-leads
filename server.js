@@ -12127,6 +12127,51 @@ app.post("/api/admin/backfill-fb-page-ids", authMiddleware, runBackfillFbPageIds
 // x-cron-secret. Mirrors the pattern of /api/cron/archive-by-source etc —
 // authMiddleware otherwise 401s before the handler's cron-secret check runs.
 app.post("/api/cron/backfill-fb-page-ids", runBackfillFbPageIds);
+
+// Debug endpoint — fetches a single FB URL from Cloud Run and reports
+// what it actually got back. Used to diagnose why the production
+// backfill returns ~3% success vs 100% locally (Cloud Run egress IP
+// likely being throttled/blocked by FB).
+//
+// Cron-secret protected so only ops can hit it.
+app.get("/api/admin/_debug-fb-fetch", async (req, res) => {
+  const cronOk = process.env.CRON_SECRET && req.headers["x-cron-secret"] === process.env.CRON_SECRET;
+  if (!cronOk) return res.status(401).json({ error: "cron-secret required" });
+  const url = String(req.query.url || "");
+  if (!url) return res.status(400).json({ error: "url query param required" });
+  const ua = String(req.query.ua || "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
+  const mobile = url.replace('://www.facebook.com', '://m.facebook.com').replace('://facebook.com', '://m.facebook.com');
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 10000);
+    const r = await fetch(mobile, {
+      signal: ctl.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': ua, 'Accept': 'text/html,application/xhtml+xml' },
+    }).catch((e) => ({ _err: e.message }));
+    clearTimeout(timer);
+    if (r._err) return res.json({ ok: false, error: r._err });
+    const html = await r.text().catch(() => '');
+    const headers = {};
+    r.headers.forEach((v, k) => { headers[k] = v; });
+    // Patterns to test against response
+    const iosMatch = html.match(/<meta[^>]+property=["']al:ios:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i);
+    const androidMatch = html.match(/<meta[^>]+property=["']al:android:url["'][^>]+content=["']fb:\/\/profile\/(\d+)["']/i);
+    return res.json({
+      ok: true,
+      finalUrl: r.url,
+      status: r.status,
+      htmlLen: html.length,
+      contentType: r.headers.get('content-type'),
+      iosPageId: iosMatch ? iosMatch[1] : null,
+      androidPageId: androidMatch ? androidMatch[1] : null,
+      headersSample: { 'set-cookie': headers['set-cookie'] ? headers['set-cookie'].slice(0,100) : null, 'x-frame-options': headers['x-frame-options'] },
+      htmlSample: html.slice(0, 500),
+    });
+  } catch (e) {
+    return res.json({ ok: false, error: e.message });
+  }
+});
 app.post("/api/cron/df-verify-unknowns", (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
