@@ -7202,6 +7202,14 @@ async function enrichLeadWithMetaAds(lead) {
     lead.meta_verified_at = checkedAt;
     lead.meta_ads_active_now = 0;
     lead.meta_ads_recent90d = 0;
+    // Ensure ad_library_url is at least the keyword-search fallback when
+    // we have no page_id. Catches legacy advertising leads where the
+    // discovery path stamped meta_verified_active=true without storing
+    // ad_library_url — and now Apify can't re-find ads to capture a
+    // page_id either. Without this they'd render with NO Meta Ads link.
+    if (!lead.ad_library_url && lead.name) {
+      lead.ad_library_url = buildAdsLibraryUrl(lead.name);
+    }
   }
   return {
     hit: verified.length > 0,
