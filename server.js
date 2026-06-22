@@ -3227,7 +3227,7 @@ app.delete("/api/leads/:cvr", authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
-app.patch("/api/leads/:cvr", authMiddleware, (req, res) => {
+app.patch("/api/leads/:cvr", authMiddleware, async (req, res) => {
   const d = loadUserData(req.userId);
   const lead = d.leads.find((l) => l.cvr === req.params.cvr);
   if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
@@ -3235,7 +3235,22 @@ app.patch("/api/leads/:cvr", authMiddleware, (req, res) => {
   const prevAction = lead.lastAction;
   const prevCallbackAt = lead.callback_at;
   const prevPhone = lead.phone || lead.ph || "";
+  const prevFacebookUrl = lead.facebook_url || "";
   Object.assign(lead, req.body);
+  // When SDR pastes/changes a Facebook URL via the links editor, instantly
+  // resolve the numeric page ID + upgrade ad_library_url to the page-
+  // specific deep-link. Same logic as intakeEnrichLead, just on-demand.
+  // ~500ms-3s extra wait but the SDR's next click on "🎯 Meta Ads Library"
+  // hits the right page instead of a noisy keyword search.
+  if (lead.facebook_url && (lead.facebook_url !== prevFacebookUrl || !lead.facebook_page_id)) {
+    try {
+      const pid = await fetchFacebookPageId(lead.facebook_url, { timeoutMs: 6000 });
+      if (pid) {
+        lead.facebook_page_id = pid;
+        lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${pid}`;
+      }
+    } catch { /* non-fatal */ }
+  }
   saveUserData(req.userId, d);
   // Log disposition changes + callback scheduling so admin's activity feed
   // captures every SDR action (calls, dispositions, follow-ups, edits).
