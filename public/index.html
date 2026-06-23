@@ -7215,6 +7215,21 @@ function openLeadInspector(cvr){
           ${c.email?`<div>✉️ <a href="mailto:${e(c.email)}" style="color:#60a5fa;text-decoration:none">${e(c.email)}</a></div>`:''}
           ${phoneHtml}
           ${(() => {
+            // No phone + has /in/ URL → one-click "Find mobil" button.
+            // Fires Apollo + Lusha + FE chain against the contact's
+            // existing LinkedIn URL and merges phone into THIS contact
+            // (no duplicate row). Saves the manual flow:
+            //   click LinkedIn → run Lusha extension → copy → paste.
+            const hasPhone = (phones && phones.length > 0);
+            const li2 = c.linkedin || c.linkedinUrl || '';
+            const isPersonLi2 = /\/in\//.test(li2);
+            if (!hasPhone && isPersonLi2) {
+              const firstName = e((c.name||'kontakten').split(' ')[0]);
+              return `<div style="margin-top:6px"><button onclick="contactFetchPhone('${e(lead.cvr||'')}',${idx})" style="background:rgba(167,139,250,0.16);border:1px solid rgba(167,139,250,0.4);border-radius:7px;padding:5px 11px;color:#c4b5fd;font-family:Outfit,sans-serif;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px" title="Kør Apollo + Lusha + Full Enrich mod denne LinkedIn-URL — auto-gemmer mobilen">📞 Find mobil for ${firstName}</button></div>`;
+            }
+            return '';
+          })()}
+          ${(() => {
             // Smart LinkedIn link: detect /company/ URLs (where intake
             // sometimes stored the COMPANY page instead of the person's
             // /in/ profile) and render a search shortcut instead. Click
@@ -10316,6 +10331,84 @@ function openGoogleSearchForCompany(company) {
   const roles = 'CEO OR direktør OR founder OR stifter OR marketing OR ejer';
   const q = encodeURIComponent(`"${company}" (${roles}) Denmark`);
   window.open(`https://www.google.com/search?q=${q}`, '_blank', 'noopener');
+}
+
+// One-click "find phone for this existing contact" — fires the
+// Apollo + Lusha + FE chain against the contact's LinkedIn URL and
+// merges the phone back into the existing contact (without appending
+// a duplicate). Saves SDR from the manual flow:
+//   1. Click LinkedIn link → opens profile
+//   2. Run Lusha extension manually
+//   3. Copy phone
+//   4. Open ✎ Ret → paste → save
+// Now reduced to one button.
+async function contactFetchPhone(cvr, contactIdx) {
+  if (!cvr) return;
+  const lead = (leads || []).find((l) => l.cvr === cvr);
+  if (!lead) return;
+  const contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+  const c = contacts[contactIdx];
+  if (!c) return;
+  const url = (c.linkedin || c.linkedinUrl || '').trim();
+  if (!url || !/\/in\//.test(url)) {
+    showToast('Mangler personlig /in/-URL — brug "Slå LinkedIn-URL op" feltet i stedet');
+    return;
+  }
+  showToast(`🔍 Henter mobil for ${c.name || 'kontakten'}…`);
+  try {
+    const r = await fetch('/api/apollo/lookup-linkedin', {
+      method: 'POST',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = await r.json();
+    if (r.status === 429 && d.code === 'APOLLO_CAP_REACHED') {
+      showToast(`⏸ Apollo dagsbudget brugt op (${d.spent}/${d.cap})`); return;
+    }
+    if (!r.ok) { showToast('Fejl: ' + (d.error || 'ukendt')); return; }
+    if (!d.found) { showToast('Apollo + Lusha + FE fandt intet for denne profil'); return; }
+    const src = d.contact || d.person || d;
+    const phonesArr = src.phones || d.phones || (src.phone ? [{ number: src.phone, type: 'work', typeLabel: 'work' }] : []);
+    const phone = src.phone || (phonesArr[0] && phonesArr[0].number) || '';
+    if (!phone) {
+      showToast(`Profilen fundet (${src.name || c.name}) men ingen direkte mobil i nogen kilde`);
+      return;
+    }
+    // Merge phone + email into the existing contact (don't append)
+    contacts[contactIdx] = {
+      ...c,
+      phone,
+      phones: phonesArr,
+      phoneType: src.phoneType || src.phone_type || (phonesArr[0] && phonesArr[0].type) || 'mobile',
+      phoneTypeLabel: src.phoneTypeLabel || (phonesArr[0] && phonesArr[0].typeLabel) || 'Direkte (auto)',
+      email: src.email || c.email,
+      source_phone: src.source_phone || (d.sources && d.sources[0]) || 'auto-from-li',
+      phoneUpdatedAt: new Date().toISOString(),
+    };
+    lead.contacts = contacts;
+    // Mirror server-side hovednummer sync locally
+    if (!(lead.phone || lead.ph || '').toString().trim()) {
+      lead.phone = phone;
+      lead.ph = phone;
+      lead.phone_missing = false;
+      lead.phone_source = 'contact-sync';
+    }
+    await fetch('/api/leads/' + encodeURIComponent(cvr), {
+      method: 'PATCH',
+      headers: { ...ah(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contacts: lead.contacts }),
+    });
+    showToast(`✓ ${c.name}: ${phone}`);
+    // Re-render whichever view is open
+    try { if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit(); } catch(_) {}
+    try {
+      const inspectorBg = document.getElementById('lead-inspector-bg');
+      if (inspectorBg && inspectorBg.style.display !== 'none') openLeadInspector(cvr);
+    } catch(_) {}
+    try { if (typeof renderAutodialerPage === 'function' && currentPage === 'autodialer') renderAutodialerPage(); } catch(_) {}
+  } catch (ex) {
+    showToast('Fejl: ' + ex.message);
+  }
 }
 
 async function cockpitAddContactFromLinkedin(cvr) {
