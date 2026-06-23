@@ -12872,8 +12872,6 @@ app.listen(PORT, () => {
   else console.log("📞 Twilio dialer: ikke konfigureret (tilføj TWILIO_* i .env for at aktivere browser-opkald)");
   console.log(`🔑 Datafordeler GraphQL: ${process.env.DATAFORDELER_KEY ? "API-nøgle konfigureret" : "⚠️  DATAFORDELER_KEY mangler i .env"}`);
   console.log(`🤖 Gemini AI enrichment: ${process.env.GEMINI_API_KEY ? "konfigureret" : "⚠️  GEMINI_API_KEY mangler"}`);
-  if (loadGmailConfig()) console.log("📧 Gmail OAuth: konfigureret");
-  else console.log("📧 Gmail OAuth: ikke konfigureret (opsæt via Indstillinger → Gmail)");
   console.log("\nStop med Ctrl+C\n");
 
   // Pre-warm cache for common industry codes in background
