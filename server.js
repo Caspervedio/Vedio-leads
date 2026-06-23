@@ -11999,22 +11999,15 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
     }
   }
 
-  // Pick top contact for phone reveal. No contact found by any path?
-  // Stamp anyway so we don't retry every batch — daily cron picks it
-  // up after 24h.
+  // Pick top contact for phone reveal — if we have one. Stage 5
+  // (SERP → LinkedIn → Lusha) can still run on company-name search
+  // even when we have no contact, so don't early-return here.
   const contactsForReveal = Array.isArray(l.contacts) ? l.contacts : [];
-  if (contactsForReveal.length === 0) {
-    l.bulk_enriched_at = new Date().toISOString();
-    return;
-  }
-
-  const top = await pickTopContactForFullEnrich(contactsForReveal);
-  if (!top || !top.name) {
-    l.bulk_enriched_at = new Date().toISOString();
-    return;
-  }
-  const [firstName, ...rest] = String(top.name).trim().split(/\s+/);
-  const lastName = rest.join(" ");
+  const top = (contactsForReveal.length > 0)
+    ? await pickTopContactForFullEnrich(contactsForReveal)
+    : null;
+  const firstName = top && top.name ? String(top.name).trim().split(/\s+/)[0] : "";
+  const lastName = top && top.name ? String(top.name).trim().split(/\s+/).slice(1).join(" ") : "";
   let directDial = "";
 
   // ─── STAGE 3: Lusha phone reveal (FAST) ──────────────────────────
@@ -12047,7 +12040,8 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
   }
 
   // ─── STAGE 4: FE Contact Enrich fallback (SLOW, when Lusha whiffed)
-  if (!directDial && isFullEnrichConfigured()) {
+  // Requires firstName + lastName (FE needs an identity to enrich).
+  if (!directDial && isFullEnrichConfigured() && top && firstName && lastName) {
     stats.feAttempts++;
     try {
       const contact = {
