@@ -12180,7 +12180,28 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
   //
   // Bounded: 3 LinkedIn URLs probed via Lusha per lead.
   // Cost: ~$0.01 SERP + ($0.30 × ~40% Lusha hit × 3) = ~$0.30 per attempt.
-  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured() && Date.now() > _lushaRateLimitedUntil) {
+  // Stage 5 quality gate — only fire SERP→LinkedIn→Lusha on leads
+  // that show high-priority signal. Saves Lusha quota for leads
+  // worth burning credits on. Cheap-path optimisation 2026-06-23.
+  //
+  // Triggers:
+  //   • Meta-advertising (verified active OR recent 90d)
+  //   • Has captured employee count (DF-verified company exists)
+  //   • Has captured company LinkedIn URL (B2B presence signal)
+  //   • Source is gmaps/meta-scraper (32-58% hit rates)
+  //   • SDR has touched the lead (engaged action)
+  const stage5Priority = (
+    l.meta_verified_active === true ||
+    (Number(l.meta_ads_recent90d) || 0) > 0 ||
+    !!l.employees_count ||
+    !!l.emp_count ||
+    !!l.linkedin_url ||
+    String(l.source || '').startsWith('gmaps-discover') ||
+    String(l.source || '').startsWith('meta-scraper') ||
+    String(l.source || '').startsWith('meta-ads-discover') ||
+    ['interested', 'follow-up', 'sms', 'call-back'].includes(l.lastAction)
+  );
+  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured() && Date.now() > _lushaRateLimitedUntil && stage5Priority) {
     stats.serpLinkedinAttempts = (stats.serpLinkedinAttempts || 0) + 1;
     try {
       let liProfiles = [];
@@ -12253,7 +12274,13 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
       console.warn("[bulk-enrich/serp]", cvr, e.message);
     }
   } else if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured()) {
-    stats.serpSkippedRateLimited = (stats.serpSkippedRateLimited || 0) + 1;
+    // Distinguish "skipped because rate-limited" vs "skipped because
+    // lead didn't meet quality gate" — useful for tuning the gate.
+    if (Date.now() > _lushaRateLimitedUntil) {
+      stats.serpSkippedLowPriority = (stats.serpSkippedLowPriority || 0) + 1;
+    } else {
+      stats.serpSkippedRateLimited = (stats.serpSkippedRateLimited || 0) + 1;
+    }
   }
 
   if (directDial) {
