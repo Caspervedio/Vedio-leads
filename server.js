@@ -6748,9 +6748,24 @@ async function lushaLookupContact(opts) {
   const apiKey = process.env.LUSHA_API_KEY;
   if (!apiKey) throw new Error("LUSHA_API_KEY not configured");
   const { firstName, lastName, companyName, linkedinUrl, timeoutMs = 15_000 } = opts || {};
-  if (!firstName || !lastName || !companyName) return null;
-  const body = { firstName, lastName, companyName };
-  if (linkedinUrl) body.linkedinUrl = linkedinUrl;
+  // Lusha v2 /person bulk endpoint (verified 2026-06-23). Schema:
+  //   { contacts: [{ contactId, linkedinUrl }] }            OR
+  //   { contacts: [{ contactId, fullName,
+  //                  companies: [{name, isCurrent: true}] }] }
+  // Returns { contacts: { <contactId>: { data, error, isCreditCharged } } }.
+  // The old { firstName, lastName, companyName } shape was rejected by
+  // the v2 schema validator with "property firstName should not exist".
+  const contactId = "lookup_" + Math.random().toString(36).slice(2, 10);
+  const contactEntry = { contactId };
+  if (linkedinUrl) {
+    contactEntry.linkedinUrl = linkedinUrl;
+  } else if (firstName && lastName && companyName) {
+    contactEntry.fullName = `${firstName} ${lastName}`.trim();
+    contactEntry.companies = [{ name: companyName, isCurrent: true }];
+  } else {
+    return null;
+  }
+  const body = { contacts: [contactEntry] };
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   let r;
@@ -6762,7 +6777,6 @@ async function lushaLookupContact(opts) {
       body: JSON.stringify(body),
     });
   } finally { clearTimeout(timer); }
-  if (r.status === 404) return null; // Lusha has no match — normal
   if (r.status === 401) throw new Error("Lusha auth failed — check LUSHA_API_KEY");
   if (r.status === 429) throw new Error("Lusha rate-limited or out of credits");
   if (!r.ok) {
@@ -6770,12 +6784,13 @@ async function lushaLookupContact(opts) {
     throw new Error(`Lusha ${r.status}: ${text.slice(0, 200)}`);
   }
   const data = await r.json().catch(() => null);
-  const person = data && (data.data || data);
-  if (!person) return null;
+  const entry = data && data.contacts && data.contacts[contactId];
+  if (!entry || !entry.data) return null; // EMPTY_DATA = no match
+  const person = entry.data;
   // DK-only phone filter — we never call non-DK numbers (hard rule).
-  const phones = Array.isArray(person.phoneNumbers) ? person.phoneNumbers : [];
+  const phones = Array.isArray(person.phoneNumbers) ? person.phoneNumbers : (Array.isArray(person.phones) ? person.phones : []);
   const dkPhones = phones.filter((p) => {
-    const num = String(p.internationalNumber || p.number || "").replace(/[^0-9+]/g, "");
+    const num = String(p.internationalNumber || p.number || p.value || "").replace(/[^0-9+]/g, "");
     return num.startsWith("+45");
   });
   // Mobile-first sort — direct mobiles convert way better than office DIDs.
@@ -6784,19 +6799,19 @@ async function lushaLookupContact(opts) {
     const bm = (b.phoneType || b.type || "").toLowerCase() === "mobile" ? 0 : 1;
     return am - bm;
   });
-  const emails = Array.isArray(person.emailAddresses) ? person.emailAddresses : [];
+  const emails = Array.isArray(person.emailAddresses) ? person.emailAddresses : (Array.isArray(person.emails) ? person.emails : []);
   const workEmail = (emails.find((x) => String(x.emailType || x.type || "").toLowerCase() === "work") || emails[0] || {}).email || "";
   return {
-    fullName: person.fullName || `${firstName} ${lastName}`,
+    fullName: person.fullName || person.name || `${firstName || ""} ${lastName || ""}`.trim(),
     phones: dkPhones.map((p) => {
       const isMobile = (p.phoneType || p.type || "").toLowerCase() === "mobile";
       return {
-        number: p.internationalNumber || p.number,
+        number: p.internationalNumber || p.number || p.value,
         type: isMobile ? "mobile" : "work",
         typeLabel: isMobile ? "Direkte mobil (Lusha)" : "Direkte (Lusha)",
       };
     }),
-    phone: (dkPhones[0] && (dkPhones[0].internationalNumber || dkPhones[0].number)) || "",
+    phone: (dkPhones[0] && (dkPhones[0].internationalNumber || dkPhones[0].number || dkPhones[0].value)) || "",
     email: workEmail,
   };
 }
