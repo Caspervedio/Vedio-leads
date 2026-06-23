@@ -7734,6 +7734,27 @@ function callingListRenameById(id){
   renderCallingListPage();
   if (typeof renderCockpitListSwitcher === 'function') renderCockpitListSwitcher();
 }
+// Bulk-unassign a list of leads from their calling list. Tracks per-
+// lead failures + returns {ok, fail, failedCvrs}. Used before deleting
+// a calling list — if any PATCH fails, the list deletion is aborted
+// so we don't end up with orphaned leads pointing at a vanished list.
+async function bulkUnassignCallingList(leadsToUnassign){
+  let ok = 0, fail = 0; const failedCvrs = [];
+  await Promise.all(leadsToUnassign.map(async (l) => {
+    try {
+      const r = await fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
+        method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calling_list_id: null }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      l.calling_list_id = null;
+      ok++;
+    } catch (e) {
+      fail++; failedCvrs.push(l.cvr);
+    }
+  }));
+  return { ok, fail, failedCvrs };
+}
 // Per-card delete — sends every lead in the list back to Pipeline
 // (clears calling_list_id) and drops the list definition.
 async function callingListDeleteById(id){
@@ -7747,14 +7768,17 @@ async function callingListDeleteById(id){
     confirmLabel: '🗑 Ja, slet listen',
   });
   if (!ok) return;
-  await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
-    method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ calling_list_id: null }),
-  }).then(() => { l.calling_list_id = null; }).catch(() => {})));
+  const result = await bulkUnassignCallingList(inList);
+  if (result.fail > 0) {
+    // Abort the list-delete — don't orphan leads pointing at a deleted list.
+    showToast(`Fejl: ${result.fail} af ${inList.length} leads kunne ikke flyttes — listen er IKKE slettet. Prøv igen.`);
+    renderCallingListPage();
+    return;
+  }
   const next = lists.filter(l => l.id !== id);
   saveCallingLists(next.length ? next : DEFAULT_CALLING_LISTS.slice());
   if (getActiveCallingListId() === id) setActiveCallingListId(next[0]?.id || '');
-  showToast(`Listen slettet · ${inList.length} leads tilbage i Leadlist`);
+  showToast(`Listen slettet · ${result.ok} leads tilbage i Leadlist`);
   renderCallingListPage();
 }
 // "+ Opret ny liste" — dark-themed modal that matches the rest of the
@@ -8161,16 +8185,16 @@ async function callingListDeleteActive(){
     confirmLabel: '🗑 Ja, slet listen',
   });
   if (!ok) return;
-  // Unassign leads first so they reappear in Prelist.
-  await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
-    method: 'PATCH',
-    headers: { ...ah(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ calling_list_id: null }),
-  }).then(() => { l.calling_list_id = null; }).catch(() => {})));
+  const result = await bulkUnassignCallingList(inList);
+  if (result.fail > 0) {
+    showToast(`Fejl: ${result.fail} af ${inList.length} leads kunne ikke flyttes — listen er IKKE slettet. Prøv igen.`);
+    renderCallingListPage();
+    return;
+  }
   const next = lists.filter(l => l.id !== id);
   saveCallingLists(next.length ? next : DEFAULT_CALLING_LISTS.slice());
   setActiveCallingListId(next[0]?.id || DEFAULT_CALLING_LISTS[0].id);
-  showToast(`Listen slettet · ${inList.length} leads tilbage i Prelist`);
+  showToast(`Listen slettet · ${result.ok} leads tilbage i Prelist`);
   renderCallingListPage();
 }
 async function callingListRemove(cvr){
@@ -8326,15 +8350,16 @@ async function cockpitDeleteActiveList(){
     confirmLabel: '🗑 Ja, slet listen',
   });
   if (!ok) return;
-  await Promise.all(inList.map(l => fetch(`/api/leads/${encodeURIComponent(l.cvr)}`, {
-    method: 'PATCH', headers: { ...ah(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ calling_list_id: null }),
-  }).then(() => { l.calling_list_id = null; }).catch(() => {})));
+  const result = await bulkUnassignCallingList(inList);
+  if (result.fail > 0) {
+    showToast(`Fejl: ${result.fail} af ${inList.length} leads kunne ikke flyttes — listen er IKKE slettet. Prøv igen.`);
+    return;
+  }
   const next = lists.filter(l => l.id !== id);
   saveCallingLists(next.length ? next : DEFAULT_CALLING_LISTS.slice());
   setActiveCallingListId(next[0]?.id || DEFAULT_CALLING_LISTS[0].id);
   closeCockpit();
-  showToast(`Listen slettet · ${inList.length} leads tilbage i Leadlist`);
+  showToast(`Listen slettet · ${result.ok} leads tilbage i Leadlist`);
 }
 
 // ─── Activity log viewer ────────────────────────────────────────────────
@@ -10429,11 +10454,21 @@ async function contactFetchPhone(cvr, contactIdx) {
       lead.phone_missing = false;
       lead.phone_source = 'contact-sync';
     }
-    await fetch('/api/leads/' + encodeURIComponent(cvr), {
+    const persistRes = await fetch('/api/leads/' + encodeURIComponent(cvr), {
       method: 'PATCH',
       headers: { ...ah(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ contacts: lead.contacts }),
     });
+    if (!persistRes.ok) {
+      // Roll back local mutation so UI doesn't show phantom phone
+      contacts[contactIdx] = c;
+      lead.contacts = contacts;
+      if (lead.phone_source === 'contact-sync') {
+        lead.phone = ''; lead.ph = ''; lead.phone_missing = true; lead.phone_source = '';
+      }
+      showToast(`Fejl: kunne ikke gemme nummer (${persistRes.status})`);
+      return;
+    }
     showToast(`✓ ${c.name}: ${phone}`);
     // Re-render whichever view is open
     try { if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit(); } catch(_) {}
@@ -10511,11 +10546,21 @@ async function cockpitAddContactFromLinkedin(cvr) {
         lead.phone_missing = false;
         lead.phone_source = 'contact-sync';
       }
-      await fetch('/api/leads/' + encodeURIComponent(cvr), {
+      const persistRes = await fetch('/api/leads/' + encodeURIComponent(cvr), {
         method: 'PATCH',
         headers: { ...ah(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ contacts: lead.contacts }),
       });
+      if (!persistRes.ok) {
+        // Roll back the local append so the contact card doesn't show
+        // a phantom-saved contact that vanishes on page refresh.
+        lead.contacts = (lead.contacts || []).filter((c) => c !== contact);
+        if (lead.phone_source === 'contact-sync') {
+          lead.phone = ''; lead.ph = ''; lead.phone_missing = true; lead.phone_source = '';
+        }
+        showToast(`Fejl: kunne ikke gemme kontakt (${persistRes.status})`);
+        return;
+      }
       showToast(`✓ ${contact.name} tilføjet${contact.phone ? ' med direkte nummer' : ''}`);
       // Re-render every surface where this lead might be visible RIGHT NOW
       // so the SDR sees the new contact instantly (no page-refresh needed):
