@@ -6778,7 +6778,13 @@ async function lushaLookupContact(opts) {
     });
   } finally { clearTimeout(timer); }
   if (r.status === 401) throw new Error("Lusha auth failed — check LUSHA_API_KEY");
-  if (r.status === 429) throw new Error("Lusha rate-limited or out of credits");
+  if (r.status === 429) {
+    // Daily quota exhausted — let the caller know explicitly so it can
+    // halt the rest of the batch instead of burning more 429s.
+    const e = new Error("Lusha rate-limited or out of credits");
+    e.code = "LUSHA_RATE_LIMITED";
+    throw e;
+  }
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     throw new Error(`Lusha ${r.status}: ${text.slice(0, 200)}`);
@@ -11945,6 +11951,12 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
 //
 // Throws APOLLO_CAP_REACHED to stop the whole batch (caller breaks).
 // Every other error is swallowed so one bad lead doesn't kill the chunk.
+// Module-level Lusha rate-limit memory — once we see a 429 in this Cloud
+// Run instance, stop trying Lusha for the rest of this run. Cloud Run
+// instance recycling resets this naturally (every few hours of idle),
+// so it doesn't need explicit TTL.
+let _lushaRateLimitedUntil = 0;
+
 async function processLeadForBulkEnrich(ud, cvr, stats) {
   const l = (ud.leads || []).find((x) => x.cvr === cvr);
   if (!l || l.lastAction === "not-relevant") return;
@@ -12011,7 +12023,8 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
   let directDial = "";
 
   // ─── STAGE 3: Lusha phone reveal (FAST) ──────────────────────────
-  if (isLushaConfigured() && firstName && lastName) {
+  // Skip entirely if we've already hit Lusha rate limit this run.
+  if (isLushaConfigured() && firstName && lastName && Date.now() > _lushaRateLimitedUntil) {
     stats.lushaAttempts++;
     try {
       const lr = await lushaLookupContact({
@@ -12035,8 +12048,18 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
         stats.lushaHits++;
       }
     } catch (e) {
-      console.warn("[bulk-enrich/lusha]", cvr, e.message);
+      if (e && e.code === "LUSHA_RATE_LIMITED") {
+        // Lock out Lusha for 1 hour. Daily quota resets at UTC midnight
+        // so it'll naturally recover before next day's cron tick.
+        _lushaRateLimitedUntil = Date.now() + 60 * 60 * 1000;
+        stats.lushaRateLimited = true;
+        console.warn("[bulk-enrich/lusha] RATE LIMIT — skipping further Lusha calls for 1h");
+      } else {
+        console.warn("[bulk-enrich/lusha]", cvr, e.message);
+      }
     }
+  } else if (isLushaConfigured() && firstName && lastName) {
+    stats.lushaSkippedRateLimited = (stats.lushaSkippedRateLimited || 0) + 1;
   }
 
   // ─── STAGE 4: FE Contact Enrich fallback (SLOW, when Lusha whiffed)
@@ -12089,25 +12112,27 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
   //
   // Bounded: 3 LinkedIn URLs probed via Lusha per lead.
   // Cost: ~$0.01 SERP + ($0.30 × ~40% Lusha hit × 3) = ~$0.30 per attempt.
-  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured()) {
+  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured() && Date.now() > _lushaRateLimitedUntil) {
     stats.serpLinkedinAttempts = (stats.serpLinkedinAttempts || 0) + 1;
     try {
       let liProfiles = [];
       // Prefer person-name search when we have a contact name
       if (top && top.name && top.name.trim().length >= 3) {
-        liProfiles = await findPersonLinkedinViaSerp(top.name, l.name, { limit: 3 });
+        liProfiles = await findPersonLinkedinViaSerp(top.name, l.name, { limit: 2 });
         if (liProfiles.length > 0) {
           stats.serpPersonNameUsed = (stats.serpPersonNameUsed || 0) + 1;
         } else {
           // Fall back to company-name search when person search returns nothing
-          liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 3 });
+          liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 2 });
           if (liProfiles.length > 0) stats.serpCompanyNameFallback = (stats.serpCompanyNameFallback || 0) + 1;
         }
       } else if (l.name) {
-        liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 3 });
+        liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 2 });
         if (liProfiles.length > 0) stats.serpCompanyNameUsed = (stats.serpCompanyNameUsed || 0) + 1;
       }
-      for (const profile of liProfiles.slice(0, 3)) {
+      // Reduced from 3 → 1 LinkedIn URL per lead to bound Lusha daily
+      // quota. Most-relevant first SERP result is usually the right person.
+      for (const profile of liProfiles.slice(0, 1)) {
         try {
           const lr = await lushaLookupContact({ linkedinUrl: profile.url, timeoutMs: 12_000 });
           if (lr && lr.phone) {
@@ -12147,12 +12172,20 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
             break;
           }
         } catch (e) {
+          if (e && e.code === "LUSHA_RATE_LIMITED") {
+            _lushaRateLimitedUntil = Date.now() + 60 * 60 * 1000;
+            stats.lushaRateLimited = true;
+            console.warn("[bulk-enrich/serp-lusha] RATE LIMIT — halting Lusha for 1h");
+            break;
+          }
           console.warn("[bulk-enrich/serp-lusha]", cvr, e.message);
         }
       }
     } catch (e) {
       console.warn("[bulk-enrich/serp]", cvr, e.message);
     }
+  } else if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured()) {
+    stats.serpSkippedRateLimited = (stats.serpSkippedRateLimited || 0) + 1;
   }
 
   if (directDial) {
