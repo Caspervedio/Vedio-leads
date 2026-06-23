@@ -3374,13 +3374,13 @@ function adminBulkArchiveByCvrs(){
 }
 function adminBulkBackfillContacts(){
   return adminBulkRunGuarded({
-    label: 'Bulk-enrich aktive leads (Apollo → FE → Lusha)',
+    label: 'Bulk-enrich aktive leads',
     url: '/api/admin/backfill-contacts',
     batched: true,
-    batchSize: 20,
+    batchSize: 10,
     confirmTitle: 'Bulk-enrich hele aktive pool?',
-    confirmMessage: 'Kører den fulde tre-trins kæde på alle aktive leads:\n\n  1. Apollo people-match (1 credit/lead)\n  2. Full Enrich Contact Enrich for direkte mobil ($0.60 ved hit)\n  3. Lusha v2 /person fallback ($0.30 ved hit)\n\nKøres i batches af 20 leads ad gangen med live progress (1-3 min per batch). Springer leads over der allerede har contact-niveau telefon ELLER er bulk-enriched sidste 7 dage. ~503 aktive leads, realistisk total $100-150. Stop-knap under kørsel — partial progress gemmes efter hver batch.',
-    confirmLabel: '▶ Ja, kør (~$100-150)',
+    confirmMessage: 'Kører den fulde fire-trins kæde på alle aktive leads:\n\n  1. Apollo people-match (1 credit/lead, ~10s)\n  2. Full Enrich People Search hvis Apollo missede (gratis, ~10s)\n  3. Lusha for direkte mobil ($0.30 ved hit, ~10s)\n  4. Full Enrich Contact Enrich hvis Lusha missede ($0.60 ved hit, ~60s)\n\nKøres i batches af 10 leads ad gangen, 5 i parallel — ~2 min per batch. Springer leads over der allerede har contact-niveau telefon ELLER er bulk-enriched sidste 24 timer. ~500 aktive leads, realistisk total $50-100. Stop-knap under kørsel — partial progress gemmes efter hver batch.',
+    confirmLabel: '▶ Ja, kør (~$50-100)',
   });
 }
 function adminBulkDfVerifyUnknowns(){

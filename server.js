@@ -11819,6 +11819,162 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
   return runArchiveByCvrs(req, res);
 });
 
+// Per-lead enrichment chain for bulk-enrich. Mutates the lead inside
+// `ud` in-place; caller is responsible for saving ud once the chunk
+// completes. Always stamps bulk_enriched_at (so failed leads don't
+// retry every batch — daily cron picks them up after 24h).
+//
+// Stage order tuned for speed + cost:
+//   1. Apollo people-match — cheap, fast, indexed
+//   2. FE People Search — free fallback for DK SMB Apollo whiffs
+//   3. Lusha phone reveal — fast (~10s), DK mobile specialist
+//   4. FE Contact Enrich — slow (~60s) but high-quality, last resort
+//
+// Throws APOLLO_CAP_REACHED to stop the whole batch (caller breaks).
+// Every other error is swallowed so one bad lead doesn't kill the chunk.
+async function processLeadForBulkEnrich(ud, cvr, stats) {
+  const l = (ud.leads || []).find((x) => x.cvr === cvr);
+  if (!l || l.lastAction === "not-relevant") return;
+  const csNow = Array.isArray(l.contacts) ? l.contacts : [];
+  if (csNow.some((c) => c && (c.phone || c.direct_phone || c.mobile))) return;
+  stats.processed++;
+
+  // ─── STAGE 1: Apollo people-match ─────────────────────────────────
+  if (csNow.length === 0) {
+    try {
+      const { contacts: aContacts, company } = await enrichWithApollo({
+        name: l.name,
+        domain: l.web || l.website,
+      });
+      if (aContacts && aContacts.length > 0) {
+        l.contacts = aContacts;
+        l.apollo_company = company || l.apollo_company;
+        l.apollo_enriched_at = new Date().toISOString();
+        stats.apolloHits++;
+      } else {
+        stats.apolloMisses++;
+      }
+    } catch (e) {
+      if (e && e.code === "APOLLO_CAP_REACHED") throw e;
+      console.warn("[bulk-enrich/apollo]", cvr, e.message);
+    }
+  }
+
+  // ─── STAGE 2: FE People Search (FREE fallback) ───────────────────
+  const afterApollo = Array.isArray(l.contacts) ? l.contacts : [];
+  if (afterApollo.length === 0 && isFullEnrichConfigured()) {
+    const domain = String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+    if (domain) {
+      try {
+        const found = await fullEnrichPeopleSearch(domain, { limit: 1, timeoutMs: 12_000 });
+        if (Array.isArray(found) && found.length > 0) {
+          l.contacts = found.map((p) => ({
+            name: p.name || p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim(),
+            title: p.title || "",
+            linkedin: p.linkedin_url || p.linkedin || "",
+            source_discovery: "fullenrich-people-search",
+            phone: "",
+            email: "",
+          })).filter((c) => c.name);
+          stats.fePeopleSearchHits = (stats.fePeopleSearchHits || 0) + 1;
+        } else {
+          stats.fePeopleSearchMisses = (stats.fePeopleSearchMisses || 0) + 1;
+        }
+      } catch (e) {
+        console.warn("[bulk-enrich/fe-people-search]", cvr, e.message);
+      }
+    }
+  }
+
+  // Pick top contact for phone reveal. No contact found by any path?
+  // Stamp anyway so we don't retry every batch — daily cron picks it
+  // up after 24h.
+  const contactsForReveal = Array.isArray(l.contacts) ? l.contacts : [];
+  if (contactsForReveal.length === 0) {
+    l.bulk_enriched_at = new Date().toISOString();
+    return;
+  }
+
+  const top = await pickTopContactForFullEnrich(contactsForReveal);
+  if (!top || !top.name) {
+    l.bulk_enriched_at = new Date().toISOString();
+    return;
+  }
+  const [firstName, ...rest] = String(top.name).trim().split(/\s+/);
+  const lastName = rest.join(" ");
+  let directDial = "";
+
+  // ─── STAGE 3: Lusha phone reveal (FAST) ──────────────────────────
+  if (isLushaConfigured() && firstName && lastName) {
+    stats.lushaAttempts++;
+    try {
+      const lr = await lushaLookupContact({
+        firstName, lastName,
+        companyName: l.name,
+        linkedinUrl: top.linkedin || top.linkedinUrl || "",
+        timeoutMs: 15_000,
+      });
+      if (lr && lr.phone) {
+        directDial = lr.phone;
+        const idx = l.contacts.findIndex((c) => c === top);
+        if (idx >= 0) {
+          l.contacts[idx] = {
+            ...top,
+            phone: lr.phone,
+            phones: lr.phones,
+            email: lr.email || top.email,
+            source_phone: "lusha",
+          };
+        }
+        stats.lushaHits++;
+      }
+    } catch (e) {
+      console.warn("[bulk-enrich/lusha]", cvr, e.message);
+    }
+  }
+
+  // ─── STAGE 4: FE Contact Enrich fallback (SLOW, when Lusha whiffed)
+  if (!directDial && isFullEnrichConfigured()) {
+    stats.feAttempts++;
+    try {
+      const contact = {
+        first_name: firstName,
+        last_name: lastName,
+        company_name: l.name,
+        domain: (l.apollo_company && l.apollo_company.domain) || l.web || l.website || "",
+      };
+      if (top.linkedin || top.linkedinUrl) contact.linkedin_url = top.linkedin || top.linkedinUrl;
+      // 90s cap — DK SMB usually finishes in 30-60s; longer means whiff.
+      const result = await fullEnrichLookupOne(contact, { timeoutMs: 90_000 });
+      const phone = result?.contact_info?.most_probable_phone?.number;
+      const email = result?.contact_info?.most_probable_work_email?.email;
+      if (phone) {
+        directDial = phone;
+        const idx = l.contacts.findIndex((c) => c === top);
+        if (idx >= 0) {
+          l.contacts[idx] = {
+            ...top,
+            phone,
+            phones: [{ number: phone, type: "mobile", typeLabel: "Direkte (Full Enrich)" }],
+            email: email || top.email,
+            source_phone: "fullenrich",
+          };
+        }
+        stats.feHits++;
+      }
+    } catch (e) {
+      console.warn("[bulk-enrich/fe]", cvr, e.message);
+    }
+  }
+
+  if (directDial) {
+    l.phone = directDial;
+    l.ph = directDial;
+    stats.leadsWithPhone++;
+  }
+  l.bulk_enriched_at = new Date().toISOString();
+}
+
 // ─── Backfill contacts: Apollo → FE Contact Enrich → Lusha ────────────
 // Full-chain bulk enrichment for the existing queue. Walks active leads
 // that lack contacts OR have contacts without phones, runs the same
@@ -11837,7 +11993,10 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
 // short-circuits: ~$0.20-0.30 per lead. For 500 active leads = ~$100-150.
 async function runBackfillContacts(req, res) {
   const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
-  const LIMIT = Math.max(1, Math.min(800, Number(req.query.limit) || 600));
+  // Default batch is 10 leads (with 5x parallelism = ~2 min per batch,
+  // well under Cloud Run's 20-min request cap). batch_size param wins
+  // over limit so the frontend batched runner can drive the pagination.
+  const LIMIT = Math.max(1, Math.min(800, Number(req.query.batch_size) || Number(req.query.limit) || 10));
   const OFFSET = Math.max(0, Number(req.query.offset) || 0);
   const DRY = req.query.dry === "1";
   const stats = {
@@ -11859,13 +12018,18 @@ async function runBackfillContacts(req, res) {
     return res.status(503).json({ error: "Apollo not configured" });
   }
   const ud = loadUserData(TARGET_USER);
-  // ?force=1 ignores the 7-day skip guard. Used to re-process leads
-  // that got bulk_enriched_at stamped by an earlier broken run where
-  // Apollo whiffed without falling back to FE People Search.
+  // ?force=1 ignores the skip guard. Used to re-process leads that got
+  // bulk_enriched_at stamped by an earlier broken run.
   const FORCE = req.query.force === "1";
-  // Skip if bulk-enriched within last 7 days — idempotent re-run guard
-  const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+  // 24h skip guard — failed enrichments get retried daily via the cron.
+  // Successful ones (lead now has a contact-level phone) are filtered out
+  // by the candidate selector regardless of skip window.
+  const RECENT_MS = 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - RECENT_MS;
+  // Parallelism within each batch — 5 leads concurrent so 10-lead batches
+  // finish in ~2× single-lead time instead of 10×. Apollo + FE + Lusha
+  // all handle concurrent calls fine.
+  const CONCURRENCY = Math.max(1, Math.min(10, Number(req.query.concurrency) || 5));
   // Candidates: active, has callable identity (domain OR real CVR), AND
   // either no contacts yet OR contacts without phone. Skip recently-
   // enriched leads to make the bulk-op cheap to re-run.
@@ -11894,150 +12058,29 @@ async function runBackfillContacts(req, res) {
     return res.json({ ok: true, stats, dry: true, sampleCvrs: candidates.slice(0, 5).map((l) => l.cvr), total_candidates: totalCandidates, offset: OFFSET, next_offset: nextOffset });
   }
 
-  for (const lead of candidates) {
-    try {
-      // Re-load state — other crons may have mutated since candidate list built
-      const udNow = loadUserData(TARGET_USER);
-      const l = (udNow.leads || []).find((x) => x.cvr === lead.cvr);
-      if (!l || l.lastAction === "not-relevant") continue;
-      const csNow = Array.isArray(l.contacts) ? l.contacts : [];
-      if (csNow.some((c) => c && (c.phone || c.direct_phone || c.mobile))) continue;
-      stats.processed++;
-
-      // ─── STAGE 1: Apollo people-match ──────────────────────────────
-      if (csNow.length === 0) {
-        const { contacts: aContacts, company } = await enrichWithApollo({
-          name: l.name,
-          domain: l.web || l.website,
-        });
-        if (aContacts && aContacts.length > 0) {
-          l.contacts = aContacts;
-          l.apollo_company = company || l.apollo_company;
-          l.apollo_enriched_at = new Date().toISOString();
-          stats.apolloHits++;
-        } else {
-          stats.apolloMisses++;
-        }
-      }
-
-      // ─── STAGE 1.5: Full Enrich People Search (FREE) ─────────────
-      // Apollo coverage on DK SMB is weak — fall back to FE People
-      // Search when Apollo returned 0. FREE (no credits charged), uses
-      // FE's index. Seeds 1 contact name+title for the phone stages.
-      const afterApollo = Array.isArray(l.contacts) ? l.contacts : [];
-      if (afterApollo.length === 0 && isFullEnrichConfigured()) {
-        const domain = String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
-        if (domain) {
-          try {
-            const found = await fullEnrichPeopleSearch(domain, { limit: 1, timeoutMs: 12_000 });
-            if (Array.isArray(found) && found.length > 0) {
-              l.contacts = found.map((p) => ({
-                name: p.name,
-                title: p.title || "",
-                linkedin: p.linkedin_url || p.linkedin || "",
-                source_discovery: "fullenrich-people-search",
-                phone: "",
-                email: "",
-              }));
-              stats.fePeopleSearchHits = (stats.fePeopleSearchHits || 0) + 1;
-            } else {
-              stats.fePeopleSearchMisses = (stats.fePeopleSearchMisses || 0) + 1;
-            }
-          } catch (e) {
-            console.warn("[backfill-contacts/fe-people-search]", l.cvr, e.message);
-          }
-        }
-      }
-
-      // Pick top contact for phone reveal. None? skip phone stages.
-      const contactsForReveal = Array.isArray(l.contacts) ? l.contacts : [];
-      let directDial = "";
-      if (contactsForReveal.length > 0) {
-        const top = await pickTopContactForFullEnrich(contactsForReveal);
-        if (top && top.name) {
-          const [firstName, ...rest] = String(top.name).trim().split(/\s+/);
-          const lastName = rest.join(" ");
-
-          // ─── STAGE 2: Full Enrich Contact Enrich ──────────────────
-          if (isFullEnrichConfigured()) {
-            stats.feAttempts++;
-            try {
-              const contact = {
-                first_name: firstName,
-                last_name: lastName,
-                company_name: l.name,
-                domain: (l.apollo_company && l.apollo_company.domain) || l.web || l.website || "",
-              };
-              if (top.linkedin || top.linkedinUrl) contact.linkedin_url = top.linkedin || top.linkedinUrl;
-              const result = await fullEnrichLookupOne(contact, { timeoutMs: 180_000 });
-              const phone = result?.contact_info?.most_probable_phone?.number;
-              const email = result?.contact_info?.most_probable_work_email?.email;
-              if (phone) {
-                directDial = phone;
-                const idx = l.contacts.findIndex((c) => c === top);
-                if (idx >= 0) {
-                  l.contacts[idx] = {
-                    ...top,
-                    phone,
-                    phones: [{ number: phone, type: "mobile", typeLabel: "Direkte (Full Enrich)" }],
-                    email: email || top.email,
-                    source_phone: "fullenrich",
-                  };
-                }
-                stats.feHits++;
-              }
-            } catch (e) {
-              console.warn("[backfill-contacts/fe]", l.cvr, e.message);
-            }
-          }
-
-          // ─── STAGE 3: Lusha fallback (FE whiffed) ─────────────────
-          if (!directDial && isLushaConfigured() && firstName && lastName) {
-            stats.lushaAttempts++;
-            try {
-              const lr = await lushaLookupContact({
-                firstName,
-                lastName,
-                companyName: l.name,
-                linkedinUrl: top.linkedin || top.linkedinUrl || "",
-                timeoutMs: 15_000,
-              });
-              if (lr && lr.phone) {
-                directDial = lr.phone;
-                const idx = l.contacts.findIndex((c) => c === top);
-                if (idx >= 0) {
-                  l.contacts[idx] = {
-                    ...top,
-                    phone: lr.phone,
-                    phones: lr.phones,
-                    email: lr.email || top.email,
-                    source_phone: "lusha",
-                  };
-                }
-                stats.lushaHits++;
-              }
-            } catch (e) {
-              console.warn("[backfill-contacts/lusha]", l.cvr, e.message);
-            }
-          }
-        }
-      }
-
-      if (directDial) {
-        l.phone = directDial;
-        l.ph = directDial;
-        stats.leadsWithPhone++;
-      }
-      l.bulk_enriched_at = new Date().toISOString();
+  // Process leads in parallel chunks of CONCURRENCY. Each lead runs the
+  // full chain independently — Apollo + FE People Search for contacts,
+  // then Lusha (fast) then FE Contact Enrich (slow) for phone.
+  //
+  // Chain order matters:
+  //   1. Apollo (~5-10s, 1 credit) — finds 1 contact via index
+  //   2. FE People Search (~5-10s, FREE) — fallback if Apollo whiffed
+  //   3. Lusha (~5-15s, $0.30 hit) — phone reveal, fast + DK-specialist
+  //   4. FE Contact Enrich (~30-60s, $0.60 hit) — phone reveal fallback,
+  //      slow but high-quality. Lusha-first means we usually don't pay
+  //      FE's slow tax on the easy wins.
+  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+    const chunk = candidates.slice(i, i + CONCURRENCY);
+    // Re-load shared user data once for this chunk
+    const udNow = loadUserData(TARGET_USER);
+    const results = await Promise.allSettled(chunk.map((c) => processLeadForBulkEnrich(udNow, c.cvr, stats)));
+    // Check for Apollo cap from any lead in the chunk
+    if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === "APOLLO_CAP_REACHED")) {
+      stats.capReached = true;
       saveUserData(TARGET_USER, udNow);
-    } catch (e) {
-      stats.errors++;
-      if (e && e.code === "APOLLO_CAP_REACHED") {
-        stats.capReached = true;
-        break;
-      }
-      console.warn("[backfill-contacts]", lead.cvr, e.message);
+      break;
     }
+    saveUserData(TARGET_USER, udNow);
   }
   // Only log the activity summary on the LAST batch (next_offset is null)
   // so the activity log isn't spammed with per-batch entries.
