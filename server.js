@@ -9450,6 +9450,65 @@ async function tryGoogleSerpForPhone(companyName) {
 // countryCode=dk + languageCode=da.
 //
 // Cost per call: ~$0.01-0.02 (1 SERP call via apify~google-search-scraper).
+// PERSON-name SERP: when we already have a contact name from Apollo/FE,
+// search Google for THAT person's LinkedIn directly. Much higher hit
+// rate than company-name search because we're targeting a specific
+// individual whose name + company combination is likely indexed.
+//
+// User-validated 2026-06-23: manual Lusha-on-LinkedIn tests against
+// our "name-only" pool showed phones DO exist when we feed Lusha the
+// right LinkedIn URL — the by-name path was missing them due to
+// Lusha's name+company fuzzy match being weaker than URL match.
+async function findPersonLinkedinViaSerp(personName, companyName, opts = {}) {
+  if (!personName || personName.trim().length < 3) return [];
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) return [];
+  const limit = Math.max(1, Math.min(10, opts.limit || 3));
+  // Query: site:linkedin.com/in "Person Name" "Company Name" — both
+  // quoted so Google enforces exact match. Falls back to person-only
+  // when company name is missing.
+  const cleanPerson = personName.trim();
+  const cleanCo = (companyName || '').trim();
+  const query = cleanCo
+    ? `site:linkedin.com/in "${cleanPerson}" "${cleanCo}"`
+    : `site:linkedin.com/in "${cleanPerson}"`;
+  try {
+    const r = await fetch(
+      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${token}&memory=1024&timeout=90`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: query,
+          resultsPerPage: limit,
+          maxPagesPerQuery: 1,
+          countryCode: "dk",
+          languageCode: "da",
+        }),
+      },
+    );
+    if (!r.ok) return [];
+    const items = await r.json();
+    if (!Array.isArray(items) || !items.length) return [];
+    const page = items[0];
+    const profiles = [];
+    for (const o of (page.organicResults || [])) {
+      const url = o.url || o.link || "";
+      if (!/^https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#]+/i.test(url)) continue;
+      profiles.push({
+        url: url.replace(/[#?].*$/, ""),
+        title: String(o.title || ""),
+        snippet: String(o.description || o.snippet || ""),
+      });
+      if (profiles.length >= limit) break;
+    }
+    return profiles;
+  } catch (e) {
+    console.warn("[serp-person-linkedin]", personName, e.message);
+    return [];
+  }
+}
+
 async function findCompanyLinkedinViaSerp(companyName, opts = {}) {
   if (!companyName || companyName.length < 3) return [];
   const token = process.env.APIFY_API_TOKEN;
@@ -12022,36 +12081,74 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
   }
 
   // ─── STAGE 5: SERP → LinkedIn → Lusha (last-resort coverage boost)
-  // When Lusha + FE Contact Enrich both whiff (~75% of DK SMB), try
-  // discovering employee LinkedIn URLs via Google SERP, then feed each
-  // URL back into Lusha. Catches DK owners who exist on LinkedIn but
-  // aren't in Lusha's by-name index — Lusha indexes BY URL much better.
+  // When Lusha-by-name + FE Contact Enrich both whiff, try discovering
+  // a LinkedIn URL via Google SERP then feed it back to Lusha v2 (which
+  // matches by URL much more reliably than by name+company).
   //
-  // Bounded: 2 LinkedIn URLs max per lead, Lusha 12s timeout each.
-  // Cost: ~$0.01 SERP + ($0.30 × ~30% Lusha hit × 2) = ~$0.20 per attempt.
-  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured() && l.name) {
+  // Two query variants in priority order:
+  //   1. PERSON-name search — when we have a contact name (Apollo/FE
+  //      found someone). User-validated 2026-06-23 that Lusha DOES
+  //      have these people when fed the right LinkedIn URL; the
+  //      by-name path was just losing them to fuzzy-match.
+  //   2. COMPANY-name fallback — when we have no contact yet, harvest
+  //      LinkedIn URLs of anyone at the company.
+  //
+  // Bounded: 3 LinkedIn URLs probed via Lusha per lead.
+  // Cost: ~$0.01 SERP + ($0.30 × ~40% Lusha hit × 3) = ~$0.30 per attempt.
+  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured()) {
     stats.serpLinkedinAttempts = (stats.serpLinkedinAttempts || 0) + 1;
     try {
-      const liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 3 });
-      for (const profile of liProfiles.slice(0, 2)) {
+      let liProfiles = [];
+      // Prefer person-name search when we have a contact name
+      if (top && top.name && top.name.trim().length >= 3) {
+        liProfiles = await findPersonLinkedinViaSerp(top.name, l.name, { limit: 3 });
+        if (liProfiles.length > 0) {
+          stats.serpPersonNameUsed = (stats.serpPersonNameUsed || 0) + 1;
+        } else {
+          // Fall back to company-name search when person search returns nothing
+          liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 3 });
+          if (liProfiles.length > 0) stats.serpCompanyNameFallback = (stats.serpCompanyNameFallback || 0) + 1;
+        }
+      } else if (l.name) {
+        liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 3 });
+        if (liProfiles.length > 0) stats.serpCompanyNameUsed = (stats.serpCompanyNameUsed || 0) + 1;
+      }
+      for (const profile of liProfiles.slice(0, 3)) {
         try {
           const lr = await lushaLookupContact({ linkedinUrl: profile.url, timeoutMs: 12_000 });
           if (lr && lr.phone) {
             directDial = lr.phone;
-            // Add as a new contact entry (we don't know which existing
-            // contact this LinkedIn URL belongs to)
-            const newContact = {
-              name: lr.fullName || profile.title.replace(/\s*[\|\-–].*$/, "").trim() || "(via LinkedIn)",
-              title: "",
-              linkedin: profile.url,
-              phone: lr.phone,
-              phones: lr.phones,
-              email: lr.email || "",
-              source_discovery: "serp-linkedin",
-              source_phone: "lusha",
-            };
-            l.contacts = Array.isArray(l.contacts) ? l.contacts : [];
-            l.contacts.push(newContact);
+            // If we already had a top contact and the LinkedIn URL likely
+            // belongs to them (or close), update in-place. Otherwise add
+            // as a new contact entry.
+            const matchedTop = top && profile.title && top.name &&
+              profile.title.toLowerCase().includes(top.name.toLowerCase().split(/\s+/)[0]);
+            if (matchedTop && top) {
+              const idx = l.contacts.findIndex((c) => c === top);
+              if (idx >= 0) {
+                l.contacts[idx] = {
+                  ...top,
+                  phone: lr.phone,
+                  phones: lr.phones,
+                  email: lr.email || top.email,
+                  linkedin: top.linkedin || profile.url,
+                  source_phone: "lusha",
+                };
+              }
+            } else {
+              const newContact = {
+                name: lr.fullName || profile.title.replace(/\s*[\|\-–].*$/, "").trim() || "(via LinkedIn)",
+                title: "",
+                linkedin: profile.url,
+                phone: lr.phone,
+                phones: lr.phones,
+                email: lr.email || "",
+                source_discovery: "serp-linkedin",
+                source_phone: "lusha",
+              };
+              l.contacts = Array.isArray(l.contacts) ? l.contacts : [];
+              l.contacts.push(newContact);
+            }
             stats.serpLinkedinHits = (stats.serpLinkedinHits || 0) + 1;
             break;
           }
