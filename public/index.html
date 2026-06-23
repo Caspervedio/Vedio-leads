@@ -6185,6 +6185,23 @@ function renderAutodialerPage(){
   if(_adState.categoryFilter && _adState.categoryFilter !== 'all'){
     filtered = filtered.filter(l => leadCategory(l) === _adState.categoryFilter);
   }
+  // Enrichment-status filter (2026-06-23) — separates callable leads
+  // (ready for cockpit) from leads needing manual research.
+  //   • 'callable'    → has named contact + direct phone
+  //   • 'needs-manual' → bulk_enriched_at set (chain ran) AND lacks
+  //                      contact-level phone OR named contact
+  //   • 'not-enriched' → never been through the chain
+  if(_adState.enrichmentFilter && _adState.enrichmentFilter !== 'all'){
+    filtered = filtered.filter((l) => {
+      const cs = Array.isArray(l.contacts) ? l.contacts : [];
+      const hasNamedContactPhone = cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
+      const enriched = !!l.bulk_enriched_at;
+      if (_adState.enrichmentFilter === 'callable')    return hasNamedContactPhone;
+      if (_adState.enrichmentFilter === 'needs-manual') return enriched && !hasNamedContactPhone;
+      if (_adState.enrichmentFilter === 'not-enriched') return !enriched;
+      return true;
+    });
+  }
   // Hide leads already added to a calling list (toggled by SDR, default ON).
   // Keeps the Leadlist focused on "what's still untriaged" without losing
   // the master-view escape hatch — flipping the toggle off shows them
@@ -6581,10 +6598,33 @@ function renderAutodialerPage(){
       };
       // Aktivitet + Eksportér moved to the sidebar footer 2026-06-16 — they
       // are global actions and shouldn't live inside the Leadlist toolbar.
+      // Enrichment-status chip row (2026-06-23) — lets SDR separate
+      // "ready to call" leads from "needs manual enrichment" leads.
+      // Callable = has named contact + direct phone.
+      const callableCount = baseActive.filter((l) => {
+        const cs = Array.isArray(l.contacts) ? l.contacts : [];
+        return cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
+      }).length;
+      const needsManualCount = baseActive.filter((l) => {
+        if (!l.bulk_enriched_at) return false;
+        const cs = Array.isArray(l.contacts) ? l.contacts : [];
+        return !cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
+      }).length;
+      const notEnrichedCount = baseActive.filter((l) => !l.bulk_enriched_at).length;
+      const enrichChip = (id, lbl, cnt, fg) => {
+        const active = (_adState.enrichmentFilter || 'all') === id;
+        return `<button onclick="adSetEnrichmentFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?fg:'var(--w08)'};background:${active?fg.replace('rgba(','rgba(').replace(/,1\)/,',0.18)').replace(/,0\.9\)/,',0.18)'):'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s" title="${active?'Klik igen for at vise alle':'Vis kun '+lbl}">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
+      };
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kategori</span>
         ${catChip('ecom',    '🛍 DK e-commerce', ecomCount)}
         ${catChip('service', '🏢 DK service',    serviceCount)}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Berigelse</span>
+        ${enrichChip('callable',    '📞 Klar at ringe',     callableCount,    'rgba(52,211,153,0.9)')}
+        ${enrichChip('needs-manual','⚠ Mangler berigelse',  needsManualCount, 'rgba(251,146,60,0.9)')}
+        ${enrichChip('not-enriched','⏳ Ikke beriget endnu', notEnrichedCount, 'rgba(148,163,184,0.9)')}
       </div>`;
     })()}
     <!-- Filter + sort row -->
@@ -6824,6 +6864,11 @@ function adSetCategoryFilter(id){
   // filter (back to "all"). Replaces the removed "Alle leads" chip from
   // the 2026-06-16 cleanup.
   _adState.categoryFilter = (_adState.categoryFilter === id) ? 'all' : id;
+  renderAutodialerPage();
+}
+function adSetEnrichmentFilter(id){
+  // Same toggle-off behavior as category chips.
+  _adState.enrichmentFilter = (_adState.enrichmentFilter === id) ? 'all' : id;
   renderAutodialerPage();
 }
 // Cross-list search — runs the same query across every chip-filter state
@@ -8922,21 +8967,42 @@ function openCockpit(forceCvr){
   // cockpit can land on it. The lead just isn't dialable yet — but the
   // SDR can still see the info card, contacts, history, etc.
   const now=Date.now();
+  // ─── Cockpit "callable-only" gate (2026-06-23) ─────────────────────
+  // A lead earns its way into cockpit only if it has:
+  //   • A named contact (Apollo/FE/Gemini found someone), AND
+  //   • That contact's direct phone (Lusha/FE Contact Enrich captured it)
+  // Exceptions that bypass the gate (still appear in cockpit):
+  //   • forceCvr — SDR explicitly clicked this lead, always include
+  //   • Due callbacks — time-sensitive, callback_at <= now
+  //   • Engaged leads — SDR has worked them (interested/follow-up/sms)
+  // Leads failing the gate stay in Leadlist for manual enrichment.
+  const hasCallableContact = (l) => {
+    const cs = Array.isArray(l.contacts) ? l.contacts : [];
+    return cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
+  };
+  const engagedActions = new Set(['interested','follow-up','sms','call-back']);
+  // Track what the gate filters out so we can show "X waiting in Leadlist"
+  let _filteredNotCallable = 0;
   base=base.filter(l=>{
     if(forceCvr && l.cvr === forceCvr) return true; // always include the requested lead
     if(l.lastAction==='not-relevant') return false;
     if(l.twenty_opportunity_id) return false;       // PR2: pushed to AE — done from SDR's view
-    // PR6: same relaxation as the autodialer page — verified-advertising
-    // leads stay callable even without a phone yet. Cockpit-open auto-
-    // reveal fires Apollo when SDR lands on them.
-    if(l.phone_missing===true) {
-      const isVerifiedAd = l.meta_advertiser===true || l.linkedin_advertiser===true || l.meta_verified_active===true;
-      if(!isVerifiedAd) return false;
-    }
     if(l.apollo_enrichment_pending===true) return false;
-    if(!l.callback_at) return true;
-    return new Date(l.callback_at).getTime() <= now;
+    // Due-callback override — always include time-sensitive ones
+    const callbackDue = l.callback_at && new Date(l.callback_at).getTime() <= now;
+    if (callbackDue) return true;
+    if (l.callback_at) return false; // future callback — hide until due
+    // Engagement override — SDR has worked this lead, keep visible
+    if (engagedActions.has(l.lastAction)) return true;
+    // The callable gate — must have contact-level phone + named contact
+    if (!hasCallableContact(l)) {
+      _filteredNotCallable++;
+      return false;
+    }
+    return true;
   });
+  // Expose count globally so the queue rail can show "Y waiting for manual enrich"
+  window._cockpitNotCallableCount = _filteredNotCallable;
   // Defensive: if forceCvr was passed but the lead doesn't exist in `leads`
   // at all (e.g. archived list or stale UI cache), still ensure we don't
   // open an empty cockpit — fall through to the normal queue.
@@ -9538,6 +9604,11 @@ function renderCockpitQueue(){
       </select>
     </div>
     ${q ? `<div style="margin-top:6px;font-size:10px;color:var(--w35)">${items.length} af ${_cockpit.queue.length} i køen · ${sortLabel}</div>` : ''}
+    ${(typeof window._cockpitNotCallableCount === 'number' && window._cockpitNotCallableCount > 0) ? `
+      <div style="margin-top:8px;padding:6px 8px;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.20);border-radius:6px;font-size:10px;color:#fdba74;line-height:1.4">
+        <strong style="color:#fff">${_cockpit.queue.length}</strong> klar at ringe · <strong style="color:#fdba74">${window._cockpitNotCallableCount}</strong> venter i Leadlist på manuel berigelse
+        <div style="margin-top:3px;color:var(--w55);font-size:9.5px">Kun leads med direkte mobil + navngivet kontakt vises her. Resten ligger i Leadlist.</div>
+      </div>` : ''}
   </div>`;
   const list = items.length > 0
     ? items.map(({ l, i }) => {
