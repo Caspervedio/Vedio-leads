@@ -6553,29 +6553,91 @@ function _normaliseLinkedinUrl(u) {
 //
 // Returns "ecom" | "service" | "unknown". Use "unknown" sparingly so the
 // dual-list UI always has a definite home for each lead.
+// Branche-walk DB07 codes — broadened 2026-06-23 to scale intake from
+// ~19 to ~50-80 leads/day (per Casper's 40-60 direct-mobile target).
+// Datafordeler is FREE so wider codes are pure upside. SDR + chain
+// filters quality downstream; we just need more raw input.
 const BRANCHE_WALK_ECOM_CODES = new Set([
+  // — Apparel + accessories —
   "477110", // Tøjbutik
+  "477120", // Herretøj
   "477210", // Skobutik
+  "477710", // Lædervarer
+  "477700", // Ure
+  "477500", // Guld/smykker
+  // — Home + furniture —
   "475100", // Møbler
-  "479110", // Detailhandel internet
-  "478990", // Anden detailhandel
-  "477800", // Optikere
+  "477820", // Møbler online
   "475250", // Belysning
   "475440", // Glas/keramik
+  "475910", // Hjemmeudstyr
+  // — Sports + leisure + hobbies —
   "476420", // Sport
   "476500", // Spil/legetøj
+  "476600", // Lystfiskergrej
+  // — Specialty retail —
+  "477110", // Apotek (dub-set ignores)
+  "477300", // Apotek-håndkøb
   "477630", // Blomster
   "477640", // Dyr/foder
-  "477990", // Anden detail
+  "477420", // Gaver
+  "477450", // Bøger
+  "477800", // Optikere
+  // — Online + catch-alls —
+  "479110", // Detailhandel internet
+  "478910", // Markeder/torvehandel
+  "478990", // Anden detail
+  "477990", // Anden detail (variation)
+  "479900", // Postordre
 ]);
 const BRANCHE_WALK_SERVICE_CODES = new Set([
+  // — Marketing + creative agencies —
   "731000", // Marketing-bureau
   "741010", // Design/web
-  "683210", // Ejendomsmægler
-  "791100", // Rejsebureau
-  "563000", // Caféer/cafeterier
   "742010", // Fotograf-erhverv
+  // — Restaurants + cafés + hotels (DK SMB hotspot) —
+  "561010", // Restaurant
+  "561020", // Pizzeria
+  "563000", // Caféer/cafeterier
+  "562100", // Event catering
+  "551000", // Hoteller
+  "551110", // Hoteller mindre
+  // — Beauty + wellness —
   "961040", // Wellness/skønhed
+  "960210", // Frisør
+  "960220", // Kosmetisk behandling
+  // — Health practices —
+  "862100", // Almenpraktiserende læge
+  "862200", // Speciallæge
+  "862300", // Tandlæge
+  "869010", // Fysioterapi
+  "869020", // Kiropraktor
+  "869090", // Anden sundhedstjeneste
+  // — Fitness —
+  "931200", // Fitness
+  "931100", // Sport
+  // — Real estate + property —
+  "683110", // Ejendomsmægler bolig
+  "683210", // Ejendomsmægler erhverv
+  // — Travel —
+  "791100", // Rejsebureau
+  "791200", // Rejsearrangør
+  // — Professional services (B2B) —
+  "691000", // Advokat
+  "692000", // Revisor
+  "702200", // Konsulent
+  "711200", // Arkitekt
+  // — Trade crafts (SMB owner-operated) —
+  "432100", // El-installation
+  "432200", // VVS
+  "433100", // Stukatør/pudser
+  "433200", // Tømrer/møbel
+  "433300", // Gulv
+  "433400", // Maler
+  // — Auto + transport —
+  "451120", // Bilhandel
+  "452010", // Værkstedhandel
+  "494100", // Vejgodstransport
 ]);
 
 function deriveSourceCategory(source, brancheCode) {
@@ -9947,6 +10009,46 @@ const GMAPS_DISCOVER_QUERIES = [
   { category: "revisor",        city: "Vejle"      },
   { category: "ejendomsmægler", city: "Randers"    },
   { category: "frisor",         city: "Odense"     },
+  // Q2 2026 — intake-scale expansion for 40-60/day target.
+  // New categories (small DK SMB with websites + decision-makers):
+  { category: "kosmetolog",     city: "København" },
+  { category: "kosmetolog",     city: "Aarhus"     },
+  { category: "kiropraktor",    city: "København" },
+  { category: "kiropraktor",    city: "Aarhus"     },
+  { category: "massage",        city: "København" },
+  { category: "skønhedssalon",  city: "København" },
+  { category: "neglesalon",     city: "København" },
+  { category: "fitness",        city: "København" },
+  { category: "fitness",        city: "Aarhus"     },
+  { category: "yoga",           city: "København" },
+  { category: "personlig træner", city: "København" },
+  // Specialty retail (Apollo-indexed):
+  { category: "guldsmed",       city: "København" },
+  { category: "guldsmed",       city: "Aarhus"     },
+  { category: "møbelbutik",     city: "København" },
+  { category: "boutique",       city: "København" },
+  { category: "interiør",       city: "København" },
+  // Professional services beyond major cities:
+  { category: "marketingbureau", city: "København" },
+  { category: "marketingbureau", city: "Aarhus"     },
+  { category: "webbureau",      city: "København" },
+  { category: "webbureau",      city: "Aarhus"     },
+  { category: "fotograf",       city: "København" },
+  { category: "fotograf",       city: "Aarhus"     },
+  // Travel + hospitality:
+  { category: "rejsebureau",    city: "København" },
+  { category: "rejsebureau",    city: "Aarhus"     },
+  { category: "hotel",          city: "København" },
+  { category: "hotel",          city: "Aarhus"     },
+  // Smaller cities — less dedupe overlap with major-city scrapes:
+  { category: "ejendomsmægler", city: "Roskilde"   },
+  { category: "ejendomsmægler", city: "Helsingør"  },
+  { category: "ejendomsmægler", city: "Kolding"    },
+  { category: "ejendomsmægler", city: "Horsens"    },
+  { category: "tandlæge",       city: "Esbjerg"    },
+  { category: "tandlæge",       city: "Vejle"      },
+  { category: "fysioterapi",    city: "Vejle"      },
+  { category: "fysioterapi",    city: "Kolding"    },
 ];
 
 function loadGmapsDiscoverState() {
