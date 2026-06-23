@@ -3236,6 +3236,29 @@ app.patch("/api/leads/:cvr", authMiddleware, (req, res) => {
   const prevCallbackAt = lead.callback_at;
   const prevPhone = lead.phone || lead.ph || "";
   Object.assign(lead, req.body);
+  // Auto-sync hovednummer from contacts: when a contact-level phone is
+  // added (via paste-LinkedIn, manual contact editor, or any path) and
+  // the lead has no main phone, copy the first contact's phone to
+  // lead.phone. Clears phone_missing flag too so the lead exits the
+  // "Mangler nummer" view automatically.
+  // Caller sending an explicit phone in req.body wins — we only auto-
+  // fill when the lead currently has no main number.
+  if (req.body.contacts !== undefined && !req.body.phone) {
+    const hasMainPhone = !!(lead.phone || lead.ph || "").toString().trim();
+    if (!hasMainPhone) {
+      const contactsArr = Array.isArray(lead.contacts) ? lead.contacts : [];
+      const firstContactPhone = contactsArr
+        .map((c) => c && (c.phone || c.direct_phone || c.mobile || (c.phones && c.phones[0] && c.phones[0].number)))
+        .find((p) => p && String(p).trim());
+      if (firstContactPhone) {
+        lead.phone = String(firstContactPhone).trim();
+        lead.ph = lead.phone;
+        if (lead.phone_missing) lead.phone_missing = false;
+        lead.phone_source = "contact-sync";
+        lead.phone_synced_at = new Date().toISOString();
+      }
+    }
+  }
   saveUserData(req.userId, d);
   // Log disposition changes + callback scheduling so admin's activity feed
   // captures every SDR action (calls, dispositions, follow-ups, edits).
