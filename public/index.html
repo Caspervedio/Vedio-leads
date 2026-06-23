@@ -4326,7 +4326,7 @@ function renderLookalikeSeedCard(){
     </div>
     ${preview.length?`
       <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px">
-        ${preview.map(l=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;background:var(--w04);border:1px solid var(--w08);border-radius:8px">
+        ${preview.map(l=>`<div onclick="adOpenLead('${e(l.cvr||'')}')" style="display:flex;align-items:center;gap:8px;padding:6px 9px;background:var(--w04);border:1px solid var(--w08);border-radius:8px;cursor:pointer;transition:background 0.12s" onmouseover="this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.background='var(--w04)'">
           <div style="font-size:11.5px;font-weight:700;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(l.name||'—')}</div>
           <div style="font-size:10px;color:var(--w35);font-family:monospace;flex-shrink:0">${l.cvr||'—'}</div>
         </div>`).join('')}
@@ -6767,7 +6767,7 @@ function renderAutodialerPage(){
           return `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px">
               <div style="flex:1;min-width:0">
-                <div style="font-size:14.5px;font-weight:800;color:#fff;margin-bottom:3px">${e(l.name||'—')}</div>
+                <button onclick="adOpenLead('${e(l.cvr||'')}')" title="Åbn lead-kort" style="all:unset;cursor:pointer;font-size:14.5px;font-weight:800;color:#fff;margin-bottom:3px;display:block;border-bottom:1px dashed transparent;transition:border-color 0.12s" onmouseover="this.style.borderBottomColor='rgba(124,58,237,0.5)'" onmouseout="this.style.borderBottomColor='transparent'">${e(l.name||'—')}</button>
                 <div style="font-size:11.5px;color:var(--w55)">
                   ${ac.estimatedEmployees?`${ac.estimatedEmployees} ansatte · `:''}${e(trunc(ac.industry||l.ind||'',36))}${ac.city?' · '+e(ac.city):''}
                   ${websiteClean?` · <a href="${e(website.startsWith('http')?website:'https://'+website)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">🌐 ${e(websiteClean)}</a>`:''}
