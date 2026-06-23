@@ -11823,6 +11823,7 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
 async function runBackfillContacts(req, res) {
   const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
   const LIMIT = Math.max(1, Math.min(800, Number(req.query.limit) || 600));
+  const OFFSET = Math.max(0, Number(req.query.offset) || 0);
   const DRY = req.query.dry === "1";
   const stats = {
     candidates: 0,
@@ -11847,7 +11848,7 @@ async function runBackfillContacts(req, res) {
   // Candidates: active, has callable identity (domain OR real CVR), AND
   // either no contacts yet OR contacts without phone. Skip recently-
   // enriched leads to make the bulk-op cheap to re-run.
-  const candidates = (ud.leads || []).filter((l) => {
+  const allCandidates = (ud.leads || []).filter((l) => {
     if (l.lastAction === "not-relevant") return false;
     if (l.twenty_opportunity_id) return false;
     const t = l.bulk_enriched_at ? new Date(l.bulk_enriched_at).getTime() : 0;
@@ -11861,10 +11862,13 @@ async function runBackfillContacts(req, res) {
     const hasContactPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
     if (hasContactPhone) return false;
     return true;
-  }).slice(0, LIMIT);
+  });
+  const totalCandidates = allCandidates.length;
+  const candidates = allCandidates.slice(OFFSET, OFFSET + LIMIT);
+  const nextOffset = (OFFSET + LIMIT < totalCandidates) ? OFFSET + LIMIT : null;
   stats.candidates = candidates.length;
   if (DRY) {
-    return res.json({ ok: true, stats, dry: true, sampleCvrs: candidates.slice(0, 5).map((l) => l.cvr) });
+    return res.json({ ok: true, stats, dry: true, sampleCvrs: candidates.slice(0, 5).map((l) => l.cvr), total_candidates: totalCandidates, offset: OFFSET, next_offset: nextOffset });
   }
 
   for (const lead of candidates) {
@@ -11983,13 +11987,17 @@ async function runBackfillContacts(req, res) {
       console.warn("[backfill-contacts]", lead.cvr, e.message);
     }
   }
-  logActivity(
-    "backfill",
-    `🔗 Bulk-enrich: ${stats.leadsWithPhone}/${stats.processed} fik direkte mobil. Apollo:${stats.apolloHits} FE:${stats.feHits} Lusha:${stats.lushaHits}`,
-    { stats, userId: TARGET_USER },
-  );
-  console.log("[backfill-contacts]", JSON.stringify(stats));
-  res.json({ ok: true, stats });
+  // Only log the activity summary on the LAST batch (next_offset is null)
+  // so the activity log isn't spammed with per-batch entries.
+  if (nextOffset == null) {
+    logActivity(
+      "backfill",
+      `🔗 Bulk-enrich: ${stats.leadsWithPhone}/${stats.processed} fik direkte mobil i sidste batch. Apollo:${stats.apolloHits} FE:${stats.feHits} Lusha:${stats.lushaHits}`,
+      { stats, userId: TARGET_USER },
+    );
+  }
+  console.log("[backfill-contacts] batch:", JSON.stringify({ offset: OFFSET, limit: LIMIT, totalCandidates, ...stats }));
+  res.json({ ok: true, stats, total_candidates: totalCandidates, offset: OFFSET, next_offset: nextOffset });
 }
 app.post("/api/admin/backfill-contacts", authMiddleware, runBackfillContacts);
 app.post("/api/cron/backfill-contacts", (req, res) => {
@@ -12079,19 +12087,28 @@ async function runBackfillMetaAds(req, res) {
   // didn't capture page_id). Catches the existing pool of ~60 advertising
   // leads where the keyword-search URL is still the only Ad Library link.
   const onlyMissingPageId = req.query.missingPageId === "1";
+  // Batched pagination: ?offset=N&batch_size=20 → process leads N..N+20,
+  // return next_offset for the frontend loop to continue. Falls back to
+  // full-pool mode when batch_size is unset.
+  const OFFSET = Math.max(0, Number(req.query.offset) || 0);
+  const BATCH = Math.max(0, Math.min(100, Number(req.query.batch_size) || 0));
+  // Build combined candidate list across all users so pagination spans
+  // them cleanly. Each entry carries a back-reference so we know which
+  // user-file to save into.
+  const userDatas = {};
+  const allCandidates = [];
   for (const f of fs.readdirSync(DATA_DIR)) {
     if (!f.startsWith("data_") || !f.endsWith(".json") || f === "data.json") continue;
     const userId = f.slice("data_".length, -".json".length);
     if (!userId) continue;
     const ud = loadUserData(userId);
-    let targets = (ud.leads || []).filter((lead) => {
+    userDatas[userId] = ud;
+    const targets = (ud.leads || []).filter((lead) => {
       if (!lead || !lead.name) return false;
       if (lead.lastAction === "not-relevant") return false;
       if (lead.twenty_opportunity_id) return false;
       if (onlyCvr && lead.cvr !== onlyCvr) return false;
       if (onlyMissingPageId) {
-        // Catch-up path: only advertising leads missing page_id, regardless
-        // of when meta_verified_at was last stamped.
         if (!lead.meta_verified_active) return false;
         if (lead.facebook_page_id) return false;
         return true;
@@ -12100,13 +12117,28 @@ async function runBackfillMetaAds(req, res) {
       if (t && t > cutoff) { stats.skippedRecent++; return false; }
       return true;
     });
-    if (limit > 0) targets = targets.slice(0, limit);
-    stats.scanned += targets.length;
-    // Process 5 at a time so Apify isn't slammed; saveUserData runs after
-    // each chunk so partial progress survives a Cloud Run crash.
-    const CHUNK = 5;
-    for (let i = 0; i < targets.length; i += CHUNK) {
-      const chunk = targets.slice(i, i + CHUNK);
+    for (const lead of targets) allCandidates.push({ lead, userId });
+  }
+  const totalCandidates = allCandidates.length;
+  let batchTargets;
+  if (BATCH > 0) {
+    batchTargets = allCandidates.slice(OFFSET, OFFSET + BATCH);
+  } else {
+    batchTargets = allCandidates;
+    if (limit > 0) batchTargets = batchTargets.slice(0, limit);
+  }
+  stats.scanned = batchTargets.length;
+  // Group by user so we save each user-file once after its batch is done.
+  const byUser = {};
+  for (const t of batchTargets) {
+    if (!byUser[t.userId]) byUser[t.userId] = [];
+    byUser[t.userId].push(t.lead);
+  }
+  // Process 5 at a time per user; Apify Starter handles the parallelism.
+  const CHUNK = 5;
+  for (const [userId, leads] of Object.entries(byUser)) {
+    for (let i = 0; i < leads.length; i += CHUNK) {
+      const chunk = leads.slice(i, i + CHUNK);
       const results = await Promise.allSettled(chunk.map((lead) => enrichLeadWithMetaAds(lead)));
       for (let j = 0; j < results.length; j++) {
         const r = results[j];
@@ -12116,11 +12148,12 @@ async function runBackfillMetaAds(req, res) {
         if (lead.meta_verified_active) stats.advertising++;
         if (lead.facebook_page_id) stats.pageIdCaptured++;
       }
-      saveUserData(userId, ud);
+      saveUserData(userId, userDatas[userId]);
     }
   }
-  console.log("[backfill-meta-ads] done:", JSON.stringify(stats));
-  res.json({ ok: true, stats });
+  const nextOffset = (BATCH > 0 && OFFSET + BATCH < totalCandidates) ? OFFSET + BATCH : null;
+  console.log("[backfill-meta-ads] batch:", JSON.stringify({ offset: OFFSET, batch: BATCH, totalCandidates, ...stats }));
+  res.json({ ok: true, stats, total_candidates: totalCandidates, offset: OFFSET, next_offset: nextOffset });
 }
 app.post("/api/admin/backfill-meta-ads", authMiddleware, runBackfillMetaAds);
 app.post("/api/cron/backfill-meta-ads", runBackfillMetaAds);

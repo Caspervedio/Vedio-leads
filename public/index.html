@@ -3212,7 +3212,131 @@ async function adminBulkRunGuarded(opts){
     confirmLabel: opts.confirmLabel || '▶ Kør',
   });
   if (!ok) return;
+  if (opts.batched) return adminBulkRunBatched(opts);
   await adminBulkRun(opts);
+}
+
+// Batched bulk-op runner — fires the endpoint N times with offset+
+// batch_size pagination, each batch ~20 leads = under Cloud Run's
+// timeout. Shows a live progress bar with elapsed time, per-stage
+// stats, ETA, and a Stop button. Partial progress is persisted by the
+// backend after each batch so closing the browser only stops the
+// front-end loop, never loses work.
+async function adminBulkRunBatched(opts){
+  const resultEl = document.getElementById('admin-bulk-result');
+  const batchSize = opts.batchSize || 20;
+  let offset = 0;
+  let totalCandidates = null;
+  let totalProcessed = 0;
+  let batchesRun = 0;
+  const startTs = Date.now();
+  let stopRequested = false;
+  const stats = {};
+  const fmtDuration = (sec) => sec < 60
+    ? `${sec}s`
+    : `${Math.floor(sec/60)}m ${sec%60}s`;
+  const render = (mode) => {
+    if (!resultEl) return;
+    const elapsedSec = Math.round((Date.now() - startTs) / 1000);
+    const pct = totalCandidates ? Math.min(100, Math.round(100 * totalProcessed / totalCandidates)) : 0;
+    const etaSec = (totalCandidates != null && totalProcessed > 0 && totalProcessed < totalCandidates && elapsedSec > 0)
+      ? Math.round((totalCandidates - totalProcessed) * elapsedSec / totalProcessed)
+      : null;
+    const statsRows = Object.entries(stats).map(([k, v]) =>
+      `<div style="display:flex;justify-content:space-between;padding:3px 0"><span style="color:var(--w55);font-size:11px">${e(k)}</span><strong style="color:#fff;font-size:11px;font-variant-numeric:tabular-nums">${typeof v === 'number' ? v.toLocaleString('da-DK') : e(String(v))}</strong></div>`
+    ).join('');
+    const isRunning = mode === 'running';
+    const isDone = mode === 'done';
+    const isStopped = mode === 'stopped';
+    const isError = mode === 'error';
+    const headerColor = isError ? '#fca5a5' : isDone ? '#6ee7b7' : isStopped ? '#fcd34d' : '#fff';
+    const headerIcon = isError ? '✕' : isDone ? '✓' : isStopped ? '⏸' : '';
+    const headerText = isError ? `${opts.label} fejlede`
+      : isDone ? `${opts.label} færdig`
+      : isStopped ? `${opts.label} stoppet`
+      : `${opts.label} kører…`;
+    const stopBtn = isRunning
+      ? `<button id="bulk-stop-btn" style="margin-left:auto;background:rgba(248,113,113,0.16);border:1px solid rgba(248,113,113,0.36);border-radius:7px;padding:5px 12px;color:#fca5a5;font-size:11px;font-weight:700;cursor:pointer;font-family:Outfit,sans-serif">⏹ Stop efter denne batch</button>`
+      : '';
+    const totalLine = totalCandidates != null
+      ? `<strong style="color:#fff">${totalProcessed.toLocaleString('da-DK')}</strong> af <strong>${totalCandidates.toLocaleString('da-DK')}</strong> leads`
+      : `<strong style="color:#fff">${totalProcessed.toLocaleString('da-DK')}</strong> leads behandlet`;
+    resultEl.innerHTML = `
+      <div style="background:var(--w04);border:1px solid var(--w08);border-radius:10px;padding:14px 18px;font-size:12.5px;color:var(--w80)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          ${isRunning ? '<span class="search-spinner" style="display:inline-block;width:14px;height:14px"></span>' : `<span style="color:${headerColor};font-size:15px;font-weight:700">${headerIcon}</span>`}
+          <strong style="color:${headerColor};font-size:13px">${e(headerText)}</strong>
+          ${stopBtn}
+        </div>
+        ${totalCandidates != null ? `
+          <div style="height:8px;background:var(--w04);border:1px solid var(--w08);border-radius:5px;overflow:hidden;margin-bottom:10px;position:relative">
+            <div style="height:100%;background:linear-gradient(90deg,#34d399,#6ee7b7);width:${pct}%;transition:width 0.4s ease-out"></div>
+            <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#000;mix-blend-mode:overlay">${pct}%</div>
+          </div>
+        ` : ''}
+        <div style="font-size:12px;color:var(--w80);margin-bottom:10px;display:flex;flex-wrap:wrap;gap:10px 18px">
+          <span>${totalLine}</span>
+          <span style="color:var(--w55)">batch <strong style="color:#fff;font-variant-numeric:tabular-nums">${batchesRun}</strong> × ${batchSize}</span>
+          <span style="color:var(--w55)">elapsed <strong style="color:#fff;font-variant-numeric:tabular-nums">${fmtDuration(elapsedSec)}</strong></span>
+          ${etaSec != null ? `<span style="color:var(--w55)">~<strong style="color:#fff;font-variant-numeric:tabular-nums">${fmtDuration(etaSec)}</strong> tilbage</span>` : ''}
+        </div>
+        ${Object.keys(stats).length > 0 ? `
+          <div style="background:var(--w04);border:1px solid var(--w08);border-radius:8px;padding:10px 14px;max-height:200px;overflow-y:auto">${statsRows}</div>
+        ` : ''}
+      </div>
+    `;
+    if (isRunning) {
+      document.getElementById('bulk-stop-btn')?.addEventListener('click', () => {
+        stopRequested = true;
+        const btn = document.getElementById('bulk-stop-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Stopper efter denne batch…'; btn.style.opacity = '0.6'; }
+      });
+    }
+  };
+  render('running');
+  while (true) {
+    if (stopRequested) { render('stopped'); return; }
+    const sep = opts.url.includes('?') ? '&' : '?';
+    const url = `${opts.url}${sep}offset=${offset}&batch_size=${batchSize}`;
+    let r, d;
+    try {
+      r = await fetch(url, { method: 'POST', headers: { ...ah(), 'Content-Type': 'application/json' } });
+      d = await r.json().catch(() => ({}));
+    } catch (ex) {
+      stats.error = ex.message;
+      render('error');
+      return;
+    }
+    if (!r.ok) {
+      stats.error = `${r.status} ${d.error || 'ukendt fejl'}`;
+      render('error');
+      return;
+    }
+    batchesRun++;
+    // Aggregate numeric stats across batches
+    for (const k in (d.stats || {})) {
+      const v = d.stats[k];
+      if (typeof v === 'number') stats[k] = (stats[k] || 0) + v;
+      else if (typeof v === 'boolean' && v) stats[k] = true;
+    }
+    if (typeof d.total_candidates === 'number') totalCandidates = d.total_candidates + (totalCandidates ? 0 : 0); // first observation wins
+    if (totalCandidates == null && typeof d.total_candidates === 'number') totalCandidates = d.total_candidates;
+    // total candidates is recomputed every batch on the backend (filter
+    // result changes as leads get bulk_enriched_at stamped), so use the
+    // first-seen value as the denominator to keep the progress bar stable
+    if (totalCandidates == null) totalCandidates = d.total_candidates ?? null;
+    // Processed = max(stats.queued, stats.processed, stats.scanned)
+    const batchProcessed = (d.stats?.queued || d.stats?.processed || d.stats?.scanned || 0);
+    totalProcessed += batchProcessed;
+    render('running');
+    if (d.next_offset == null) {
+      render('done');
+      return;
+    }
+    offset = d.next_offset;
+    // small breath between batches so Cloud Run can save + we don't slam
+    await new Promise((res) => setTimeout(res, 400));
+  }
 }
 function adminBulkRunStripNonDk(){
   return adminBulkRunGuarded({
@@ -3252,8 +3376,10 @@ function adminBulkBackfillContacts(){
   return adminBulkRunGuarded({
     label: 'Bulk-enrich aktive leads (Apollo → FE → Lusha)',
     url: '/api/admin/backfill-contacts',
+    batched: true,
+    batchSize: 20,
     confirmTitle: 'Bulk-enrich hele aktive pool?',
-    confirmMessage: 'Kører den fulde tre-trins kæde på alle aktive leads:\n\n  1. Apollo people-match (1 credit/lead)\n  2. Full Enrich Contact Enrich for direkte mobil ($0.60 ved hit)\n  3. Lusha v2 /person fallback ($0.30 ved hit)\n\nSpringer leads over der allerede har contact-niveau telefon ELLER er bulk-enriched sidste 7 dage. ~503 aktive leads, realistisk total $100-150. Genkørsel er billig pga 7-dages skip-guard.\n\nKøres allerede via daglig cron — kør kun manuelt for at fange backloggen NU i stedet for at vente til i morgen kl 04.',
+    confirmMessage: 'Kører den fulde tre-trins kæde på alle aktive leads:\n\n  1. Apollo people-match (1 credit/lead)\n  2. Full Enrich Contact Enrich for direkte mobil ($0.60 ved hit)\n  3. Lusha v2 /person fallback ($0.30 ved hit)\n\nKøres i batches af 20 leads ad gangen med live progress (1-3 min per batch). Springer leads over der allerede har contact-niveau telefon ELLER er bulk-enriched sidste 7 dage. ~503 aktive leads, realistisk total $100-150. Stop-knap under kørsel — partial progress gemmes efter hver batch.',
     confirmLabel: '▶ Ja, kør (~$100-150)',
   });
 }
@@ -3279,8 +3405,10 @@ function adminBulkBackfillMetaAds(){
   return adminBulkRunGuarded({
     label: 'Backfill Meta Ads check',
     url: '/api/admin/backfill-meta-ads',
+    batched: true,
+    batchSize: 20,
     confirmTitle: 'Backfill Meta Ads check?',
-    confirmMessage: 'Kører Apify Meta Ads scraper på alle aktive leads. For hver lead:\n\n• Verificerer om firmaet annoncerer på Meta lige nu\n• Fanger Facebook page ID (→ side-specifik Ad Library URL)\n• Stempler ad-aktivitets-tæller på leaden\n\nKOSTER PENGE — Apify ~$0.025 per lead. ~255 leads ≈ $6.40 i værste fald. Springer leads over der er Meta-tjekket inden for sidste 14 dage.\n\nKøres allerede automatisk på alle nye leads ved intake. Kør kun manuelt for at fange backloggen.',
+    confirmMessage: 'Kører Apify Meta Ads scraper på alle aktive leads. For hver lead:\n\n• Verificerer om firmaet annoncerer på Meta lige nu\n• Fanger Facebook page ID (→ side-specifik Ad Library URL)\n• Stempler ad-aktivitets-tæller på leaden\n\nKOSTER PENGE — Apify ~$0.025 per lead. ~255 leads ≈ $6.40 i værste fald. Springer leads over der er Meta-tjekket inden for sidste 14 dage. Kører i batches af 20 leads ad gangen med live progress og stop-knap.',
     confirmLabel: '▶ Ja, kør (koster credits)',
   });
 }
