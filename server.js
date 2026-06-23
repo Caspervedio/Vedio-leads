@@ -2547,7 +2547,7 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
           const ud2 = loadUserData(userId);
           const lead2 = (ud2.leads || []).find((l) => l.cvr === cvr);
           if (!lead2) continue;
-          if (!lead2.phone) lead2.phone = dfPhone;
+          if (!lead2.phone) { lead2.phone = dfPhone; lead2.ph = dfPhone; }
           lead2.phone_missing = false;
           lead2.apollo_enrichment_pending = false; // stop drain re-picking
           lead2.apollo_enrichment_deferred = true; // signal: contacts unfetched, fetch on cockpit-open
@@ -2576,9 +2576,9 @@ async function enrichUserLeadsViaApolloAsync(userId, cvrs, opts = {}) {
         // Phone priority: Apollo direct dial > Datafordeler switchboard >
         // Apollo org switchboard.
         const directDial = (contacts.find((c) => c.phone) || {}).phone;
-        if (directDial) lead2.phone = directDial;
-        else if (!lead2.phone && dfPhone) lead2.phone = dfPhone;
-        else if (!lead2.phone && company?.phone) lead2.phone = company.phone;
+        if (directDial)                                 { lead2.phone = directDial;     lead2.ph = directDial; }
+        else if (!lead2.phone && dfPhone)               { lead2.phone = dfPhone;        lead2.ph = dfPhone; }
+        else if (!lead2.phone && company?.phone)        { lead2.phone = company.phone;  lead2.ph = company.phone; }
         lead2.phone_missing = !lead2.phone;
         saveUserData(userId, ud2);
       } catch (e) {
@@ -8252,8 +8252,8 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.apollo_company = poolEntry.apollo_company || null;
     lead.apollo_enriched_at = poolEntry.apollo_enriched_at;
     const directDial = (lead.contacts.find((c) => c.phone) || {}).phone;
-    if (directDial) lead.phone = directDial;
-    else if (!lead.phone && lead.apollo_company?.phone) lead.phone = lead.apollo_company.phone;
+    if (directDial)                                     { lead.phone = directDial;                lead.ph = directDial; }
+    else if (!lead.phone && lead.apollo_company?.phone) { lead.phone = lead.apollo_company.phone; lead.ph = lead.apollo_company.phone; }
     lead.phone_missing = !lead.phone;
     saveUserData(req.userId, ud);
     return res.json({ ok: true, cached: "pool", contacts: lead.contacts, company: lead.apollo_company });
@@ -8269,8 +8269,8 @@ app.post("/api/apollo/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.meta_advertiser = !!(company && company.metaAdvertiser);
     lead.ad_signals = (company && company.metaAdSignals) || [];
     const directDial = (contacts.find((c) => c.phone) || {}).phone;
-    if (directDial) lead.phone = directDial;
-    else if (!lead.phone && company?.phone) lead.phone = company.phone;
+    if (directDial)                          { lead.phone = directDial;    lead.ph = directDial; }
+    else if (!lead.phone && company?.phone)  { lead.phone = company.phone; lead.ph = company.phone; }
     lead.phone_missing = !lead.phone;
     saveUserData(req.userId, ud);
     // Write-through to state.json so the pool cache benefits
@@ -11816,7 +11816,7 @@ app.post("/api/kaspr/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.contacts = poolEntry.contacts || [];
     lead.kaspr_enriched_at = poolEntry.kaspr_enriched_at;
     const primaryPhone = (lead.contacts.find((c) => c.phone) || {}).phone;
-    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    if (primaryPhone && !lead.phone) { lead.phone = primaryPhone; lead.ph = primaryPhone; }
     saveUserData(req.userId, ud);
     return res.json({ ok: true, cached: "pool", contacts: lead.contacts });
   }
@@ -11829,7 +11829,7 @@ app.post("/api/kaspr/enrich/:cvr", authMiddleware, async (req, res) => {
     lead.contacts = contacts;
     lead.kaspr_enriched_at = new Date().toISOString();
     const primaryPhone = (contacts.find((c) => c.phone) || {}).phone;
-    if (primaryPhone && !lead.phone) lead.phone = primaryPhone;
+    if (primaryPhone && !lead.phone) { lead.phone = primaryPhone; lead.ph = primaryPhone; }
     saveUserData(req.userId, ud);
     // Also write-through to state.json's pool entry so other users
     // benefit + the cron doesn't re-enrich this CVR.
