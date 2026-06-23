@@ -11804,23 +11804,36 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
   return runArchiveByCvrs(req, res);
 });
 
-// ─── Backfill contacts via Apollo people-match ────────────────────────
-// One-shot batch enrichment for the existing queue. Walks active leads
-// that have a domain (or real CVR) but no contacts attached, calls
-// enrichWithApollo for each, saves the returned contacts.
+// ─── Backfill contacts: Apollo → FE Contact Enrich → Lusha ────────────
+// Full-chain bulk enrichment for the existing queue. Walks active leads
+// that lack contacts OR have contacts without phones, runs the same
+// three-stage chain the cockpit auto-reveal uses:
 //
-// Used after a queue cleanup to bulk-attach decision-makers to legacy
-// leads so the SDR doesn't have to open each one to trigger the
-// auto-reveal. Cost: 1 Apollo credit per lead processed.
+//   1. Apollo people-match — finds 1 contact + sometimes phone (1 credit)
+//   2. FE Contact Enrich on top contact — finds direct mobile (10 credits
+//      = $0.60 on hit, no charge on whiff)
+//   3. Lusha v2 /person fallback — fires only when FE Contact Enrich
+//      whiffs (~$0.30 on hit, no charge on whiff)
+//
+// Conservative skip: leads where bulk_enriched_at is within last 7 days
+// (so re-runs of the bulk-op are cheap + idempotent).
+//
+// Cost per lead (worst case full chain): ~$0.50. Realistic average with
+// short-circuits: ~$0.20-0.30 per lead. For 500 active leads = ~$100-150.
 async function runBackfillContacts(req, res) {
   const TARGET_USER = (req.query.userId || req.userId || "u1").toString();
-  const LIMIT = Math.max(1, Math.min(200, Number(req.query.limit) || 100));
+  const LIMIT = Math.max(1, Math.min(800, Number(req.query.limit) || 600));
   const DRY = req.query.dry === "1";
   const stats = {
     candidates: 0,
     processed: 0,
-    contactsAdded: 0,
+    apolloHits: 0,
     apolloMisses: 0,
+    feAttempts: 0,
+    feHits: 0,
+    lushaAttempts: 0,
+    lushaHits: 0,
+    leadsWithPhone: 0,
     capReached: false,
     errors: 0,
   };
@@ -11828,15 +11841,26 @@ async function runBackfillContacts(req, res) {
     return res.status(503).json({ error: "Apollo not configured" });
   }
   const ud = loadUserData(TARGET_USER);
-  // Candidates: active, no contacts, has domain OR real 8-digit CVR
+  // Skip if bulk-enriched within last 7 days — idempotent re-run guard
+  const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - RECENT_MS;
+  // Candidates: active, has callable identity (domain OR real CVR), AND
+  // either no contacts yet OR contacts without phone. Skip recently-
+  // enriched leads to make the bulk-op cheap to re-run.
   const candidates = (ud.leads || []).filter((l) => {
     if (l.lastAction === "not-relevant") return false;
     if (l.twenty_opportunity_id) return false;
-    if (Array.isArray(l.contacts) && l.contacts.length > 0) return false;
+    const t = l.bulk_enriched_at ? new Date(l.bulk_enriched_at).getTime() : 0;
+    if (t && t > cutoff) return false;
     const domain = String(l.web || l.website || "").toLowerCase();
     const hasDomain = !!(domain && domain.includes(".") && domain.length > 4);
     const hasRealCvr = /^\d{8}$/.test(String(l.cvr || ""));
-    return hasDomain || hasRealCvr;
+    if (!hasDomain && !hasRealCvr) return false;
+    // Already has a contact-level phone? skip.
+    const cs = Array.isArray(l.contacts) ? l.contacts : [];
+    const hasContactPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
+    if (hasContactPhone) return false;
+    return true;
   }).slice(0, LIMIT);
   stats.candidates = candidates.length;
   if (DRY) {
@@ -11845,27 +11869,111 @@ async function runBackfillContacts(req, res) {
 
   for (const lead of candidates) {
     try {
-      // Re-load state — other crons may have mutated since the candidate
-      // list was built.
+      // Re-load state — other crons may have mutated since candidate list built
       const udNow = loadUserData(TARGET_USER);
       const l = (udNow.leads || []).find((x) => x.cvr === lead.cvr);
-      if (!l || (l.contacts && l.contacts.length > 0) || l.lastAction === "not-relevant") {
-        continue;
-      }
-      const { contacts, company } = await enrichWithApollo({
-        name: l.name,
-        domain: l.web || l.website,
-      });
+      if (!l || l.lastAction === "not-relevant") continue;
+      const csNow = Array.isArray(l.contacts) ? l.contacts : [];
+      if (csNow.some((c) => c && (c.phone || c.direct_phone || c.mobile))) continue;
       stats.processed++;
-      if (contacts && contacts.length > 0) {
-        l.contacts = contacts;
-        l.apollo_company = company || l.apollo_company;
-        l.apollo_enriched_at = new Date().toISOString();
-        saveUserData(TARGET_USER, udNow);
-        stats.contactsAdded++;
-      } else {
-        stats.apolloMisses++;
+
+      // ─── STAGE 1: Apollo people-match ──────────────────────────────
+      if (csNow.length === 0) {
+        const { contacts: aContacts, company } = await enrichWithApollo({
+          name: l.name,
+          domain: l.web || l.website,
+        });
+        if (aContacts && aContacts.length > 0) {
+          l.contacts = aContacts;
+          l.apollo_company = company || l.apollo_company;
+          l.apollo_enriched_at = new Date().toISOString();
+          stats.apolloHits++;
+        } else {
+          stats.apolloMisses++;
+        }
       }
+
+      // Pick top contact for phone reveal. None? skip phone stages.
+      const contactsForReveal = Array.isArray(l.contacts) ? l.contacts : [];
+      let directDial = "";
+      if (contactsForReveal.length > 0) {
+        const top = await pickTopContactForFullEnrich(contactsForReveal);
+        if (top && top.name) {
+          const [firstName, ...rest] = String(top.name).trim().split(/\s+/);
+          const lastName = rest.join(" ");
+
+          // ─── STAGE 2: Full Enrich Contact Enrich ──────────────────
+          if (isFullEnrichConfigured()) {
+            stats.feAttempts++;
+            try {
+              const contact = {
+                first_name: firstName,
+                last_name: lastName,
+                company_name: l.name,
+                domain: (l.apollo_company && l.apollo_company.domain) || l.web || l.website || "",
+              };
+              if (top.linkedin || top.linkedinUrl) contact.linkedin_url = top.linkedin || top.linkedinUrl;
+              const result = await fullEnrichLookupOne(contact, { timeoutMs: 180_000 });
+              const phone = result?.contact_info?.most_probable_phone?.number;
+              const email = result?.contact_info?.most_probable_work_email?.email;
+              if (phone) {
+                directDial = phone;
+                const idx = l.contacts.findIndex((c) => c === top);
+                if (idx >= 0) {
+                  l.contacts[idx] = {
+                    ...top,
+                    phone,
+                    phones: [{ number: phone, type: "mobile", typeLabel: "Direkte (Full Enrich)" }],
+                    email: email || top.email,
+                    source_phone: "fullenrich",
+                  };
+                }
+                stats.feHits++;
+              }
+            } catch (e) {
+              console.warn("[backfill-contacts/fe]", l.cvr, e.message);
+            }
+          }
+
+          // ─── STAGE 3: Lusha fallback (FE whiffed) ─────────────────
+          if (!directDial && isLushaConfigured() && firstName && lastName) {
+            stats.lushaAttempts++;
+            try {
+              const lr = await lushaLookupContact({
+                firstName,
+                lastName,
+                companyName: l.name,
+                linkedinUrl: top.linkedin || top.linkedinUrl || "",
+                timeoutMs: 15_000,
+              });
+              if (lr && lr.phone) {
+                directDial = lr.phone;
+                const idx = l.contacts.findIndex((c) => c === top);
+                if (idx >= 0) {
+                  l.contacts[idx] = {
+                    ...top,
+                    phone: lr.phone,
+                    phones: lr.phones,
+                    email: lr.email || top.email,
+                    source_phone: "lusha",
+                  };
+                }
+                stats.lushaHits++;
+              }
+            } catch (e) {
+              console.warn("[backfill-contacts/lusha]", l.cvr, e.message);
+            }
+          }
+        }
+      }
+
+      if (directDial) {
+        l.phone = directDial;
+        l.ph = directDial;
+        stats.leadsWithPhone++;
+      }
+      l.bulk_enriched_at = new Date().toISOString();
+      saveUserData(TARGET_USER, udNow);
     } catch (e) {
       stats.errors++;
       if (e && e.code === "APOLLO_CAP_REACHED") {
@@ -11877,7 +11985,7 @@ async function runBackfillContacts(req, res) {
   }
   logActivity(
     "backfill",
-    `🔗 Backfill kontakter: ${stats.contactsAdded}/${stats.processed} fundet via Apollo (${stats.apolloMisses} miss)`,
+    `🔗 Bulk-enrich: ${stats.leadsWithPhone}/${stats.processed} fik direkte mobil. Apollo:${stats.apolloHits} FE:${stats.feHits} Lusha:${stats.lushaHits}`,
     { stats, userId: TARGET_USER },
   );
   console.log("[backfill-contacts]", JSON.stringify(stats));

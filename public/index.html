@@ -3250,11 +3250,11 @@ function adminBulkArchiveByCvrs(){
 }
 function adminBulkBackfillContacts(){
   return adminBulkRunGuarded({
-    label: 'Backfill contacts (Apollo + FE + Lusha)',
+    label: 'Bulk-enrich aktive leads (Apollo → FE → Lusha)',
     url: '/api/admin/backfill-contacts',
-    confirmTitle: 'Backfill contacts på leads uden contacts?',
-    confirmMessage: 'Kører Apollo + Full Enrich + Lusha på leads der mangler beslutningstagere. KAN KOSTE PENGE — afhænger af pool-størrelse.',
-    confirmLabel: '▶ Ja, kør',
+    confirmTitle: 'Bulk-enrich hele aktive pool?',
+    confirmMessage: 'Kører den fulde tre-trins kæde på alle aktive leads:\n\n  1. Apollo people-match (1 credit/lead)\n  2. Full Enrich Contact Enrich for direkte mobil ($0.60 ved hit)\n  3. Lusha v2 /person fallback ($0.30 ved hit)\n\nSpringer leads over der allerede har contact-niveau telefon ELLER er bulk-enriched sidste 7 dage. ~503 aktive leads, realistisk total $100-150. Genkørsel er billig pga 7-dages skip-guard.\n\nKøres allerede via daglig cron — kør kun manuelt for at fange backloggen NU i stedet for at vente til i morgen kl 04.',
+    confirmLabel: '▶ Ja, kør (~$100-150)',
   });
 }
 function adminBulkDfVerifyUnknowns(){
