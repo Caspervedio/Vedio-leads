@@ -1687,18 +1687,19 @@ async function softRefresh() {
   _dashLastRefreshAt = Date.now();
 }
 
-// ─── Dashboard auto-refresh ──────────────────────────────────────────
-// Keeps the autodialer page (queue + activity table) live without the
-// user having to hit ↻. Re-fetches /api/leads every 45s while:
-//   • the autodialer view is the active page, AND
-//   • the browser tab is visible (Page Visibility API), AND
-//   • no cockpit modal is open (cockpit handles its own polling)
-// Silent — no toast, no spinner. Just numbers updating in place.
+// ─── Live auto-refresh ────────────────────────────────────────────────
+// Keeps EVERY surface live without the user hitting ↻. Re-fetches
+// /api/leads every 15s while the browser tab is visible — then re-
+// renders whichever view is currently open (autodialer / cockpit /
+// inspector / dashboard). Cron jobs, bulk-enrich chains, and other
+// SDRs' actions become visible within ~15s automatically.
+// Silent — no toast, no spinner. The "🟢 Live" indicator in the
+// autodialer header shows the tick is alive.
 let _dashAutoRefreshTimer = null;
 let _dashLabelTickTimer = null;
 let _dashLastRefreshAt = Date.now();
 let _dashRefreshInFlight = false;
-const DASH_AUTO_REFRESH_MS = 45_000;
+const DASH_AUTO_REFRESH_MS = 15_000;  // was 45s — too laggy
 const DASH_LABEL_TICK_MS = 5_000;
 
 function _updateDashFreshnessLabel() {
@@ -1714,13 +1715,28 @@ function _updateDashFreshnessLabel() {
 async function _dashAutoRefreshTick() {
   if (_dashRefreshInFlight) return;
   if (document.hidden) return;                      // tab not visible — skip
-  if (document.getElementById('cockpit-modal')) return;  // cockpit open — its own loop
-  if (!document.getElementById('autodialer-page') ||
-      document.getElementById('autodialer-page').style.display === 'none') return;
   _dashRefreshInFlight = true;
   try {
     await loadUserState();
-    if (typeof renderAutodialerPage === 'function') renderAutodialerPage();
+    // Re-render every surface that's currently open. Cockpit + inspector
+    // run alongside the autodialer-page render so background changes
+    // (cron jobs, bulk-enrich, other SDRs) become visible within ~15s
+    // regardless of which view the SDR is sitting on.
+    const adPage = document.getElementById('autodialer-page');
+    if (adPage && adPage.style.display !== 'none' && typeof renderAutodialerPage === 'function') {
+      renderAutodialerPage();
+    }
+    if (typeof _cockpit !== 'undefined' && _cockpit && _cockpit.open && typeof renderCockpit === 'function') {
+      // Preserve the SDR's current position in the queue — just re-bind
+      // the lead reference + re-render.
+      try { renderCockpit(); } catch(_) {}
+    }
+    const insp = document.getElementById('lead-inspector-bg');
+    if (insp && insp.style.display !== 'none' && typeof openLeadInspector === 'function') {
+      const titleEl = document.getElementById('lead-inspector-title');
+      const cvr = titleEl && titleEl.dataset && titleEl.dataset.cvr;
+      if (cvr) { try { openLeadInspector(cvr); } catch(_) {} }
+    }
     if (typeof renderDashboardActivity === 'function') renderDashboardActivity();
     if (typeof renderPipelineStatusWidget === 'function') renderPipelineStatusWidget();
     if (typeof renderRecentLeadsWidget === 'function') renderRecentLeadsWidget();
@@ -6194,10 +6210,18 @@ function renderAutodialerPage(){
   if(_adState.enrichmentFilter && _adState.enrichmentFilter !== 'all'){
     filtered = filtered.filter((l) => {
       const cs = Array.isArray(l.contacts) ? l.contacts : [];
-      const hasNamedContactPhone = cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
+      // Matches the cockpit's callable definition exactly — named contact
+      // AND a dialable number (direct on contact OR lead-level switchboard).
+      // If these two filters drift apart, leads can be promoted via the
+      // "→ Tilføj alle til ring-liste" button and then vanish from the
+      // cockpit because the cockpit's gate is stricter.
+      const hasNamedContact = cs.some((c) => c && c.name);
+      const contactHasPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
+      const leadHasPhone = !!(l.phone || l.ph || '').toString().trim();
+      const callable = hasNamedContact && (contactHasPhone || leadHasPhone);
       const enriched = !!l.bulk_enriched_at;
-      if (_adState.enrichmentFilter === 'callable')    return hasNamedContactPhone;
-      if (_adState.enrichmentFilter === 'needs-manual') return enriched && !hasNamedContactPhone;
+      if (_adState.enrichmentFilter === 'callable')    return callable;
+      if (_adState.enrichmentFilter === 'needs-manual') return enriched && !callable;
       if (_adState.enrichmentFilter === 'not-enriched') return !enriched;
       return true;
     });
@@ -7144,6 +7168,9 @@ function openLeadInspector(cvr){
   if (!bg || !aside || !titleEl || !bodyEl) return;
 
   titleEl.textContent = lead.name || lead.cvr || '—';
+  // Stamp the cvr so the live polling tick can re-render the inspector
+  // in-place when leads change in the background.
+  titleEl.dataset.cvr = cvr;
 
   // 2026-06-17: rewrote the inspector to match the cockpit detail panel —
   // rich contact cards, quick-links bar, talking points, enrichment
@@ -9110,9 +9137,19 @@ function openCockpit(forceCvr){
   //   • Due callbacks — time-sensitive, callback_at <= now
   //   • Engaged leads — SDR has worked them (interested/follow-up/sms)
   // Leads failing the gate stay in Leadlist for manual enrichment.
+  // Callable: named contact AND a dialable number. Direct contact phone
+  // is preferred, but lead.phone (switchboard / Datafordeler) is a valid
+  // fallback — SDR can call the switchboard and ask for the person.
+  // Without this fallback, leads promoted to a calling list via the
+  // "Klar at ringe" view vanish when the Leadlist's looser filter accepts
+  // them but the cockpit's stricter filter rejects them — making the
+  // bulk-promote action look like it lost the leads.
   const hasCallableContact = (l) => {
     const cs = Array.isArray(l.contacts) ? l.contacts : [];
-    return cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
+    if (!cs.some((c) => c && c.name)) return false;
+    const contactHasPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
+    const leadHasPhone = !!(l.phone || l.ph || '').toString().trim();
+    return contactHasPhone || leadHasPhone;
   };
   const engagedActions = new Set(['interested','follow-up','sms','call-back']);
   // Track what the gate filters out so we can show "X waiting in Leadlist"
@@ -11258,8 +11295,10 @@ function sv(v){
   const aoPage=document.getElementById('admin-oversight-page');
   const abPage=document.getElementById('admin-bulk-page');
 
-  // Hide everything first
-  if(v!=='autodialer' && typeof stopDashAutoRefresh==='function') stopDashAutoRefresh();
+  // Live polling now runs across ALL views (cron jobs, bulk-enrich,
+  // other SDRs' actions push state in the background). Start it
+  // unconditionally — tick is no-op when tab is hidden.
+  if (typeof startDashAutoRefresh === 'function') startDashAutoRefresh();
   bw.style.display='none';tb.style.display='none';
   if(sb)sb.style.display='none';if(selb)selb.style.display='none';
   document.getElementById('sb-lists').style.display='none';
