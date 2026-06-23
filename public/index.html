@@ -6803,7 +6803,7 @@ function renderAutodialerPage(){
           return `<tr data-cvr="${e(l.cvr)}" ${dragAttrs} ${rowAction} style="border-bottom:1px solid var(--w04);${showArchive?'opacity:0.78':'cursor:pointer'};transition:background 0.1s${l.icpFit&&!showArchive?';background:rgba(52,211,153,0.04)':''}${isChecked?';background:rgba(124,58,237,0.10)':''}${dimRow}" ${showArchive?'':`onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':l.icpFit?'rgba(52,211,153,0.04)':'transparent'}'"`}>
             ${checkboxCell}
             <td style="padding:10px 8px 10px ${showCheckbox?'4px':'16px'};font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${showArchive?'':'<span style="color:var(--w35);cursor:grab;margin-right:4px" title="Træk for at omarrangere">⠿</span>'}${i+1}</td>
-            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${nicheChip(l)}${inListChip(l)}${(window._adminMode && l._ownerName) ? `<span title="Ejer: ${e(l._ownerName)}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;background:rgba(96,165,250,0.14);color:#93c5fd;border:1px solid rgba(96,165,250,0.28);letter-spacing:0.3px;vertical-align:middle">👤 ${e(l._ownerName)}</span>` : ''}${adBadge?' '+adBadge:''}${socialIcons}</td>
+            <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span>${nicheChip(l)}${inListChip(l)}${(window._adminMode && l._ownerName) ? `<span title="Ejer: ${e(l._ownerName)}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:6px;background:rgba(96,165,250,0.14);color:#93c5fd;border:1px solid rgba(96,165,250,0.28);letter-spacing:0.3px;vertical-align:middle">👤 ${e(l._ownerName)}</span>` : ''}${adBadge?' '+adBadge:''}${socialIcons} <span style="margin-left:4px">${enrichmentChip(l)}</span></td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${dispCell}</td>
             <td style="padding:10px 14px;text-align:right">${lastCell}</td>
@@ -9411,6 +9411,43 @@ async function _cockpitAutoReveal(cvr) {
   } catch (_) { /* silent fallback to manual button */ }
 }
 
+// Enrichment-status chip — shows whether the bulk-enrich chain has
+// touched this lead, so SDR doesn't waste time manually researching
+// leads the automated chain already tried (and either found or
+// confirmed unavailable).
+//
+// States:
+//   • Enriched today  → green ✓ "Beriget i dag"
+//   • Enriched 1-7d   → gray  ✓ "Beriget Nd siden"
+//   • Enriched >7d    → faded ✓ "Beriget for længe siden"
+//   • Never enriched  → orange dot "Ikke beriget"
+function enrichmentChip(lead) {
+  const ts = lead && lead.bulk_enriched_at;
+  if (!ts) {
+    return `<span title="Endnu ikke kørt gennem berigelses-kæden — vent på næste cron eller kør manuelt." style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(251,146,60,0.16);color:#fdba74;font-weight:700;letter-spacing:0.3px">⏳ ikke beriget</span>`;
+  }
+  let ms;
+  try { ms = Date.now() - new Date(ts).getTime(); } catch { ms = 999e9; }
+  const days = Math.floor(ms / 86400000);
+  const today = days < 1;
+  const recent = days < 7;
+  let label, bg, fg;
+  if (today) {
+    label = '✓ beriget i dag';
+    bg = 'rgba(52,211,153,0.16)';
+    fg = '#6ee7b7';
+  } else if (recent) {
+    label = `✓ beriget ${days}d siden`;
+    bg = 'rgba(148,163,184,0.14)';
+    fg = '#cbd5e1';
+  } else {
+    label = `✓ beriget ${days}d siden`;
+    bg = 'var(--w04)';
+    fg = 'var(--w55)';
+  }
+  return `<span title="Berigelses-kæden (Apollo+FE+Lusha+SERP) er kørt på denne lead. Hvis der ikke er fundet kontakt/telefon = de findes ikke i nogen af kilderne." style="font-size:9px;padding:1px 5px;border-radius:8px;background:${bg};color:${fg};font-weight:700;letter-spacing:0.3px">${label}</span>`;
+}
+
 function renderCockpitQueue(){
   const wrap=document.getElementById('cockpit-queue');if(!wrap)return;
   // Search filter — narrows the queue rail to leads matching by name,
@@ -9512,9 +9549,10 @@ function renderCockpitQueue(){
             ${active?'<span style="color:var(--purple-light)">▶</span>':''}
             <span style="font-size:12.5px;font-weight:700;color:${active?'#fff':'var(--w80)'};line-height:1.2;flex:1">${e(trunc(l.name,28))}</span>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--w35)">
+          <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--w35);flex-wrap:wrap">
             <span style="font-family:monospace">${l.cvr}</span>
             ${lastChip}
+            ${enrichmentChip(l)}
           </div>
         </div>`;
       }).join('')
