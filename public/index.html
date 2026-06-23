@@ -6743,52 +6743,46 @@ function renderAutodialerPage(){
   // (Google "company +45", LinkedIn, website contact page) and paste it
   // back inline → lead auto-flips to dialable.
   if(showPhoneMissing){
+    // 2026-06-23 redesign: dense table-row layout (was big stacked cards).
+    // SDR scrolls a clean list, clicks any row → side-panel inspector
+    // opens with all the research tools (paste LinkedIn, run chain,
+    // manual phone input). Matches the regular Leadlist table aesthetic
+    // for consistency.
+    const trunc = (s,n)=>{ s=String(s||''); return s.length>n?s.slice(0,n):s; };
     queueEl.innerHTML = `<div style="background:var(--dark2);border:1px solid var(--w08);border-radius:14px;overflow:hidden">
       <div style="padding:14px 18px;border-bottom:1px solid var(--w08);background:rgba(252,165,165,0.06)">
-        <div style="font-size:13px;font-weight:800;color:#fca5a5;margin-bottom:4px">⚠ Research-kø · ${filtered.length} høj-værdi leads mangler nummer</div>
+        <div style="font-size:13px;font-weight:800;color:#fca5a5;margin-bottom:4px">⚠ Mangler nummer · ${filtered.length} leads</div>
         <div style="font-size:12px;color:var(--w80);line-height:1.55">
           Disse leads kører <strong>aktivt Meta-annoncer</strong> men hverken Apollo, Datafordeler eller deres hjemmeside afslørede et nummer.
-          Tjek hurtigt på Google / LinkedIn (30-60s pr. lead), indtast nummeret nedenfor, og leadet flyttes automatisk til opkaldskøen.
+          Klik en række for at åbne lead-kortet — der kan du indsætte LinkedIn-URL, køre Apollo igen, eller indtaste nummeret manuelt.
         </div>
       </div>
-      <div style="display:grid;gap:10px;padding:14px 18px;max-height:70vh;overflow-y:auto">
-        ${preview.map((l,i)=>{
-          const ac = l.apollo_company || {};
-          const website = l.web || ac.websiteUrl || ac.domain || '';
-          const websiteClean = website.replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/$/, '');
-          const contactUrl = website ? (website.replace(/\/$/,'')+'/kontakt') : '';
-          const googleQ = encodeURIComponent(`"${l.name}" "+45" telefon kontakt`);
-          const linkedinQ = encodeURIComponent(l.name + ' Denmark');
-          const metaQ = encodeURIComponent(l.name);
-          const contacts = l.contacts || [];
-          const dm = contacts.find(c=>c.email) || contacts[0];
-          const trunc = (s,n)=>{ s=String(s||''); return s.length>n?s.slice(0,n):s; };
-          const dmStr = dm ? `${e(dm.name||'?')} (${e(trunc(dm.title,40))})${dm.email?' · '+e(dm.email):''}` : '';
-          return `<div style="background:var(--w04);border:1px solid var(--w08);border-radius:12px;padding:14px 16px">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px">
-              <div style="flex:1;min-width:0">
-                <button onclick="adOpenLead('${e(l.cvr||'')}')" title="Åbn lead-kort" style="all:unset;cursor:pointer;font-size:14.5px;font-weight:800;color:#fff;margin-bottom:3px;display:block;border-bottom:1px dashed transparent;transition:border-color 0.12s" onmouseover="this.style.borderBottomColor='rgba(124,58,237,0.5)'" onmouseout="this.style.borderBottomColor='transparent'">${e(l.name||'—')}</button>
-                <div style="font-size:11.5px;color:var(--w55)">
-                  ${ac.estimatedEmployees?`${ac.estimatedEmployees} ansatte · `:''}${e(trunc(ac.industry||l.ind||'',36))}${ac.city?' · '+e(ac.city):''}
-                  ${websiteClean?` · <a href="${e(website.startsWith('http')?website:'https://'+website)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">🌐 ${e(websiteClean)}</a>`:''}
-                </div>
-                ${dmStr?`<div style="font-size:11px;color:var(--w80);margin-top:4px">👤 ${dmStr}</div>`:''}
-              </div>
-              <a href="${metaAdsLibUrl(l)}" target="_blank" rel="noopener" title="Bekræft de annoncerer" style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:8px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3);font-size:10.5px;font-weight:800;text-decoration:none;white-space:nowrap">🎯 Se ads</a>
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-              <a href="https://www.google.com/search?q=${googleQ}" target="_blank" rel="noopener" style="background:rgba(255,255,255,0.06);border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:#fff;font-size:11px;font-weight:600;text-decoration:none">🔍 Google "${e(trunc(l.name,20))}..." +45</a>
-              <a href="https://www.linkedin.com/search/results/companies/?keywords=${linkedinQ}" target="_blank" rel="noopener" style="background:rgba(10,102,194,0.15);border:1px solid rgba(10,102,194,0.35);border-radius:7px;padding:5px 10px;color:#60a5fa;font-size:11px;font-weight:600;text-decoration:none">💼 LinkedIn</a>
-              ${contactUrl?`<a href="${e(contactUrl)}" target="_blank" rel="noopener" style="background:rgba(96,165,250,0.12);border:1px solid rgba(96,165,250,0.3);border-radius:7px;padding:5px 10px;color:#60a5fa;font-size:11px;font-weight:600;text-decoration:none">🌐 /kontakt</a>`:''}
-              ${ac.facebookUrl?`<a href="${e(ac.facebookUrl)}" target="_blank" rel="noopener" style="background:rgba(96,165,250,0.12);border:1px solid rgba(96,165,250,0.3);border-radius:7px;padding:5px 10px;color:#60a5fa;font-size:11px;font-weight:600;text-decoration:none">📘 Facebook</a>`:''}
-            </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="research-ph-${e(l.cvr)}" type="tel" placeholder="+45 XX XX XX XX" style="flex:1;background:var(--dark);border:1px solid var(--w08);border-radius:8px;padding:8px 12px;color:#fff;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none" onkeydown="if(event.key==='Enter')adSavePhoneFromResearch('${e(l.cvr)}')">
-              <button onclick="adSavePhoneFromResearch('${e(l.cvr)}')" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:8px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">💾 Gem & til kø</button>
-              <button onclick="adArchiveLead('${e(l.cvr)}')" title="Drop denne (ingen tid til research)" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:8px 10px;color:var(--w55);font-size:11px;cursor:pointer">✕</button>
-            </div>
-          </div>`;
-        }).join('')}
+      <div style="max-height:75vh;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <tbody>
+            ${preview.map((l,i)=>{
+              const ac = l.apollo_company || {};
+              const city = ac.city || l.city || '';
+              const contacts = l.contacts || [];
+              const dm = contacts.find(c=>c.name);
+              const isChecked = _adSelected.has(l.cvr);
+              return `<tr data-cvr="${e(l.cvr)}" onclick="adOpenLead('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${isChecked?';background:rgba(124,58,237,0.10)':''}" onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':'transparent'}'">
+                <td style="padding:10px 4px 10px 14px;width:34px" onclick="event.stopPropagation()"><input type="checkbox" data-cvr="${e(l.cvr)}" ${isChecked?'checked':''} onclick="event.stopPropagation();adToggleSelected('${e(l.cvr)}',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#a78bfa"></td>
+                <td style="padding:10px 8px;font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${i+1}</td>
+                <td style="padding:10px 14px">
+                  <span style="font-size:13px;font-weight:700;color:#fff">${e(trunc(l.name,40))}</span>
+                  ${nicheChip ? nicheChip(l) : ''}
+                  ${dm ? `<span style="font-size:10.5px;color:var(--w55);margin-left:8px">· 👤 ${e(trunc(dm.name,20))}</span>` : ''}
+                </td>
+                <td style="padding:10px 14px;font-size:11.5px;color:var(--w80);white-space:nowrap">${e(city)}</td>
+                <td style="padding:10px 14px;text-align:right;font-size:12px;color:#fca5a5;font-style:italic;white-space:nowrap">⚠ ingen tlf</td>
+                <td style="padding:10px 16px 10px 6px;text-align:right;white-space:nowrap" onclick="event.stopPropagation()">
+                  <button onclick="event.stopPropagation();openLeadInspector('${e(l.cvr)}')" title="Åbn lead-kort med berig-værktøjer" style="all:unset;cursor:pointer;color:var(--w55);font-size:14px;padding:4px 8px;border-radius:6px" onmouseover="this.style.background='var(--w04)';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='var(--w55)'">✎</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
       </div>
     </div>`;
     return; // research view replaces the normal table
