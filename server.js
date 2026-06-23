@@ -7402,7 +7402,17 @@ async function intakeEnrichLead(lead) {
           title: p.title,
           seniority: p.seniority,
           country: p.country_code,
-          linkedin: p.company_linkedin_url,
+          // FE People Search doesn't return the PERSON's LinkedIn URL
+          // (only the company's). Storing company_linkedin_url here as
+          // `linkedin` is wrong — it makes the contact-card link go to
+          // the COMPANY page instead of the person's /in/ profile.
+          //
+          // Leave `linkedin` empty so SDR uses the "🔍 Find på LinkedIn"
+          // search shortcut on the contact card (frontend detects the
+          // missing /in/ URL and routes to a Google search by name).
+          // Keep the company URL under a distinct field for context.
+          linkedin: "",
+          company_linkedin: p.company_linkedin_url || "",
           phone: "",
           email: "",
           source_discovery: "fullenrich-search",

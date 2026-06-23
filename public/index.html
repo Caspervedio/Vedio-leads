@@ -7214,7 +7214,29 @@ function openLeadInspector(cvr){
         <div style="font-size:11px;color:var(--w55);line-height:1.5">
           ${c.email?`<div>✉️ <a href="mailto:${e(c.email)}" style="color:#60a5fa;text-decoration:none">${e(c.email)}</a></div>`:''}
           ${phoneHtml}
-          ${c.linkedin||c.linkedinUrl?`<div style="margin-top:3px"><a href="${e(c.linkedin||c.linkedinUrl)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a></div>`:''}
+          ${(() => {
+            // Smart LinkedIn link: detect /company/ URLs (where intake
+            // sometimes stored the COMPANY page instead of the person's
+            // /in/ profile) and render a search shortcut instead. Click
+            // → Google "site:linkedin.com/in 'Name'" to find Søren etc.
+            const li = c.linkedin || c.linkedinUrl || '';
+            if (!li) return '';
+            const isPersonLi = /\/in\//.test(li);
+            const isCompanyLi = /\/company\//.test(li);
+            if (isPersonLi) {
+              return `<div style="margin-top:3px"><a href="${e(li)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a></div>`;
+            }
+            if (isCompanyLi && c.name) {
+              // Bad data — show as search shortcut + warn on hover
+              const q = encodeURIComponent(`site:linkedin.com/in "${c.name}"`);
+              return `<div style="margin-top:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener" title="Den gemte LinkedIn-URL er en COMPANY-side, ikke ${e(c.name)}s personlige profil. Klik for at søge efter dem på LinkedIn." style="color:var(--purple-light);text-decoration:none;font-size:11px">🔍 Find ${e(c.name.split(' ')[0])} på LinkedIn ↗</a>
+                <a href="${e(li)}" target="_blank" rel="noopener" title="Gemt URL er firmaets side — ikke personens. Brug Find-knappen ovenfor." style="color:var(--w35);text-decoration:none;font-size:10px">⚠ firma-link</a>
+              </div>`;
+            }
+            // Fallback: render whatever URL we have
+            return `<div style="margin-top:3px"><a href="${e(li)}" target="_blank" rel="noopener" style="color:var(--purple-light);text-decoration:none">🔗 LinkedIn ↗</a></div>`;
+          })()}
           ${c.location?`<div style="margin-top:3px;color:var(--w35)">📍 ${e(c.location)}</div>`:''}
         </div>
       </div>
