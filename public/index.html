@@ -2895,10 +2895,13 @@ function renderDashboardLeadStatus(){
   const all = leads || [];
   const inLists = all.filter(l => !!l.calling_list_id);
   const isTwentyPushed = (l) => !!l.twenty_opportunity_id;
+  // "Klar til opkald" must match exactly what the cockpit accepts —
+  // otherwise dashboard claims a number the cockpit then refuses to show.
+  // Use the canonical isLeadCallable helper.
   const readyToCall = inLists.filter(l =>
     l.lastAction !== 'not-relevant' &&
     !isTwentyPushed(l) &&
-    !!(l.phone || l.ph || '').toString().trim()
+    isLeadCallable(l)
   );
 
   const tile = (label, value, sub, accent, onclick) => `<div onclick="${onclick||''}" style="background:var(--dark2);border:1px solid var(--w08);border-radius:12px;padding:16px 18px;${onclick?'cursor:pointer;transition:border-color 0.12s,background 0.12s':''}" ${onclick?`onmouseover="this.style.borderColor='rgba(124,58,237,0.4)';this.style.background='var(--w04)'" onmouseout="this.style.borderColor='var(--w08)';this.style.background='var(--dark2)'"`:''}>
@@ -6072,6 +6075,27 @@ function setActiveCallingListId(id){
 // Prelist selection state — CVRs the SDR has checked for bulk-add.
 var _adSelected = new Set();
 
+// ─── isLeadCallable — single source of truth ─────────────────────────
+// A lead is "callable" iff it has a named contact AND a dialable phone
+// (either on the contact OR the lead-level switchboard). SDR can call
+// switchboard and ask for the person, so switchboard is acceptable.
+//
+// THIS IS THE ONLY DEFINITION. Every filter, count, and gate that asks
+// "is this lead ready to call?" must use this function. The 107-lead
+// vanish bug (2026-06-23) was caused by three places implementing
+// subtly different definitions and drifting apart.
+//
+// If you need to change what "callable" means, change it HERE.
+function isLeadCallable(l){
+  if (!l) return false;
+  const cs = Array.isArray(l.contacts) ? l.contacts : [];
+  const hasNamedContact = cs.some((c) => c && c.name);
+  if (!hasNamedContact) return false;
+  const contactHasPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
+  const leadHasPhone = !!(l.phone || l.ph || '').toString().trim();
+  return contactHasPhone || leadHasPhone;
+}
+
 // Frontend mirror of server.js deriveSourceCategory. Returns 'ecom' |
 // 'service' | 'unknown'. Trusts lead.source_category if set; otherwise
 // derives from source prefix. Keep in sync with the server-side helper.
@@ -6209,16 +6233,8 @@ function renderAutodialerPage(){
   //   • 'not-enriched' → never been through the chain
   if(_adState.enrichmentFilter && _adState.enrichmentFilter !== 'all'){
     filtered = filtered.filter((l) => {
-      const cs = Array.isArray(l.contacts) ? l.contacts : [];
-      // Matches the cockpit's callable definition exactly — named contact
-      // AND a dialable number (direct on contact OR lead-level switchboard).
-      // If these two filters drift apart, leads can be promoted via the
-      // "→ Tilføj alle til ring-liste" button and then vanish from the
-      // cockpit because the cockpit's gate is stricter.
-      const hasNamedContact = cs.some((c) => c && c.name);
-      const contactHasPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
-      const leadHasPhone = !!(l.phone || l.ph || '').toString().trim();
-      const callable = hasNamedContact && (contactHasPhone || leadHasPhone);
+      // Single source of truth — isLeadCallable. See definition above.
+      const callable = isLeadCallable(l);
       const enriched = !!l.bulk_enriched_at;
       if (_adState.enrichmentFilter === 'callable')    return callable;
       if (_adState.enrichmentFilter === 'needs-manual') return enriched && !callable;
@@ -6622,18 +6638,11 @@ function renderAutodialerPage(){
       };
       // Aktivitet + Eksportér moved to the sidebar footer 2026-06-16 — they
       // are global actions and shouldn't live inside the Leadlist toolbar.
-      // Enrichment-status chip row (2026-06-23) — lets SDR separate
-      // "ready to call" leads from "needs manual enrichment" leads.
-      // Callable = has named contact + direct phone.
-      const callableCount = baseActive.filter((l) => {
-        const cs = Array.isArray(l.contacts) ? l.contacts : [];
-        return cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
-      }).length;
-      const needsManualCount = baseActive.filter((l) => {
-        if (!l.bulk_enriched_at) return false;
-        const cs = Array.isArray(l.contacts) ? l.contacts : [];
-        return !cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
-      }).length;
+      // Enrichment-status chip row — uses the canonical isLeadCallable
+      // helper so the badge counts always match what enrichmentFilter
+      // shows when clicked + what the cockpit gate accepts.
+      const callableCount = baseActive.filter(isLeadCallable).length;
+      const needsManualCount = baseActive.filter((l) => l.bulk_enriched_at && !isLeadCallable(l)).length;
       const notEnrichedCount = baseActive.filter((l) => !l.bulk_enriched_at).length;
       const activeEnrich = _adState.enrichmentFilter || 'all';
 
@@ -9137,20 +9146,10 @@ function openCockpit(forceCvr){
   //   • Due callbacks — time-sensitive, callback_at <= now
   //   • Engaged leads — SDR has worked them (interested/follow-up/sms)
   // Leads failing the gate stay in Leadlist for manual enrichment.
-  // Callable: named contact AND a dialable number. Direct contact phone
-  // is preferred, but lead.phone (switchboard / Datafordeler) is a valid
-  // fallback — SDR can call the switchboard and ask for the person.
-  // Without this fallback, leads promoted to a calling list via the
-  // "Klar at ringe" view vanish when the Leadlist's looser filter accepts
-  // them but the cockpit's stricter filter rejects them — making the
-  // bulk-promote action look like it lost the leads.
-  const hasCallableContact = (l) => {
-    const cs = Array.isArray(l.contacts) ? l.contacts : [];
-    if (!cs.some((c) => c && c.name)) return false;
-    const contactHasPhone = cs.some((c) => c && (c.phone || c.direct_phone || c.mobile));
-    const leadHasPhone = !!(l.phone || l.ph || '').toString().trim();
-    return contactHasPhone || leadHasPhone;
-  };
+  // Callable gate — defers to the canonical isLeadCallable helper so
+  // this never drifts from the Leadlist tab badge / enrichmentFilter
+  // / dashboard "Klar til opkald" metric.
+  const hasCallableContact = isLeadCallable;
   const engagedActions = new Set(['interested','follow-up','sms','call-back']);
   // Track what the gate filters out so we can show "X waiting in Leadlist"
   let _filteredNotCallable = 0;
