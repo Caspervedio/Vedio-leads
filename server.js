@@ -8020,12 +8020,51 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
       }
     }
 
-    // ─── Final phone-reveal stage: Full Enrich on the LinkedIn URL ─────
-    // Apollo + Apify rarely return phones for DK SMB profiles. Full
-    // Enrich Contact Enrich accepts a linkedin_url directly and runs
-    // its 20+ vendor waterfall to find a mobile. Costs ~10 credits on
-    // hit, $0 on miss. This closes the "paste LinkedIn URL → got a
-    // name but no phone" gap. Added 2026-06-16.
+    // ─── Phone reveal — Lusha FIRST, then Full Enrich ─────────────────
+    // User reported (2026-06-23) that Lusha-by-LinkedIn-URL finds
+    // phones that FE Contact Enrich misses on DK SMB. Also: Lusha v2
+    // accepts linkedinUrl alone (no name/company required), so even
+    // when Apollo + Apify whiffed on the name we can still try Lusha
+    // by the raw URL. Order:
+    //
+    //   1. Lusha v2 /person with linkedinUrl  — ~10-15s, ~$0.30 on hit
+    //   2. Full Enrich Contact Enrich          — ~60-180s, $0.60 on hit
+    //
+    // Was the reverse — burning 60-180s on FE before trying the cheap
+    // fast hit. Reordering means Lusha-hits come back in 10s and we
+    // skip the slow FE call entirely.
+
+    // ─── STAGE 2: Lusha by linkedinUrl (FAST) ─────────────────────────
+    if ((contact.phones || []).length === 0 && isLushaConfigured()) {
+      try {
+        const lushaResult = await lushaLookupContact({
+          linkedinUrl: url,
+          timeoutMs: 15_000,
+        });
+        if (lushaResult && lushaResult.phone) {
+          contact.phones = contact.phones || [];
+          for (const p of lushaResult.phones) {
+            contact.phones.push({ ...p, status: "verified", position: 0 });
+          }
+          if (!contact.phone) {
+            contact.phone = lushaResult.phone;
+            contact.phoneType = lushaResult.phones[0]?.type || "mobile";
+            contact.phoneTypeLabel = lushaResult.phones[0]?.typeLabel || "Direkte mobil (Lusha)";
+            contact.source_phone = "lusha";
+          }
+          if (lushaResult.email && !contact.email) contact.email = lushaResult.email;
+          if (lushaResult.fullName && !contact.name) contact.name = lushaResult.fullName;
+          dataSources.push("lusha");
+        }
+      } catch (e) {
+        console.warn("[apollo/lookup-linkedin] lusha-by-url failed:", e.message);
+      }
+    }
+
+    // ─── STAGE 3: Full Enrich Contact Enrich (SLOW fallback) ──────────
+    // Only fires if Lusha didn't return a phone. The 180s timeout is
+    // worth it as the LAST resort — Lusha-first means we now usually
+    // skip it entirely.
     if ((contact.phones || []).length === 0 && isFullEnrichConfigured()) {
       try {
         const feResult = await fullEnrichLookupOne(
@@ -8057,45 +8096,6 @@ app.post("/api/apollo/lookup-linkedin", authMiddleware, async (req, res) => {
         }
       } catch (e) {
         console.warn("[apollo/lookup-linkedin] full-enrich fallback failed:", e.message);
-      }
-    }
-
-    // ─── STAGE 3: Lusha fallback (FE also missed) ─────────────────────
-    // Last automatic stop before SDR has to research manually. Lusha v2
-    // /person needs name + company, so we only try when both are known.
-    if ((contact.phones || []).length === 0 && isLushaConfigured() && contact.name) {
-      const [firstName, ...rest] = String(contact.name).trim().split(/\s+/);
-      const lastName = rest.join(" ");
-      const lushaCompany = (company && (company.name || company.organization_name))
-        || (scrapedCompany && scrapedCompany.name)
-        || (contact.organization && contact.organization.name)
-        || "";
-      if (firstName && lastName && lushaCompany) {
-        try {
-          const lushaResult = await lushaLookupContact({
-            firstName,
-            lastName,
-            companyName: lushaCompany,
-            linkedinUrl: url,
-            timeoutMs: 15_000,
-          });
-          if (lushaResult && lushaResult.phone) {
-            contact.phones = contact.phones || [];
-            for (const p of lushaResult.phones) {
-              contact.phones.push({ ...p, status: "verified", position: 0 });
-            }
-            if (!contact.phone) {
-              contact.phone = lushaResult.phone;
-              contact.phoneType = lushaResult.phones[0]?.type || "mobile";
-              contact.phoneTypeLabel = lushaResult.phones[0]?.typeLabel || "Direkte mobil (Lusha)";
-              contact.source_phone = "lusha";
-            }
-            if (lushaResult.email && !contact.email) contact.email = lushaResult.email;
-            dataSources.push("lusha");
-          }
-        } catch (e) {
-          console.warn("[apollo/lookup-linkedin] lusha fallback failed:", e.message);
-        }
       }
     }
 

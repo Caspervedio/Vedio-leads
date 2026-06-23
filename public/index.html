@@ -10337,8 +10337,21 @@ async function cockpitAddContactFromLinkedin(cvr) {
         headers: { ...ah(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ contacts: lead.contacts }),
       });
-      showToast(`✓ ${contact.name} tilføjet`);
-      renderCockpit();
+      showToast(`✓ ${contact.name} tilføjet${contact.phone ? ' med direkte nummer' : ''}`);
+      // Re-render every surface where this lead might be visible RIGHT NOW
+      // so the SDR sees the new contact instantly (no page-refresh needed):
+      //   • Cockpit hero/contacts panel (if cockpit is open)
+      //   • Lead inspector modal (if user pasted from there)
+      //   • Leadlist table (badge counts + enrichment chip)
+      try { if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit(); } catch(_) {}
+      try {
+        const inspectorEl = document.getElementById('lead-inspector-modal');
+        if (inspectorEl && typeof openLeadInspector === 'function') {
+          inspectorEl.remove();
+          openLeadInspector(cvr);
+        }
+      } catch(_) {}
+      try { if (typeof renderAutodialerPage === 'function' && currentPage === 'autodialer') renderAutodialerPage(); } catch(_) {}
     }
   } catch (ex) {
     showToast('Fejl: ' + ex.message);
