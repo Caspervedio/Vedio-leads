@@ -6590,54 +6590,20 @@ const BRANCHE_WALK_ECOM_CODES = new Set([
   "477990", // Anden detail (variation)
   "479900", // Postordre
 ]);
+// Service codes — kept SMALL because Casper's ICP is e-commerce.
+// Service businesses (advokat, fysioterapi, etc.) have higher
+// enrichment hit rate but ARE NOT THE BUYER. The intake-scale-up
+// from 2026-06-23 added 35 service codes — reverted to original
+// minimal set because non-ICP leads waste SDR time even at 100%
+// enrichment rates.
 const BRANCHE_WALK_SERVICE_CODES = new Set([
-  // — Marketing + creative agencies —
-  "731000", // Marketing-bureau
+  "731000", // Marketing-bureau   — sometimes target (agencies as resellers)
   "741010", // Design/web
+  "683210", // Ejendomsmægler     — DTC volume
+  "791100", // Rejsebureau        — DTC volume
+  "563000", // Caféer/cafeterier  — some run e-com (subscriptions/merch)
   "742010", // Fotograf-erhverv
-  // — Restaurants + cafés + hotels (DK SMB hotspot) —
-  "561010", // Restaurant
-  "561020", // Pizzeria
-  "563000", // Caféer/cafeterier
-  "562100", // Event catering
-  "551000", // Hoteller
-  "551110", // Hoteller mindre
-  // — Beauty + wellness —
-  "961040", // Wellness/skønhed
-  "960210", // Frisør
-  "960220", // Kosmetisk behandling
-  // — Health practices —
-  "862100", // Almenpraktiserende læge
-  "862200", // Speciallæge
-  "862300", // Tandlæge
-  "869010", // Fysioterapi
-  "869020", // Kiropraktor
-  "869090", // Anden sundhedstjeneste
-  // — Fitness —
-  "931200", // Fitness
-  "931100", // Sport
-  // — Real estate + property —
-  "683110", // Ejendomsmægler bolig
-  "683210", // Ejendomsmægler erhverv
-  // — Travel —
-  "791100", // Rejsebureau
-  "791200", // Rejsearrangør
-  // — Professional services (B2B) —
-  "691000", // Advokat
-  "692000", // Revisor
-  "702200", // Konsulent
-  "711200", // Arkitekt
-  // — Trade crafts (SMB owner-operated) —
-  "432100", // El-installation
-  "432200", // VVS
-  "433100", // Stukatør/pudser
-  "433200", // Tømrer/møbel
-  "433300", // Gulv
-  "433400", // Maler
-  // — Auto + transport —
-  "451120", // Bilhandel
-  "452010", // Værkstedhandel
-  "494100", // Vejgodstransport
+  "961040", // Wellness/skønhed   — DTC retail overlap
 ]);
 
 function deriveSourceCategory(source, brancheCode) {
