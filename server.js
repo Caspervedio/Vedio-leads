@@ -11665,7 +11665,7 @@ async function runStripNonDkPhones(req, res) {
     if (!req.userId) return res.status(401).json({ error: "Not logged in" });
     const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
     const me = allUsers.find((u) => u.id === req.userId);
-    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    if (!me || (me.role !== "admin" && req.userId !== "admin")) return res.status(403).json({ error: "Admin only" });
   }
   const stats = { stripped: 0, byPrefix: {}, examples: [] };
   if (!fs.existsSync(DATA_DIR)) return res.json({ ok: true, stats });
@@ -12063,7 +12063,7 @@ async function runBackfillMetaAds(req, res) {
     if (!req.userId) return res.status(401).json({ error: "Not logged in" });
     const allUsers = JSON.parse(fs.readFileSync(USERS_FILE, "utf8") || "[]");
     const me = allUsers.find((u) => u.id === req.userId);
-    if (!me || me.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    if (!me || (me.role !== "admin" && req.userId !== "admin")) return res.status(403).json({ error: "Admin only" });
   }
   if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "Apify not configured" });
   const stats = { scanned: 0, queued: 0, advertising: 0, pageIdCaptured: 0, errors: 0, skippedRecent: 0 };
