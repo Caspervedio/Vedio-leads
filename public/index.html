@@ -8997,6 +8997,19 @@ async function adRestoreAllArchived(){
 // state (normally filtered out), we still let the SDR land on it so they
 // can inspect contacts, notes, history, etc.
 function adOpenLead(cvr){
+  // Routing rule (2026-06-23): leads on a calling list open in cockpit
+  // (full call workflow with queue navigation). Leads NOT on a calling
+  // list open the right-side inspector panel — these are still being
+  // triaged/researched, not yet ready to dial. The inspector has all
+  // edit + paste-LinkedIn-URL + manual research tools the SDR needs
+  // without the cockpit's call-orientation overhead.
+  const lead = (typeof leads !== 'undefined' && Array.isArray(leads))
+    ? leads.find((l) => l.cvr === cvr) : null;
+  if (lead && !lead.calling_list_id && typeof openLeadInspector === 'function') {
+    openLeadInspector(cvr);
+    return;
+  }
+  // Calling-list lead → cockpit
   openCockpit(cvr);
   if(!_cockpit.open) return;            // queue was empty
   const qi=(_cockpit.queue||[]).findIndex(l=>l.cvr===cvr);
