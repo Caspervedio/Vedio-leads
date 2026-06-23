@@ -2293,9 +2293,10 @@ async function doBulkCustomerImport(){
 
 async function deleteCustomer(id){
   try{
-    await fetch('/api/customers/'+id,{method:'DELETE',headers:ah()});
+    const r = await fetch('/api/customers/'+id,{method:'DELETE',headers:ah()});
+    if (!r.ok) { showToast(`Fejl: kunne ikke slette kunde (${r.status})`); return; }
     renderCustomersPage();
-  }catch(e){}
+  }catch(e){ showToast('Netværksfejl: ' + e.message); }
 }
 
 async function renderCustomersPage(){
@@ -10644,7 +10645,15 @@ async function cockpitPushToTwenty(){
       c.twenty_opportunity_id=d.opportunity?.id;
       c.twenty_url=d.opportunity?.url;
       c.twenty_stage=d.opportunity?.stage;
-      showToast(`✓ Pushet til Twenty — ${c.name}`);
+      // Surface Note-attachment failure so SDR knows context didn't reach
+      // the AE. Server returns noteAttached=false when the rich-context
+      // Note creation/link silently failed (the Opportunity itself saved).
+      const noteSent = (c.notes && c.notes.trim()) || c.adsMatched || c.contacts?.length;
+      if (noteSent && d.opportunity?.noteAttached === false) {
+        showToast(`⚠ Pushet til Twenty, men note med kontekst kunne ikke vedhæftes — AE ser kun en bar Opportunity`);
+      } else {
+        showToast(`✓ Pushet til Twenty — ${c.name}`);
+      }
       // PR2: lead is now AE's — remove from cockpit queue + advance to
       // next. The queue rebuilds without the just-pushed lead since the
       // openCockpit filter excludes twenty_opportunity_id leads.

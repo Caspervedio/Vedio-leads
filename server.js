@@ -3054,7 +3054,11 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
   const now = new Date().toISOString();
 
   const stats = {
-    imported: 0, alreadyExists: 0, matched: 0, unmatched: 0, errors: 0, details: [],
+    imported: 0, alreadyExists: 0, matched: 0, unmatched: 0, errors: 0,
+    // lookupFailures distinguishes Datafordeler API errors (transient,
+    // worth a "try again" hint) from genuine "no such company"
+    // outcomes. Previously both flowed into `unmatched`.
+    lookupFailures: 0, details: [],
     routedTo: targetUserId,
     // Report the detected header map so the UI can show "We mapped these
     // columns: name→Company Name, cvr→CVR Number, …" — gives confidence
@@ -3077,9 +3081,11 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
         if (!name && !cvrRaw) { stats.errors++; stats.details.push({ row, reason: "no name or CVR" }); continue; }
 
         let company = null;
+        let lookupHadApiError = false;
         if (cvrRaw && /^\d{8}$/.test(cvrRaw)) {
           // Try CVR lookup directly.
-          try { company = await lookupDatafordeler(cvrRaw); } catch (_) {}
+          try { company = await lookupDatafordeler(cvrRaw); }
+          catch (e) { lookupHadApiError = true; console.warn(`[csv-import] Datafordeler CVR ${cvrRaw} failed:`, e.message); }
         }
         if (!company && name) {
           // Best-effort exact-name match (a few variants for the common A/S / ApS suffix dance).
@@ -3096,12 +3102,25 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
                   `{ CVR_Virksomhed(first: 1, where: { id: { eq: "${hit.CVREnhedsId}" } }) { edges { node { CVRNummer } } } }`,
                 );
                 const cvrNr = r2?.CVR_Virksomhed?.edges?.[0]?.node?.CVRNummer;
-                if (cvrNr) { company = await lookupDatafordeler(String(cvrNr)).catch(() => null); }
+                if (cvrNr) {
+                  company = await lookupDatafordeler(String(cvrNr)).catch((e) => {
+                    lookupHadApiError = true;
+                    console.warn(`[csv-import] Datafordeler CVR ${cvrNr} (from name) failed:`, e.message);
+                    return null;
+                  });
+                }
               }
               if (company) break;
-            } catch (_) {}
+            } catch (e) {
+              lookupHadApiError = true;
+              console.warn(`[csv-import] Datafordeler name "${v}" failed:`, e.message);
+            }
           }
         }
+        // Track API failures so the UI can warn "X rows hit Datafordeler
+        // errors — try those again later" instead of conflating them
+        // with genuine "no match found" outcomes.
+        if (!company && lookupHadApiError) stats.lookupFailures++;
 
         if (company) {
           if (existing.has(company.cvr)) { stats.alreadyExists++; continue; }
@@ -3196,7 +3215,7 @@ app.post("/api/leads/import", authMiddleware, async (req, res) => {
   }
   // Trim details to avoid blowing up the response
   stats.details = stats.details.slice(0, 20);
-  logActivity("csv-import", `CSV-import → ${targetUserId}: ${stats.imported} leads (${stats.matched} CVR-match, ${stats.unmatched} uden) · ${stats.adsCheckQueued || 0} til gratis ads-tjek`, { userId: targetUserId });
+  logActivity("csv-import", `CSV-import → ${targetUserId}: ${stats.imported} leads (${stats.matched} CVR-match, ${stats.unmatched} uden${stats.lookupFailures ? `, ⚠ ${stats.lookupFailures} API-fejl` : ''}) · ${stats.adsCheckQueued || 0} til gratis ads-tjek`, { userId: targetUserId });
   res.json(stats);
 });
 
