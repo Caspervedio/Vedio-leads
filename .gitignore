@@ -2,6 +2,8 @@ node_modules/
 .env
 data*.json
 users.json
+sessions.json
+docs/
 *.log
 .DS_Store
 cert.pem
