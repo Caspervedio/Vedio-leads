@@ -6766,7 +6766,7 @@ function renderAutodialerPage(){
               const contacts = l.contacts || [];
               const dm = contacts.find(c=>c.name);
               const isChecked = _adSelected.has(l.cvr);
-              return `<tr data-cvr="${e(l.cvr)}" onclick="adOpenLead('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${isChecked?';background:rgba(124,58,237,0.10)':''}" onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':'transparent'}'">
+              return `<tr data-cvr="${e(l.cvr)}" onclick="openLeadInspector('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${isChecked?';background:rgba(124,58,237,0.10)':''}" onmouseover="this.style.background='${isChecked?'rgba(124,58,237,0.14)':'rgba(124,58,237,0.06)'}'" onmouseout="this.style.background='${isChecked?'rgba(124,58,237,0.10)':'transparent'}'">
                 <td style="padding:10px 4px 10px 14px;width:34px" onclick="event.stopPropagation()"><input type="checkbox" data-cvr="${e(l.cvr)}" ${isChecked?'checked':''} onclick="event.stopPropagation();adToggleSelected('${e(l.cvr)}',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#a78bfa"></td>
                 <td style="padding:10px 8px;font-size:12px;color:var(--w35);width:42px;white-space:nowrap">${i+1}</td>
                 <td style="padding:10px 14px">
