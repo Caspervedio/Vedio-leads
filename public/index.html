@@ -7863,12 +7863,23 @@ async function saveContactEditor(cvr, contactIdx) {
     });
     if (!r.ok) { showToast('Fejl: kunne ikke gemme (' + r.status + ')'); return; }
     lead.contacts = contacts;
+    // Mirror the server-side hovednummer auto-sync locally so the UI
+    // reflects the new lead.phone immediately without re-fetching.
+    // Server logic: if contacts patched and lead.phone empty, copy
+    // first contact phone to lead.phone. Do the same here.
+    if (phone && !(lead.phone || lead.ph || '').toString().trim()) {
+      lead.phone = phone;
+      lead.ph = phone;
+      lead.phone_missing = false;
+      lead.phone_source = 'contact-sync';
+    }
     showToast(existing ? `✓ ${name} opdateret` : `✓ ${name} tilføjet`);
     document.getElementById('contact-edit-bg')?.remove();
     // Re-render whichever view is open
     if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit();
     const inspectorBg = document.getElementById('lead-inspector-bg');
-    if (inspectorBg && inspectorBg.style.display === 'block') openLeadInspector(cvr);
+    if (inspectorBg && (inspectorBg.style.display === 'block' || inspectorBg.style.display !== 'none')) openLeadInspector(cvr);
+    if (typeof renderAutodialerPage === 'function' && currentPage === 'autodialer') renderAutodialerPage();
   } catch (ex) {
     showToast('Fejl: ' + ex.message);
   }
@@ -10361,6 +10372,16 @@ async function cockpitAddContactFromLinkedin(cvr) {
     const lead = leads.find(l => l.cvr === cvr);
     if (lead) {
       lead.contacts = [...(lead.contacts || []), contact];
+      // Mirror server-side auto-sync: if this new contact has a phone
+      // and lead.phone is empty, populate lead.phone locally too so
+      // the UI shows the synced number instantly (matches what server
+      // does in PATCH /api/leads/:cvr handler).
+      if (contact.phone && !(lead.phone || lead.ph || '').toString().trim()) {
+        lead.phone = contact.phone;
+        lead.ph = contact.phone;
+        lead.phone_missing = false;
+        lead.phone_source = 'contact-sync';
+      }
       await fetch('/api/leads/' + encodeURIComponent(cvr), {
         method: 'PATCH',
         headers: { ...ah(), 'Content-Type': 'application/json' },
