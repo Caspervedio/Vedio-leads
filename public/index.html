@@ -10370,13 +10370,19 @@ async function cockpitAddContactFromLinkedin(cvr) {
       // Re-render every surface where this lead might be visible RIGHT NOW
       // so the SDR sees the new contact instantly (no page-refresh needed):
       //   • Cockpit hero/contacts panel (if cockpit is open)
-      //   • Lead inspector modal (if user pasted from there)
+      //   • Lead inspector side-panel (if user pasted from there)
       //   • Leadlist table (badge counts + enrichment chip)
+      // Inspector uses IDs lead-inspector-bg + lead-inspector (aside) —
+      // NOT lead-inspector-modal (older guess that silently no-op'd).
       try { if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit(); } catch(_) {}
       try {
-        const inspectorEl = document.getElementById('lead-inspector-modal');
-        if (inspectorEl && typeof openLeadInspector === 'function') {
-          inspectorEl.remove();
+        const inspectorBg = document.getElementById('lead-inspector-bg');
+        const inspectorAside = document.getElementById('lead-inspector');
+        const isVisible = (inspectorBg && inspectorBg.style.display !== 'none') ||
+                          (inspectorAside && inspectorAside.style.display !== 'none');
+        if (isVisible && typeof openLeadInspector === 'function') {
+          // Re-call openLeadInspector with the same cvr — it repopulates
+          // the title + body in place (no remove/recreate needed).
           openLeadInspector(cvr);
         }
       } catch(_) {}
