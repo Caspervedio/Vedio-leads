@@ -6611,21 +6611,75 @@ function renderAutodialerPage(){
         return !cs.some((c) => c && c.name && (c.phone || c.direct_phone || c.mobile));
       }).length;
       const notEnrichedCount = baseActive.filter((l) => !l.bulk_enriched_at).length;
-      const enrichChip = (id, lbl, cnt, fg) => {
-        const active = (_adState.enrichmentFilter || 'all') === id;
-        return `<button onclick="adSetEnrichmentFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?fg:'var(--w08)'};background:${active?fg.replace('rgba(','rgba(').replace(/,1\)/,',0.18)').replace(/,0\.9\)/,',0.18)'):'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s" title="${active?'Klik igen for at vise alle':'Vis kun '+lbl}">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
+      const activeEnrich = _adState.enrichmentFilter || 'all';
+
+      // Enrichment flow tabs — the primary view dimension for Leadlist
+      // (was a peer-of-Kategori chip row; bumped to top-of-page hero
+      // 2026-06-23 because SDR needed clearer signal of "what stage
+      // is this lead at" + bulk action hooks per stage).
+      const tabCard = (id, icon, title, cnt, sub, fg, bg, action) => {
+        const isActive = activeEnrich === id;
+        return `
+          <button onclick="adSetEnrichmentFilter('${id}')" style="flex:1;min-width:170px;background:${isActive?bg:'var(--w04)'};border:${isActive?'2px solid '+fg:'1px solid var(--w08)'};border-radius:12px;padding:14px 16px;cursor:pointer;text-align:left;transition:all 0.12s;font-family:'Outfit',sans-serif;display:flex;flex-direction:column;gap:4px" onmouseover="if(!${isActive})this.style.background='var(--w08)'" onmouseout="if(!${isActive})this.style.background='var(--w04)'">
+            <div style="display:flex;align-items:baseline;gap:8px">
+              <span style="font-size:18px">${icon}</span>
+              <span style="font-size:13px;font-weight:800;color:${isActive?fg:'var(--w80)'};letter-spacing:0.2px">${e(title)}</span>
+              <span style="margin-left:auto;font-size:20px;font-weight:900;color:${isActive?'#fff':fg};font-variant-numeric:tabular-nums">${cnt}</span>
+            </div>
+            <div style="font-size:11px;color:var(--w55);line-height:1.4">${e(sub)}</div>
+            ${action ? `<div style="margin-top:4px;font-size:10.5px;color:${isActive?fg:'var(--w35)'};font-weight:700">${action}</div>` : ''}
+          </button>`;
       };
-      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-        <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kategori</span>
-        ${catChip('ecom',    '🛍 DK e-commerce', ecomCount)}
-        ${catChip('service', '🏢 DK service',    serviceCount)}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-        <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Berigelse</span>
-        ${enrichChip('callable',    '📞 Klar at ringe',     callableCount,    'rgba(52,211,153,0.9)')}
-        ${enrichChip('needs-manual','⚠ Mangler berigelse',  needsManualCount, 'rgba(251,146,60,0.9)')}
-        ${enrichChip('not-enriched','⏳ Ikke beriget endnu', notEnrichedCount, 'rgba(148,163,184,0.9)')}
-      </div>`;
+
+      // Contextual help/action bar — appears below tabs when one is active
+      let contextBar = '';
+      if (activeEnrich === 'callable') {
+        contextBar = `
+          <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.22);border-radius:10px;padding:11px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <span style="font-size:13px;color:#6ee7b7;font-weight:700">📞 ${callableCount} leads klar at ringe</span>
+            <span style="font-size:11.5px;color:var(--w55);flex:1">Direkte mobil + navngivet kontakt fundet. Vises automatisk i cockpit hvis de er på en ring-liste.</span>
+            <button onclick="adSelectAllCallableAndAddToList()" style="background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:8px;padding:7px 14px;color:#fff;font-size:12px;font-weight:800;cursor:pointer;letter-spacing:0.2px;box-shadow:0 1px 4px rgba(34,197,94,0.3);font-family:Outfit,sans-serif">→ Tilføj alle til ring-liste</button>
+          </div>`;
+      } else if (activeEnrich === 'needs-manual') {
+        contextBar = `
+          <div style="background:rgba(251,146,60,0.06);border:1px solid rgba(251,146,60,0.22);border-radius:10px;padding:11px 16px;margin-bottom:14px;line-height:1.5">
+            <div style="font-size:13px;color:#fdba74;font-weight:700;margin-bottom:4px">⚠ ${needsManualCount} leads kræver manuel berigelse</div>
+            <div style="font-size:11.5px;color:var(--w55)">Automatisk berigelse (Apollo + Full Enrich + Lusha + SERP→LinkedIn) er kørt men fandt enten ingen kontaktperson eller ingen direkte mobil. SDR/admin kan undersøge manuelt:</div>
+            <ul style="margin:6px 0 0 18px;padding:0;font-size:11px;color:var(--w80)">
+              <li>🔎 Tjek company LinkedIn → find owner/manager direkte</li>
+              <li>📧 Kontakt-side på website → ofte står navnet</li>
+              <li>📱 Facebook page → about-section nævner ofte indehaveren</li>
+              <li>✎ Brug "Tilføj kontakt manuelt" via Links-editor på leaden</li>
+            </ul>
+          </div>`;
+      } else if (activeEnrich === 'not-enriched') {
+        contextBar = `
+          <div style="background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.22);border-radius:10px;padding:11px 16px;margin-bottom:14px">
+            <div style="font-size:13px;color:#cbd5e1;font-weight:700;margin-bottom:4px">⏳ ${notEnrichedCount} leads venter på automatisk berigelse</div>
+            <div style="font-size:11.5px;color:var(--w55);line-height:1.5">Den daglige cron (04:30 Europe/Copenhagen) kører hele berigelses-kæden på disse leads. Intet manuelt arbejde nødvendigt — vent på næste cron. Ny intake landes hver 5. minut.</div>
+          </div>`;
+      }
+
+      return `
+        <!-- Berigelses-flow tabs (primary lifecycle view) -->
+        <div style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-size:11px;color:var(--w55);font-weight:700;letter-spacing:1px;text-transform:uppercase">Berigelses-flow</span>
+            ${activeEnrich !== 'all' ? `<button onclick="adSetEnrichmentFilter('${activeEnrich}')" style="background:transparent;border:0;color:var(--w55);font-size:11px;text-decoration:underline;cursor:pointer;padding:0">vis alle</button>` : ''}
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            ${tabCard('callable',    '📞', 'Klar at ringe',    callableCount,    'Direkte mobil + navngivet kontakt fundet.',  'rgba(52,211,153,0.9)', 'rgba(52,211,153,0.10)', '→ kan tilføjes til ring-liste')}
+            ${tabCard('needs-manual','⚠', 'Manuel berigelse',  needsManualCount, 'Chain kørte, fandt ikke kontakt eller telefon.', 'rgba(251,146,60,0.9)', 'rgba(251,146,60,0.10)', '→ kræver SDR/admin handling')}
+            ${tabCard('not-enriched','⏳', 'I berigelses-kø',   notEnrichedCount, 'Venter på næste daglige cron (04:30).',      'rgba(148,163,184,0.9)','rgba(148,163,184,0.10)', '→ ingen handling, vent')}
+          </div>
+        </div>
+        ${contextBar}
+        <!-- Kategori chips (secondary filter — kept for source-mix views) -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+          <span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:0.8px;text-transform:uppercase;width:60px;flex-shrink:0">Kategori</span>
+          ${catChip('ecom',    '🛍 DK e-commerce', ecomCount)}
+          ${catChip('service', '🏢 DK service',    serviceCount)}
+        </div>`;
     })()}
     <!-- Filter + sort row -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
@@ -6925,6 +6979,26 @@ function adSelectAllVisible(){
   const boxes = document.querySelectorAll('#ad-queue input[type="checkbox"][data-cvr]');
   for (const b of boxes) _adSelected.add(b.getAttribute('data-cvr'));
   renderAutodialerPage();
+}
+// "Klar at ringe" tab quick-action: filter to callable leads, select all
+// visible, and open the add-to-list modal in one click. Saves the SDR
+// from manually checking each box on bulk promote.
+function adSelectAllCallableAndAddToList(){
+  // Force the callable filter on so the visible set is the right cohort
+  _adState.enrichmentFilter = 'callable';
+  renderAutodialerPage();
+  // After re-render, the rendered checkboxes match the callable view.
+  // Defer one tick so the new DOM is in place before we read it.
+  setTimeout(() => {
+    const boxes = document.querySelectorAll('#ad-queue input[type="checkbox"][data-cvr]');
+    if (boxes.length === 0) {
+      showToast('Ingen callable leads i den aktuelle visning');
+      return;
+    }
+    for (const b of boxes) _adSelected.add(b.getAttribute('data-cvr'));
+    renderAutodialerPage();
+    setTimeout(() => adOpenAddToCallingListModal(), 50);
+  }, 30);
 }
 // Header "select all" toggle — checked = add all visible CVRs to the
 // selection set, unchecked = remove them. Operates on what's RENDERED
