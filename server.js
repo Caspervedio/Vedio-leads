@@ -9439,6 +9439,60 @@ async function tryGoogleSerpForPhone(companyName) {
   }
 }
 
+// Apify Google SERP → LinkedIn profile URLs for a company.
+// Used as a Stage 5 fallback in bulk-enrich when Lusha + FE both whiffed:
+// even DK SMB owners not in Lusha/FE indexes often have indexed LinkedIn
+// profiles. The URLs go straight back into Lusha v2 (which accepts
+// linkedinUrl as its discriminator) for one more phone-reveal attempt.
+//
+// Query: site:linkedin.com/in "Company Name" — restricts to people
+// profiles where the company name appears, biases DK results via
+// countryCode=dk + languageCode=da.
+//
+// Cost per call: ~$0.01-0.02 (1 SERP call via apify~google-search-scraper).
+async function findCompanyLinkedinViaSerp(companyName, opts = {}) {
+  if (!companyName || companyName.length < 3) return [];
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) return [];
+  const limit = Math.max(1, Math.min(10, opts.limit || 3));
+  const query = `site:linkedin.com/in "${companyName}"`;
+  try {
+    const r = await fetch(
+      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${token}&memory=1024&timeout=90`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: query,
+          resultsPerPage: limit,
+          maxPagesPerQuery: 1,
+          countryCode: "dk",
+          languageCode: "da",
+        }),
+      },
+    );
+    if (!r.ok) return [];
+    const items = await r.json();
+    if (!Array.isArray(items) || !items.length) return [];
+    const page = items[0];
+    const profiles = [];
+    for (const o of (page.organicResults || [])) {
+      const url = o.url || o.link || "";
+      if (!/^https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#]+/i.test(url)) continue;
+      profiles.push({
+        url: url.replace(/[#?].*$/, ""),
+        title: String(o.title || ""),
+        snippet: String(o.description || o.snippet || ""),
+      });
+      if (profiles.length >= limit) break;
+    }
+    return profiles;
+  } catch (e) {
+    console.warn("[serp-linkedin]", companyName, e.message);
+    return [];
+  }
+}
+
 app.post("/api/cron/recover-phones", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
@@ -11964,6 +12018,49 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
       }
     } catch (e) {
       console.warn("[bulk-enrich/fe]", cvr, e.message);
+    }
+  }
+
+  // ─── STAGE 5: SERP → LinkedIn → Lusha (last-resort coverage boost)
+  // When Lusha + FE Contact Enrich both whiff (~75% of DK SMB), try
+  // discovering employee LinkedIn URLs via Google SERP, then feed each
+  // URL back into Lusha. Catches DK owners who exist on LinkedIn but
+  // aren't in Lusha's by-name index — Lusha indexes BY URL much better.
+  //
+  // Bounded: 2 LinkedIn URLs max per lead, Lusha 12s timeout each.
+  // Cost: ~$0.01 SERP + ($0.30 × ~30% Lusha hit × 2) = ~$0.20 per attempt.
+  if (!directDial && process.env.APIFY_API_TOKEN && isLushaConfigured() && l.name) {
+    stats.serpLinkedinAttempts = (stats.serpLinkedinAttempts || 0) + 1;
+    try {
+      const liProfiles = await findCompanyLinkedinViaSerp(l.name, { limit: 3 });
+      for (const profile of liProfiles.slice(0, 2)) {
+        try {
+          const lr = await lushaLookupContact({ linkedinUrl: profile.url, timeoutMs: 12_000 });
+          if (lr && lr.phone) {
+            directDial = lr.phone;
+            // Add as a new contact entry (we don't know which existing
+            // contact this LinkedIn URL belongs to)
+            const newContact = {
+              name: lr.fullName || profile.title.replace(/\s*[\|\-–].*$/, "").trim() || "(via LinkedIn)",
+              title: "",
+              linkedin: profile.url,
+              phone: lr.phone,
+              phones: lr.phones,
+              email: lr.email || "",
+              source_discovery: "serp-linkedin",
+              source_phone: "lusha",
+            };
+            l.contacts = Array.isArray(l.contacts) ? l.contacts : [];
+            l.contacts.push(newContact);
+            stats.serpLinkedinHits = (stats.serpLinkedinHits || 0) + 1;
+            break;
+          }
+        } catch (e) {
+          console.warn("[bulk-enrich/serp-lusha]", cvr, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn("[bulk-enrich/serp]", cvr, e.message);
     }
   }
 
