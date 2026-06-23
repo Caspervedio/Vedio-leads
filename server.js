@@ -11830,6 +11830,8 @@ async function runBackfillContacts(req, res) {
     processed: 0,
     apolloHits: 0,
     apolloMisses: 0,
+    fePeopleSearchHits: 0,
+    fePeopleSearchMisses: 0,
     feAttempts: 0,
     feHits: 0,
     lushaAttempts: 0,
@@ -11842,6 +11844,10 @@ async function runBackfillContacts(req, res) {
     return res.status(503).json({ error: "Apollo not configured" });
   }
   const ud = loadUserData(TARGET_USER);
+  // ?force=1 ignores the 7-day skip guard. Used to re-process leads
+  // that got bulk_enriched_at stamped by an earlier broken run where
+  // Apollo whiffed without falling back to FE People Search.
+  const FORCE = req.query.force === "1";
   // Skip if bulk-enriched within last 7 days — idempotent re-run guard
   const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - RECENT_MS;
@@ -11851,8 +11857,10 @@ async function runBackfillContacts(req, res) {
   const allCandidates = (ud.leads || []).filter((l) => {
     if (l.lastAction === "not-relevant") return false;
     if (l.twenty_opportunity_id) return false;
-    const t = l.bulk_enriched_at ? new Date(l.bulk_enriched_at).getTime() : 0;
-    if (t && t > cutoff) return false;
+    if (!FORCE) {
+      const t = l.bulk_enriched_at ? new Date(l.bulk_enriched_at).getTime() : 0;
+      if (t && t > cutoff) return false;
+    }
     const domain = String(l.web || l.website || "").toLowerCase();
     const hasDomain = !!(domain && domain.includes(".") && domain.length > 4);
     const hasRealCvr = /^\d{8}$/.test(String(l.cvr || ""));
@@ -11894,6 +11902,35 @@ async function runBackfillContacts(req, res) {
           stats.apolloHits++;
         } else {
           stats.apolloMisses++;
+        }
+      }
+
+      // ─── STAGE 1.5: Full Enrich People Search (FREE) ─────────────
+      // Apollo coverage on DK SMB is weak — fall back to FE People
+      // Search when Apollo returned 0. FREE (no credits charged), uses
+      // FE's index. Seeds 1 contact name+title for the phone stages.
+      const afterApollo = Array.isArray(l.contacts) ? l.contacts : [];
+      if (afterApollo.length === 0 && isFullEnrichConfigured()) {
+        const domain = String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
+        if (domain) {
+          try {
+            const found = await fullEnrichPeopleSearch(domain, { limit: 1, timeoutMs: 12_000 });
+            if (Array.isArray(found) && found.length > 0) {
+              l.contacts = found.map((p) => ({
+                name: p.name,
+                title: p.title || "",
+                linkedin: p.linkedin_url || p.linkedin || "",
+                source_discovery: "fullenrich-people-search",
+                phone: "",
+                email: "",
+              }));
+              stats.fePeopleSearchHits = (stats.fePeopleSearchHits || 0) + 1;
+            } else {
+              stats.fePeopleSearchMisses = (stats.fePeopleSearchMisses || 0) + 1;
+            }
+          } catch (e) {
+            console.warn("[backfill-contacts/fe-people-search]", l.cvr, e.message);
+          }
         }
       }
 
