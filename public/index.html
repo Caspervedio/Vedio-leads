@@ -7642,20 +7642,39 @@ function _renderCallingListPageImpl(){
   const todayMs = today0.getTime();
   let lastOpenedMap = {};
   try { lastOpenedMap = JSON.parse(localStorage.getItem('vl_cl_last_opened') || '{}'); } catch {}
+  // Mirror the cockpit-queue gates so the calling-list card count + the
+  // expanded list table BOTH match exactly what the cockpit will dial.
+  //   • Active (not archived/not-relevant)
+  //   • Not twenty-pushed (handed off to AE)
+  //   • Not currently enriching (Apollo in-flight)
+  //   • Not a future-scheduled callback (those reappear when due)
+  //   • isLeadCallable (named contact + phone)
+  // Without these, the card claimed "317 klar at ringe" but the cockpit
+  // queue showed 220 — and the table below the card listed all 521 raw
+  // leads including archived + twenty-pushed.
+  const now = Date.now();
+  const isCockpitReady = (x) => {
+    if (!x) return false;
+    if (x.lastAction === 'not-relevant') return false;
+    if (x.twenty_opportunity_id) return false;
+    if (x.apollo_enrichment_pending === true) return false;
+    if (x.callback_at && new Date(x.callback_at).getTime() > now) return false;
+    return typeof isLeadCallable === 'function' ? isLeadCallable(x) : true;
+  };
   const stats = lists.map(l => {
     const inList = (leads||[]).filter(x => x.calling_list_id === l.id);
-    const calledToday = inList.filter(x => x.lastCallAt && new Date(x.lastCallAt).getTime() >= todayMs).length;
+    const ready = inList.filter(isCockpitReady);
+    const calledToday = ready.filter(x => x.lastCallAt && new Date(x.lastCallAt).getTime() >= todayMs).length;
     const lastOpenedStr = lastOpenedMap[l.id];
     const lastOpenedMs = lastOpenedStr ? new Date(lastOpenedStr).getTime() : 0;
     const newSinceLast = lastOpenedMs
-      ? inList.filter(x => x.addedAt && new Date(x.addedAt).getTime() > lastOpenedMs).length
+      ? ready.filter(x => x.addedAt && new Date(x.addedAt).getTime() > lastOpenedMs).length
       : 0; // first time → no "NEW" badge, the SDR has seen nothing yet
-    // Track the callable subset separately so the card can show
-    // "521 leads · 220 klar at ringe nu" — without this the SDR sees
-    // 521 on the card but only 220 in the cockpit and assumes the rest
-    // vanished. Uses the canonical isLeadCallable helper.
-    const callableNow = inList.filter((x) => typeof isLeadCallable === 'function' ? isLeadCallable(x) : true).length;
-    return { ...l, total: inList.length, callableNow, calledToday, newSinceLast, leads: inList };
+    // total = callableNow = ready.length so the card count + the
+    // expanded table both show the same number. SDR can no longer be
+    // surprised by "card said 317, cockpit gave me 220, list table
+    // showed 521 — which is real?". Answer: only ready leads are real.
+    return { ...l, total: ready.length, callableNow: ready.length, calledToday, newSinceLast, leads: ready };
   });
 
   // Post-call summary banner — pops at the top of the Calling list when
