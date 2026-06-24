@@ -12787,12 +12787,58 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     }
     const description = descLines.join("\n");
 
-    // Twenty's standard Opportunity object does NOT have a `description`
-    // field — sending one returns 400 "Object opportunity doesn't have
-    // any 'description' field". The clean alternative is Twenty's Notes
-    // object: create a Note with the rich SDR context, then link it to
-    // the Opportunity via noteTarget. That's the same UX as if a user
-    // had added a note inside Twenty manually.
+    // ─── Native Twenty records for phone + contact ─────────────────────
+    // Push phone + primary contact AS structured Twenty objects (not just
+    // buried in the Note) so AE sees them on the Opportunity card without
+    // having to read the notes panel. Both are best-effort — if either
+    // fails (custom Twenty schema, field name drift, etc.) we log and
+    // continue. The Opportunity creation is the primary success criterion.
+    const tHeaders = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}`,
+    };
+    const tCreate = async (path, body) => {
+      try {
+        const resp = await fetch(`${baseUrl}/rest/${path}`, { method: "POST", headers: tHeaders, body: JSON.stringify(body) });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          console.warn(`[twenty/${path}]`, resp.status, JSON.stringify(data).slice(0, 200));
+          return null;
+        }
+        const obj = data.data?.[`create${path[0].toUpperCase()}${path.slice(1, -1)}`] || data.data?.[path.slice(0, -1)] || data.data || {};
+        return obj.id || null;
+      } catch (e) { console.warn(`[twenty/${path}] failed:`, e.message); return null; }
+    };
+    // Company: phone goes on Company.phones in Twenty. Domain helps Twenty
+    // dedupe if the company already exists.
+    let companyId = null;
+    if (oppName) {
+      const domain = (lead.web || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+      const companyBody = { name: oppName };
+      if (phone) companyBody.phones = { primaryPhoneNumber: phone, primaryPhoneCountryCode: "DK" };
+      if (domain) companyBody.domainName = { primaryLinkUrl: domain };
+      if (lead.city) companyBody.address = { addressCity: lead.city, addressCountry: "Denmark" };
+      companyId = await tCreate("companies", companyBody);
+    }
+    // Person: primary contact's name + phone + email + LinkedIn. Linked
+    // to the Company so AE sees the contact under "People" on the company
+    // card AND as pointOfContact on the opportunity.
+    let personId = null;
+    if (primaryContact && primaryContact.name) {
+      const parts = String(primaryContact.name).trim().split(/\s+/);
+      const firstName = parts[0] || "";
+      const lastName = parts.slice(1).join(" ") || "";
+      const personBody = { name: { firstName, lastName } };
+      if (primaryContact.title) personBody.jobTitle = primaryContact.title;
+      if (primaryContact.phone) personBody.phones = { primaryPhoneNumber: primaryContact.phone, primaryPhoneCountryCode: "DK" };
+      if (primaryContact.email) personBody.emails = { primaryEmail: primaryContact.email };
+      if (linkedinUrl) personBody.linkedinLink = { primaryLinkUrl: linkedinUrl };
+      if (companyId) personBody.companyId = companyId;
+      personId = await tCreate("people", personBody);
+    }
+    // SDR-context still goes in a Note (line items + ad signals etc.
+    // don't fit native fields). Opportunity gains companyId +
+    // pointOfContactId so AE has structured access to the prospect.
     const payload = {
       name: oppName,
       stage,
@@ -12802,12 +12848,11 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
       // our leads come from META scrape / Apollo / CSV / Datafordeler.
       source: "UNKNOWN",
     };
+    if (companyId) payload.companyId = companyId;
+    if (personId) payload.pointOfContactId = personId;
     const r = await fetch(`${baseUrl}/rest/opportunities`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}`,
-      },
+      headers: tHeaders,
       body: JSON.stringify(payload),
     });
     const j = await r.json().catch(() => ({}));
@@ -12871,10 +12916,13 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     lead.twenty_url = url;
     lead.twenty_stage = stage;
     lead.twenty_note_attached = noteAttached;
+    lead.twenty_company_id = companyId || null;
+    lead.twenty_person_id = personId || null;
     if (notes) lead.twenty_pushed_notes = notes;
     saveUserData(req.userId, d);
-    logActivity("twenty-push", `🎯 ${lead.name} pushet til Twenty (stage: ${stage}${noteAttached ? " + note" : ""})`, { cvr, userId: req.userId, opportunityId });
-    res.json({ ok: true, opportunity: { id: opportunityId, url, stage, noteAttached } });
+    const richness = [companyId && "company", personId && "person", noteAttached && "note"].filter(Boolean).join("+") || "opp-only";
+    logActivity("twenty-push", `🎯 ${lead.name} pushet til Twenty (stage: ${stage} · ${richness})`, { cvr, userId: req.userId, opportunityId });
+    res.json({ ok: true, opportunity: { id: opportunityId, url, stage, noteAttached, companyId, personId } });
   } catch (e) {
     console.error("[twenty/push]", e.message);
     res.status(500).json({ error: e.message });

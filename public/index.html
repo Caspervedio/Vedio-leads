@@ -7673,6 +7673,33 @@ function _renderCallingListPageImpl(){
     return { ...l, total: ready.length, callableNow: ready.length, scheduled, calledToday, newSinceLast, leads: inList };
   });
 
+  // Virtual "Pushet til Twenty" list — same calling-list page card style,
+  // but the lead set is anything with twenty_opportunity_id (handed off
+  // to AE). SDR keeps a permanent record of "every deal I sent to AE"
+  // without having to dig through the Leadlist's twenty-pushed chip.
+  // Pushed-today = pushed at any point today (SDR's progress snapshot).
+  const pushedAll = (leads||[]).filter(x => !!x.twenty_opportunity_id);
+  if (pushedAll.length > 0) {
+    const pushedToday = pushedAll.filter(x => x.twenty_pushed_at && new Date(x.twenty_pushed_at).getTime() >= todayMs).length;
+    // Newest at top — most recent pushes first.
+    const pushedSorted = pushedAll.slice().sort((a, b) => {
+      const aT = a.twenty_pushed_at ? new Date(a.twenty_pushed_at).getTime() : 0;
+      const bT = b.twenty_pushed_at ? new Date(b.twenty_pushed_at).getTime() : 0;
+      return bT - aT;
+    });
+    stats.push({
+      id: '__twenty_pushed__',
+      name: '🎯 Pushet til Twenty',
+      virtual: 'twenty-pushed',
+      total: pushedAll.length,
+      callableNow: 0,
+      scheduled: 0,
+      calledToday: 0,
+      newSinceLast: pushedToday,
+      leads: pushedSorted,
+    });
+  }
+
   // Post-call summary banner — pops at the top of the Calling list when
   // the SDR closes the cockpit. Lives in sessionStorage so it's gone on
   // the next browser session (tomorrow). Auto-disappears 5 min after
@@ -7735,15 +7762,25 @@ function _renderCallingListPageImpl(){
           } else {
             stateChip = lastActionChip(l.lastAction);
           }
-          return `<tr onclick="callingListOpenCockpit('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${rowDim}" onmouseover="this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.background='transparent'">
+          // Twenty-pushed rows in the virtual list open the Twenty card
+          // directly; everything else opens the cockpit/inspector as usual.
+          const rowClick = (s.virtual === 'twenty-pushed' && l.twenty_url)
+            ? `window.open('${e(l.twenty_url)}','_blank')`
+            : `callingListOpenCockpit('${e(l.cvr)}')`;
+          // Virtual list rows show "Open Twenty ↗" instead of "← Fjern"
+          // since they're read-only history rows.
+          const rowAction = s.virtual === 'twenty-pushed'
+            ? (l.twenty_url
+                ? `<a href="${e(l.twenty_url)}" target="_blank" onclick="event.stopPropagation()" style="background:transparent;border:1px solid rgba(96,165,250,0.35);border-radius:7px;padding:5px 10px;color:#60a5fa;font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;text-decoration:none">Åbn i Twenty ↗</a>`
+                : `<span style="font-size:10.5px;color:var(--w35);font-style:italic">ingen URL</span>`)
+            : `<button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Leadlist" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>`;
+          return `<tr onclick="${rowClick}" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${rowDim}" onmouseover="this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.background='transparent'">
             <td style="padding:10px 8px 10px 24px;font-size:12px;color:var(--w35);width:42px">${i+1}</td>
             <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span></td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
             <td style="padding:10px 14px">${stateChip}</td>
             <td style="padding:10px 14px;text-align:right">${phoneCell}</td>
-            <td style="padding:10px 24px 10px 6px;text-align:right">
-              <button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Leadlist" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>
-            </td>
+            <td style="padding:10px 24px 10px 6px;text-align:right">${rowAction}</td>
           </tr>`;
         }).join('')}</tbody>
       </table>
@@ -7754,25 +7791,35 @@ function _renderCallingListPageImpl(){
     const isExpanded = s.id === activeId;
     const disabled = s.total === 0;
     const hasNew = s.newSinceLast > 0;
+    const isVirtual = !!s.virtual;
     // Subtle: only intensify the glow when there's genuinely something
     // new to call. Otherwise keep the standard animation so the page
     // doesn't feel like a slot machine.
     const startBtnExtra = hasNew
       ? 'box-shadow:0 0 28px rgba(124,58,237,0.65),0 4px 18px rgba(124,58,237,0.55)'
       : '';
+    // Virtual lists (e.g. "Pushet til Twenty") are READ-ONLY archives —
+    // no rename, no delete, no Start opkald. Subtitle reads as "N pushet
+    // til Twenty · M i dag" instead of "klar at ringe".
+    const subtitle = isVirtual
+      ? `<strong style="color:${s.total>0?'#fff':'var(--w55)'};font-weight:800">${s.total}</strong> pushet til Twenty${s.newSinceLast>0?` · <strong style="color:#60a5fa">${s.newSinceLast} pushet i dag</strong>`:''}`
+      : `<strong style="color:${s.callableNow>0?'#fff':'var(--w55)'};font-weight:800">${s.callableNow}</strong> klar at ringe${s.scheduled>0?` · <strong style="color:#c4b5fd">${s.scheduled}</strong> callback planlagt`:''}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}`;
+    const actions = isVirtual
+      ? `<span style="font-size:10px;color:var(--w35);font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:0 14px">Historik · skrivebeskyttet</span>`
+      : `<button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
+        <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
+        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.45;animation:none':''}">▶ Start opkald</button>`;
     return `<div style="background:var(--dark2);border:1px solid ${isExpanded?'rgba(124,58,237,0.55)':'var(--w08)'};border-radius:14px;margin-bottom:10px;overflow:hidden;transition:border-color 0.15s">
       <div onclick="callingListToggleExpand('${e(s.id)}')" style="display:flex;align-items:center;gap:14px;padding:18px 22px;cursor:pointer;transition:background 0.12s" onmouseover="this.style.background='rgba(124,58,237,0.04)'" onmouseout="this.style.background='transparent'">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px;flex-wrap:wrap">
             <span style="font-size:16px;font-weight:800;color:#fff">${e(s.name)}</span>
             ${isExpanded?'<span style="font-size:9px;color:#c4b5fd;font-weight:800;letter-spacing:0.6px;background:rgba(124,58,237,0.18);padding:3px 7px;border-radius:5px">ÅBEN</span>':''}
-            ${hasNew?`<span style="font-size:9.5px;color:#6ee7b7;font-weight:800;letter-spacing:0.6px;background:rgba(110,231,153,0.14);border:1px solid rgba(110,231,153,0.35);padding:3px 8px;border-radius:5px" title="Nye leads siden sidste session i denne liste">+${s.newSinceLast} NYE</span>`:''}
+            ${!isVirtual && hasNew?`<span style="font-size:9.5px;color:#6ee7b7;font-weight:800;letter-spacing:0.6px;background:rgba(110,231,153,0.14);border:1px solid rgba(110,231,153,0.35);padding:3px 8px;border-radius:5px" title="Nye leads siden sidste session i denne liste">+${s.newSinceLast} NYE</span>`:''}
           </div>
-          <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.callableNow>0?'#fff':'var(--w55)'};font-weight:800">${s.callableNow}</strong> klar at ringe${s.scheduled>0?` · <strong style="color:#c4b5fd">${s.scheduled}</strong> callback planlagt`:''}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
+          <div style="font-size:12px;color:var(--w55)">${subtitle}</div>
         </div>
-        <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
-        <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
-        <button onclick="event.stopPropagation();callingListStartList('${e(s.id)}')" class="btn-start-call" style="border-radius:9px;padding:10px 20px;font-size:13px;${startBtnExtra};${disabled?'opacity:0.45;animation:none':''}">▶ Start opkald</button>
+        ${actions}
         <button onclick="event.stopPropagation();callingListToggleExpand('${e(s.id)}')" title="${isExpanded?'Skjul leads':'Vis leads'}" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:8px 10px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color 0.12s,background 0.12s" onmouseover="this.style.borderColor='rgba(124,58,237,0.5)';this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.borderColor='var(--w08)';this.style.background='transparent'">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--w55);transform:rotate(${isExpanded?'180':'0'}deg);transition:transform 0.2s;display:block"><path d="M3 5l4 4 4-4"/></svg>
         </button>
