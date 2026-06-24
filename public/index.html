@@ -6226,31 +6226,6 @@ function renderAutodialerPage(){
   if(_adState.categoryFilter && _adState.categoryFilter !== 'all'){
     filtered = filtered.filter(l => leadCategory(l) === _adState.categoryFilter);
   }
-  // Enrichment-status filter (2026-06-23) — separates callable leads
-  // (ready for cockpit) from leads needing manual research.
-  //   • 'callable'    → has named contact + direct phone
-  //   • 'needs-manual' → bulk_enriched_at set (chain ran) AND lacks
-  //                      contact-level phone OR named contact
-  //   • 'not-enriched' → never been through the chain
-  if(_adState.enrichmentFilter && _adState.enrichmentFilter !== 'all'){
-    filtered = filtered.filter((l) => {
-      // Single source of truth — isLeadCallable. See definition above.
-      const callable = isLeadCallable(l);
-      const enriched = !!l.bulk_enriched_at;
-      if (_adState.enrichmentFilter === 'callable')    return callable;
-      if (_adState.enrichmentFilter === 'needs-manual') return enriched && !callable;
-      if (_adState.enrichmentFilter === 'not-enriched') return !enriched;
-      return true;
-    });
-  }
-  // Hide leads already added to a calling list (toggled by SDR, default ON).
-  // Keeps the Leadlist focused on "what's still untriaged" without losing
-  // the master-view escape hatch — flipping the toggle off shows them
-  // back with an amber "🎯 list-name" chip on each row.
-  // Only applies in the active queue view (not archive / twenty-pushed etc).
-  if(_adState.hideInLists && !showArchive && !showTwentyPushed && !showPhoneMissing && !showEnriching && !showMaybeRelevant){
-    filtered = filtered.filter(l => !l.calling_list_id);
-  }
   // Apply tech-stack filter (set by Tech Stack Scanner page)
   if(_adState.stackFilter){
     filtered=filtered.filter(l=>Array.isArray(l.techStack)&&l.techStack.includes(_adState.stackFilter));
@@ -6280,6 +6255,41 @@ function renderAutodialerPage(){
       // Digit-only retry — catches CVR/phone matches when input has spaces
       if (qDigits !== q && hay.replace(/\s+/g,'').includes(qDigits)) return true;
       return false;
+    });
+  }
+  // ─── Cohort snapshots for the badge counts (2026-06-24) ────────────
+  // Stash `filtered` at two points so the badge counters can compute
+  // EXACTLY what each tab would display when clicked, with the same
+  // source/category/search/etc. filters already applied.
+  //
+  //   _adState._cohortIgnoringListMembership
+  //     = passes every visibility filter except hideInLists+enrichment
+  //   _adState._cohortListAware
+  //     = passes every visibility filter except enrichment
+  //
+  // Badge counters read these via the IIFE in listsEl.innerHTML below.
+  _adState._cohortIgnoringListMembership = filtered.slice();
+  // Hide leads already added to a calling list (toggled by SDR, default ON).
+  // Keeps the Leadlist focused on "what's still untriaged" without losing
+  // the master-view escape hatch — flipping the toggle off shows them
+  // back with an amber "🎯 list-name" chip on each row.
+  // Only applies in the active queue view (not archive / twenty-pushed etc).
+  if(_adState.hideInLists && !showArchive && !showTwentyPushed && !showPhoneMissing && !showEnriching && !showMaybeRelevant){
+    filtered = filtered.filter(l => !l.calling_list_id);
+  }
+  _adState._cohortListAware = filtered.slice();
+  // Enrichment-status filter — applies LAST so the cohort snapshots above
+  // mirror what each tab's click result would yield (everything-except-
+  // this-tab's-predicate). See isLeadCallable for the single source of
+  // truth on what "callable" means.
+  if(_adState.enrichmentFilter && _adState.enrichmentFilter !== 'all'){
+    filtered = filtered.filter((l) => {
+      const callable = isLeadCallable(l);
+      const enriched = !!l.bulk_enriched_at;
+      if (_adState.enrichmentFilter === 'callable')    return callable;
+      if (_adState.enrichmentFilter === 'needs-manual') return enriched && !callable;
+      if (_adState.enrichmentFilter === 'not-enriched') return !enriched;
+      return true;
     });
   }
   // Sort — priority (info-rich first, then ICP-klar, then ads count) is
@@ -6639,23 +6649,23 @@ function renderAutodialerPage(){
       };
       // Aktivitet + Eksportér moved to the sidebar footer 2026-06-16 — they
       // are global actions and shouldn't live inside the Leadlist toolbar.
-      // Enrichment-status chip row — uses the canonical isLeadCallable
-      // helper so the badge counts always match what enrichmentFilter
-      // shows when clicked + what the cockpit gate accepts.
-      // Badge counts mirror exactly what clicking the tab DISPLAYS so
-      // "📞 9 klar at ringe" never disagrees with the 9-row table below.
-      // Without the hideInLists factor, the badge said 301 but the click
-      // showed 9 (because 292 callables were already on a list and the
-      // "Skjul leads på lister" toggle is default-ON).
-      const hideInListsActive = _adState.hideInLists !== false;
-      const passesListVisibility = (l) => hideInListsActive ? !l.calling_list_id : true;
-      const callableCount    = baseActive.filter((l) => isLeadCallable(l) && passesListVisibility(l)).length;
-      const needsManualCount = baseActive.filter((l) => l.bulk_enriched_at && !isLeadCallable(l) && passesListVisibility(l)).length;
-      const notEnrichedCount = baseActive.filter((l) => !l.bulk_enriched_at && passesListVisibility(l)).length;
-      // For the subtitle hint — total callable across ALL lists, so
-      // SDR sees "9 kan tilføjes (292 allerede på liste)".
-      const callableTotalIgnoringList = baseActive.filter(isLeadCallable).length;
-      const callableAlreadyOnList = callableTotalIgnoringList - callableCount;
+      // Badge counters use the cohort snapshots stashed during the filter
+      // chain. Each badge count = leads that would actually appear in the
+      // table when that tab is clicked. Every visibility filter (source,
+      // category, search, twenty-pushed, enriching, phone-missing, ad-
+      // signal, stackFilter, hideInLists) is already applied — only the
+      // enrichmentFilter is "rolled back" so each tab can compute its
+      // own predicate. This makes badge → click mismatches mathematically
+      // impossible regardless of which filters are active.
+      const cohort = _adState._cohortListAware || [];
+      const callableCount    = cohort.filter(isLeadCallable).length;
+      const needsManualCount = cohort.filter((l) => l.bulk_enriched_at && !isLeadCallable(l)).length;
+      const notEnrichedCount = cohort.filter((l) => !l.bulk_enriched_at).length;
+      // Subtitle hint — callables that would appear if SDR turned off
+      // "Skjul leads i ring-lister". Pulled from the wider cohort so it
+      // represents the same source/category/search etc. context.
+      const cohortIgnoringList = _adState._cohortIgnoringListMembership || cohort;
+      const callableAlreadyOnList = cohortIgnoringList.filter((l) => isLeadCallable(l) && l.calling_list_id).length;
       const activeEnrich = _adState.enrichmentFilter || 'all';
 
       // Enrichment flow tabs — the primary view dimension for Leadlist
