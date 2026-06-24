@@ -7762,10 +7762,12 @@ function _renderCallingListPageImpl(){
           } else {
             stateChip = lastActionChip(l.lastAction);
           }
-          // Twenty-pushed rows in the virtual list open the Twenty card
-          // directly; everything else opens the cockpit/inspector as usual.
-          const rowClick = (s.virtual === 'twenty-pushed' && l.twenty_url)
-            ? `window.open('${e(l.twenty_url)}','_blank')`
+          // Twenty-pushed rows open the lead inspector (side-panel data
+          // card inside Vedio Leads) so SDR can review the data we have
+          // without leaving the tool. The "Åbn i Twenty ↗" button on the
+          // right side stays as a direct jump to Twenty when SDR wants it.
+          const rowClick = (s.virtual === 'twenty-pushed')
+            ? `openLeadInspector('${e(l.cvr)}')`
             : `callingListOpenCockpit('${e(l.cvr)}')`;
           // Virtual list rows show "Open Twenty ↗" instead of "← Fjern"
           // since they're read-only history rows.
