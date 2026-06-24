@@ -7642,16 +7642,11 @@ function _renderCallingListPageImpl(){
   const todayMs = today0.getTime();
   let lastOpenedMap = {};
   try { lastOpenedMap = JSON.parse(localStorage.getItem('vl_cl_last_opened') || '{}'); } catch {}
-  // Mirror the cockpit-queue gates so the calling-list card count + the
-  // expanded list table BOTH match exactly what the cockpit will dial.
-  //   • Active (not archived/not-relevant)
-  //   • Not twenty-pushed (handed off to AE)
-  //   • Not currently enriching (Apollo in-flight)
-  //   • Not a future-scheduled callback (those reappear when due)
-  //   • isLeadCallable (named contact + phone)
-  // Without these, the card claimed "317 klar at ringe" but the cockpit
-  // queue showed 220 — and the table below the card listed all 521 raw
-  // leads including archived + twenty-pushed.
+  // Card count = cockpit-ready (matches what "▶ Start opkald" will dial).
+  // Table = ALL leads in the list — including ones with future callbacks,
+  // pushed-to-Twenty, archived. Each row shows a state chip so SDR can
+  // see at a glance "Spejlshoppen → ✓ Pushet til Twenty" instead of
+  // assuming the lead vanished.
   const now = Date.now();
   const isCockpitReady = (x) => {
     if (!x) return false;
@@ -7664,17 +7659,18 @@ function _renderCallingListPageImpl(){
   const stats = lists.map(l => {
     const inList = (leads||[]).filter(x => x.calling_list_id === l.id);
     const ready = inList.filter(isCockpitReady);
-    const calledToday = ready.filter(x => x.lastCallAt && new Date(x.lastCallAt).getTime() >= todayMs).length;
+    const scheduled = inList.filter((x) => x.callback_at && new Date(x.callback_at).getTime() > now && x.lastAction !== 'not-relevant' && !x.twenty_opportunity_id).length;
+    const calledToday = inList.filter(x => x.lastCallAt && new Date(x.lastCallAt).getTime() >= todayMs).length;
     const lastOpenedStr = lastOpenedMap[l.id];
     const lastOpenedMs = lastOpenedStr ? new Date(lastOpenedStr).getTime() : 0;
     const newSinceLast = lastOpenedMs
       ? ready.filter(x => x.addedAt && new Date(x.addedAt).getTime() > lastOpenedMs).length
-      : 0; // first time → no "NEW" badge, the SDR has seen nothing yet
-    // total = callableNow = ready.length so the card count + the
-    // expanded table both show the same number. SDR can no longer be
-    // surprised by "card said 317, cockpit gave me 220, list table
-    // showed 521 — which is real?". Answer: only ready leads are real.
-    return { ...l, total: ready.length, callableNow: ready.length, calledToday, newSinceLast, leads: ready };
+      : 0;
+    // Card count uses ready.length so it matches the cockpit queue.
+    // The table (s.leads) gets the FULL inList so SDR can find e.g.
+    // a Twenty-pushed Spejlshoppen with a "✓ Pushet" chip instead of
+    // thinking it disappeared.
+    return { ...l, total: ready.length, callableNow: ready.length, scheduled, calledToday, newSinceLast, leads: inList };
   });
 
   // Post-call summary banner — pops at the top of the Calling list when
@@ -7719,11 +7715,31 @@ function _renderCallingListPageImpl(){
           const phoneCell = phone
             ? `<button onclick="event.stopPropagation();ringNow('${e(phone)}','${e(l.cvr||'')}','${e(l.name||'')}')" title="Ring" style="all:unset;cursor:pointer;font-family:monospace;font-size:13px;font-weight:700;color:#c4b5fd;letter-spacing:0.3px">${e(phone)}</button>`
             : `<span style="font-size:11px;color:var(--w35);font-style:italic">mangler nummer</span>`;
-          return `<tr onclick="callingListOpenCockpit('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.background='transparent'">
+          // Status chip — surfaces non-dialable states so SDR can find
+          // e.g. "Spejlshoppen → ✓ Pushet til Twenty" without thinking
+          // the lead vanished. Priority: Twenty-pushed > callback > archived
+          // > lastAction > (none). Dimmed row when not cockpit-ready.
+          let stateChip = '';
+          let rowDim = '';
+          if (l.twenty_opportunity_id) {
+            const url = l.twenty_url ? `href="${e(l.twenty_url)}" target="_blank"` : '';
+            stateChip = `<a ${url} onclick="event.stopPropagation()" style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(96,165,250,0.18);color:#60a5fa;font-weight:700;text-decoration:none;display:inline-block">✓ Twenty</a>`;
+            rowDim = ';opacity:0.6';
+          } else if (l.callback_at && new Date(l.callback_at).getTime() > now) {
+            const d = new Date(l.callback_at);
+            const lbl = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+            stateChip = `<span style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(196,181,253,0.18);color:#c4b5fd;font-weight:700">📅 ${lbl}</span>`;
+          } else if (l.lastAction === 'not-relevant') {
+            stateChip = `<span style="font-size:9.5px;padding:2px 7px;border-radius:6px;background:rgba(148,163,184,0.15);color:#94a3b8;font-weight:700">✕ Arkiveret</span>`;
+            rowDim = ';opacity:0.55';
+          } else {
+            stateChip = lastActionChip(l.lastAction);
+          }
+          return `<tr onclick="callingListOpenCockpit('${e(l.cvr)}')" style="border-bottom:1px solid var(--w04);cursor:pointer;transition:background 0.1s${rowDim}" onmouseover="this.style.background='rgba(124,58,237,0.08)'" onmouseout="this.style.background='transparent'">
             <td style="padding:10px 8px 10px 24px;font-size:12px;color:var(--w35);width:42px">${i+1}</td>
             <td style="padding:10px 14px"><span style="font-size:13px;font-weight:700;color:#fff">${e(l.name||'—')}</span></td>
             <td style="padding:10px 14px;font-size:11.5px;color:var(--w80)">${e(l.city||'')}</td>
-            <td style="padding:10px 14px">${lastActionChip(l.lastAction)}</td>
+            <td style="padding:10px 14px">${stateChip}</td>
             <td style="padding:10px 14px;text-align:right">${phoneCell}</td>
             <td style="padding:10px 24px 10px 6px;text-align:right">
               <button onclick="event.stopPropagation();callingListRemove('${e(l.cvr)}')" title="Fjern fra ring-listen — tilbage til Leadlist" style="background:transparent;border:1px solid var(--w08);border-radius:7px;padding:5px 10px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11px;font-weight:600;cursor:pointer">← Fjern</button>
@@ -7752,7 +7768,7 @@ function _renderCallingListPageImpl(){
             ${isExpanded?'<span style="font-size:9px;color:#c4b5fd;font-weight:800;letter-spacing:0.6px;background:rgba(124,58,237,0.18);padding:3px 7px;border-radius:5px">ÅBEN</span>':''}
             ${hasNew?`<span style="font-size:9.5px;color:#6ee7b7;font-weight:800;letter-spacing:0.6px;background:rgba(110,231,153,0.14);border:1px solid rgba(110,231,153,0.35);padding:3px 8px;border-radius:5px" title="Nye leads siden sidste session i denne liste">+${s.newSinceLast} NYE</span>`:''}
           </div>
-          <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.callableNow>0?'#fff':'var(--w55)'};font-weight:800">${s.callableNow}</strong> klar at ringe${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
+          <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.callableNow>0?'#fff':'var(--w55)'};font-weight:800">${s.callableNow}</strong> klar at ringe${s.scheduled>0?` · <strong style="color:#c4b5fd">${s.scheduled}</strong> callback planlagt`:''}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
         </div>
         <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
         <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
@@ -8033,6 +8049,7 @@ async function saveContactEditor(cvr, contactIdx) {
     const inspectorBg = document.getElementById('lead-inspector-bg');
     if (inspectorBg && (inspectorBg.style.display === 'block' || inspectorBg.style.display !== 'none')) openLeadInspector(cvr);
     if (typeof renderAutodialerPage === 'function' && currentPage === 'autodialer') renderAutodialerPage();
+    if (typeof renderCallingListPage === 'function' && document.getElementById('calling-list-page') && document.getElementById('calling-list-page').style.display !== 'none') renderCallingListPage();
   } catch (ex) {
     showToast('Fejl: ' + ex.message);
   }
@@ -10548,13 +10565,15 @@ async function contactFetchPhone(cvr, contactIdx) {
       return;
     }
     showToast(`✓ ${c.name}: ${phone}`);
-    // Re-render whichever view is open
+    // Re-render every surface that might be showing this lead — instant
+    // feedback for the SDR instead of waiting 15s for the polling tick.
     try { if (typeof renderCockpit === 'function' && _cockpit && _cockpit.open) renderCockpit(); } catch(_) {}
     try {
       const inspectorBg = document.getElementById('lead-inspector-bg');
       if (inspectorBg && inspectorBg.style.display !== 'none') openLeadInspector(cvr);
     } catch(_) {}
     try { if (typeof renderAutodialerPage === 'function' && currentPage === 'autodialer') renderAutodialerPage(); } catch(_) {}
+    try { if (typeof renderCallingListPage === 'function' && document.getElementById('calling-list-page') && document.getElementById('calling-list-page').style.display !== 'none') renderCallingListPage(); } catch(_) {}
   } catch (ex) {
     showToast('Fejl: ' + ex.message);
   }
@@ -10660,6 +10679,7 @@ async function cockpitAddContactFromLinkedin(cvr) {
         }
       } catch(_) {}
       try { if (typeof renderAutodialerPage === 'function' && currentPage === 'autodialer') renderAutodialerPage(); } catch(_) {}
+      try { if (typeof renderCallingListPage === 'function' && document.getElementById('calling-list-page') && document.getElementById('calling-list-page').style.display !== 'none') renderCallingListPage(); } catch(_) {}
     }
   } catch (ex) {
     showToast('Fejl: ' + ex.message);
