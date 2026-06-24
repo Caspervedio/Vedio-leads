@@ -6642,9 +6642,20 @@ function renderAutodialerPage(){
       // Enrichment-status chip row — uses the canonical isLeadCallable
       // helper so the badge counts always match what enrichmentFilter
       // shows when clicked + what the cockpit gate accepts.
-      const callableCount = baseActive.filter(isLeadCallable).length;
-      const needsManualCount = baseActive.filter((l) => l.bulk_enriched_at && !isLeadCallable(l)).length;
-      const notEnrichedCount = baseActive.filter((l) => !l.bulk_enriched_at).length;
+      // Badge counts mirror exactly what clicking the tab DISPLAYS so
+      // "📞 9 klar at ringe" never disagrees with the 9-row table below.
+      // Without the hideInLists factor, the badge said 301 but the click
+      // showed 9 (because 292 callables were already on a list and the
+      // "Skjul leads på lister" toggle is default-ON).
+      const hideInListsActive = _adState.hideInLists !== false;
+      const passesListVisibility = (l) => hideInListsActive ? !l.calling_list_id : true;
+      const callableCount    = baseActive.filter((l) => isLeadCallable(l) && passesListVisibility(l)).length;
+      const needsManualCount = baseActive.filter((l) => l.bulk_enriched_at && !isLeadCallable(l) && passesListVisibility(l)).length;
+      const notEnrichedCount = baseActive.filter((l) => !l.bulk_enriched_at && passesListVisibility(l)).length;
+      // For the subtitle hint — total callable across ALL lists, so
+      // SDR sees "9 kan tilføjes (292 allerede på liste)".
+      const callableTotalIgnoringList = baseActive.filter(isLeadCallable).length;
+      const callableAlreadyOnList = callableTotalIgnoringList - callableCount;
       const activeEnrich = _adState.enrichmentFilter || 'all';
 
       // Enrichment flow tabs — the primary view dimension for Leadlist
@@ -6702,7 +6713,7 @@ function renderAutodialerPage(){
             ${activeEnrich !== 'all' ? `<button onclick="adSetEnrichmentFilter('${activeEnrich}')" style="background:transparent;border:0;color:var(--w55);font-size:11px;text-decoration:underline;cursor:pointer;padding:0">vis alle</button>` : ''}
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
-            ${tabCard('callable',    '📞', 'Klar at ringe',    callableCount,    'Direkte mobil + navngivet kontakt fundet.',  'rgba(52,211,153,0.9)', 'rgba(52,211,153,0.10)', '→ kan tilføjes til ring-liste')}
+            ${tabCard('callable',    '📞', 'Klar at ringe',    callableCount,    'Direkte mobil + navngivet kontakt fundet.',  'rgba(52,211,153,0.9)', 'rgba(52,211,153,0.10)', callableAlreadyOnList > 0 ? `→ kan tilføjes til ring-liste · ${callableAlreadyOnList} allerede på liste` : '→ kan tilføjes til ring-liste')}
             ${tabCard('needs-manual','⚠', 'Manuel berigelse',  needsManualCount, 'Chain kørte, fandt ikke kontakt eller telefon.', 'rgba(251,146,60,0.9)', 'rgba(251,146,60,0.10)', '→ kræver SDR/admin handling')}
             ${tabCard('not-enriched','⏳', 'I berigelses-kø',   notEnrichedCount, 'Venter på næste daglige cron (04:30).',      'rgba(148,163,184,0.9)','rgba(148,163,184,0.10)', '→ ingen handling, vent')}
           </div>
@@ -7597,7 +7608,12 @@ function _renderCallingListPageImpl(){
     const newSinceLast = lastOpenedMs
       ? inList.filter(x => x.addedAt && new Date(x.addedAt).getTime() > lastOpenedMs).length
       : 0; // first time → no "NEW" badge, the SDR has seen nothing yet
-    return { ...l, total: inList.length, calledToday, newSinceLast, leads: inList };
+    // Track the callable subset separately so the card can show
+    // "521 leads · 220 klar at ringe nu" — without this the SDR sees
+    // 521 on the card but only 220 in the cockpit and assumes the rest
+    // vanished. Uses the canonical isLeadCallable helper.
+    const callableNow = inList.filter((x) => typeof isLeadCallable === 'function' ? isLeadCallable(x) : true).length;
+    return { ...l, total: inList.length, callableNow, calledToday, newSinceLast, leads: inList };
   });
 
   // Post-call summary banner — pops at the top of the Calling list when
@@ -7675,7 +7691,7 @@ function _renderCallingListPageImpl(){
             ${isExpanded?'<span style="font-size:9px;color:#c4b5fd;font-weight:800;letter-spacing:0.6px;background:rgba(124,58,237,0.18);padding:3px 7px;border-radius:5px">ÅBEN</span>':''}
             ${hasNew?`<span style="font-size:9.5px;color:#6ee7b7;font-weight:800;letter-spacing:0.6px;background:rgba(110,231,153,0.14);border:1px solid rgba(110,231,153,0.35);padding:3px 8px;border-radius:5px" title="Nye leads siden sidste session i denne liste">+${s.newSinceLast} NYE</span>`:''}
           </div>
-          <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.total>0?'#fff':'var(--w55)'};font-weight:800">${s.total}</strong> ${s.total===1?'lead':'leads'}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
+          <div style="font-size:12px;color:var(--w55)"><strong style="color:${s.total>0?'#fff':'var(--w55)'};font-weight:800">${s.total}</strong> ${s.total===1?'lead':'leads'}${s.callableNow !== s.total ? ` · <strong style="color:#6ee7b7">${s.callableNow}</strong> klar at ringe nu` : ''}${s.calledToday>0?` · <strong style="color:#c4b5fd">${s.calledToday} ringet i dag</strong>`:''}</div>
         </div>
         <button onclick="event.stopPropagation();callingListRenameById('${e(s.id)}')" title="Omdøb listen" style="background:transparent;border:1px solid var(--w08);border-radius:8px;padding:7px 12px;color:var(--w55);font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">✎ Omdøb</button>
         <button onclick="event.stopPropagation();callingListDeleteById('${e(s.id)}')" title="Slet listen (leads tilbage til Leadlist)" style="background:transparent;border:1px solid rgba(248,113,113,0.25);border-radius:8px;padding:7px 12px;color:#fca5a5;font-family:'Outfit',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">🗑 Slet</button>
