@@ -6522,10 +6522,16 @@ function renderAutodialerPage(){
     }
     return true;
   });
-  const advertiserCount=activeLeads.filter(l=>l.meta_advertiser===true).length;
-  for(const l of activeLeads){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
+  // Source-chip baseline must mirror the enrichment-badge cohort so
+  // counts across the toolbar share one consistent yardstick.
+  // Without this, "Alle 269" shouts at the SDR while "Klar at ringe 9"
+  // whispers — different baselines for the same view.
+  const hideInListsActive = _adState.hideInLists && !showArchive && !showTwentyPushed && !showPhoneMissing && !showEnriching && !showMaybeRelevant;
+  const chipBaseline = hideInListsActive ? activeLeads.filter(l => !l.calling_list_id) : activeLeads;
+  const advertiserCount=chipBaseline.filter(l=>l.meta_advertiser===true).length;
+  for(const l of chipBaseline){const s=l.source||'manual';srcCounts[s]=(srcCounts[s]||0)+1;}
   const srcDef=[
-    ['all','Alle',activeLeads.length],
+    ['all','Alle',chipBaseline.length],
     // Confirmed Meta advertisers — strongest ICP signal. Click-through
     // to "only real advertisers" view stays useful even with Meta as
     // scorer (not source) since branche-walk leads pick up this flag.
@@ -6640,9 +6646,12 @@ function renderAutodialerPage(){
          To reset the category filter, click the active chip again
          (toggle-off behavior, see adSetCategoryFilter). -->
     ${(()=>{
-      const baseActive = leads.filter(l => l.lastAction!=='not-relevant' && !isTwentyPushed(l));
-      const ecomCount    = baseActive.filter(l => leadCategory(l) === 'ecom').length;
-      const serviceCount = baseActive.filter(l => leadCategory(l) === 'service').length;
+      // Category chips count over the SAME chipBaseline as source chips
+      // and the same cohortListAware as enrichment badges — so toggling
+      // any filter changes every count in lockstep. No more "639 e-com
+      // in one row but only 22 leads visible in the badges below".
+      const ecomCount    = chipBaseline.filter(l => leadCategory(l) === 'ecom').length;
+      const serviceCount = chipBaseline.filter(l => leadCategory(l) === 'service').length;
       const catChip = (id, lbl, cnt) => {
         const active = (_adState.categoryFilter || 'all') === id;
         return `<button onclick="adSetCategoryFilter('${id}')" style="padding:7px 14px;border-radius:10px;border:1px solid ${active?'rgba(124,58,237,0.6)':'var(--w08)'};background:${active?'linear-gradient(135deg,rgba(124,58,237,0.22),rgba(167,139,250,0.14))':'transparent'};color:${active?'#fff':'var(--w80)'};font-size:12px;font-weight:${active?'800':'600'};cursor:pointer;font-family:'Outfit',sans-serif;letter-spacing:0.2px;transition:all 0.12s" title="${active?'Klik igen for at vise alle kategorier':'Vis kun '+lbl}">${e(lbl)} <span style="opacity:0.6;font-weight:600;margin-left:2px">${cnt}</span></button>`;
