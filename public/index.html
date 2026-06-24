@@ -6486,28 +6486,51 @@ function renderAutodialerPage(){
   // phone_missing AND currently-enriching leads (those live in dedicated
   // chips at the end of the chip row).
   const srcCounts={};
+  // ─── Special-chip count alignment (2026-06-24) ────────────────────
+  // Each special chip TAKES OVER the view when clicked — but its count
+  // used to be computed over `leads` (global), while the click result
+  // narrows further by categoryFilter / stackFilter / searchQ. SDR saw
+  // "Mangler nummer 223" then clicked and got 29 rows.
+  //
+  // Helper: applyContextualFilters(predicate) counts leads matching the
+  // chip's predicate AND the currently-active context filters (category
+  // / stack / search), matching exactly what the click reveals.
+  const applyContextualFilters = (pred) => {
+    let n = 0;
+    for (const l of leads) {
+      if (!pred(l)) continue;
+      if (_adState.categoryFilter && _adState.categoryFilter !== 'all' && leadCategory(l) !== _adState.categoryFilter) continue;
+      if (_adState.stackFilter && !(Array.isArray(l.techStack) && l.techStack.includes(_adState.stackFilter))) continue;
+      if (_adState.searchQ && _adState.searchQ.trim()) {
+        const q = _adState.searchQ.trim().toLowerCase();
+        const qDigits = q.replace(/\s+/g, '');
+        const hay = [l.name, l.cvr, l.phone, l.ph, l.web, l.domain, l.city, l.address, l.branche, l.industry,
+          (l.contacts||[]).map(c => `${c.name||''} ${c.title||''} ${c.phone||''} ${c.email||''}`).join(' ')
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q) && !(qDigits !== q && hay.replace(/\s+/g,'').includes(qDigits))) continue;
+      }
+      n++;
+    }
+    return n;
+  };
   // PR2: Twenty-pushed leads = SDR handed off to AE. Hidden from active
   // queue, visible in "🎯 Pushet til Twenty" backlog view.
-  const twentyPushedCount=leads.filter(l=>!!l.twenty_opportunity_id).length;
-  const archivedCount=leads.filter(l=>l.lastAction==='not-relevant').length;
-  // PR6: Mangler-nummer chip now counts only TRULY stuck leads — no
-  // phone AND no advertising signal. Verified-advertising no-phone
-  // leads stay in the main queue (cockpit-open auto-reveal handles
-  // them) so they don't pollute this chip.
-  const phoneMissingCount=leads.filter(l=>
+  const twentyPushedCount=applyContextualFilters(l=>!!l.twenty_opportunity_id);
+  const archivedCount=applyContextualFilters(l=>l.lastAction==='not-relevant');
+  // Mangler-nummer click filter (line 6187) keeps verified advertisers
+  // — they reappear here because cockpit's auto-reveal might unstick
+  // them. The chip count now mirrors the click filter exactly.
+  const phoneMissingCount=applyContextualFilters(l=>
     l.lastAction!=='not-relevant'
     && l.phone_missing===true
     && !l.twenty_opportunity_id
-    && l.meta_advertiser!==true
-    && l.linkedin_advertiser!==true
-    && l.meta_verified_active!==true
-  ).length;
-  const enrichingCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true && !l.twenty_opportunity_id).length;
+  );
+  const enrichingCount=applyContextualFilters(l=>l.lastAction!=='not-relevant' && l.apollo_enrichment_pending===true && !l.twenty_opportunity_id);
   // "Måske relevant" — Apollo flagged metaAdvertiser=true (pixel installed)
   // but a live Meta Ad Library check found 0 currently-running ads in DK.
   // These are filtered out of the dialer queue but kept accessible here
   // so the SDR can sanity-check or dial overflow as needed.
-  const maybeRelevantCount=leads.filter(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false && !l.twenty_opportunity_id).length;
+  const maybeRelevantCount=applyContextualFilters(l=>l.lastAction!=='not-relevant' && l.meta_verified_active===false && !l.twenty_opportunity_id);
   // activeLeads now ALLOWS phone_missing if it's a verified advertiser —
   // matches the main queue filter so the source chip counts agree with
   // what's actually visible.
