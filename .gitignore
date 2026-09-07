@@ -9,3 +9,4 @@ docs/
 cert.pem
 key.pem
 .claude/scheduled_tasks.lock
+.claude/launch.json

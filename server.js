@@ -20,11 +20,16 @@ app.use(express.json());
 // no-store guarantees a normal refresh always pulls the latest build.
 // (Hashed/static assets below can still be cached by the browser.)
 app.use((req, res, next) => {
-  if (req.path === "/" || req.path.endsWith(".html")) {
+  if (req.path === "/" || req.path === "/legacy" || req.path.endsWith(".html")) {
     res.set("Cache-Control", "no-store, must-revalidate");
   }
   next();
 });
+// 2026-08 reboot: the SDR app (public/app.html) is the front door. The old
+// 12-page tool stays reachable at /legacy for founders/admin (discovery,
+// enrichment controls, CSV import) until those are re-homed.
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "app.html")));
+app.get("/legacy", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -106,7 +111,9 @@ function businessDomainFromEmail(email) {
 // Nicolas/u1). Imports/manual-adds by a non-caller (e.g. admin) route to
 // the first active caller so uploaded leads land in the dialing queue.
 function getActiveCallerIds() {
-  return (process.env.AUTODIALER_USER_IDS || "u1").split(",").map((s) => s.trim()).filter(Boolean);
+  // 2026-08 reboot: all intake (crons, CSV import, manual add) lands in the
+  // shared "pool" pseudo-user, which the SDR app (/api/sdr/*) reads from.
+  return (process.env.AUTODIALER_USER_IDS || "pool").split(",").map((s) => s.trim()).filter(Boolean);
 }
 function routeToCallerId(reqUserId) {
   const callers = getActiveCallerIds();
@@ -12927,6 +12934,232 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
     console.error("[twenty/push]", e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SDR app (2026-08 reboot) — one shared lead pool + /api/sdr/* endpoints.
+//
+// The reboot moved from per-user lead files to ONE pool (data_pool.json,
+// i.e. the pseudo-user "pool") so two SDRs can work the same queue without
+// double-dialing. Claim-locking: a lead shown to an SDR is `claimed_by` that
+// user for 30 min or until they give a disposition. The front-end is
+// public/app.html (4 tabs: Ring / Opfølgning / Demoer / Leads).
+// ═════════════════════════════════════════════════════════════════════════════
+const POOL_ID = "pool";
+const SDR_CLAIM_TTL_MS = 30 * 60 * 1000;
+const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant"]);
+function loadPool() { return loadUserData(POOL_ID); }
+function savePool(d) { saveUserData(POOL_ID, d); }
+function isDkPhone(p) {
+  const x = String(p || "").replace(/[^0-9+]/g, "");
+  return /^\+45\d{8}$/.test(x) || /^45\d{8}$/.test(x) || /^\d{8}$/.test(x);
+}
+function sdrPrimaryContact(l) {
+  const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
+  return cs.find((c) => isDkPhone(c.phone || c.direct_phone || c.mobile)) || cs[0] || null;
+}
+// The one dialable number for the card: contact direct line first, else the
+// lead's main number. Returns {phone, label}.
+function sdrPhone(l) {
+  const c = sdrPrimaryContact(l);
+  const direct = c && (c.phone || c.direct_phone || c.mobile);
+  if (isDkPhone(direct)) return { phone: String(direct).trim(), label: "direkte" };
+  const main = String(l.phone || l.ph || "").trim();
+  if (isDkPhone(main)) return { phone: main, label: l.phone_source === "contact-sync" ? "direkte" : "hovednummer" };
+  return { phone: main, label: "" };
+}
+function sdrCallable(l) { return !!sdrPrimaryContact(l) && isDkPhone(sdrPhone(l).phone); }
+function sdrEligible(l, now) {
+  if (!l || l.lastAction === "not-relevant" || l.lastAction === "demo-booked") return false;
+  if (l.twenty_opportunity_id || l.apollo_enrichment_pending === true) return false;
+  if (l.resurface_at && new Date(l.resurface_at).getTime() > now) return false;
+  if (l.deferred_until && new Date(l.deferred_until).getTime() > now) return false;
+  if (l.callback_at && new Date(l.callback_at).getTime() > now) return false;
+  return sdrCallable(l);
+}
+function sdrNextWeekdayAt(hour) {
+  const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(hour, 0, 0, 0);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+function sdrSlim(l, nameById) {
+  const c = sdrPrimaryContact(l);
+  const ph = sdrPhone(l);
+  const calls = Array.isArray(l.calls) ? l.calls.slice(-8) : [];
+  return {
+    cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "",
+    niche: l.ind || l.industry || l.niche || "",
+    phone: ph.phone, phone_label: ph.label,
+    contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
+    meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, adsMatched: Number(l.adsMatched || 0), pageId: l.meta_page_id || l.facebook_page_id || "" },
+    source_label: String(l.source || "").replace(/^branche-walk-.*/, "CVR-register").replace(/^storeleads.*/, "Webshop").replace(/^gmaps.*/, "Google Maps").replace(/^meta.*/, "Meta-annoncør") || "",
+    callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
+    calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
+    last_note: l.last_note || "",
+    demo_booked_at: l.demo_booked_at || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
+    claimed_by: l.claimed_by || null,
+  };
+}
+function buildSdrState(userId, d) {
+  d = d || loadPool();
+  const users = loadUsers();
+  const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const meUser = users.find((u) => u.id === userId) || { id: userId, name: userId };
+  const now = Date.now();
+  const leads = d.leads || [];
+  const settings = { daily_target: 60, calendly_url: "", ...(d.sdr_settings || {}) };
+
+  const claimedByOther = (l) => l.claimed_by && l.claimed_by !== userId && l.claimed_at && (now - new Date(l.claimed_at).getTime()) < SDR_CLAIM_TTL_MS;
+  const eligible = leads.filter((l) => sdrEligible(l, now) && !claimedByOther(l));
+  const due = eligible.filter((l) => l.callback_at && new Date(l.callback_at).getTime() <= now)
+    .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+  const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
+    const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
+    if (am !== bm) return bm - am;
+    const aa = Number(a.adsMatched || 0), ba = Number(b.adsMatched || 0);
+    if (aa !== ba) return ba - aa;
+    // Never-called before retried; then newest first.
+    const ac = a.lastCallAt ? 1 : 0, bc = b.lastCallAt ? 1 : 0;
+    if (ac !== bc) return ac - bc;
+    return new Date(b.addedAt || 0) - new Date(a.addedAt || 0);
+  });
+  const queue = [...due, ...fresh];
+
+  // Current = the lead I already hold a claim on (if still eligible), else
+  // the head of the queue — which we claim now so the other SDR skips it.
+  let current = leads.find((l) => l.claimed_by === userId && sdrEligible(l, now)) || null;
+  let dirty = false;
+  if (!current && queue.length) {
+    current = queue[0];
+    current.claimed_by = userId; current.claimed_at = new Date().toISOString(); dirty = true;
+  }
+  if (dirty) savePool(d);
+  const upNext = queue.filter((l) => l !== current).slice(0, 5);
+
+  // Same DK-number + named-contact bar as the queue, so nothing shows up in
+  // Opfølgning that the SDR can't actually dial.
+  const followups = leads.filter((l) => l.callback_at && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l))
+    .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+  const demos = leads.filter((l) => l.lastAction === "demo-booked").sort((a, b) => new Date(b.demo_booked_at || 0) - new Date(a.demo_booked_at || 0));
+
+  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const w0 = new Date(t0); w0.setDate(t0.getDate() - ((t0.getDay() + 6) % 7)); // Monday
+  const per = {};
+  for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 };
+  let callsToday = 0, demosToday = 0, callsWeek = 0, demosWeek = 0;
+  for (const l of leads) {
+    for (const c of (l.calls || [])) {
+      const at = new Date(c.at).getTime(); if (!(at >= w0.getTime())) continue;
+      const p = per[c.by] || (per[c.by] = { id: c.by, name: nameById[c.by] || c.by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 });
+      const isDemo = c.action === "demo-booked";
+      p.callsWeek++; if (isDemo) p.demosWeek++;
+      if (at >= t0.getTime()) { p.callsToday++; if (isDemo) p.demosToday++; }
+    }
+  }
+  const mine = per[userId]; if (mine) { callsToday = mine.callsToday; demosToday = mine.demosToday; callsWeek = mine.callsWeek; demosWeek = mine.demosWeek; }
+  const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || users.some((u) => u.id === p.id && !u.role)));
+
+  const stats = {
+    callsToday, demosToday, callsWeek, demosWeek,
+    followupsDue: due.length, followupsOpen: followups.length,
+    poolReady: queue.length + (current ? 1 : 0) - (current && queue.includes(current) ? 1 : 0),
+    poolTotal: leads.length,
+    poolNeedsEnrich: leads.filter((l) => l.lastAction !== "not-relevant" && !l.twenty_opportunity_id && !sdrCallable(l)).length,
+    perUser,
+  };
+  return {
+    me: { id: meUser.id, name: meUser.name, role: meUser.role || null },
+    settings, stats,
+    current: current ? sdrSlim(current, nameById) : null,
+    upNext: upNext.map((l) => sdrSlim(l, nameById)),
+    followups: followups.map((l) => sdrSlim(l, nameById)),
+    demos: demos.map((l) => sdrSlim(l, nameById)),
+  };
+}
+
+app.get("/api/sdr/state", authMiddleware, (req, res) => {
+  try { res.json(buildSdrState(req.userId)); }
+  catch (e) { console.error("[sdr/state]", e); res.status(500).json({ error: e.message }); }
+});
+app.post("/api/sdr/claim", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    for (const l of d.leads) if (l.claimed_by === req.userId) { l.claimed_by = null; l.claimed_at = null; }
+    lead.claimed_by = req.userId; lead.claimed_at = new Date().toISOString();
+    // Jumping to a scheduled follow-up early → make it eligible now.
+    if (lead.callback_at && new Date(lead.callback_at).getTime() > Date.now()) lead.callback_at = new Date().toISOString();
+    lead.deferred_until = null;
+    savePool(d);
+    res.json({ ok: true, state: buildSdrState(req.userId, d) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/sdr/call-started", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
+    if (lead) { lead.last_call_started_at = new Date().toISOString(); savePool(d); }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
+  try {
+    const { cvr, action, note, callback_at } = req.body || {};
+    if (!SDR_ACTIONS.has(action)) return res.status(400).json({ error: "Ukendt udfald: " + action });
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
+    const nowIso = new Date().toISOString();
+    const cleanNote = String(note || "").trim().slice(0, 2000);
+    lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
+    lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null });
+    lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
+    lead.claimed_by = null; lead.claimed_at = null; lead.deferred_until = null;
+    if (cleanNote) {
+      lead.last_note = cleanNote;
+      const stamp = new Date().toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit" });
+      lead.notes = (lead.notes ? lead.notes + "\n" : "") + `[${stamp} ${meUser ? meUser.name : req.userId}] ${cleanNote}`;
+    }
+    if (action === "demo-booked") { lead.demo_booked_at = nowIso; lead.demo_booked_by = req.userId; lead.callback_at = null; }
+    else if (action === "follow-up") {
+      const t = callback_at ? new Date(callback_at) : null;
+      if (!t || isNaN(t.getTime())) return res.status(400).json({ error: "Vælg et tidspunkt for opfølgning" });
+      lead.callback_at = t.toISOString();
+    }
+    else if (action === "no-answer") {
+      lead.no_answer_count = (lead.no_answer_count || 0) + 1;
+      const h = new Date().getHours();
+      // Retry same day if early, else next weekday 09:00. After 4 misses, park a week.
+      lead.callback_at = lead.no_answer_count >= 4 ? new Date(Date.now() + 7 * 86400000).toISOString() : (h < 13 ? new Date(Date.now() + 3 * 3600000).toISOString() : sdrNextWeekdayAt(9));
+    }
+    else if (action === "not-now") { lead.resurface_at = new Date(Date.now() + 90 * 86400000).toISOString(); lead.callback_at = null; }
+    else if (action === "not-relevant") { lead.archived_at = nowIso; lead.callback_at = null; }
+    savePool(d);
+    logActivity("sdr-call", `${meUser ? meUser.name : req.userId} · ${lead.name}: ${action}${cleanNote ? " — " + cleanNote.slice(0, 80) : ""}`, { cvr, userId: req.userId, action });
+    res.json({ ok: true, state: buildSdrState(req.userId, d) });
+  } catch (e) { console.error("[sdr/disposition]", e); res.status(500).json({ error: e.message }); }
+});
+app.post("/api/sdr/skip", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { cvr, note } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    lead.claimed_by = null; lead.claimed_at = null;
+    lead.deferred_until = new Date(Date.now() + 3 * 3600000).toISOString();
+    if (note && String(note).trim()) lead.last_note = String(note).trim().slice(0, 2000);
+    savePool(d);
+    res.json({ ok: true, state: buildSdrState(req.userId, d) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/sdr/settings", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { calendly_url, daily_target } = req.body || {};
+    d.sdr_settings = { ...(d.sdr_settings || {}) };
+    if (typeof calendly_url === "string") d.sdr_settings.calendly_url = calendly_url.trim().slice(0, 300);
+    if (Number.isFinite(Number(daily_target)) && Number(daily_target) > 0) d.sdr_settings.daily_target = Math.min(500, Math.round(Number(daily_target)));
+    savePool(d);
+    res.json({ ok: true, settings: d.sdr_settings });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.listen(PORT, () => {
