@@ -168,6 +168,21 @@ td.num{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
 .chip.over{background:#fdecec;color:#b42318}
 .chip.ok{background:#e6f6ec;color:var(--approve)}
 .empty-row td{padding:36px 24px;text-align:center;color:var(--txt-soft)}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--txt)}
+th.sortable.on{color:var(--violet)}
+th.sortable.on::after{content:" ↓";font-weight:800}
+th.sortable.on.asc::after{content:" ↑"}
+.filters{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.filters button{padding:6px 12px;border-radius:var(--pill);font-size:12px;font-weight:700;color:var(--txt-soft);border:1px solid var(--line);background:var(--white)}
+.filters button:hover{color:var(--txt);border-color:#cfcbc2}
+.filters button.on{background:var(--black);color:var(--white);border-color:var(--black)}
+.filters button .n{margin-left:5px;opacity:.6;font-weight:600}
+.chip.a-demo-booked{background:#e6f6ec;color:var(--approve)}
+.chip.a-follow-up{background:var(--violet-soft);color:var(--violet)}
+.chip.a-no-answer{background:var(--paper);color:var(--txt-soft)}
+.chip.a-not-now{background:#fdf3e2;color:#9a5b00}
+.chip.a-not-relevant{background:#fdecec;color:#b42318}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
 .tile{background:var(--white);border:1px solid var(--line);border-radius:var(--radius-lg);padding:20px 22px}
 .tile b{display:block;font-family:var(--display);font-size:38px;line-height:1;letter-spacing:.005em}
@@ -219,6 +234,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
     <div class="wordmark"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
     <nav class="tabs">
       <button data-tab="ring" class="active" onclick="showTab('ring')">Ring</button>
+      <button data-tab="today" onclick="showTab('today')">I dag<span class="n" id="n-today">0</span></button>
       <button data-tab="followups" onclick="showTab('followups')">Opfølgning<span class="n" id="n-fu">0</span></button>
       <button data-tab="demos" onclick="showTab('demos')">Demoer<span class="n" id="n-demo">0</span></button>
       <button data-tab="leads" onclick="showTab('leads')">Leads</button>
@@ -256,6 +272,27 @@ td.num{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
         <div class="box"><h4>Næste i køen</h4><div class="upnext" id="upnext"></div></div>
         <div class="box" id="histbox" hidden><h4>Historik på leadet</h4><div class="history" id="history"></div></div>
       </aside>
+    </div>
+  </section>
+
+  <!-- ─── I DAG ────────────────────────────────────────────────────────── -->
+  <section id="view-today" class="view">
+    <div class="tablewrap">
+      <div class="thead">
+        <div><h3>Dagens opkald</h3><p>Alle opkald i dag, begge SDR'er. Klik på en kolonne for at sortere, eller filtrér på udfald.</p></div>
+        <div class="filters" id="today-filters"></div>
+      </div>
+      <table>
+        <thead><tr>
+          <th class="sortable" data-k="at" onclick="todaySort('at')">Tid</th>
+          <th class="sortable" data-k="name" onclick="todaySort('name')">Virksomhed</th>
+          <th>Kontakt</th>
+          <th class="sortable" data-k="action" onclick="todaySort('action')">Udfald</th>
+          <th>Note</th>
+          <th class="sortable" data-k="by_name" onclick="todaySort('by_name')">SDR</th>
+        </tr></thead>
+        <tbody id="tb-today"></tbody>
+      </table>
     </div>
   </section>
 
@@ -360,7 +397,8 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('legacy-link').hidden = !(me && (me.role === 'admin' || me.id === 'admin'));
   if (!keepCurrent) renderCard();
   else if ($('note')) $('note').value = prevNote;
-  renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderLeads();
+  $('n-today').textContent = (S.todayCalls || []).length;
+  renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderLeads(); renderToday();
 }
 
 function fmtPhone(p) {
@@ -489,6 +527,38 @@ function renderLeads() {
   ].map(([k, lbl, v]) => `<div class="tile"><b class="${v ? 'v' : ''}">${st[k] ?? 0}</b><span>${lbl}</span></div>`).join('');
   const per = st.perUser || [];
   $('tb-sdr').innerHTML = per.length ? per.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="5">Ingen opkald endnu.</td></tr>`;
+}
+
+/* ─── I dag (today's calls) — light sort + outcome filter ──────────────── */
+let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';
+const TODAY_FILTERS = [['all', 'Alle'], ['demo-booked', 'Demo'], ['follow-up', 'Følg op'], ['no-answer', 'Ingen svar'], ['not-now', 'Ikke nu'], ['not-relevant', 'Ikke relevant']];
+function todaySort(k) { if (todaySortKey === k) todaySortAsc = !todaySortAsc; else { todaySortKey = k; todaySortAsc = k !== 'at'; } renderToday(); }
+function todayFilterSet(f) { todayFilter = f; renderToday(); }
+function renderToday() {
+  const all = S.todayCalls || [];
+  const counts = {}; for (const c of all) counts[c.action] = (counts[c.action] || 0) + 1;
+  $('today-filters').innerHTML = TODAY_FILTERS.map(([k, lbl]) => { const n = k === 'all' ? all.length : (counts[k] || 0); return n || k === 'all' ? `<button class="${todayFilter === k ? 'on' : ''}" onclick="todayFilterSet('${k}')">${lbl}<span class="n">${n}</span></button>` : ''; }).join('');
+  document.querySelectorAll('#view-today th.sortable').forEach((th) => { th.classList.toggle('on', th.dataset.k === todaySortKey); th.classList.toggle('asc', th.dataset.k === todaySortKey && todaySortAsc); });
+  const ORDER = { 'demo-booked': 0, 'follow-up': 1, 'no-answer': 2, 'not-now': 3, 'not-relevant': 4 };
+  const rows = all.filter((c) => todayFilter === 'all' || c.action === todayFilter).sort((a, b) => {
+    let v = 0;
+    if (todaySortKey === 'at') v = new Date(a.at) - new Date(b.at);
+    else if (todaySortKey === 'action') v = (ORDER[a.action] ?? 9) - (ORDER[b.action] ?? 9);
+    else v = String(a[todaySortKey] || '').localeCompare(String(b[todaySortKey] || ''), 'da');
+    if (v === 0) v = new Date(b.at) - new Date(a.at);
+    return todaySortAsc ? v : -v;
+  });
+  $('tb-today').innerHTML = rows.length ? rows.map((c) => {
+    const d = new Date(c.at); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    const extra = c.action === 'follow-up' && c.callback_at ? ` · ${fmtWhen(c.callback_at)}` : '';
+    return `<tr class="rowlink" onclick="jumpTo('${e(c.cvr)}')">
+      <td class="num">${hm}</td>
+      <td><b>${e(c.name)}</b><span class="sub">${e(c.city || '')}${c.phone ? ' · ' + e(fmtPhone(c.phone)) : ''}</span></td>
+      <td>${e(c.contact || '—')}</td>
+      <td><span class="chip a-${e(c.action)}">${e(ACTION_LABEL[c.action] || c.action)}${e(extra)}</span></td>
+      <td style="max-width:360px;color:var(--txt-soft)">${e(c.note || '')}</td>
+      <td>${e(c.by_name || '')}</td>
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">${all.length ? 'Ingen opkald med det udfald i dag.' : 'Ingen opkald endnu i dag. Kom i gang under <b>Ring</b>.'}</td></tr>`;
 }
 
 /* ─── Actions ──────────────────────────────────────────────────────────── */

@@ -13047,15 +13047,23 @@ function buildSdrState(userId, d) {
   const per = {};
   for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 };
   let callsToday = 0, demosToday = 0, callsWeek = 0, demosWeek = 0;
+  const todayCalls = []; // every call today, all SDRs — feeds the "I dag" tab
   for (const l of leads) {
     for (const c of (l.calls || [])) {
       const at = new Date(c.at).getTime(); if (!(at >= w0.getTime())) continue;
       const p = per[c.by] || (per[c.by] = { id: c.by, name: nameById[c.by] || c.by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 });
       const isDemo = c.action === "demo-booked";
       p.callsWeek++; if (isDemo) p.demosWeek++;
-      if (at >= t0.getTime()) { p.callsToday++; if (isDemo) p.demosToday++; }
+      if (at >= t0.getTime()) {
+        p.callsToday++; if (isDemo) p.demosToday++;
+        todayCalls.push({
+          at: c.at, by: c.by, by_name: nameById[c.by] || c.by, action: c.action, note: c.note || "", callback_at: c.callback_at || null,
+          cvr: l.cvr, name: l.name || "", city: l.city || "", phone: sdrPhone(l).phone, contact: (sdrPrimaryContact(l) || {}).name || "",
+        });
+      }
     }
   }
+  todayCalls.sort((a, b) => new Date(b.at) - new Date(a.at));
   const mine = per[userId]; if (mine) { callsToday = mine.callsToday; demosToday = mine.demosToday; callsWeek = mine.callsWeek; demosWeek = mine.demosWeek; }
   const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || users.some((u) => u.id === p.id && !u.role)));
 
@@ -13074,6 +13082,7 @@ function buildSdrState(userId, d) {
     upNext: upNext.map((l) => sdrSlim(l, nameById)),
     followups: followups.map((l) => sdrSlim(l, nameById)),
     demos: demos.map((l) => sdrSlim(l, nameById)),
+    todayCalls,
   };
 }
 
