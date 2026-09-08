@@ -45,6 +45,7 @@
     </nav>
     <div class="hright">
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
+      <a class="pill sm violet" id="imp-chip" href="/admin" title="Tilbage til admin" hidden></a>
       <div class="me"><span class="dot"></span><span id="me-name">—</span></div>
       <button class="iconbtn" title="Indstillinger" onclick="openSettings()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
@@ -146,7 +147,15 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Vedio Ring — SDR app. One page, four tabs. Talks to /api/sdr/*.
    ═══════════════════════════════════════════════════════════════════════════ */
-let token = localStorage.getItem('vl_token') || '';
+// Admin "Se som <SDR>": /#imp=<token> puts a tab-scoped token in sessionStorage,
+// so this tab runs as the SDR while the admin tab stays logged in as admin.
+let impersonating = false;
+try {
+  const m = /[#&]imp=([^&]+)/.exec(location.hash || '');
+  if (m) { sessionStorage.setItem('vl_imp_token', decodeURIComponent(m[1])); history.replaceState(null, '', location.pathname + location.search); }
+  impersonating = !!sessionStorage.getItem('vl_imp_token');
+} catch {}
+let token = (impersonating ? sessionStorage.getItem('vl_imp_token') : '') || localStorage.getItem('vl_token') || '';
 let me = null;
 let S = null;                 // last server state
 let calling = false;
@@ -172,7 +181,10 @@ async function doLogin(ev) {
     boot();
   } catch (ex) { $('l-err').textContent = 'Netværksfejl: ' + ex.message; }
 }
-function logout() { token = ''; me = null; localStorage.removeItem('vl_token'); localStorage.removeItem('vl_current_user'); clearInterval(pollTimer); $('app').hidden = true; $('login').hidden = false; }
+function logout() {
+  if (impersonating) { try { sessionStorage.removeItem('vl_imp_token'); } catch {} location.replace('/admin'); return; }
+  token = ''; me = null; localStorage.removeItem('vl_token'); localStorage.removeItem('vl_current_user'); clearInterval(pollTimer); $('app').hidden = true; $('login').hidden = false;
+}
 
 /* ─── State ────────────────────────────────────────────────────────────── */
 async function loadState({ keepCurrent = false } = {}) {
@@ -719,7 +731,7 @@ document.addEventListener('keydown', (ev) => {
 /* ─── Boot ─────────────────────────────────────────────────────────────── */
 async function boot() {
   if (!token) { $('login').hidden = false; $('app').hidden = true; return; }
-  try { me = JSON.parse(localStorage.getItem('vl_current_user') || 'null'); } catch { me = null; }
+  try { me = impersonating ? null : JSON.parse(localStorage.getItem('vl_current_user') || 'null'); } catch { me = null; }
   $('login').hidden = true; $('app').hidden = false;
   let tab = 'list'; try { tab = localStorage.getItem('vl_tab') || 'list'; } catch {}
   if (!['list', 'ring', 'followups', 'results'].includes(tab)) tab = 'list';
@@ -729,8 +741,9 @@ async function boot() {
   // preview the SDR view for this browser session.
   try { if (new URLSearchParams(location.search).get('as') === 'sdr') sessionStorage.setItem('vl_as_sdr', '1'); } catch {}
   let asSdr = false; try { asSdr = sessionStorage.getItem('vl_as_sdr') === '1'; } catch {}
-  if (me && me.is_admin && !asSdr) { location.replace('/admin'); return; }
-  const al = $('admin-link'); if (al) al.hidden = !(me && me.is_admin);
+  if (!impersonating && me && me.is_admin && !asSdr) { location.replace('/admin'); return; }
+  const al = $('admin-link'); if (al) al.hidden = impersonating || !(me && me.is_admin);
+  const ic = $('imp-chip'); if (ic) { ic.hidden = !impersonating; if (impersonating) ic.innerHTML = 'Admin · du ser som <b>' + e((me && me.name) || '') + '</b> · tilbage'; }
   clearInterval(pollTimer);
   pollTimer = setInterval(() => { if (!document.hidden && !busy && !dragCvr) loadState({ keepCurrent: true }); }, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !busy) loadState({ keepCurrent: true }); });

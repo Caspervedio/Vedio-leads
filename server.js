@@ -2678,14 +2678,11 @@ app.post("/api/cron/autodialer-maintain", async (req, res) => {
   const targetSize = Math.max(5, Math.min(200, Number(req.query.target) || 30));
   const stats = { usersProcessed: 0, totalPromoted: 0, totalEnrichmentQueued: 0 };
 
-  // Active callers — ONLY these user IDs receive auto-promoted leads.
-  // Currently just Nicolas (u1). Victor (u2) and Admin are excluded from
-  // the call rotation so leads aren't duplicated across SDRs (every lead
-  // belongs to exactly one caller). To add an SDR, append their id here
-  // (or set AUTODIALER_USER_IDS="u1,u2" in the env to override without a
-  // code change).
-  const ACTIVE_CALLER_IDS = (process.env.AUTODIALER_USER_IDS || "u1")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+  // 2026-09 reboot: ICP-klar Meta advertisers are promoted into the SHARED
+  // pool (data_pool.json), from which each SDR's list fills itself. Until
+  // 2026-09-08 this defaulted to "u1" and quietly filled the retired
+  // per-user file instead.
+  const ACTIVE_CALLER_IDS = getActiveCallerIds();
 
   // User data is stored as DATA_DIR/data_<userId>.json (not in a subdir).
   // Walk DATA_DIR and pick out the data_<id>.json files.
@@ -13882,6 +13879,15 @@ app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {
     sdrTouch(lead, true);
     savePool(d); sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "contact/select"); }
+});
+// Admin "Se som <SDR>": a session token per SDR so the admin can open the SDR
+// app as that user in a new tab (/#imp=<token>, tab-scoped on the client).
+app.get("/api/sdr/admin/impersonate-links", authMiddleware, (req, res) => {
+  try {
+    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin" });
+    const users = loadUsers().filter((u) => u.id !== "admin" && u.role !== "admin" && u.id !== POOL_ID);
+    res.json({ users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, url: `/#imp=${encodeURIComponent(signSessionToken(u.id))}` })) });
+  } catch (e) { sdrFail(res, e, "admin/impersonate-links"); }
 });
 app.post("/api/sdr/settings", authMiddleware, (req, res) => {
   try {
