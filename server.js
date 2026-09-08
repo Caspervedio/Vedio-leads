@@ -12965,7 +12965,7 @@ const SDR_DEFAULT_PITCH = [
   "Indvending · \"Ikke lige nu\": Forstået. Hvornår er et bedre tidspunkt — om 2 uger eller efter {måned}? Så ringer jeg der.",
 ].join("\n");
 const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0 };
-const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 40, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", rules: SDR_DEFAULT_RULES };
 function sdrSettings(d) { const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) }; s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) }; return s; }
 // Admin fine-tune rules — what the pool is allowed to serve to SDRs.
 function sdrPassesRules(l, settings) {
@@ -13161,10 +13161,10 @@ function sdrEnsureList(d, userId, now, settings) {
     d.sdr_lists[userId] = { date: key, cvrs: [], done: (L && L.date === key ? L.done : []) || [] };
     return { list: d.sdr_lists[userId], dirty };
   }
+  const target = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
   if (!L || L.date !== key) {
     if (L) for (const cvr of L.cvrs || []) { const l = byCvr.get(cvr); if (l && l.claimed_by === userId) sdrUnclaim(l); }
     L = { date: key, cvrs: [], done: [] };
-    for (const l of sdrQueue(d, userId, now, null, settings).slice(0, settings.list_size || 40)) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); }
     d.sdr_lists[userId] = L; dirty = true;
   }
   const before = L.cvrs.length;
@@ -13177,6 +13177,14 @@ function sdrEnsureList(d, userId, now, settings) {
     L.cvrs = [...due.map((l) => l.cvr), ...L.cvrs];
     for (const l of due) sdrClaim(l, userId, now);
     dirty = true;
+  }
+  // Auto top-up: the list is always kept at list_size (default 60). Every
+  // state load refills from the pool in pool order as leads get dispositioned,
+  // removed or pruned — the SDR never has to fetch leads by hand. Leads done
+  // today and leads removed for today (deferred_until) are skipped.
+  if (L.cvrs.length < target) {
+    const skip = new Set([...L.cvrs, ...(L.done || [])]);
+    for (const l of sdrQueue(d, userId, now, skip, settings).slice(0, target - L.cvrs.length)) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); dirty = true; }
   }
   // Keep claims fresh on everything in my list (a claim is per-day).
   for (const cvr of L.cvrs) { const l = byCvr.get(cvr); if (l && !sdrClaimActive(l, now)) { sdrClaim(l, userId, now); dirty = true; } }

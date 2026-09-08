@@ -262,7 +262,7 @@ function renderList() {
         <button class="go" onclick="jumpTo('${e(l.cvr)}')">Ring →</button>
         <button title="Tag ud af dagens liste (arkiverer ikke)" onclick="removeItem('${e(l.cvr)}')">Fjern</button>
       </td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="7">${(S.stats && S.stats.poolAvailable) ? 'Listen er tom.' : 'Listen er tom — og puljen er også tom. Nye leads lander når berigelsen kører.'}</td></tr>`;
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="7">${(S.me && S.me.is_admin) ? 'Admin får ingen ringeliste — SDR\'erne får automatisk fyldt deres lister fra puljen. Log ind som SDR for at se en liste.' : (S.stats && S.stats.poolAvailable) ? 'Listen er tom.' : 'Listen er tom — og puljen er også tom. Nye leads lander når berigelsen kører.'}</td></tr>`;
 }
 let dragCvr = null;
 function dragStart(ev, cvr) { dragCvr = cvr; ev.dataTransfer.effectAllowed = 'move'; ev.currentTarget.classList.add('dragging'); }
@@ -685,7 +685,7 @@ function openSettings() {
     <h3>Indstillinger</h3><p>Fælles for alle SDR'er.</p>
     <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
-    <label>Ringeliste pr. dag (leads der hentes automatisk)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 40)}">
+    <label>Leads på ringelisten (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
     <label>Pitch på kortet — brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
     <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
     ${me && me.is_admin ? `
@@ -697,7 +697,7 @@ function openSettings() {
   document.body.appendChild(bg);
 }
 async function saveSettings() {
-  const body = { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 40, pitch_text: $('st-pitch').value };
+  const body = { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, pitch_text: $('st-pitch').value };
   if ($('st-comm')) body.commission_dkk = Number($('st-comm').value);
   if ($('st-hook')) body.demo_webhook_url = $('st-hook').value.trim();
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt'); loadState({ keepCurrent: true }); }
