@@ -6684,9 +6684,10 @@ function storeLeadsQualify(dom, domain) {
   const dkSignal = !!dkPhone || /\.dk$/.test(domain) || dom.currency_code === "DKK" || !!dom.city;
   if (!dkSignal) return { ok: false, reason: "skippedNoDkSignal" };
   const facebookUrl = String((ci.find((c) => String(c.type || "").toLowerCase() === "facebook") || {}).value || "").trim();
+  const email = String((ci.find((c) => /^e?-?mail$/i.test(String(c.type || ""))) || {}).value || "").trim().toLowerCase();
   const techNames = (dom.technologies || []).map((t) => t && t.name).filter(Boolean);
   const metaPixel = techNames.some((n) => /facebook pixel|meta pixel/i.test(n));
-  return { ok: true, dkPhone, facebookUrl, metaPixel, techNames };
+  return { ok: true, dkPhone, email, facebookUrl, metaPixel, techNames };
 }
 async function storeLeadsSearchDomains(platform, opts = {}) {
   if (!isStoreLeadsConfigured()) throw new Error("StoreLeads not configured");
@@ -6804,9 +6805,12 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
         // DF outages.
         let df = null;
         try {
+          // Phone / e-mail exact match first, then name variants (see
+          // tryDfVerifyDkCompany). 8s budget: the old 3s race expired
+          // before the name variants had even run.
           df = await Promise.race([
-            tryDfVerifyDkCompany(merchantName),
-            new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+            tryDfVerifyDkCompany(merchantName, { phone: q.dkPhone, email: q.email }),
+            new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
           ]);
         } catch (_) {}
 
@@ -8195,7 +8199,8 @@ app.post("/api/cron/find-people", async (req, res) => {
   const FOREIGN = /\.(de|fr|fi|se|no|nl|be|at|ch|it|es|pl|uk|us|ca|au|nz|ie|pt|cz|hu|ro|lt|lv|ee|jp|cn|in|br|mx)$|glopalstore\.com$|^dk[.-]/;
   const d0 = loadUserData(TARGET_USER);
   const all = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && !named(l) && domainOf(l).includes(".") && !l.fullenrich_search_at);
-  const todo = all.filter((l) => { if (FOREIGN.test(domainOf(l))) { stats.skippedForeign++; return false; } return true; });
+  const todo = all.filter((l) => { if (FOREIGN.test(domainOf(l))) { stats.skippedForeign++; return false; } return true; })
+    .sort((a, b) => new Date(b.addedAt || b.discovered_at || 0) - new Date(a.addedAt || a.discovered_at || 0)); // newest first — fresh intake beats the June backlog
   stats.candidates = todo.length;
   const batch = todo.slice(0, BATCH);
   const found = new Map(); // cvr → contacts (or [] on a miss)
@@ -10882,9 +10887,26 @@ function hasDkCompanyEvidence(lead) {
 // in the autodialer with phone + CVR + ICP data already populated; non-
 // matches are dropped (they were going to "needs research" purgatory
 // anyway).
-async function tryDfVerifyDkCompany(rawName) {
-  if (!rawName) return null;
-  const name = String(rawName).trim();
+async function tryDfVerifyDkCompany(rawName, hints = {}) {
+  const name = String(rawName || "").trim();
+  // 2026-09-08: exact phone / e-mail matches first. A brand name
+  // ("OutletLamper") rarely equals the registered name ("OUTLET LAMPER ApS"),
+  // so the name variants below matched 0 of 31 StoreLeads shops in a run,
+  // while the registry phone is the number on the shop's contact page.
+  const byField = async (entity, value) => {
+    const r = await dfGqlFetch(`{ ${entity}(first: 3, where: { vaerdi: { eq: "${String(value).replace(/"/g, '\\"')}" } }) { edges { node { CVREnhedsId vaerdi } } } }`);
+    const hit = r?.[entity]?.edges?.[0]?.node;
+    if (!hit) return null;
+    const r2 = await dfGqlFetch(`{ CVR_Virksomhed(first: 1, where: { id: { eq: "${hit.CVREnhedsId}" } }) { edges { node { CVRNummer } } } }`);
+    const cvrNr = r2?.CVR_Virksomhed?.edges?.[0]?.node?.CVRNummer;
+    if (!cvrNr) return null;
+    const company = await lookupDatafordeler(String(cvrNr));
+    return company && company.cvr ? company : null;
+  };
+  const phoneDigits = String(hints.phone || "").replace(/\D/g, "").replace(/^0045/, "").replace(/^45(?=\d{8}$)/, "");
+  if (/^[2-9]\d{7}$/.test(phoneDigits)) { try { const c = await byField("CVR_Telefonnummer", phoneDigits); if (c) return c; } catch (_) { /* fall through */ } }
+  const email = String(hints.email || "").trim().toLowerCase();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { try { const c = await byField("CVR_e_mailadresse", email); if (c) return c; } catch (_) { /* fall through */ } }
   if (name.length < 3) return null;
   // Try several name variants — DK companies are registered with legal
   // form suffixes (A/S, ApS) but advertise under the bare brand. We
@@ -14104,6 +14126,16 @@ app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {
 });
 // Admin "Se som <SDR>": a session token per SDR so the admin can open the SDR
 // app as that user in a new tab (/#imp=<token>, tab-scoped on the client).
+// Admin debug: run a Datafordeler GraphQL query from prod (the only IP on
+// the registry's allow-list). Used to probe entities / match rules.
+app.post("/api/sdr/admin/df-probe", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin" });
+    const query = String((req.body || {}).query || "").slice(0, 6000);
+    if (!query) return res.status(400).json({ error: "query required" });
+    res.json({ ok: true, result: await dfGqlFetch(query) });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
 app.get("/api/sdr/admin/impersonate-links", authMiddleware, (req, res) => {
   try {
     if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin" });
