@@ -73,17 +73,20 @@ nav.tabs button .n.due{background:var(--violet);color:var(--white)}
 /* ─── Layout ────────────────────────────────────────────────────────────── */
 main{max-width:1180px;margin:0 auto;padding:36px 28px 80px}
 .view{display:none}.view.active{display:block}
-.statrow{display:flex;align-items:flex-end;gap:28px;margin-bottom:22px}
-.stat{display:flex;flex-direction:column;gap:6px}
-.stat .num{font-family:var(--display);font-size:64px;line-height:.9;letter-spacing:.005em;text-transform:uppercase;color:var(--txt)}
+.statrow{display:flex;align-items:center;gap:28px;margin-bottom:22px;background:var(--white);border:1px solid var(--line);border-radius:var(--radius-lg);padding:22px 30px;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column;gap:6px;min-width:250px}
+.stat .num{font-family:var(--display);font-size:60px;line-height:.9;letter-spacing:.005em;text-transform:uppercase;color:var(--txt)}
 .stat .num em{font-style:normal;color:var(--violet)}
 .stat .lbl{font-size:13px;font-weight:600;color:var(--txt-soft)}
-.bar{height:8px;border-radius:var(--pill);background:var(--violet-soft);overflow:hidden;width:220px;margin-top:2px}
+.bar{height:8px;border-radius:var(--pill);background:var(--violet-soft);overflow:hidden;width:220px;margin-top:4px}
 .bar i{display:block;height:100%;background:var(--violet);border-radius:var(--pill);transition:width .5s var(--ease);min-width:16px}
-.mini{display:flex;gap:22px;margin-left:auto;padding-bottom:6px}
-.mini div{display:flex;flex-direction:column;gap:2px}
-.mini b{font-size:20px;font-weight:800;letter-spacing:-.02em}
-.mini span{font-size:12px;color:var(--txt-faint);font-weight:600}
+.mini{display:flex;margin-left:auto}
+.mini div{display:flex;flex-direction:column;gap:3px;padding:6px 28px;border-left:1px solid var(--line)}
+.mini div:first-child{border-left:0}
+.mini div:last-child{padding-right:4px}
+.mini b{font-size:26px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
+.mini span{font-size:12px;color:var(--txt-soft);font-weight:600;white-space:nowrap}
+@media (max-width:900px){.mini{margin-left:0;width:100%;border-top:1px solid var(--line);padding-top:14px}.mini div{padding:6px 18px 6px 0;border-left:0}}
 
 /* ─── Card (Opkald) ─────────────────────────────────────────────────────── */
 .ring{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:32px;align-items:start}
