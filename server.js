@@ -304,11 +304,12 @@ function loadUserData(userId) {
 }
 
 function saveUserData(userId, d) {
-  // Server-side auto-assignment of calling_list_id was removed 2026-06-16.
-  // New leads should land in Pipeline (calling_list_id=undefined) so the
-  // SDR can review + filter + bulk-add into named calling lists. A future
-  // commit will add per-list auto-add RULES (e.g. "any branche-walk-ecom
-  // lead → DK E-commerce") that run here, but those need explicit opt-in.
+  // The shared pool is written by two kinds of code: SDR/admin endpoints
+  // (load → mutate → save synchronously) and background jobs (load → await
+  // external APIs for seconds/minutes → save). A job's stale copy must not
+  // clobber outcomes the SDRs registered meanwhile, so pool saves merge
+  // SDR-owned fields from disk first (see sdrMergeBeforeSave).
+  if (userId === "pool" && typeof sdrMergeBeforeSave === "function") { try { sdrMergeBeforeSave(d); } catch (e) { console.warn("[pool-merge]", e.message); } }
   fs.writeFileSync(getUserDataFile(userId), JSON.stringify(d, null, 2));
 }
 
@@ -6713,7 +6714,7 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   if (!isStoreLeadsConfigured()) {
     return res.status(503).json({ error: "STORELEADS_API_KEY not configured" });
   }
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   // Per-run: pull N fresh domains per platform. Default 30, now scheduled
   // at 60 → 60 × 2 = 120 candidates per run, expect 30-60 saved leads
   // after DF-verify + dedup drops. Cloud Run timeout is 1200s, so plenty
@@ -7194,7 +7195,7 @@ app.post("/api/cron/intake-enrich", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   const BATCH_SIZE = Math.max(1, Math.min(30, Number(req.query.batch_size) || 10));
   const CONCURRENCY = Math.max(1, Math.min(10, Number(req.query.concurrency) || 5));
 
@@ -8623,7 +8624,7 @@ app.post("/api/cron/apollo-discover", async (req, res) => {
   // Per-run budget. 4 pages × 25 = 100 candidates → ~15-25 expected positives.
   // Capped at 200 candidates to avoid one bad run torching credits.
   const PAGES_PER_RUN = Math.max(1, Math.min(8, Number(req.query.pages) || 4));
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
 
   const state = loadApolloDiscoverState();
   const stats = {
@@ -8905,7 +8906,7 @@ app.post("/api/cron/scrape-website-phones", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   const LIMIT = Math.max(5, Math.min(100, Number(req.query.limit) || 50));
   const stats = {
     candidates: 0,
@@ -9247,7 +9248,7 @@ app.post("/api/cron/recover-phones", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   // Cap at 200/run — Datafordeler tolerates this volume comfortably.
   const LIMIT = Math.max(10, Math.min(500, Number(req.query.limit) || 200));
   const stats = {
@@ -9443,7 +9444,7 @@ app.post("/api/cron/linkedin-ads-discover", async (req, res) => {
   if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
 
   const RESULTS_LIMIT = Math.max(20, Math.min(300, Number(req.query.limit) || 100));
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   // Synchronous flow — Cloud Run timeout bumped to 1200s in deploy.yml
   // to fit Apify scrape (~3-5min) + N × DF lookups.
   const state = loadLinkedInDiscoverState();
@@ -9696,7 +9697,7 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
   if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
   if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
 
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   const LIMIT = Math.max(20, Math.min(200, Number(req.query.limit) || 80));
   const state = loadGmapsDiscoverState();
   const query = GMAPS_DISCOVER_QUERIES[state.queryCursor % GMAPS_DISCOVER_QUERIES.length];
@@ -9930,7 +9931,7 @@ app.post("/api/cron/tech-discover", async (req, res) => {
   // cost ($0.005 per candidate) + people-match (2 credits per ICP-fit, async
   // via drain), the per-run hard cost is ~$0.25 + ~30-50 credits.
   const PAGES_PER_RUN = Math.max(1, Math.min(5, Number(req.query.pages) || 2));
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   const customTech = (req.query.tech || "").toString().trim();
   const state = loadTechDiscoverState();
   const tech = customTech || TECH_DISCOVER_UIDS[state.techCursor % TECH_DISCOVER_UIDS.length];
@@ -10228,7 +10229,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   }
   if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
 
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   // Hard cap on Apollo lookups per run. Apollo find-company match rate
   // for small DK SMBs varies 5-30% by industry (restaurants ~27%,
   // micro-salons ~5%), so we need ~80 lookups to land 5-15 ICP-fit
@@ -10899,7 +10900,7 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   // resultsLimit per keyword.
   const RESULTS_LIMIT = Math.max(30, Math.min(500, Number(req.query.limit) || 100));
   const KEYWORDS_PER_RUN = Math.max(1, Math.min(10, Number(req.query.keywords_per_run) || 3));
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   // Caller can pin a specific keyword list via ?keywords=DK,tøj,mode for testing.
   const customKeywords = (req.query.keywords || "").toString().split(",").map((s) => s.trim()).filter(Boolean);
   // Synchronous flow. Cloud Run timeout bumped to 1200s in deploy.yml
@@ -11069,7 +11070,7 @@ app.post("/api/cron/purge-outside-icp", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   const stats = {
     activeBefore: 0,
     archived: 0,
@@ -11160,7 +11161,7 @@ async function runVerifyLeadsBatch(req, res) {
     return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
   }
   const LIMIT = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
-  const TARGET_USER = (req.query.userId || "u1").toString();
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
   const FORCE = req.query.force === "1";
   // ?archive=1 → permanently archive failures (lastAction='not-relevant').
   // Operator asked for "once and for all get rid of those not running ads".
@@ -13012,7 +13013,30 @@ async function sdrGeminiJson(prompt, audio) {
   try { return JSON.parse(txt); } catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error("Gemini svarede ikke med JSON"); }
 }
 function loadPool() { return loadUserData(POOL_ID); }
-function savePool(d) { saveUserData(POOL_ID, d); }
+// Every SDR/admin save also stamps the meta (lists + settings) as freshest.
+function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(POOL_ID, d); }
+// Write-stamps: SDR/admin handlers mark what they changed so a background
+// job's stale copy can't overwrite it on save (merge below).
+function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "sdr_touched_at"];
+const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
+// Called from saveUserData("pool", d): pull SDR-owned fields from the copy
+// on disk wherever disk was touched more recently than the copy in memory.
+// Leads only in memory (new intake) are kept; nothing is ever dropped.
+function sdrMergeBeforeSave(d) {
+  const file = getUserDataFile(POOL_ID);
+  if (!fs.existsSync(file)) return;
+  let disk; try { disk = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; }
+  const byCvr = new Map((disk.leads || []).map((l) => [l.cvr, l]));
+  let merged = 0;
+  for (const L of d.leads || []) {
+    const D = byCvr.get(L.cvr); if (!D) continue;
+    if ((D.sdr_touched_at || "") > (L.sdr_touched_at || "")) { for (const k of SDR_STATE_FIELDS) { if (D[k] === undefined) delete L[k]; else L[k] = D[k]; } merged++; }
+    if ((D.sdr_contact_touched_at || "") > (L.sdr_contact_touched_at || "")) { for (const k of SDR_CONTACT_FIELDS) { if (D[k] === undefined) delete L[k]; else L[k] = D[k]; } merged++; }
+  }
+  if ((disk.sdr_meta_at || "") > (d.sdr_meta_at || "")) { d.sdr_lists = disk.sdr_lists; d.sdr_settings = disk.sdr_settings; d.sdr_meta_at = disk.sdr_meta_at; merged++; }
+  if (merged) console.log(`[pool-merge] kept ${merged} newer SDR-side change(s) from disk`);
+}
 function isDkPhone(p) {
   const x = String(p || "").replace(/[^0-9+]/g, "");
   return /^\+45\d{8}$/.test(x) || /^45\d{8}$/.test(x) || /^\d{8}$/.test(x);
@@ -13117,8 +13141,8 @@ function sdrQueue(d, userId, now, exclude, settings) {
   });
   return [...due, ...fresh];
 }
-function sdrClaim(l, userId, now) { l.claimed_by = userId; l.claimed_at = new Date(now).toISOString(); }
-function sdrUnclaim(l) { l.claimed_by = null; l.claimed_at = null; }
+function sdrClaim(l, userId, now) { l.claimed_by = userId; l.claimed_at = new Date(now).toISOString(); sdrTouch(l); }
+function sdrUnclaim(l) { l.claimed_by = null; l.claimed_at = null; sdrTouch(l); }
 // Today's list for a user — builds it on first touch each day, prunes leads
 // that stopped being eligible, and auto-inserts follow-ups that became due.
 // Returns { list, dirty } — caller saves once.
@@ -13243,6 +13267,32 @@ function buildSdrState(userId, d) {
 function sdrRespond(res, userId, d) { res.json({ ok: true, state: buildSdrState(userId, d) }); }
 function sdrFail(res, e, where) { console.error(`[sdr/${where}]`, e); res.status(500).json({ error: e.message }); }
 
+// Daily snapshot of the single-file pool → DATA_DIR/backup/pool-YYYY-MM-DD.json
+// (GCS bucket via Fuse). Keeps 30 days. Called by Cloud Scheduler.
+app.post("/api/cron/pool-backup", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "unauthorized" });
+  try {
+    const src = getUserDataFile(POOL_ID);
+    if (!fs.existsSync(src)) return res.json({ ok: false, error: "no pool file" });
+    const dir = path.join(DATA_DIR, "backup"); fs.mkdirSync(dir, { recursive: true });
+    const name = `pool-${sdrDayKey(new Date())}.json`; const dst = path.join(dir, name);
+    fs.copyFileSync(src, dst);
+    const cutoff = Date.now() - 30 * 86400000; let pruned = 0;
+    for (const f of fs.readdirSync(dir)) { const m = f.match(/^pool-(\d{4}-\d{2}-\d{2})\.json$/); if (m && new Date(m[1]).getTime() < cutoff) { try { fs.unlinkSync(path.join(dir, f)); pruned++; } catch {} } }
+    const size = fs.statSync(dst).size;
+    logActivity("pool-backup", `Pool backup ${name} (${Math.round(size / 1024)} KB)${pruned ? ", pruned " + pruned : ""}`);
+    res.json({ ok: true, file: name, bytes: size, pruned });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Public, unauthenticated: just the count of leads ready to dial (for the
+// login screen). Reveals a single number, nothing else.
+app.get("/api/sdr/public/ready-count", (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now(); const settings = sdrSettings(d);
+    const ready = (d.leads || []).filter((l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrEligible(l, now) && sdrPassesRules(l, settings)).length;
+    res.set("Cache-Control", "no-store"); res.json({ ready });
+  } catch (e) { res.json({ ready: null }); }
+});
 app.get("/api/sdr/state", authMiddleware, (req, res) => {
   try { res.json(buildSdrState(req.userId)); } catch (e) { sdrFail(res, e, "state"); }
 });
@@ -13290,6 +13340,7 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
     lead.deferred_until = null;
+    sdrTouch(lead, action === "wrong-number");
     if (cleanNote) {
       lead.last_note = cleanNote;
       const stamp = new Date().toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit" });
@@ -13454,6 +13505,7 @@ app.post("/api/sdr/contact", authMiddleware, (req, res) => {
     else { lead.contacts = [c, ...lead.contacts.filter((x) => x !== c)]; c.editedAt = new Date().toISOString(); c.edited_by = req.userId; }
     c.name = name; if (title) c.title = title; if (email) c.email = email;
     if (phone) { c.phone = phone; c.phones = [{ number: phone, type: "mobile", typeLabel: "Manuel" }]; c.source_phone = "sdr-manual"; lead.phone = phone; lead.ph = phone; lead.phone_missing = false; lead.phone_source = "sdr-manual"; }
+    sdrTouch(lead, true);
     savePool(d);
     logActivity("sdr-contact", `${meUser ? meUser.name : req.userId} rettede kontakt på ${lead.name}: ${name}${phone ? " · " + phone : ""}`, { cvr, userId: req.userId });
     sdrRespond(res, req.userId, d);
@@ -13472,6 +13524,7 @@ app.post("/api/sdr/undo", authMiddleware, (req, res) => {
     if (Array.isArray(lead.calls) && lead.calls.length && lead.calls[lead.calls.length - 1].at === u.at) lead.calls.pop();
     lead.needs_enrichment = false; lead.phone_wrong = null;
     delete lead._undo;
+    sdrTouch(lead, true);
     const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
     L.done = (L.done || []).filter((x) => x !== cvr);
@@ -13492,6 +13545,7 @@ app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
     if (!lead || lead.lastAction !== "demo-booked") return res.status(404).json({ error: "Ingen booket demo på det lead" });
     lead.demo_status = status; lead.demo_review_reason = String(reason || "").trim().slice(0, 200);
     lead.demo_reviewed_by = req.userId; lead.demo_reviewed_at = new Date().toISOString();
+    sdrTouch(lead);
     savePool(d);
     logActivity("sdr-demo-review", `Demo ${lead.name}: ${status}${lead.demo_review_reason ? " — " + lead.demo_review_reason : ""}`, { cvr, userId: req.userId, status });
     sdrRespond(res, req.userId, d);
@@ -13522,10 +13576,15 @@ app.post("/api/sdr/debrief", authMiddleware, async (req, res) => {
     const next_step = String(out.next_step || "").trim().slice(0, 200);
     const coaching = String(out.coaching || "").trim().slice(0, 300);
     const transcript = hasText ? text.trim().slice(0, 4000) : String(out.transcript || "").trim().slice(0, 4000);
-    lead.debriefs = Array.isArray(lead.debriefs) ? lead.debriefs : [];
-    lead.debriefs.push({ at: new Date().toISOString(), by: req.userId, source: hasAudio ? "voice" : "text", transcript, summary, next_step, coaching, sentiment: out.sentiment || "" });
-    if (lead.debriefs.length > 20) lead.debriefs = lead.debriefs.slice(-20);
-    savePool(d);
+    // Gemini took seconds — re-read the pool so we don't save a stale copy
+    // over outcomes the SDRs registered meanwhile (merge-on-save is the
+    // safety net; this keeps the debrief itself on the freshest lead).
+    const d2 = loadPool(); const fresh = (d2.leads || []).find((l) => l.cvr === cvr) || lead;
+    fresh.debriefs = Array.isArray(fresh.debriefs) ? fresh.debriefs : [];
+    fresh.debriefs.push({ at: new Date().toISOString(), by: req.userId, source: hasAudio ? "voice" : "text", transcript, summary, next_step, coaching, sentiment: out.sentiment || "" });
+    if (fresh.debriefs.length > 20) fresh.debriefs = fresh.debriefs.slice(-20);
+    sdrTouch(fresh);
+    savePool(d2);
     logActivity("sdr-debrief", `${meUser ? meUser.name : req.userId} debrief på ${lead.name}: ${summary.slice(0, 80)}`, { cvr, userId: req.userId });
     res.json({ ok: true, summary, next_step, coaching, transcript });
   } catch (e) { sdrFail(res, e, "debrief"); }
@@ -13631,6 +13690,7 @@ app.post("/api/sdr/admin/lead-status", authMiddleware, (req, res) => {
       if (!cvrs.includes(l.cvr)) continue; n++;
       if (status === "archive") { l.lastAction = "not-relevant"; l.archived_at = nowIso; l.archived_by = req.userId; l.callback_at = null; sdrUnclaim(l); for (const L of Object.values(d.sdr_lists || {})) { L.cvrs = (L.cvrs || []).filter((x) => x !== l.cvr); } }
       else { l.lastAction = null; l.archived_at = null; l.archived_by = null; l.resurface_at = null; l.deferred_until = null; l.callback_at = null; l.needs_enrichment = false; }
+      sdrTouch(l);
     }
     savePool(d);
     logActivity("sdr-admin", `Admin ${status === "archive" ? "arkiverede" : "genåbnede"} ${n} lead(s)`, { userId: req.userId, cvrs });
@@ -13670,6 +13730,7 @@ app.post("/api/sdr/admin/lead-edit", authMiddleware, (req, res) => {
     }
     if (sdrCallable(lead)) lead.needs_enrichment = false;
     lead.admin_edited_at = nowIso;
+    sdrTouch(lead, true);
     savePool(d);
     logActivity("sdr-admin", `Admin berigede ${lead.name} manuelt: ${changed.join(", ") || "ingen ændringer"}`, { cvr: lead.cvr, userId: req.userId });
     res.json({ ok: true, changed, callable: sdrCallable(lead) });
@@ -13706,6 +13767,7 @@ app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {
     const c = (lead.contacts || []).find((x) => x && x.name && x.name.trim().toLowerCase() === String(name || "").trim().toLowerCase());
     if (!c) return res.status(404).json({ error: "Kontakt ikke fundet" });
     lead.preferred_contact_name = c.name;
+    sdrTouch(lead, true);
     savePool(d); sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "contact/select"); }
 });

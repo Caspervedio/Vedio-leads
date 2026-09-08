@@ -284,14 +284,14 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
 #login .wordmark.corner img{height:30px}
 #login .wordmark.corner .text{font-size:24px}
 @media (max-width:760px){#login .wordmark.corner{top:16px;left:16px}#login .wordmark.corner img{height:24px}}
-.lbox{width:100%;max-width:520px;background:var(--white);border:1px solid var(--line);border-radius:var(--radius-lg);padding:48px 52px 40px;text-align:center}
-.lbox .kick{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--violet);margin-bottom:18px}
-.lbox .kick .dotv{width:8px;height:8px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 0 rgba(124,58,237,.5);animation:pulsev 2.4s infinite}
-.lbox h1{font-family:var(--display);font-size:50px;line-height:.95;text-transform:uppercase;margin:0 0 14px}
-.lbox p{margin:0 auto 28px;max-width:400px;font-size:15px;line-height:1.55;color:var(--txt-soft)}
-.lbox .feats{display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;margin-top:22px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;font-weight:600;color:var(--txt-faint)}
-.lbox .feats i{font-style:normal;color:var(--line)}
-@media (max-width:760px){.lbox{padding:36px 26px 30px}.lbox h1{font-size:40px}}
+.lbox{width:100%;max-width:440px;background:var(--white);border:1px solid var(--line);border-radius:var(--radius-lg);padding:40px 40px 40px;text-align:center}
+.lbox .kick{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--violet);margin-bottom:16px}
+.lbox .kick .dotv{width:8px;height:8px;border-radius:50%;background:var(--live);box-shadow:0 0 0 0 rgba(46,229,107,.5);animation:pulse 2.4s infinite}
+.lbox h1{font-family:var(--display);font-size:36px;line-height:1;text-transform:uppercase;margin:0 0 14px}
+.lbox h1 span,.lbox h1 em{display:block}
+.lbox h1 em{margin-top:10px}
+.lbox p{margin:0 auto 26px;max-width:340px;font-size:14px;line-height:1.55;color:var(--txt-soft)}
+@media (max-width:760px){.lbox{padding:34px 26px 30px}.lbox h1{font-size:32px}}
 .lbox h1 em{font-style:normal;color:var(--violet)}
 .lbox p{color:var(--txt-soft);font-size:14px;margin-bottom:24px}
 .field{margin-bottom:12px}

@@ -22,14 +22,13 @@
 <div id="login" hidden>
   <div class="wordmark corner"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
   <form class="lbox" onsubmit="doLogin(event)">
-    <div class="kick"><span class="dotv"></span>Vedio Ring · SDR</div>
-    <h1>Klar til dagens <em>opkald.</em></h1>
-    <p>Din ringeliste er bygget i nat — forfaldne opfølgninger først, derefter de webshops der kører Meta-annoncer lige nu.</p>
+    <div class="kick"><span class="dotv"></span><span id="l-ready">Leads klar til dig</span></div>
+    <h1><span>Klar til dagens opkald.</span><em>Listen venter.</em></h1>
+    <p>Bygget i nat — forfaldne opfølgninger først, derefter de webshops der kører Meta-annoncer lige nu.</p>
     <div class="field"><input id="l-email" type="email" placeholder="Email" autocomplete="username" required></div>
     <div class="field"><input id="l-pass" type="password" placeholder="Adgangskode" autocomplete="current-password" required></div>
     <div class="err" id="l-err"></div>
     <button class="pill primary" style="width:100%;justify-content:center;margin-top:8px" type="submit">Log ind</button>
-    <div class="feats"><span>Ét lead ad gangen</span><i>·</i><span>Udfald med ét tryk</span><i>·</i><span>Demo direkte i Calendly</span></div>
   </form>
 </div>
 
@@ -178,7 +177,7 @@ async function doLogin(ev) {
     boot();
   } catch (ex) { $('l-err').textContent = 'Netværksfejl: ' + ex.message; }
 }
-function logout() { token = ''; me = null; localStorage.removeItem('vl_token'); localStorage.removeItem('vl_current_user'); clearInterval(pollTimer); $('app').hidden = true; $('login').hidden = false; }
+function logout() { token = ''; me = null; localStorage.removeItem('vl_token'); localStorage.removeItem('vl_current_user'); clearInterval(pollTimer); $('app').hidden = true; $('login').hidden = false; showReadyCount(); }
 
 /* ─── State ────────────────────────────────────────────────────────────── */
 async function loadState({ keepCurrent = false } = {}) {
@@ -749,8 +748,11 @@ document.addEventListener('keydown', (ev) => {
 });
 
 /* ─── Boot ─────────────────────────────────────────────────────────────── */
+async function showReadyCount() {
+  try { const d = await fetch('/api/sdr/public/ready-count').then((r) => r.json()); const el = $('l-ready'); if (el && typeof d.ready === 'number') el.textContent = d.ready ? `${d.ready} leads klar til dig` : 'Nye leads lander snart'; } catch (_) {}
+}
 async function boot() {
-  if (!token) { $('login').hidden = false; $('app').hidden = true; return; }
+  if (!token) { $('login').hidden = false; $('app').hidden = true; showReadyCount(); return; }
   try { me = JSON.parse(localStorage.getItem('vl_current_user') || 'null'); } catch { me = null; }
   $('login').hidden = true; $('app').hidden = false;
   let tab = 'list'; try { tab = localStorage.getItem('vl_tab') || 'list'; } catch {}
