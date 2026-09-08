@@ -12940,20 +12940,36 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
 // SDR app (2026-08 reboot) — one shared lead pool + /api/sdr/* endpoints.
 //
 // The reboot moved from per-user lead files to ONE pool (data_pool.json,
-// i.e. the pseudo-user "pool") so two SDRs can work the same queue without
-// double-dialing. Claim-locking: a lead shown to an SDR is `claimed_by` that
-// user for 30 min or until they give a disposition. The front-end is
-// public/app.html (4 tabs: Ring / Opfølgning / Demoer / Leads).
+// i.e. the pseudo-user "pool") so two SDRs can work the same leads without
+// double-dialing. Each SDR gets a DAILY RINGELISTE (d.sdr_lists[userId]):
+// an ordered list of cvrs built fresh each morning from the pool — due
+// follow-ups first, then the best fresh leads — that the SDR can reorder,
+// prune, and top up. A lead on someone's list is `claimed_by` them for the
+// calendar day. The front-end is public/app.html (tabs: Ringeliste /
+// Opkald / Opfølgning / Resultater).
 // ═════════════════════════════════════════════════════════════════════════════
 const POOL_ID = "pool";
-const SDR_CLAIM_TTL_MS = 30 * 60 * 1000;
 const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant"]);
+const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 40 };
 function loadPool() { return loadUserData(POOL_ID); }
 function savePool(d) { saveUserData(POOL_ID, d); }
 function isDkPhone(p) {
   const x = String(p || "").replace(/[^0-9+]/g, "");
   return /^\+45\d{8}$/.test(x) || /^45\d{8}$/.test(x) || /^\d{8}$/.test(x);
 }
+function normDkPhone(p) {
+  const x = String(p || "").replace(/[^0-9+]/g, "");
+  if (/^\d{8}$/.test(x)) return "+45" + x;
+  if (/^45\d{8}$/.test(x)) return "+" + x;
+  return x;
+}
+function sdrDayKey(dt) {
+  const d = dt ? new Date(dt) : new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// A claim lasts the calendar day it was made — matches the daily list.
+function sdrClaimActive(l, now) { return !!(l.claimed_by && l.claimed_at && sdrDayKey(l.claimed_at) === sdrDayKey(now)); }
+function sdrClaimedByOther(l, userId, now) { return sdrClaimActive(l, now) && l.claimed_by !== userId; }
 function sdrPrimaryContact(l) {
   const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
   return cs.find((c) => isDkPhone(c.phone || c.direct_phone || c.mobile)) || cs[0] || null;
@@ -12965,10 +12981,11 @@ function sdrPhone(l) {
   const direct = c && (c.phone || c.direct_phone || c.mobile);
   if (isDkPhone(direct)) return { phone: String(direct).trim(), label: "direkte" };
   const main = String(l.phone || l.ph || "").trim();
-  if (isDkPhone(main)) return { phone: main, label: l.phone_source === "contact-sync" ? "direkte" : "hovednummer" };
+  if (isDkPhone(main)) return { phone: main, label: (l.phone_source === "contact-sync" || l.phone_source === "sdr-manual") ? "direkte" : "hovednummer" };
   return { phone: main, label: "" };
 }
 function sdrCallable(l) { return !!sdrPrimaryContact(l) && isDkPhone(sdrPhone(l).phone); }
+// Eligible = could be dialed today (ignores who holds the claim).
 function sdrEligible(l, now) {
   if (!l || l.lastAction === "not-relevant" || l.lastAction === "demo-booked") return false;
   if (l.twenty_opportunity_id || l.apollo_enrichment_pending === true) return false;
@@ -12977,10 +12994,21 @@ function sdrEligible(l, now) {
   if (l.callback_at && new Date(l.callback_at).getTime() > now) return false;
   return sdrCallable(l);
 }
+function sdrIsDue(l, now) { return !!(l.callback_at && new Date(l.callback_at).getTime() <= now); }
 function sdrNextWeekdayAt(hour) {
   const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(hour, 0, 0, 0);
   while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
   return d.toISOString();
+}
+function sdrSourceLabel(l) {
+  const s = String(l.source || "");
+  if (/^branche-walk/.test(s)) return "CVR-register";
+  if (/^storeleads/.test(s)) return "Webshop";
+  if (/^gmaps/.test(s)) return "Google Maps";
+  if (/^meta/.test(s)) return "Meta-annoncør";
+  if (/^csv/.test(s)) return "CSV-import";
+  if (/^manual/.test(s)) return "Manuel";
+  return s || "";
 }
 function sdrSlim(l, nameById) {
   const c = sdrPrimaryContact(l);
@@ -12991,14 +13019,65 @@ function sdrSlim(l, nameById) {
     niche: l.ind || l.industry || l.niche || "",
     phone: ph.phone, phone_label: ph.label,
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
+    contacts_count: Array.isArray(l.contacts) ? l.contacts.filter((x) => x && x.name).length : 0,
     meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, adsMatched: Number(l.adsMatched || 0), pageId: l.meta_page_id || l.facebook_page_id || "" },
-    source_label: String(l.source || "").replace(/^branche-walk-.*/, "CVR-register").replace(/^storeleads.*/, "Webshop").replace(/^gmaps.*/, "Google Maps").replace(/^meta.*/, "Meta-annoncør") || "",
+    source_label: sdrSourceLabel(l),
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
     last_note: l.last_note || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
     claimed_by: l.claimed_by || null,
   };
+}
+// Pool order for pulling leads into a list: due follow-ups first, then fresh
+// leads by Meta-advertiser → ad count → never-called → newest.
+function sdrQueue(d, userId, now, exclude) {
+  const ex = exclude || new Set();
+  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && !sdrClaimedByOther(l, userId, now) && !ex.has(l.cvr));
+  const due = eligible.filter((l) => sdrIsDue(l, now)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+  const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
+    const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
+    if (am !== bm) return bm - am;
+    const aa = Number(a.adsMatched || 0), ba = Number(b.adsMatched || 0);
+    if (aa !== ba) return ba - aa;
+    const ac = a.lastCallAt ? 1 : 0, bc = b.lastCallAt ? 1 : 0;
+    if (ac !== bc) return ac - bc;
+    return new Date(b.addedAt || 0) - new Date(a.addedAt || 0);
+  });
+  return [...due, ...fresh];
+}
+function sdrClaim(l, userId, now) { l.claimed_by = userId; l.claimed_at = new Date(now).toISOString(); }
+function sdrUnclaim(l) { l.claimed_by = null; l.claimed_at = null; }
+// Today's list for a user — builds it on first touch each day, prunes leads
+// that stopped being eligible, and auto-inserts follow-ups that became due.
+// Returns { list, dirty } — caller saves once.
+function sdrEnsureList(d, userId, now, settings) {
+  d.sdr_lists = d.sdr_lists || {};
+  const leads = d.leads || [];
+  const byCvr = new Map(leads.map((l) => [l.cvr, l]));
+  const key = sdrDayKey(now);
+  let L = d.sdr_lists[userId];
+  let dirty = false;
+  if (!L || L.date !== key) {
+    if (L) for (const cvr of L.cvrs || []) { const l = byCvr.get(cvr); if (l && l.claimed_by === userId) sdrUnclaim(l); }
+    L = { date: key, cvrs: [], done: [] };
+    for (const l of sdrQueue(d, userId, now).slice(0, settings.list_size || 40)) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); }
+    d.sdr_lists[userId] = L; dirty = true;
+  }
+  const before = L.cvrs.length;
+  L.cvrs = L.cvrs.filter((cvr) => { const l = byCvr.get(cvr); return l && sdrEligible(l, now) && !sdrClaimedByOther(l, userId, now); });
+  if (L.cvrs.length !== before) dirty = true;
+  const inList = new Set(L.cvrs);
+  const due = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !inList.has(l.cvr) && !sdrClaimedByOther(l, userId, now) && !(L.done || []).includes(l.cvr))
+    .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+  if (due.length) {
+    L.cvrs = [...due.map((l) => l.cvr), ...L.cvrs];
+    for (const l of due) sdrClaim(l, userId, now);
+    dirty = true;
+  }
+  // Keep claims fresh on everything in my list (a claim is per-day).
+  for (const cvr of L.cvrs) { const l = byCvr.get(cvr); if (l && !sdrClaimActive(l, now)) { sdrClaim(l, userId, now); dirty = true; } }
+  return { list: L, dirty };
 }
 function buildSdrState(userId, d) {
   d = d || loadPool();
@@ -13007,37 +13086,14 @@ function buildSdrState(userId, d) {
   const meUser = users.find((u) => u.id === userId) || { id: userId, name: userId };
   const now = Date.now();
   const leads = d.leads || [];
-  const settings = { daily_target: 60, calendly_url: "", ...(d.sdr_settings || {}) };
-
-  const claimedByOther = (l) => l.claimed_by && l.claimed_by !== userId && l.claimed_at && (now - new Date(l.claimed_at).getTime()) < SDR_CLAIM_TTL_MS;
-  const eligible = leads.filter((l) => sdrEligible(l, now) && !claimedByOther(l));
-  const due = eligible.filter((l) => l.callback_at && new Date(l.callback_at).getTime() <= now)
-    .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
-  const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
-    const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
-    if (am !== bm) return bm - am;
-    const aa = Number(a.adsMatched || 0), ba = Number(b.adsMatched || 0);
-    if (aa !== ba) return ba - aa;
-    // Never-called before retried; then newest first.
-    const ac = a.lastCallAt ? 1 : 0, bc = b.lastCallAt ? 1 : 0;
-    if (ac !== bc) return ac - bc;
-    return new Date(b.addedAt || 0) - new Date(a.addedAt || 0);
-  });
-  const queue = [...due, ...fresh];
-
-  // Current = the lead I already hold a claim on (if still eligible), else
-  // the head of the queue — which we claim now so the other SDR skips it.
-  let current = leads.find((l) => l.claimed_by === userId && sdrEligible(l, now)) || null;
-  let dirty = false;
-  if (!current && queue.length) {
-    current = queue[0];
-    current.claimed_by = userId; current.claimed_at = new Date().toISOString(); dirty = true;
-  }
+  const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+  const { list: L, dirty } = sdrEnsureList(d, userId, now, settings);
   if (dirty) savePool(d);
-  const upNext = queue.filter((l) => l !== current).slice(0, 5);
+  const byCvr = new Map(leads.map((l) => [l.cvr, l]));
+  const items = L.cvrs.map((cvr) => byCvr.get(cvr)).filter(Boolean);
+  const current = items[0] || null;
+  const upNext = items.slice(1, 6);
 
-  // Same DK-number + named-contact bar as the queue, so nothing shows up in
-  // Opfølgning that the SDR can't actually dial.
   const followups = leads.filter((l) => l.callback_at && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l))
     .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const demos = leads.filter((l) => l.lastAction === "demo-booked").sort((a, b) => new Date(b.demo_booked_at || 0) - new Date(a.demo_booked_at || 0));
@@ -13046,8 +13102,7 @@ function buildSdrState(userId, d) {
   const w0 = new Date(t0); w0.setDate(t0.getDate() - ((t0.getDay() + 6) % 7)); // Monday
   const per = {};
   for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 };
-  let callsToday = 0, demosToday = 0, callsWeek = 0, demosWeek = 0;
-  const todayCalls = []; // every call today, all SDRs — feeds the "I dag" tab
+  const todayCalls = [];
   for (const l of leads) {
     for (const c of (l.calls || [])) {
       const at = new Date(c.at).getTime(); if (!(at >= w0.getTime())) continue;
@@ -13064,20 +13119,24 @@ function buildSdrState(userId, d) {
     }
   }
   todayCalls.sort((a, b) => new Date(b.at) - new Date(a.at));
-  const mine = per[userId]; if (mine) { callsToday = mine.callsToday; demosToday = mine.demosToday; callsWeek = mine.callsWeek; demosWeek = mine.demosWeek; }
+  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 };
   const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || users.some((u) => u.id === p.id && !u.role)));
+  const available = sdrQueue(d, userId, now, new Set(L.cvrs));
 
   const stats = {
-    callsToday, demosToday, callsWeek, demosWeek,
-    followupsDue: due.length, followupsOpen: followups.length,
-    poolReady: queue.length + (current ? 1 : 0) - (current && queue.includes(current) ? 1 : 0),
+    callsToday: mine.callsToday, demosToday: mine.demosToday, callsWeek: mine.callsWeek, demosWeek: mine.demosWeek,
+    listRemaining: items.length, listDone: (L.done || []).length,
+    followupsDue: items.filter((l) => sdrIsDue(l, now)).length, followupsOpen: followups.length,
+    poolAvailable: available.length,
     poolTotal: leads.length,
+    poolArchived: leads.filter((l) => l.lastAction === "not-relevant").length,
     poolNeedsEnrich: leads.filter((l) => l.lastAction !== "not-relevant" && !l.twenty_opportunity_id && !sdrCallable(l)).length,
     perUser,
   };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null },
     settings, stats,
+    list: { date: L.date, items: items.map((l) => sdrSlim(l, nameById)), doneCount: (L.done || []).length },
     current: current ? sdrSlim(current, nameById) : null,
     upNext: upNext.map((l) => sdrSlim(l, nameById)),
     followups: followups.map((l) => sdrSlim(l, nameById)),
@@ -13085,45 +13144,50 @@ function buildSdrState(userId, d) {
     todayCalls,
   };
 }
+function sdrRespond(res, userId, d) { res.json({ ok: true, state: buildSdrState(userId, d) }); }
+function sdrFail(res, e, where) { console.error(`[sdr/${where}]`, e); res.status(500).json({ error: e.message }); }
 
 app.get("/api/sdr/state", authMiddleware, (req, res) => {
-  try { res.json(buildSdrState(req.userId)); }
-  catch (e) { console.error("[sdr/state]", e); res.status(500).json({ error: e.message }); }
+  try { res.json(buildSdrState(req.userId)); } catch (e) { sdrFail(res, e, "state"); }
 });
+// Put a specific lead at the top of my list (from Opfølgning / Resultater /
+// search). Works for future follow-ups too — pulls them forward to now.
 app.post("/api/sdr/claim", authMiddleware, (req, res) => {
   try {
-    const d = loadPool(); const { cvr } = req.body || {};
+    const d = loadPool(); const now = Date.now(); const { cvr } = req.body || {};
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
-    for (const l of d.leads) if (l.claimed_by === req.userId) { l.claimed_by = null; l.claimed_at = null; }
-    lead.claimed_by = req.userId; lead.claimed_at = new Date().toISOString();
-    // Jumping to a scheduled follow-up early → make it eligible now.
-    if (lead.callback_at && new Date(lead.callback_at).getTime() > Date.now()) lead.callback_at = new Date().toISOString();
-    lead.deferred_until = null;
-    savePool(d);
-    res.json({ ok: true, state: buildSdrState(req.userId, d) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (sdrClaimedByOther(lead, req.userId, now)) return res.status(409).json({ error: `${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "En anden SDR"} har det lead på sin liste i dag` });
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    if (lead.callback_at && new Date(lead.callback_at).getTime() > now) lead.callback_at = new Date(now).toISOString();
+    lead.deferred_until = null; lead.resurface_at = null;
+    L.cvrs = [cvr, ...L.cvrs.filter((x) => x !== cvr)];
+    L.done = (L.done || []).filter((x) => x !== cvr);
+    sdrClaim(lead, req.userId, now);
+    savePool(d); sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "claim"); }
 });
 app.post("/api/sdr/call-started", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
     if (lead) { lead.last_call_started_at = new Date().toISOString(); savePool(d); }
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { sdrFail(res, e, "call-started"); }
 });
 app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
   try {
     const { cvr, action, note, callback_at } = req.body || {};
     if (!SDR_ACTIONS.has(action)) return res.status(400).json({ error: "Ukendt udfald: " + action });
-    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    const d = loadPool(); const now = Date.now(); const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
     const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
-    const nowIso = new Date().toISOString();
+    const nowIso = new Date(now).toISOString();
     const cleanNote = String(note || "").trim().slice(0, 2000);
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null });
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
-    lead.claimed_by = null; lead.claimed_at = null; lead.deferred_until = null;
+    lead.deferred_until = null;
     if (cleanNote) {
       lead.last_note = cleanNote;
       const stamp = new Date().toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit" });
@@ -13139,36 +13203,159 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
       lead.no_answer_count = (lead.no_answer_count || 0) + 1;
       const h = new Date().getHours();
       // Retry same day if early, else next weekday 09:00. After 4 misses, park a week.
-      lead.callback_at = lead.no_answer_count >= 4 ? new Date(Date.now() + 7 * 86400000).toISOString() : (h < 13 ? new Date(Date.now() + 3 * 3600000).toISOString() : sdrNextWeekdayAt(9));
+      lead.callback_at = lead.no_answer_count >= 4 ? new Date(now + 7 * 86400000).toISOString() : (h < 13 ? new Date(now + 3 * 3600000).toISOString() : sdrNextWeekdayAt(9));
     }
-    else if (action === "not-now") { lead.resurface_at = new Date(Date.now() + 90 * 86400000).toISOString(); lead.callback_at = null; }
+    else if (action === "not-now") { lead.resurface_at = new Date(now + 90 * 86400000).toISOString(); lead.callback_at = null; }
     else if (action === "not-relevant") { lead.archived_at = nowIso; lead.callback_at = null; }
+    // Off my list, onto today's done pile; release the claim.
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    L.cvrs = L.cvrs.filter((x) => x !== cvr);
+    L.done = [...(L.done || []).filter((x) => x !== cvr), cvr];
+    sdrUnclaim(lead);
     savePool(d);
     logActivity("sdr-call", `${meUser ? meUser.name : req.userId} · ${lead.name}: ${action}${cleanNote ? " — " + cleanNote.slice(0, 80) : ""}`, { cvr, userId: req.userId, action });
-    res.json({ ok: true, state: buildSdrState(req.userId, d) });
-  } catch (e) { console.error("[sdr/disposition]", e); res.status(500).json({ error: e.message }); }
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "disposition"); }
 });
+// Skip = move to the end of my list (not out of it).
 app.post("/api/sdr/skip", authMiddleware, (req, res) => {
   try {
-    const d = loadPool(); const { cvr, note } = req.body || {};
+    const d = loadPool(); const now = Date.now(); const { cvr, note } = req.body || {};
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
-    lead.claimed_by = null; lead.claimed_at = null;
-    lead.deferred_until = new Date(Date.now() + 3 * 3600000).toISOString();
     if (note && String(note).trim()) lead.last_note = String(note).trim().slice(0, 2000);
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    if (L.cvrs.includes(cvr)) L.cvrs = [...L.cvrs.filter((x) => x !== cvr), cvr];
+    savePool(d); sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "skip"); }
+});
+// ── Ringeliste management ─────────────────────────────────────────────────────
+app.post("/api/sdr/list/reorder", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now();
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    const want = Array.isArray((req.body || {}).cvrs) ? (req.body || {}).cvrs.map(String) : [];
+    const have = new Set(L.cvrs);
+    const ordered = want.filter((c) => have.has(c));
+    const missing = L.cvrs.filter((c) => !ordered.includes(c));
+    L.cvrs = [...ordered, ...missing];
+    savePool(d); sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "list/reorder"); }
+});
+// Remove from today's list — not archived, just "not today". Won't be
+// re-pulled by "Hent flere" until tomorrow.
+app.post("/api/sdr/list/remove", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    L.cvrs = L.cvrs.filter((x) => x !== cvr);
+    if (lead.claimed_by === req.userId) sdrUnclaim(lead);
+    const tmr = new Date(); tmr.setHours(24, 0, 0, 0);
+    lead.deferred_until = tmr.toISOString();
+    savePool(d); sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "list/remove"); }
+});
+// One-click top-up from the pool, in pool order.
+app.post("/api/sdr/list/add-more", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now();
+    const n = Math.max(1, Math.min(50, Number((req.body || {}).n) || 10));
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    const picked = sdrQueue(d, req.userId, now, new Set([...L.cvrs, ...(L.done || [])])).slice(0, n);
+    for (const l of picked) { L.cvrs.push(l.cvr); sdrClaim(l, req.userId, now); }
     savePool(d);
-    res.json({ ok: true, state: buildSdrState(req.userId, d) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json({ ok: true, added: picked.length, state: buildSdrState(req.userId, d) });
+  } catch (e) { sdrFail(res, e, "list/add-more"); }
+});
+// Add one specific lead (from search).
+app.post("/api/sdr/list/add", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    if (!sdrCallable(lead)) return res.status(400).json({ error: "Leadet mangler dansk nummer eller navngivet kontakt — ret det først" });
+    if (lead.lastAction === "not-relevant") return res.status(400).json({ error: "Leadet er arkiveret som ikke relevant" });
+    if (lead.twenty_opportunity_id) return res.status(400).json({ error: "Leadet ligger i Twenty" });
+    if (sdrClaimedByOther(lead, req.userId, now)) return res.status(409).json({ error: `${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "En anden SDR"} har det lead på sin liste i dag` });
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    lead.deferred_until = null; lead.resurface_at = null;
+    if (lead.callback_at && new Date(lead.callback_at).getTime() > now) lead.callback_at = new Date(now).toISOString();
+    if (!L.cvrs.includes(cvr)) L.cvrs.push(cvr);
+    L.done = (L.done || []).filter((x) => x !== cvr);
+    sdrClaim(lead, req.userId, now);
+    savePool(d); sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "list/add"); }
+});
+app.get("/api/sdr/search", authMiddleware, (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim().toLowerCase();
+    if (q.length < 2) return res.json({ results: [] });
+    const qd = q.replace(/\s+/g, "");
+    const d = loadPool(); const now = Date.now(); const users = loadUsers();
+    const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const mine = new Set(((d.sdr_lists || {})[req.userId] || {}).cvrs || []);
+    const out = [];
+    for (const l of d.leads || []) {
+      const hay = [l.name, l.cvr, l.city, l.web, l.phone, l.ph, ...(l.contacts || []).map((c) => `${c.name || ""} ${c.phone || ""}`)].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(q) && !(qd !== q && hay.replace(/\s+/g, "").includes(qd))) continue;
+      let status = "ok";
+      if (mine.has(l.cvr)) status = "in-list";
+      else if (l.lastAction === "not-relevant") status = "archived";
+      else if (l.twenty_opportunity_id) status = "twenty";
+      else if (!sdrCallable(l)) status = "not-callable";
+      else if (sdrClaimedByOther(l, req.userId, now)) status = "other:" + (nameById[l.claimed_by] || l.claimed_by);
+      out.push({ ...sdrSlim(l, nameById), status });
+      if (out.length >= 8) break;
+    }
+    res.json({ results: out });
+  } catch (e) { sdrFail(res, e, "search"); }
+});
+// ── Contact / phone correction from the card ──────────────────────────────────
+// "It's a different person I need" → SDR types name/title/phone/email. Saved
+// as the primary contact (front of contacts[]); a DK phone also becomes the
+// lead's dial number.
+app.post("/api/sdr/contact", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const name = String((req.body || {}).name || "").trim().slice(0, 120);
+    const title = String((req.body || {}).title || "").trim().slice(0, 120);
+    const email = String((req.body || {}).email || "").trim().slice(0, 160);
+    const rawPhone = String((req.body || {}).phone || "").trim();
+    if (!name) return res.status(400).json({ error: "Navn er påkrævet" });
+    if (rawPhone && !isDkPhone(rawPhone)) return res.status(400).json({ error: "Vi ringer kun til danske numre (+45)" });
+    const phone = rawPhone ? normDkPhone(rawPhone) : "";
+    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
+    lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+    let c = lead.contacts.find((x) => x && x.name && x.name.trim().toLowerCase() === name.toLowerCase());
+    if (!c) { c = { name, source_discovery: "sdr-manual", addedAt: new Date().toISOString(), added_by: req.userId }; lead.contacts.unshift(c); }
+    else { lead.contacts = [c, ...lead.contacts.filter((x) => x !== c)]; c.editedAt = new Date().toISOString(); c.edited_by = req.userId; }
+    c.name = name; if (title) c.title = title; if (email) c.email = email;
+    if (phone) { c.phone = phone; c.phones = [{ number: phone, type: "mobile", typeLabel: "Manuel" }]; c.source_phone = "sdr-manual"; lead.phone = phone; lead.ph = phone; lead.phone_missing = false; lead.phone_source = "sdr-manual"; }
+    savePool(d);
+    logActivity("sdr-contact", `${meUser ? meUser.name : req.userId} rettede kontakt på ${lead.name}: ${name}${phone ? " · " + phone : ""}`, { cvr, userId: req.userId });
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "contact"); }
 });
 app.post("/api/sdr/settings", authMiddleware, (req, res) => {
   try {
-    const d = loadPool(); const { calendly_url, daily_target } = req.body || {};
-    d.sdr_settings = { ...(d.sdr_settings || {}) };
+    const d = loadPool(); const { calendly_url, daily_target, list_size } = req.body || {};
+    d.sdr_settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
     if (typeof calendly_url === "string") d.sdr_settings.calendly_url = calendly_url.trim().slice(0, 300);
     if (Number.isFinite(Number(daily_target)) && Number(daily_target) > 0) d.sdr_settings.daily_target = Math.min(500, Math.round(Number(daily_target)));
+    if (Number.isFinite(Number(list_size)) && Number(list_size) > 0) d.sdr_settings.list_size = Math.min(200, Math.round(Number(list_size)));
     savePool(d);
     res.json({ ok: true, settings: d.sdr_settings });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { sdrFail(res, e, "settings"); }
 });
 
 app.listen(PORT, () => {
