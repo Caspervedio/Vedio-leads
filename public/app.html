@@ -74,9 +74,8 @@
     </div>
     <div class="tablewrap">
       <div class="thead">
-        <div><h3>Dagens ringeliste</h3><p>Din rækkefølge for i dag. Træk i <b>⋮⋮</b> eller brug pilene. Forfaldne opfølgninger lægges automatisk øverst. <b>Fjern</b> tager et lead ud for i dag — det bliver ikke arkiveret.</p></div>
+        <div><h3>Dagens ringeliste</h3><p>Din rækkefølge for i dag — leads kommer fra den fælles pulje, som systemet har kvalificeret. Træk i <b>⋮⋮</b> eller brug pilene. Forfaldne opfølgninger lægges automatisk øverst. <b>Fjern</b> tager et lead ud for i dag — det bliver ikke arkiveret.</p></div>
         <div class="row" style="gap:8px">
-          <div class="search"><input id="q" placeholder="Tilføj lead… (navn, CVR, telefon)" oninput="onSearch()" onfocus="onSearch()" autocomplete="off"><div id="q-res" class="dropdown" hidden></div></div>
           <button class="pill violet" onclick="addMore(10)">+ Hent 10 flere</button>
         </div>
       </div>
@@ -303,30 +302,6 @@ async function addMore(n) {
   try { const d = await post('/api/sdr/list/add-more', { n }); apply(d, { keepCurrent: true }); toast(d.added ? `+${d.added} leads hentet fra puljen` : 'Puljen er tom lige nu'); }
   catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
 }
-let qTimer = null;
-function onSearch() {
-  clearTimeout(qTimer); const q = $('q').value.trim(); const box = $('q-res');
-  if (q.length < 2) { box.hidden = true; return; }
-  qTimer = setTimeout(async () => {
-    try {
-      const r = await fetch('/api/sdr/search?q=' + encodeURIComponent(q), { headers: ah() }); const d = await r.json();
-      const rows = d.results || [];
-      const STATUS = { 'in-list': 'På din liste', 'archived': 'Arkiveret', 'twenty': 'I Twenty', 'not-callable': 'Mangler nummer/kontakt' };
-      box.innerHTML = rows.length ? rows.map((l) => {
-        const st = l.status || 'ok'; const lbl = STATUS[st] || (st.startsWith('other:') ? st.slice(6) + ' har det i dag' : '');
-        const can = st === 'ok';
-        return `<div class="r"><div class="t"><b>${e(l.name)}</b><span>${e(l.city || '')}${l.contact ? ' · ' + e(l.contact.name) : ''}${l.phone ? ' · ' + e(fmtPhone(l.phone)) : ''}</span></div>${lbl ? `<span class="chip">${e(lbl)}</span>` : ''}<button class="pill sm ${can ? 'violet' : ''}" ${can ? '' : 'disabled'} onclick="addOne('${e(l.cvr)}')">Tilføj</button></div>`;
-      }).join('') : `<div class="empty">Ingen leads matcher "${e(q)}".</div>`;
-      box.hidden = false;
-    } catch (_) {}
-  }, 220);
-}
-async function addOne(cvr) {
-  if (busy) return; busy = true;
-  try { apply(await post('/api/sdr/list/add', { cvr }), { keepCurrent: true }); $('q').value = ''; $('q-res').hidden = true; toast('Tilføjet nederst på listen'); }
-  catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
-}
-document.addEventListener('click', (ev) => { if (!ev.target.closest('.search')) { const b = $('q-res'); if (b) b.hidden = true; } });
 
 /* Opkald card */
 function renderCard() {

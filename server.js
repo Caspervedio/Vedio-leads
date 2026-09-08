@@ -13443,6 +13443,7 @@ app.post("/api/sdr/list/add-more", authMiddleware, (req, res) => {
 // Add one specific lead (from search).
 app.post("/api/sdr/list/add", authMiddleware, (req, res) => {
   try {
+    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "SDR'er henter kun leads via puljen (Hent flere)" });
     const d = loadPool(); const now = Date.now(); const { cvr } = req.body || {};
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
@@ -13462,6 +13463,7 @@ app.post("/api/sdr/list/add", authMiddleware, (req, res) => {
 });
 app.get("/api/sdr/search", authMiddleware, (req, res) => {
   try {
+    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "SDR'er henter kun leads via puljen (Hent flere)" });
     const q = String(req.query.q || "").trim().toLowerCase();
     if (q.length < 2) return res.json({ results: [] });
     const qd = q.replace(/\s+/g, "");
