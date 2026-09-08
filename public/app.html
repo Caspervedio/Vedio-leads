@@ -2,7 +2,11 @@
 <html lang="da">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F4F2EE">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Vedio Ring">
 <title>Vedio · Ring</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -150,7 +154,9 @@ textarea.note:focus{outline:none;border-color:var(--violet);box-shadow:0 0 0 3px
 .chooser{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);animation:rise .25s var(--ease) both}
 .chooser .pill{padding:8px 14px;font-size:13px}
 .chooser input[type=datetime-local]{border:1px solid var(--line);border-radius:var(--pill);padding:8px 12px;font-size:13px;background:var(--white)}
-.hint{font-size:12px;color:var(--txt-faint);display:flex;gap:14px;flex-wrap:wrap;margin-top:4px}
+.hint{font-size:12px;color:var(--txt-faint);display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.phone a.num{text-decoration:none;color:inherit;border-radius:10px}
+.phone a.num:hover{color:var(--violet)}
 .hint kbd{font-family:var(--sans);font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft)}
 .calling{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--txt-soft)}
 .calling .dot{background:var(--violet);box-shadow:0 0 0 0 rgba(124,58,237,.6);animation-name:pulsev}
@@ -244,11 +250,12 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
 .subtile span{display:block;margin-top:4px;font-size:12px;font-weight:600;color:var(--txt-soft)}
 
 /* ─── Login ─────────────────────────────────────────────────────────────── */
-#login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+#login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative}
+#login .wordmark.corner{position:absolute;top:26px;left:32px;height:auto}
+#login .wordmark.corner img{height:44px}
+#login .wordmark.corner .text{font-size:32px}
+@media (max-width:760px){#login .wordmark.corner{top:18px;left:18px}#login .wordmark.corner img{height:32px}}
 .lbox{width:100%;max-width:420px;background:var(--white);border:1px solid var(--line);border-radius:var(--radius-lg);padding:36px 40px 40px}
-.lbox .wordmark{height:auto;margin-bottom:22px}
-.lbox .wordmark img{height:46px}
-.lbox .wordmark .text{font-size:34px}
 .lbox h1{font-family:var(--display);font-size:42px;line-height:1;text-transform:uppercase;margin:0 0 8px}
 .lbox h1 em{font-style:normal;color:var(--violet)}
 .lbox p{color:var(--txt-soft);font-size:14px;margin-bottom:24px}
@@ -268,14 +275,88 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
 #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:var(--black);color:var(--white);padding:12px 18px;border-radius:var(--pill);font-size:14px;font-weight:600;opacity:0;transition:all .3s var(--ease);z-index:60;pointer-events:none;max-width:90vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ─── Phone (≤760px) — SDRs dial from the handset they hold ─────────────── */
+@media (max-width:760px){
+  html{-webkit-text-size-adjust:100%}
+  input,textarea,select{font-size:16px}                 /* no iOS zoom on focus */
+  main{padding:18px 14px calc(88px + env(safe-area-inset-bottom))}
+  /* header: wordmark + me/settings; tabs move to a fixed bottom bar */
+  .hwrap{padding:0 14px;height:56px;gap:12px}
+  .wordmark{height:56px}.wordmark img{height:22px}
+  .hright{gap:6px}.me span:last-child{display:none}
+  nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;margin:0;gap:0;background:var(--white);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(4,1fr)}
+  nav.tabs button{padding:10px 4px;border-radius:12px;font-size:12px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:4px;line-height:1.1;min-height:48px}
+  nav.tabs button .n{margin:0;font-size:10.5px;padding:1px 6px}
+  /* stat panel */
+  .statrow{padding:18px 18px;gap:14px;margin-bottom:14px}
+  .stat{min-width:0;width:100%}.stat .num{font-size:52px}.bar{width:100%}
+  .mini{width:100%;margin:0;border-top:1px solid var(--line);padding-top:12px;display:grid;grid-template-columns:repeat(4,1fr)}
+  .mini div{padding:0;border-left:0;align-items:flex-start}.mini b{font-size:20px}.mini span{font-size:11px;white-space:normal}
+  /* table headers/cards */
+  .tablewrap{border-radius:var(--radius);margin-bottom:14px}
+  .thead{padding:14px 16px;gap:10px}.thead h3{font-size:16px}.thead p{font-size:12.5px}
+  .thead .row{width:100%}.search{flex:1}.search input{width:100%}.dropdown{min-width:0}
+  .thead .row .pill{flex-shrink:0}
+  /* Ringeliste + Opfølgning rows → cards */
+  #tb-list,#tb-fu{display:block}
+  #tb-list tr,#tb-fu tr{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  #tb-list tr.empty-row,#tb-fu tr.empty-row{display:block}
+  #tb-list td,#tb-fu td{display:block;padding:0;border:0;font-size:14px}
+  #tb-list td:nth-child(1),#tb-list td:nth-child(2){display:none}             /* handle, # */
+  #tb-list td:nth-child(3){grid-column:1;grid-row:1}                          /* company */
+  #tb-list td:nth-child(5){grid-column:2;grid-row:1;text-align:right;font-size:15px}/* phone */
+  #tb-list td:nth-child(4){grid-column:1;grid-row:2;font-size:13px}           /* contact */
+  #tb-list td:nth-child(6){grid-column:2;grid-row:2;text-align:right}         /* signal */
+  #tb-list td:nth-child(7){grid-column:1/-1;grid-row:3;display:flex;gap:6px;margin-top:10px;text-align:left}
+  #tb-list td.acts button{margin:0;padding:10px 8px;font-size:13px;min-height:44px;flex:1;border-radius:12px}
+  #tb-list td.acts button.go{flex:2}
+  #tb-fu td:nth-child(1){grid-column:1/-1;grid-row:1}
+  #tb-fu td:nth-child(2){grid-column:1;grid-row:2}
+  #tb-fu td:nth-child(4){grid-column:2;grid-row:2;text-align:right;font-size:15px}
+  #tb-fu td:nth-child(3){grid-column:1/-1;grid-row:3;font-size:13px}
+  #tb-fu td:nth-child(5){grid-column:1/-1;grid-row:4;max-width:none!important;font-size:13px}
+  #tb-fu td:nth-child(6){grid-column:1/-1;grid-row:5;text-align:left!important;margin-top:8px}
+  #tb-fu td:nth-child(6) .pill{width:100%;justify-content:center;min-height:44px}
+  #view-list thead,#view-followups thead{display:none}
+  /* other tables scroll sideways inside their panel */
+  #view-results .tablewrap{overflow-x:auto}
+  #view-results table{min-width:640px}
+  #view-results th,#view-results td{padding:10px 14px}
+  .tiles{grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+  .tile{padding:16px 18px 14px}.tile b{font-size:38px}
+  .subtiles{grid-template-columns:repeat(2,1fr)}
+  /* Opkald */
+  .ring{grid-template-columns:1fr;gap:14px}.side{order:2}
+  .card{padding:20px 18px 18px;border-radius:var(--radius)}
+  .co{flex-direction:column;gap:10px}.co h2{font-size:24px}
+  .person{gap:12px}.person .links{margin-left:0;width:100%}
+  .person .links a,.person .links button{min-height:40px;display:inline-flex;align-items:center}
+  .cedit{grid-template-columns:1fr}
+  .phone{margin-bottom:16px}.phone .num{font-size:30px}
+  .phone a.num{text-decoration:none;color:inherit}
+  .actions{gap:10px}
+  .pill.primary{width:100%;justify-content:center;min-height:56px;font-size:17px}
+  .row .pill.violet-outline{width:100%;justify-content:center;min-height:48px}
+  .row.disp{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row.disp .pill{justify-content:flex-start;min-height:50px;padding:12px 14px;font-size:14px}
+  .row.disp .pill.approve{grid-column:1/-1;justify-content:center}
+  .chooser{gap:6px}.chooser .pill{min-height:42px}.chooser input[type=datetime-local]{width:100%}
+  .hint{display:none}
+  .card .actions .linkbtn{display:inline-flex;min-height:44px;align-items:center;justify-content:center;width:100%;border:1px solid var(--line);background:var(--white);border-radius:var(--pill);font-size:14px}
+  .side .box{border-radius:var(--radius);padding:16px 18px}
+  .upnext .r{padding:12px 10px}
+  /* modal */
+  .modal{padding:22px 20px}
+}
 </style>
 </head>
 <body>
 
 <!-- ─── Login ──────────────────────────────────────────────────────────── -->
 <div id="login" hidden>
+  <div class="wordmark corner"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
   <form class="lbox" onsubmit="doLogin(event)">
-    <div class="wordmark"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
     <h1>Din liste er <em>klar.</em></h1>
     <p>Log ind og kom i gang med dagens opkald.</p>
     <div class="field"><input id="l-email" type="email" placeholder="Email" autocomplete="username" required></div>
@@ -609,9 +690,9 @@ function renderCard() {
       <div id="cedit" hidden></div>
     </div>
     <div class="phone">
-      <span class="num ${dk ? '' : 'warn'}">${e(fmtPhone(L.phone) || '—')}</span>
+      ${dk ? `<a class="num" href="${telHref(L.phone)}" onclick="onCall(event)" title="Ring op">${e(fmtPhone(L.phone))}</a>` : `<span class="num warn">${e(fmtPhone(L.phone) || '—')}</span>`}
       ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}
-      ${dk ? `<button class="copy" onclick="copyPhone()">Kopiér</button>` : `<span class="tag">ikke et DK-nummer</span>`}
+      ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     <textarea id="note" class="note" placeholder="Note fra opkaldet — hvad sagde de, hvad er næste skridt?"></textarea>
     <div class="actions">
@@ -750,7 +831,6 @@ function onCall(ev) {
   const b = $('callbtn'); if (b) { b.classList.add('calling'); const lbl = $('calllbl'); if (lbl) lbl.innerHTML = '<span class="dot" style="margin-right:6px"></span>Ringer… vælg udfald'; }
   post('/api/sdr/call-started', { cvr: L.cvr }).catch(() => {});
 }
-function copyPhone() { const L = S.current; if (!L) return; navigator.clipboard.writeText(String(L.phone || '').replace(/\s+/g, '')).then(() => toast('Nummer kopieret')).catch(() => {}); }
 function toggleChooser() {
   const c = $('chooser'); chooserOpen = !chooserOpen; c.hidden = !chooserOpen; if (!chooserOpen) return;
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
