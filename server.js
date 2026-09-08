@@ -6661,13 +6661,41 @@ function saveStoreLeadsState(state) {
 }
 
 // POST /domain with filters. Returns {domains, has_next_page, next_cursor, total}.
+// 2026-09-08: the 1–25 employee filter shrank 45,910 DK stores to 1,157 —
+// StoreLeads only knows employee counts from LinkedIn, so the small owner-
+// run shops we want have none and were excluded. Size is now a traffic-rank
+// band plus a product-count floor (both server-side filters that work), and
+// the rest — known employee counts above 25, localised storefronts of a
+// cluster, missing Danish signals — is judged per domain in
+// storeLeadsQualify(). Rank bands measured on DK Shopify with ≥10 products:
+// ≤200k → 396 stores, ≤1M → 2,568, ≤2M → 4,774, ≤5M → 8,479.
+const STORELEADS_MIN_PRODUCTS = 10;
+const STORELEADS_RANK_MIN = 100000;   // above this = big brands with in-house teams
+const STORELEADS_RANK_MAX = 3000000;  // below this = hobby shops with no traffic
+const STORELEADS_QUERY_VERSION = "v2"; // cursors are query-specific — bump to restart paging
+function storeLeadsQualify(dom, domain) {
+  if (dom.employee_count && Number(dom.employee_count) > STORELEADS_ICP_EMPMAX) return { ok: false, reason: "skippedTooBig" };
+  // hairlust.fr next to hairlust.com: only the cluster's best-ranked domain.
+  const best = String(dom.cluster_best_ranked || "").toLowerCase();
+  if (best && best !== domain) return { ok: false, reason: "skippedClusterAlternate" };
+  const ci = Array.isArray(dom.contact_info) ? dom.contact_info : [];
+  const phones = ci.filter((c) => /phone|tel|mobile/i.test(String(c.type || ""))).map((c) => String(c.value || "").trim());
+  const dkPhone = phones.find((p) => isDkPhone(p)) || "";
+  const dkSignal = !!dkPhone || /\.dk$/.test(domain) || dom.currency_code === "DKK" || !!dom.city;
+  if (!dkSignal) return { ok: false, reason: "skippedNoDkSignal" };
+  const facebookUrl = String((ci.find((c) => String(c.type || "").toLowerCase() === "facebook") || {}).value || "").trim();
+  const techNames = (dom.technologies || []).map((t) => t && t.name).filter(Boolean);
+  const metaPixel = techNames.some((n) => /facebook pixel|meta pixel/i.test(n));
+  return { ok: true, dkPhone, facebookUrl, metaPixel, techNames };
+}
 async function storeLeadsSearchDomains(platform, opts = {}) {
   if (!isStoreLeadsConfigured()) throw new Error("StoreLeads not configured");
   const body = {
     "f:cc": "DK",
     "f:p": platform,
-    "f:empcmin": STORELEADS_ICP_EMPMIN,
-    "f:empcmax": STORELEADS_ICP_EMPMAX,
+    "f:pcmin": STORELEADS_MIN_PRODUCTS,
+    "f:rankmin": STORELEADS_RANK_MIN,
+    "f:rankmax": STORELEADS_RANK_MAX,
     "page_size": Math.max(1, Math.min(100, opts.pageSize || 50)),
   };
   if (opts.cursor) body.cursor = opts.cursor;
@@ -6742,14 +6770,18 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
 
   for (const platform of STORELEADS_PLATFORMS) {
     const pStats = { fetched: 0, saved: 0, dfMatched: 0 };
-    let cursor = state.platformCursors[platform] || null;
+    // Cursors belong to a query; the key carries the query version so a
+    // filter change restarts paging instead of resuming an old cursor.
+    const cursorKey = `${platform}@${STORELEADS_QUERY_VERSION}`;
+    let cursor = state.platformCursors[cursorKey] || null;
     let pageSize = Math.min(100, PER_PLATFORM);
     try {
       const page = await storeLeadsSearchDomains(platform, { pageSize, cursor });
       const domains = page.domains || [];
       pStats.fetched = domains.length;
+      pStats.total = page.total ?? null;
       stats.candidatesScanned += domains.length;
-      state.platformCursors[platform] = page.has_next_page ? page.next_cursor : null;
+      state.platformCursors[cursorKey] = page.has_next_page ? page.next_cursor : null;
 
       for (const dom of domains) {
         const domain = String(dom.name || dom.tld1 || "").toLowerCase().trim();
@@ -6758,6 +6790,9 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
         state.scannedDomains[domain] = checkedAt;
         const merchantName = (dom.merchant_name || dom.title || domain).trim();
         if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
+        // Size / storefront / Danish-signal checks on the record itself.
+        const q = storeLeadsQualify(dom, domain);
+        if (!q.ok) { stats[q.reason] = (stats[q.reason] || 0) + 1; continue; }
 
         // Datafordeler verify by merchant_name — gives us real CVR + phone.
         // Wrapped in a 3s timeout race: when DF is slow/down (their
@@ -6787,7 +6822,7 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
             continue;
           }
 
-          const slPhone = _storeLeadsPhone(dom);
+          const slPhone = q.dkPhone || _storeLeadsPhone(dom);
           const phone = (df && (df.phone || df.ph)) || slPhone || "";
           const employees = (df && (df.emp || df.emps)) || dom.employee_count || "";
           const techNames = (dom.technologies || []).map((t) => t.name).filter(Boolean);
@@ -6821,7 +6856,17 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
             lead.phone_recovered_source = df && (df.phone || df.ph) ? "df-cvr-lookup" : "storeleads";
           }
           lead.tech_stack = techNames;
+          // Meta is information, not a gate: the Facebook page feeds the
+          // meta-pages-check cron (page id + "currently running ads"), the
+          // pixel is a cheap advertiser proxy, and check-advertisers adds
+          // Apollo's org signal. All three only rank/badge the lead.
+          lead.facebook_url = q.facebookUrl || "";
+          lead.meta_pixel = q.metaPixel;
+          lead.meta_advertiser = null;
+          lead.ads_check_pending = true;
           lead.storeleads_platform = platform;
+          lead.storeleads_rank = dom.rank || null;
+          lead.storeleads_product_count = dom.product_count || null;
           lead.storeleads_estimated_sales_yearly = dom.estimated_sales_yearly || null;
           lead.storeleads_estimated_visits = dom.estimated_visits || null;
           lead.discovered_at = checkedAt;
@@ -8035,6 +8080,98 @@ app.post("/api/cron/drain-enrichment", async (req, res) => {
 // so NO credits spent) to detect the Meta-advertiser signal. The leads are
 // already callable (name+phone from the CSV); this just adds the 🎯 badge.
 // Awaited within the request so Cloud Run keeps CPU allocated.
+// ── Apify: run an actor and return its dataset items ───────────────────────
+async function apifyRunActorSync(actorId, input, opts = {}) {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) throw new Error("APIFY_API_TOKEN not configured");
+  const memory = opts.memory || 1024, timeoutSec = opts.timeoutSec || 900, maxWaitMs = opts.maxWaitMs || 15 * 60 * 1000;
+  const startResp = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${token}&memory=${memory}&timeout=${timeoutSec}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+  if (!startResp.ok) throw new Error(`Apify start ${startResp.status}: ${(await startResp.text()).slice(0, 300)}`);
+  let run = (await startResp.json()).data;
+  const t0 = Date.now();
+  while (run.status === "READY" || run.status === "RUNNING") {
+    if (Date.now() - t0 > maxWaitMs) throw new Error("Apify run timeout");
+    await new Promise((r) => setTimeout(r, 5000));
+    const poll = await fetch(`https://api.apify.com/v2/actor-runs/${run.id}?token=${token}`);
+    if (poll.ok) run = (await poll.json()).data;
+  }
+  if (run.status !== "SUCCEEDED") throw new Error(`Apify ended ${run.status}`);
+  const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${run.defaultDatasetId}/items?token=${token}&format=json`);
+  if (!itemsResp.ok) throw new Error(`Apify items fetch ${itemsResp.status}`);
+  return { items: await itemsResp.json(), usd: run.usageTotalUsd || null };
+}
+// ── Meta check by Facebook page (Apify facebook-pages-scraper) ─────────────
+// The accurate way to know whether a shop advertises on Meta: its Facebook
+// page reports "This Page is currently running ads", and its numeric page
+// id gives a page-specific Ad Library link. ≈ $0.005 per page. Replaces the
+// keyword search for the legal name in ad copy (passed 0 of ~500). Runs on
+// leads with a facebook_url that were never checked, or not in 30 days.
+app.post("/api/cron/meta-pages-check", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "Apify not configured" });
+  const TARGET_USER = (req.query.userId || "pool").toString();
+  const BATCH = Math.max(1, Math.min(100, Number(req.query.batch_size) || 40));
+  const RECHECK_MS = 30 * 86400e3;
+  const stats = { candidates: 0, checked: 0, advertising: 0, notAdvertising: 0, unknown: 0, pageIds: 0, errors: 0, usd: null };
+  const now = Date.now();
+  const norm = (u) => String(u || "").trim().replace(/^https?:\/\/(www\.|m\.|[a-z]{2}-[a-z]{2}\.)?facebook\.com\//i, "https://www.facebook.com/").replace(/[?#].*$/, "").replace(/\/$/, "");
+  const usable = (l) => /^https:\/\/www\.facebook\.com\/[^/]+/.test(norm(l.facebook_url)) && !/facebook\.com\/(sharer|share|login|dialog|plugins|groups|events|profile\.php)/i.test(norm(l.facebook_url));
+  const d0 = loadUserData(TARGET_USER);
+  const todo = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && usable(l)
+    && !(l.meta_pages_checked_at && now - new Date(l.meta_pages_checked_at).getTime() < RECHECK_MS));
+  stats.candidates = todo.length;
+  const batch = todo.slice(0, BATCH);
+  if (!batch.length) return res.json({ ok: true, stats });
+  const urlByCvr = new Map(batch.map((l) => [l.cvr, norm(l.facebook_url)]));
+  let items = [];
+  try {
+    const r = await apifyRunActorSync("apify~facebook-pages-scraper", { startUrls: [...new Set(urlByCvr.values())].map((url) => ({ url })) }, { memory: 1024 });
+    items = r.items || []; stats.usd = r.usd;
+  } catch (e) {
+    console.warn("[meta-pages-check]", e.message);
+    return res.status(502).json({ ok: false, stats, error: e.message });
+  }
+  const byUrl = new Map();
+  for (const it of items) for (const k of [it.facebookUrl, it.pageUrl, it.url]) { const n = norm(k).toLowerCase(); if (n && !byUrl.has(n)) byUrl.set(n, it); }
+  // Apply onto a fresh copy so a cron that saved meanwhile isn't clobbered.
+  const d = loadUserData(TARGET_USER);
+  const nowIso = new Date().toISOString();
+  for (const l of d.leads || []) {
+    if (!urlByCvr.has(l.cvr)) continue;
+    l.meta_pages_checked_at = nowIso;
+    const it = byUrl.get(urlByCvr.get(l.cvr).toLowerCase());
+    if (!it) { stats.errors++; continue; }
+    stats.checked++;
+    const pid = String(it.pageId || it.facebookId || "").trim();
+    if (/^\d{5,}$/.test(pid)) {
+      l.facebook_page_id = pid;
+      l.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${pid}`;
+      stats.pageIds++;
+    }
+    if (it.title && !l.facebook_page_name) l.facebook_page_name = String(it.title);
+    const followers = Number(it.followers || it.likes || 0); if (followers) l.facebook_followers = followers;
+    const status = String(it.ad_status || "");
+    if (!status) { stats.unknown++; continue; }
+    const running = /currently running ads/i.test(status) && !/not currently running/i.test(status);
+    l.meta_verified_active = running;
+    l.meta_verified_at = nowIso;
+    if (running) {
+      l.meta_advertiser = true;
+      l.ad_signals = ["Kører annoncer på Meta lige nu (Facebook-siden)"];
+      stats.advertising++;
+    } else {
+      if (l.meta_advertiser !== true) l.meta_advertiser = false; // an Apollo "advertiser" flag survives a pause
+      stats.notAdvertising++;
+    }
+  }
+  saveUserData(TARGET_USER, d);
+  logActivity("ads-check", `Meta-tjek via Facebook-side: ${stats.checked} tjekket · ${stats.advertising} kører annoncer nu`, { stats, userId: TARGET_USER });
+  console.log("[meta-pages-check] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, remaining: Math.max(0, todo.length - batch.length) });
+});
 // ── Find people (Full Enrich People Search backlog) ────────────────────────
 // A lead with a main number but no named person is not callable. Full Enrich
 // People Search is FREE (0 credits) and returns DK-located people by company
