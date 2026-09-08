@@ -51,6 +51,12 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 .drawer pre{white-space:pre-wrap;font-family:var(--sans);font-size:13px;line-height:1.55;background:var(--paper);border-radius:var(--radius);padding:12px 14px;color:var(--txt)}
 .drawer .x{position:absolute;top:18px;right:18px}
 .drawer .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.drawer .edit{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.drawer .edit .full{grid-column:1/-1}
+.drawer .edit label{display:block;font-size:11px;font-weight:700;color:var(--txt-soft);margin-bottom:4px}
+.drawer .edit input{width:100%;border:1px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--white);font-size:14px}
+.drawer .edit input:focus{outline:none;border-color:var(--violet)}
+@media (max-width:760px){.drawer .edit{grid-template-columns:1fr}}
 .rules{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-top:6px}
 .rules label.chk{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--txt);margin:0;text-transform:none;letter-spacing:0}
 .rules label.chk input{width:auto}
@@ -286,6 +292,18 @@ function selOne(cvr, on) { on ? SEL.add(cvr) : SEL.delete(cvr); updSel(); docume
 function selAll(on) { document.querySelectorAll('#tb-leads input[type=checkbox]').forEach((cb) => { cb.checked = on; const m = cb.getAttribute('onchange').match(/'([^']+)'/); if (m) on ? SEL.add(m[1]) : SEL.delete(m[1]); }); updSel(); }
 function updSel() { $('lsel').textContent = SEL.size ? `${SEL.size} valgt` : ''; $('bulk-arch').hidden = SEL.size === 0; }
 async function bulkArchive() { if (!SEL.size || !confirm(`Arkivér ${SEL.size} leads som ikke relevante?`)) return; try { const d = await post('/api/sdr/admin/lead-status', { cvrs: [...SEL], status: 'archive' }); toast(`${d.n} leads arkiveret`); SEL.clear(); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
+async function saveLeadEdit(cvr) {
+  const v = (id) => ($(id) ? $(id).value.trim() : '');
+  const body = { cvr, main_phone: v('le-main'), web: v('le-web'), niche: v('le-niche'), city: v('le-city'), contact: v('le-name') ? { name: v('le-name'), title: v('le-title'), phone: v('le-phone'), email: v('le-email'), linkedin: v('le-li') } : null };
+  const m = $('le-msg'); if (m) m.textContent = 'Gemmer…';
+  try { const d = await post('/api/sdr/admin/lead-edit', body); toast(d.changed.length ? `✓ Gemt: ${d.changed.join(', ')}${d.callable ? ' — leadet er nu klar at ringe' : ''}` : 'Ingen ændringer'); openLead(cvr); leadsReload(); loadOverview(); }
+  catch (ex) { if (m) m.textContent = ''; toast(ex.message, 4500); }
+}
+async function runEnrich(cvr) {
+  const m = $('le-msg'); if (m) m.textContent = 'Kører Apollo → Full Enrich → Lusha… (op til 1–2 min)';
+  try { const d = await post('/api/sdr/admin/enrich', { cvr }); toast(d.message, 7000); if (d.after && d.after.callable && !(d.before && d.before.callable)) toast('✓ Leadet er nu klar at ringe', 4000); openLead(cvr); leadsReload(); loadOverview(); }
+  catch (ex) { if (m) m.textContent = ''; toast(ex.message, 5000); }
+}
 async function leadStatus(cvr, status) { try { await post('/api/sdr/admin/lead-status', { cvr, status }); toast(status === 'archive' ? 'Arkiveret' : 'Genåbnet'); closeDrawer(); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
 
 /* drawer */
@@ -307,6 +325,19 @@ async function openLead(cvr) {
     ${L.calls_all.length ? L.calls_all.slice().reverse().map((c) => `<div class="p"><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b> <span>· ${e(c.by_name)}${c.duration_s ? ' · ' + Math.round(c.duration_s / 60) + ' min' : ''}</span>${c.note ? `<div style="font-size:13px;color:var(--txt-soft)">${e(c.note)}</div>` : ''}</div><span style="white-space:nowrap">${e(fmtWhen(c.at))}</span></div>`).join('') : '<div class="p"><span>Ikke ringet endnu.</span></div>'}
     ${L.debriefs && L.debriefs.length ? `<h4>Debriefs</h4>${L.debriefs.slice().reverse().map((d) => `<pre><b>${e(fmtWhen(d.at))}</b> · ${e(d.summary)}${d.next_step ? '\nNæste: ' + e(d.next_step) : ''}${d.coaching ? '\nCoaching: ' + e(d.coaching) : ''}</pre>`).join('')}` : ''}
     ${L.notes ? `<h4>Noter</h4><pre>${e(L.notes)}</pre>` : ''}
+    <h4>Berig manuelt</h4>
+    <div class="edit" id="ledit">
+      <div><label>Kontakt · navn</label><input id="le-name" value="${e(L.contact ? L.contact.name : '')}" placeholder="Fornavn Efternavn"></div>
+      <div><label>Titel</label><input id="le-title" value="${e(L.contact ? L.contact.title : '')}" placeholder="fx Ejer"></div>
+      <div><label>Direkte nummer (DK)</label><input id="le-phone" value="${e(L.contact && L.phone_label === 'direkte' ? L.phone : '')}" placeholder="+45 …"></div>
+      <div><label>Email</label><input id="le-email" value="${e(L.contact ? L.contact.email : '')}" placeholder="navn@firma.dk"></div>
+      <div class="full"><label>LinkedIn</label><input id="le-li" value="${e(L.contact ? L.contact.linkedin : '')}" placeholder="https://linkedin.com/in/…"></div>
+      <div><label>Hovednummer (DK)</label><input id="le-main" value="${e(L.main_phone || '')}" placeholder="+45 …"></div>
+      <div><label>Website</label><input id="le-web" value="${e(L.web || '')}" placeholder="firma.dk"></div>
+      <div><label>Niche</label><input id="le-niche" value="${e(L.niche || '')}" placeholder="fx Møbler"></div>
+      <div><label>By</label><input id="le-city" value="${e(L.city || '')}"></div>
+      <div class="full" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="pill sm primary" style="padding:9px 16px;font-size:13px" onclick="saveLeadEdit('${e(L.cvr)}')">Gem</button><button class="pill sm violet-outline" onclick="runEnrich('${e(L.cvr)}')" title="Kør Apollo → Full Enrich → Lusha på dette lead">🔁 Kør automatisk berigelse</button><span id="le-msg" style="font-size:12.5px;color:var(--txt-soft)"></span></div>
+    </div>
     <div class="acts">${L.lastAction === 'not-relevant' ? `<button class="pill" onclick="leadStatus('${e(L.cvr)}','reopen')">↩ Genåbn</button>` : `<button class="pill" style="color:#b42318;border-color:#e6b4b0" onclick="leadStatus('${e(L.cvr)}','archive')">✕ Arkivér — ikke ICP</button>`}${L.lastAction === 'demo-booked' ? `<button class="pill" onclick="showTab('demos');closeDrawer()">Til demoer →</button>` : ''}</div>`;
   document.body.append(bg, dr);
 }

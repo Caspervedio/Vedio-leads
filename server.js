@@ -13637,6 +13637,66 @@ app.post("/api/sdr/admin/lead-status", authMiddleware, (req, res) => {
     res.json({ ok: true, n });
   } catch (e) { sdrFail(res, e, "admin/lead-status"); }
 });
+// Admin: manual enrichment — lead-level fields + upsert a contact.
+app.post("/api/sdr/admin/lead-edit", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const b = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === b.cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const nowIso = new Date().toISOString(); const changed = [];
+    const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    if (typeof b.main_phone === "string") {
+      const p = str(b.main_phone, 30);
+      if (p && !isDkPhone(p)) return res.status(400).json({ error: "Hovednummer skal være et dansk nummer" });
+      const np = p ? normDkPhone(p) : "";
+      if (np !== (lead.phone || "")) { lead.phone = np; lead.ph = np; lead.phone_missing = !np; lead.phone_source = np ? "admin-manual" : ""; changed.push("hovednummer"); }
+    }
+    if (typeof b.web === "string" && str(b.web, 200) !== (lead.web || "")) { lead.web = str(b.web, 200); changed.push("website"); }
+    if (typeof b.niche === "string" && str(b.niche, 80) !== (lead.ind || "")) { lead.ind = str(b.niche, 80); changed.push("niche"); }
+    if (typeof b.city === "string" && str(b.city, 80) !== (lead.city || "")) { lead.city = str(b.city, 80); changed.push("by"); }
+    const c = b.contact || null;
+    if (c && str(c.name, 120)) {
+      const name = str(c.name, 120); const phone = str(c.phone, 30);
+      if (phone && !isDkPhone(phone)) return res.status(400).json({ error: "Kontaktens nummer skal være et dansk nummer" });
+      lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+      let x = lead.contacts.find((y) => y && y.name && y.name.trim().toLowerCase() === name.toLowerCase());
+      if (!x) { x = { name, source_discovery: "admin-manual", addedAt: nowIso, added_by: req.userId }; lead.contacts.unshift(x); changed.push("ny kontakt"); }
+      else { lead.contacts = [x, ...lead.contacts.filter((y) => y !== x)]; x.editedAt = nowIso; x.edited_by = req.userId; changed.push("kontakt rettet"); }
+      x.name = name; if (str(c.title, 120)) x.title = str(c.title, 120); if (str(c.email, 160)) x.email = str(c.email, 160);
+      if (str(c.linkedin, 300)) x.linkedin = str(c.linkedin, 300);
+      if (phone) { const np = normDkPhone(phone); x.phone = np; x.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; x.source_phone = "admin-manual"; if (!isDkPhone(lead.phone || lead.ph)) { lead.phone = np; lead.ph = np; lead.phone_missing = false; lead.phone_source = "contact-sync"; } }
+      lead.preferred_contact_name = name;
+    }
+    if (sdrCallable(lead)) lead.needs_enrichment = false;
+    lead.admin_edited_at = nowIso;
+    savePool(d);
+    logActivity("sdr-admin", `Admin berigede ${lead.name} manuelt: ${changed.join(", ") || "ingen ændringer"}`, { cvr: lead.cvr, userId: req.userId });
+    res.json({ ok: true, changed, callable: sdrCallable(lead) });
+  } catch (e) { sdrFail(res, e, "admin/lead-edit"); }
+});
+// Admin: run the automatic chain (Apollo → Full Enrich → Lusha) on ONE lead.
+// Honest about failures — with cancelled subscriptions it reports what
+// each stage said instead of pretending.
+app.post("/api/sdr/admin/enrich", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const before = { contacts: (lead.contacts || []).filter((c) => c && c.name).length, callable: sdrCallable(lead) };
+    const stats = { candidates: 1, processed: 0, apolloHits: 0, apolloMisses: 0, fePeopleSearchHits: 0, fePeopleSearchMisses: 0, feAttempts: 0, feHits: 0, lushaAttempts: 0, lushaHits: 0, leadsWithPhone: 0, capReached: false, errors: 0, errorMessages: [] };
+    let err = null;
+    try { await processLeadForBulkEnrich(d, cvr, stats); } catch (e) { err = e.message; }
+    lead.bulk_enriched_at = new Date().toISOString();
+    if (sdrCallable(lead)) lead.needs_enrichment = false;
+    savePool(d);
+    const after = { contacts: (lead.contacts || []).filter((c) => c && c.name).length, callable: sdrCallable(lead), phone: sdrPhone(lead).phone };
+    const msg = err ? `Kæden fejlede: ${err}` : (stats.processed === 0 ? "Sprunget over — leadet har allerede en kontakt med nummer, eller er arkiveret" : `Apollo ${stats.apolloHits ? "fandt kontakt" : "ingen"} · Full Enrich ${stats.feHits ? "fandt nummer" : (stats.feAttempts ? "ingen" : "ikke kørt")} · Lusha ${stats.lushaHits ? "fandt nummer" : (stats.lushaAttempts ? "ingen" : "ikke kørt")}${stats.capReached ? " · dagsloft nået" : ""}`);
+    logActivity("sdr-admin", `Admin kørte berigelse på ${lead.name}: ${msg}`, { cvr, userId: req.userId });
+    res.json({ ok: !err, message: msg, before, after, stats });
+  } catch (e) { sdrFail(res, e, "admin/enrich"); }
+});
 // Pick which of the lead's people is "the one to call" — sticks on the lead.
 app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {
   try {
