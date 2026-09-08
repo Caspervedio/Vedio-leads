@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F4F2EE">
+<title>Vedio · Admin</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+<style>
+/* admin-only additions on top of app.css */
+.alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
+.alert{display:flex;align-items:center;gap:12px;background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;font-size:13.5px}
+.alert b{font-weight:700}
+.alert.warn{border-color:#f1c98a;background:#fff8ea}
+.alert.act{border-color:#c4b5fd;background:var(--violet-soft)}
+.alert .pill{margin-left:auto}
+.trend{display:grid;grid-template-columns:repeat(14,1fr);gap:4px;padding:16px 20px 18px}
+.trend .d{display:flex;flex-direction:column;gap:6px;align-items:center;font-size:11px;color:var(--txt-faint)}
+.trend .d .v{width:100%;border-radius:8px;padding:8px 0;text-align:center;font-weight:800;font-size:13px;color:var(--txt);background:var(--paper)}
+.trend .d .v.demo{color:var(--approve);background:#e6f6ec}
+.trend .d .v.zero{color:var(--txt-faint);font-weight:600}
+.trend .d .v.new{color:var(--violet);background:var(--violet-soft)}
+.trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
+.filters.left{justify-content:flex-start}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
+.toolbar select{border:1px solid var(--line);border-radius:var(--pill);padding:9px 14px;background:var(--white);font-family:var(--sans);font-size:13px}
+.toolbar .search input{width:280px}
+.pager{display:flex;align-items:center;gap:10px;padding:12px 24px;border-top:1px solid var(--line);font-size:13px;color:var(--txt-soft)}
+.pager .pill{padding:7px 12px;font-size:12.5px}
+tr.sel td{background:var(--violet-soft)}
+td .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--paper);color:var(--txt-soft);margin-right:4px}
+td .tag.meta{background:var(--violet-soft);color:var(--violet)}
+td .tag.ok{background:#e6f6ec;color:var(--approve)}
+td .tag.no{background:#fdecec;color:#b42318}
+td .tag.warn{background:#fdf3e2;color:#9a5b00}
+/* drawer */
+.drawerbg{position:fixed;inset:0;background:rgba(14,14,12,.35);z-index:40}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:var(--white);border-left:1px solid var(--line);z-index:41;overflow-y:auto;padding:26px 28px 40px;animation:slide .3s var(--ease) both}
+@keyframes slide{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+.drawer h2{font-size:24px;font-weight:800;letter-spacing:-.02em;margin:6px 0 4px}
+.drawer .meta{font-size:13px;color:var(--txt-soft);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.drawer h4{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--txt-faint);margin:20px 0 8px}
+.drawer .p{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:13.5px}
+.drawer .p:first-of-type{border-top:0}
+.drawer .p span{color:var(--txt-soft)}
+.drawer pre{white-space:pre-wrap;font-family:var(--sans);font-size:13px;line-height:1.55;background:var(--paper);border-radius:var(--radius);padding:12px 14px;color:var(--txt)}
+.drawer .x{position:absolute;top:18px;right:18px}
+.drawer .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.rules{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-top:6px}
+.rules label.chk{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--txt);margin:0;text-transform:none;letter-spacing:0}
+.rules label.chk input{width:auto}
+.modal.wide{max-width:640px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:13.5px}
+.kv span{color:var(--txt-soft)}.kv b{text-align:right;font-variant-numeric:tabular-nums}
+@media (max-width:760px){.trend{grid-template-columns:repeat(7,1fr)}.rules{grid-template-columns:1fr}.toolbar .search input{width:100%}}
+</style>
+</head>
+<body>
+
+<div id="login" hidden>
+  <div class="wordmark corner"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
+  <form class="lbox" onsubmit="doLogin(event)">
+    <h1>Admin<em>.</em></h1>
+    <p>Log ind for at se tal, pulje og demoer.</p>
+    <div class="field"><input id="l-email" type="email" placeholder="Email" autocomplete="username" required></div>
+    <div class="field"><input id="l-pass" type="password" placeholder="Adgangskode" autocomplete="current-password" required></div>
+    <div class="err" id="l-err"></div>
+    <button class="pill primary" style="width:100%;justify-content:center;margin-top:8px" type="submit">Log ind</button>
+  </form>
+</div>
+
+<div id="app" hidden>
+<header>
+  <div class="hwrap">
+    <div class="wordmark"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
+    <nav class="tabs">
+      <button data-tab="overview" class="active" onclick="showTab('overview')">Overblik</button>
+      <button data-tab="leads" onclick="showTab('leads')">Leads</button>
+      <button data-tab="intake" onclick="showTab('intake')">Tilgang</button>
+      <button data-tab="demos" onclick="showTab('demos')">Demoer<span class="n" id="n-demos">0</span></button>
+    </nav>
+    <div class="hright">
+      <a class="pill sm tertiary" href="/?as=sdr" title="Se hvad SDR'erne ser">SDR-visning ↗</a>
+      <a class="pill sm tertiary" href="/legacy" target="_blank" title="Det gamle værktøj (intake, berigelse, CSV)">Værktøj ↗</a>
+      <div class="me"><span class="dot"></span><span id="me-name">—</span></div>
+      <button class="iconbtn" title="Indstillinger" onclick="openSettings()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+      <button class="iconbtn" title="Log ud" onclick="logout()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- OVERBLIK -->
+  <section id="view-overview" class="view active">
+    <div class="alerts" id="alerts"></div>
+    <div class="tiles" id="tiles" style="grid-template-columns:repeat(6,1fr)"></div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Per SDR</h3><p>I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder.</p></div></div>
+      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Afventer</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
+      <div class="trend" id="trend"></div>
+    </div>
+    <details class="deeper" open>
+      <summary><span>Puljens tilstand</span><span class="sub">Hvad SDR'erne kan ringe til lige nu, og hvad der venter.</span></summary>
+      <div class="subtiles" id="pooltiles"></div>
+    </details>
+  </section>
+
+  <!-- LEADS -->
+  <section id="view-leads" class="view">
+    <div class="tablewrap">
+      <div class="thead">
+        <div><h3>Puljen</h3><p>Tjek kvaliteten af det SDR'erne får. Klik på en række for detaljer; markér og arkivér det, der ikke er ICP.</p></div>
+        <div class="filters left" id="lead-filters"></div>
+      </div>
+      <div class="toolbar">
+        <div class="search"><input id="lq" placeholder="Søg navn, CVR, by, kontakt…" oninput="leadSearch()"></div>
+        <select id="lsrc" onchange="leadsReload()"><option value="">Alle kilder</option></select>
+        <span style="margin-left:auto;font-size:13px;color:var(--txt-soft)" id="lsel"></span>
+        <button class="pill sm" id="bulk-arch" onclick="bulkArchive()" hidden>✕ Arkivér valgte</button>
+      </div>
+      <table>
+        <thead><tr><th style="width:36px"><input type="checkbox" onchange="selAll(this.checked)"></th><th>Virksomhed</th><th>Niche</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th>Kilde</th><th>Tilføjet</th><th>Status</th></tr></thead>
+        <tbody id="tb-leads"></tbody>
+      </table>
+      <div class="pager" id="pager"></div>
+    </div>
+  </section>
+
+  <!-- TILGANG -->
+  <section id="view-intake" class="view">
+    <div class="tiles" id="intake-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Tragten</h3><p>Fra pulje til noget en SDR faktisk kan ringe til.</p></div></div>
+      <div class="kv" id="funnel" style="padding:18px 24px"></div>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Kilder i den aktive pulje</h3><p>Hvor leads kommer fra, og hvor stor en andel der er klar.</p></div></div>
+      <table><thead><tr><th>Kilde</th><th class="num">Leads</th><th class="num">Klar at ringe</th><th class="num">Andel klar</th><th class="num">Meta-annoncører</th><th class="num">Nye · 14 dage</th></tr></thead><tbody id="tb-sources"></tbody></table>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Nicher blandt klar-leads</h3><p>Hvad SDR'erne ringer til lige nu — brug det til at justere reglerne under ⚙.</p></div></div>
+      <table><thead><tr><th>Niche</th><th class="num">Klar leads</th></tr></thead><tbody id="tb-niches"></tbody></table>
+    </div>
+  </section>
+
+  <!-- DEMOER -->
+  <section id="view-demos" class="view">
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Bookede demoer</h3><p>Godkend efter mødet: kvalificeret = ICP, interesseret og mødt op. Kun godkendte udløser provision.</p></div><div class="filters" id="demo-filters"></div></div>
+      <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
+    </div>
+  </section>
+</main>
+</div>
+<div id="toast"></div>
+
+<script>
+let token = localStorage.getItem('vl_token') || ''; let me = null; let O = null; let busy = false; let pollTimer = null;
+const $ = (id) => document.getElementById(id);
+const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ah = () => ({ 'Authorization': 'Bearer ' + token });
+function toast(msg, ms = 2400) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), ms); }
+async function get(path) { const r = await fetch(path, { headers: ah() }); if (r.status === 401) { logout(); throw new Error('Logget ud'); } const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
+async function post(path, body) { const r = await fetch(path, { method: 'POST', headers: { ...ah(), 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); if (r.status === 401) { logout(); throw new Error('Logget ud'); } const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
+function fmtPhone(p) { const d = String(p || '').replace(/[^0-9+]/g, ''); if (/^\+45\d{8}$/.test(d)) return '+45 ' + d.slice(3).replace(/(\d{2})(?=\d)/g, '$1 '); if (/^45\d{8}$/.test(d)) return '+45 ' + d.slice(2).replace(/(\d{2})(?=\d)/g, '$1 '); if (/^\d{8}$/.test(d)) return '+45 ' + d.replace(/(\d{2})(?=\d)/g, '$1 '); return p || ''; }
+function fmtWhen(iso) { if (!iso) return ''; const d = new Date(iso), now = new Date(); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); if (d.toDateString() === now.toDateString()) return 'I dag ' + hm; return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }) + ' ' + hm; }
+function fmtDate(iso) { if (!iso) return '—'; return new Date(iso).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }); }
+function fmtKr(n) { return (Number(n) || 0).toLocaleString('da-DK') + ' kr'; }
+const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer' };
+
+/* auth */
+async function doLogin(ev) { ev.preventDefault(); $('l-err').textContent = ''; try { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('l-email').value.trim(), password: $('l-pass').value }) }); const d = await r.json(); if (!r.ok) { $('l-err').textContent = d.error || 'Login fejlede'; return; } token = d.token; me = d.user; localStorage.setItem('vl_token', token); localStorage.setItem('vl_current_user', JSON.stringify(me)); boot(); } catch (ex) { $('l-err').textContent = 'Netværksfejl: ' + ex.message; } }
+function logout() { token = ''; me = null; localStorage.removeItem('vl_token'); localStorage.removeItem('vl_current_user'); clearInterval(pollTimer); $('app').hidden = true; $('login').hidden = false; }
+
+/* overview */
+async function loadOverview() {
+  try { O = await get('/api/sdr/admin/overview'); } catch (ex) { if (/Kun admin/.test(ex.message)) { location.replace('/'); return; } toast(ex.message, 4000); return; }
+  me = O.me; $('me-name').textContent = me.name;
+  renderOverview(); renderIntake(); renderDemos(); fillSources();
+}
+function renderOverview() {
+  const t = O.totals, p = O.pool, s = O.settings;
+  const target = Number(s.daily_target || 60) * Math.max(1, (O.perUser || []).filter((u) => u.id !== 'admin').length || 2);
+  const daysLeft = target ? (p.ready / target).toFixed(1) : '—';
+  const alerts = [];
+  if (p.pendingDemos > 0) alerts.push(`<div class="alert act"><span>🎯</span><span><b>${p.pendingDemos} demo${p.pendingDemos === 1 ? '' : 'er'}</b> afventer din godkendelse.</span><button class="pill sm violet" onclick="showTab('demos')">Gennemgå</button></div>`);
+  if (p.newLast7 === 0) alerts.push(`<div class="alert warn"><span>⏸</span><span><b>Ingen nye leads de sidste 7 dage.</b> Intake (StoreLeads / berigelse) kører ikke — puljen rækker ca. <b>${daysLeft} dage</b> ved fuldt tempo.</span></div>`);
+  else if (p.ready < target * 2) alerts.push(`<div class="alert warn"><span>⚠</span><span>Kun <b>${p.ready} leads klar</b> — ca. ${daysLeft} dages opkald ved ${target}/dag.</span></div>`);
+  if (p.blockedByRules > 0) alerts.push(`<div class="alert"><span>🧭</span><span><b>${p.blockedByRules} callable leads</b> holdes tilbage af dine regler (⚙).</span><button class="pill sm" onclick="showTab('leads');setFilter('blocked')">Se dem</button></div>`);
+  $('alerts').innerHTML = alerts.join('');
+  const sumC = (O.perUser || []).reduce((a, u) => a + (u.commissionMonth || 0), 0);
+  const sumQ = (O.perUser || []).reduce((a, u) => a + (u.demosQualMonth || 0), 0);
+  $('tiles').innerHTML = [
+    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Opkald denne uge', t.callsWeek], ['Konvertering · uge', t.convWeekPct + '%'], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
+  ].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
+  $('tb-sdr').innerHTML = (O.perUser || []).length ? O.perUser.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}</td><td class="num">${u.demosPendingMonth || 0}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="8">Ingen SDR-aktivitet endnu.</td></tr>`;
+  const days = O.days || [];
+  const dl = (k) => { const d = new Date(k); return ['S', 'M', 'T', 'O', 'T', 'F', 'L'][d.getDay()] + ' ' + d.getDate(); };
+  $('trend').innerHTML = `<div class="lbl">Opkald</div>${days.map((d) => `<div class="d"><div class="v ${d.calls ? '' : 'zero'}">${d.calls}</div></div>`).join('')}
+    <div class="lbl">Demoer</div>${days.map((d) => `<div class="d"><div class="v ${d.demos ? 'demo' : 'zero'}">${d.demos}</div></div>`).join('')}
+    <div class="lbl">Nye leads</div>${days.map((d) => `<div class="d"><div class="v ${d.newLeads ? 'new' : 'zero'}">${d.newLeads}</div>${dl(d.day)}</div>`).join('')}`;
+  $('pooltiles').innerHTML = [['ready', 'klar at ringe'], ['metaReady', 'klar · Meta-annoncører'], ['onLists', 'på SDR-lister i dag'], ['followupsOpen', 'opfølgninger åbne'], ['needs', 'mangler kontakt/nummer'], ['blockedByRules', 'holdt tilbage af regler'], ['archived', 'arkiveret'], ['total', 'leads i alt']]
+    .map(([k, l]) => `<div class="subtile"><b>${p[k] ?? 0}</b><span>${l}</span></div>`).join('');
+  $('n-demos').textContent = p.pendingDemos || 0; $('n-demos').classList.toggle('due', (p.pendingDemos || 0) > 0);
+}
+function renderIntake() {
+  const p = O.pool, src = O.sources || {}, ib = O.intakeBySource || {};
+  $('intake-tiles').innerHTML = [['Nye · 7 dage', p.newLast7, true], ['Nye · 14 dage', p.newLast14], ['Mangler berigelse', p.needs], ['Klar at ringe', p.ready]].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
+  $('funnel').innerHTML = [['Leads i alt', p.total], ['Aktive (ikke arkiveret / i Twenty)', p.active], ['Har dansk nummer + navngivet kontakt', p.active - p.needs], ['Passerer dine regler → klar at ringe', p.ready], ['På en SDR-liste i dag', p.onLists]].map(([l, v]) => `<span>${l}</span><b>${v}</b>`).join('');
+  const rows = Object.entries(src).sort((a, b) => b[1].total - a[1].total);
+  $('tb-sources').innerHTML = rows.length ? rows.map(([k, v]) => `<tr><td><b>${e(k)}</b></td><td class="num">${v.total}</td><td class="num">${v.ready}</td><td class="num">${v.total ? Math.round(100 * v.ready / v.total) : 0}%</td><td class="num">${v.meta}</td><td class="num">${ib[k] || 0}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="6">Ingen leads.</td></tr>`;
+  $('tb-niches').innerHTML = (O.topNiches || []).length ? O.topNiches.map(([n, c]) => `<tr><td>${e(n)}</td><td class="num">${c}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="2">Ingen niche-data.</td></tr>`;
+}
+let demoFilter = 'pending';
+function renderDemos() {
+  const rows = (O.demos || []).filter((l) => demoFilter === 'all' || (l.demo_status || 'pending') === demoFilter);
+  const counts = { pending: 0, qualified: 0, unqualified: 0 }; for (const l of O.demos || []) counts[l.demo_status || 'pending']++;
+  $('demo-filters').innerHTML = [['pending', 'Afventer'], ['qualified', 'Kvalificeret'], ['unqualified', 'Ikke kval.'], ['all', 'Alle']].map(([k, l]) => `<button class="${demoFilter === k ? 'on' : ''}" onclick="demoFilter='${k}';renderDemos()">${l}<span class="n">${k === 'all' ? (O.demos || []).length : counts[k]}</span></button>`).join('');
+  const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
+  $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending'; return `<tr class="rowlink" onclick="openLead('${e(l.cvr)}')">
+      <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
+      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '—'}</td>
+      <td class="num">${e(fmtPhone(l.phone))}</td>
+      <td style="max-width:300px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
+      <td>${e(l.demo_booked_by_name || '')}</td>
+      <td onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>
+        <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">✓ Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">✕ Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? 'endnu' : 'i den kategori'}.</td></tr>`;
+}
+async function demoReview(cvr, status) {
+  let reason = ''; if (status === 'unqualified') { reason = prompt('Hvorfor ikke kvalificeret? (no-show, ikke ICP, ikke interesseret…)'); if (reason === null) return; }
+  try { await post('/api/sdr/demo-review', { cvr, status, reason }); toast(status === 'qualified' ? '✓ Kvalificeret — provision tæller' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); loadOverview(); } catch (ex) { toast(ex.message, 4000); }
+}
+
+/* leads browser */
+let LF = 'ready', LQ = '', LS = '', LP = 1, LT = 0; const SEL = new Set(); let qTimer = null;
+const FILTERS = [['ready', 'Klar at ringe'], ['blocked', 'Holdt tilbage af regler'], ['needs', 'Mangler kontakt/nummer'], ['meta', 'Meta-annoncører'], ['onlists', 'På lister i dag'], ['followups', 'Opfølgninger'], ['demos', 'Demoer'], ['archived', 'Arkiveret'], ['all', 'Alle']];
+function setFilter(f) { LF = f; LP = 1; SEL.clear(); leadsReload(); }
+function leadSearch() { clearTimeout(qTimer); qTimer = setTimeout(() => { LQ = $('lq').value.trim(); LP = 1; leadsReload(); }, 250); }
+function fillSources() { const sel = $('lsrc'); const cur = sel.value; const opts = Object.keys(O.sources || {}).sort(); sel.innerHTML = '<option value="">Alle kilder</option>' + opts.map((s) => `<option value="${e(s)}" ${s === cur ? 'selected' : ''}>${e(s)}</option>`).join(''); }
+async function leadsReload() {
+  LS = $('lsrc').value; $('lead-filters').innerHTML = FILTERS.map(([k, l]) => `<button class="${LF === k ? 'on' : ''}" onclick="setFilter('${k}')">${l}</button>`).join('');
+  $('tb-leads').innerHTML = `<tr class="empty-row"><td colspan="9">Henter…</td></tr>`;
+  try {
+    const d = await get(`/api/sdr/admin/leads?filter=${LF}&q=${encodeURIComponent(LQ)}&source=${encodeURIComponent(LS)}&page=${LP}`);
+    LT = d.total; renderLeads(d.rows); renderPager(d);
+  } catch (ex) { toast(ex.message, 4000); }
+}
+function statusTag(l) {
+  if (l.lastAction === 'not-relevant') return `<span class="tag no">Arkiveret</span>`;
+  if (l.lastAction === 'demo-booked') return `<span class="tag ok">Demo</span>`;
+  const t = [];
+  if (!l.callable) t.push(`<span class="tag warn">Mangler ${!l.contact ? 'kontakt' : 'DK-nummer'}</span>`);
+  else if (!l.passesRules) t.push(`<span class="tag warn">Regel</span>`);
+  else t.push(`<span class="tag ok">Klar</span>`);
+  if (l.claimed_by_name) t.push(`<span class="tag">${e(l.claimed_by_name)} i dag</span>`);
+  if (l.callback_at) t.push(`<span class="tag">Opf. ${e(fmtDate(l.callback_at))}</span>`);
+  if (l.calls_count) t.push(`<span class="tag">${l.calls_count} opkald</span>`);
+  return t.join('');
+}
+function renderLeads(rows) {
+  $('tb-leads').innerHTML = rows.length ? rows.map((l) => `<tr class="rowlink ${SEL.has(l.cvr) ? 'sel' : ''}" onclick="openLead('${e(l.cvr)}')">
+      <td onclick="event.stopPropagation()"><input type="checkbox" ${SEL.has(l.cvr) ? 'checked' : ''} onchange="selOne('${e(l.cvr)}',this.checked)"></td>
+      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span></td>
+      <td style="color:var(--txt-soft);font-size:13px">${e(l.niche || '—')}</td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contacts_count > 1 ? ' · +' + (l.contacts_count - 1) : ''}</span>` : '<span class="sub">—</span>'}</td>
+      <td class="num">${e(fmtPhone(l.phone)) || '—'}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>
+      <td>${l.meta && l.meta.advertiser ? `<span class="tag meta">${l.ads ? l.ads + ' ads' : 'Meta'}</span>` : ''}</td>
+      <td style="font-size:12.5px;color:var(--txt-soft)">${e(l.source)}</td>
+      <td style="font-size:12.5px;color:var(--txt-soft);white-space:nowrap">${e(fmtDate(l.addedAt))}</td>
+      <td>${statusTag(l)}</td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="9">Ingen leads matcher.</td></tr>`;
+  updSel();
+}
+function renderPager(d) { const pages = Math.max(1, Math.ceil(d.total / d.per)); $('pager').innerHTML = `<span>${d.total} leads · side ${d.page} af ${pages}</span><span style="margin-left:auto"></span><button class="pill" ${d.page <= 1 ? 'disabled' : ''} onclick="LP--;leadsReload()">← Forrige</button><button class="pill" ${d.page >= pages ? 'disabled' : ''} onclick="LP++;leadsReload()">Næste →</button>`; }
+function selOne(cvr, on) { on ? SEL.add(cvr) : SEL.delete(cvr); updSel(); document.querySelectorAll('#tb-leads tr').forEach((tr) => { if (tr.innerHTML.includes(`'${cvr}'`)) tr.classList.toggle('sel', on); }); }
+function selAll(on) { document.querySelectorAll('#tb-leads input[type=checkbox]').forEach((cb) => { cb.checked = on; const m = cb.getAttribute('onchange').match(/'([^']+)'/); if (m) on ? SEL.add(m[1]) : SEL.delete(m[1]); }); updSel(); }
+function updSel() { $('lsel').textContent = SEL.size ? `${SEL.size} valgt` : ''; $('bulk-arch').hidden = SEL.size === 0; }
+async function bulkArchive() { if (!SEL.size || !confirm(`Arkivér ${SEL.size} leads som ikke relevante?`)) return; try { const d = await post('/api/sdr/admin/lead-status', { cvrs: [...SEL], status: 'archive' }); toast(`${d.n} leads arkiveret`); SEL.clear(); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
+async function leadStatus(cvr, status) { try { await post('/api/sdr/admin/lead-status', { cvr, status }); toast(status === 'archive' ? 'Arkiveret' : 'Genåbnet'); closeDrawer(); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
+
+/* drawer */
+async function openLead(cvr) {
+  let L; try { L = (await get('/api/sdr/admin/lead/' + encodeURIComponent(cvr))).lead; } catch (ex) { toast(ex.message, 4000); return; }
+  closeDrawer();
+  const bg = document.createElement('div'); bg.className = 'drawerbg'; bg.id = 'drawerbg'; bg.onclick = closeDrawer;
+  const dr = document.createElement('div'); dr.className = 'drawer'; dr.id = 'drawer';
+  const adLib = L.meta && L.meta.pageId ? `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&view_all_page_id=${encodeURIComponent(L.meta.pageId)}` : `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${encodeURIComponent(L.name || '')}&search_type=keyword_unordered`;
+  dr.innerHTML = `<button class="pill sm tertiary x" onclick="closeDrawer()">Luk ✕</button>
+    <div class="kicker">${e(L.source)}${L.addedAt ? ' · tilføjet ' + e(fmtDate(L.addedAt)) : ''}</div>
+    <h2>${e(L.name)}</h2>
+    <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${L.web ? `<a href="${e(/^https?:/.test(L.web) ? L.web : 'https://' + L.web)}" target="_blank">${e(String(L.web).replace(/^https?:\/\//, ''))}</a>` : ''}${L.niche ? `<span>· ${e(L.niche)}</span>` : ''}${L.employees ? `<span>· ${e(L.employees)} ansatte</span>` : ''}</div>
+    <div>${statusTag(L)}${L.meta && L.meta.advertiser ? ` <a class="tag meta" href="${adLib}" target="_blank">${L.ads ? L.ads + ' Meta-annoncer' : 'Meta'} ↗</a>` : ''}</div>
+    <h4>Kontakter (${L.contacts_full.length})</h4>
+    ${L.contacts_full.length ? L.contacts_full.map((c) => `<div class="p"><div><b>${e(c.name)}</b>${c.title ? ` <span>· ${e(c.title)}</span>` : ''}${c.linkedin ? ` <a href="${e(c.linkedin)}" target="_blank" style="font-size:12px">LinkedIn ↗</a>` : ''}<div style="font-size:12.5px;color:var(--txt-soft)">${c.email ? e(c.email) : ''}</div></div><div style="text-align:right;white-space:nowrap"><b>${e(fmtPhone(c.phone)) || '—'}</b><div style="font-size:11px;color:var(--txt-faint)">${e(c.source || '')}</div></div></div>`).join('') : '<div class="p"><span>Ingen navngivet kontakt.</span></div>'}
+    ${L.main_phone ? `<div class="p"><span>Hovednummer${L.phone_source ? ' · ' + e(L.phone_source) : ''}</span><b>${e(fmtPhone(L.main_phone))}</b></div>` : ''}
+    <h4>Opkald (${L.calls_all.length})</h4>
+    ${L.calls_all.length ? L.calls_all.slice().reverse().map((c) => `<div class="p"><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b> <span>· ${e(c.by_name)}${c.duration_s ? ' · ' + Math.round(c.duration_s / 60) + ' min' : ''}</span>${c.note ? `<div style="font-size:13px;color:var(--txt-soft)">${e(c.note)}</div>` : ''}</div><span style="white-space:nowrap">${e(fmtWhen(c.at))}</span></div>`).join('') : '<div class="p"><span>Ikke ringet endnu.</span></div>'}
+    ${L.debriefs && L.debriefs.length ? `<h4>Debriefs</h4>${L.debriefs.slice().reverse().map((d) => `<pre><b>${e(fmtWhen(d.at))}</b> · ${e(d.summary)}${d.next_step ? '\nNæste: ' + e(d.next_step) : ''}${d.coaching ? '\nCoaching: ' + e(d.coaching) : ''}</pre>`).join('')}` : ''}
+    ${L.notes ? `<h4>Noter</h4><pre>${e(L.notes)}</pre>` : ''}
+    <div class="acts">${L.lastAction === 'not-relevant' ? `<button class="pill" onclick="leadStatus('${e(L.cvr)}','reopen')">↩ Genåbn</button>` : `<button class="pill" style="color:#b42318;border-color:#e6b4b0" onclick="leadStatus('${e(L.cvr)}','archive')">✕ Arkivér — ikke ICP</button>`}${L.lastAction === 'demo-booked' ? `<button class="pill" onclick="showTab('demos');closeDrawer()">Til demoer →</button>` : ''}</div>`;
+  document.body.append(bg, dr);
+}
+function closeDrawer() { const a = $('drawerbg'), b = $('drawer'); if (a) a.remove(); if (b) b.remove(); }
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { closeDrawer(); const s = $('settings'); if (s) s.remove(); } });
+
+/* settings incl. rules */
+function openSettings() {
+  const s = O.settings || {}; const r = s.rules || {}; const sources = Object.keys(O.sources || {}).sort();
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'settings';
+  bg.innerHTML = `<div class="modal wide" style="max-height:92vh;overflow-y:auto">
+    <h3>Indstillinger &amp; regler</h3><p>Fælles for alle SDR'er. Reglerne styrer hvad puljen må servere.</p>
+    <label>Regler — hvad SDR'erne må få</label>
+    <div class="rules">
+      <label class="chk"><input type="checkbox" id="r-meta" ${r.require_meta ? 'checked' : ''}> Kun leads der kører Meta-annoncer</label>
+      <label class="chk">Min. antal annoncer <input id="r-minads" type="number" min="0" max="500" value="${e(r.min_ads || 0)}" style="width:80px;margin-left:8px"></label>
+      <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk kilder</div>${sources.map((x) => `<label class="chk" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="r-src" value="${e(x)}" ${(r.exclude_sources || []).includes(x) ? 'checked' : ''}> ${e(x)}</label>`).join('') || '<span style="font-size:13px;color:var(--txt-faint)">Ingen kilder endnu.</span>'}</div>
+      <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk nicher (kommasepareret, matcher på del af ordet)</div><input id="r-niches" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}"></div>
+    </div>
+    <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
+    <label>Ringeliste pr. dag</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 40)}">
+    <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}">
+    <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
+    <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
+    <label>Pitch på kortet ({fornavn} {firma} {annoncer} {sdr} {måned})</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
+    <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
+  </div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+async function saveSettings() {
+  const body = {
+    daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 40, commission_dkk: Number($('st-comm').value), calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
+    rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
+  };
+  try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt — reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
+}
+
+/* tabs / boot */
+function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); }
+async function boot() {
+  if (!token) { $('login').hidden = false; $('app').hidden = true; return; }
+  $('login').hidden = true; $('app').hidden = false;
+  let tab = 'overview'; try { tab = localStorage.getItem('vl_admin_tab') || 'overview'; } catch {}
+  await loadOverview();
+  showTab(['overview', 'leads', 'intake', 'demos'].includes(tab) ? tab : 'overview');
+  clearInterval(pollTimer); pollTimer = setInterval(() => { if (!document.hidden && !$('settings') && !$('drawer')) loadOverview(); }, 30000);
+}
+boot();
+</script>
+</body>
+</html>
