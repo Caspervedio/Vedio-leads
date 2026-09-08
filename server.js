@@ -13052,7 +13052,11 @@ function sdrDayKey(dt) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 // A claim lasts the calendar day it was made — matches the daily list.
-function sdrClaimActive(l, now) { return !!(l.claimed_by && l.claimed_at && sdrDayKey(l.claimed_at) === sdrDayKey(now)); }
+// A claim holds while the lead sits on the holder's personal list. Claims are
+// re-stamped when the SDR loads the app, so an SDR who is away for
+// SDR_CLAIM_TTL_MS releases their leads back to the shared pool for the other.
+const SDR_CLAIM_TTL_MS = 5 * 86400e3;
+function sdrClaimActive(l, now) { return !!(l.claimed_by && l.claimed_at && (now - new Date(l.claimed_at).getTime()) < SDR_CLAIM_TTL_MS); }
 function sdrClaimedByOther(l, userId, now) { return sdrClaimActive(l, now) && l.claimed_by !== userId; }
 function sdrPrimaryContact(l) {
   const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
@@ -13162,13 +13166,19 @@ function sdrEnsureList(d, userId, now, settings) {
     return { list: d.sdr_lists[userId], dirty };
   }
   const target = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
-  if (!L || L.date !== key) {
-    if (L) for (const cvr of L.cvrs || []) { const l = byCvr.get(cvr); if (l && l.claimed_by === userId) sdrUnclaim(l); }
-    L = { date: key, cvrs: [], done: [] };
-    d.sdr_lists[userId] = L; dirty = true;
-  }
+  // The list is a persistent personal pool (max `target`, fed from the shared
+  // pool): it carries over from day to day; only the "done today" bookkeeping
+  // resets each morning.
+  if (!L) { L = { date: key, cvrs: [], done: [] }; d.sdr_lists[userId] = L; dirty = true; }
+  else if (L.date !== key) { L.date = key; L.done = []; dirty = true; }
+  L.cvrs = L.cvrs || [];
   const before = L.cvrs.length;
-  L.cvrs = L.cvrs.filter((cvr) => { const l = byCvr.get(cvr); return l && sdrEligible(l, now) && sdrPassesRules(l, settings) && !sdrClaimedByOther(l, userId, now); });
+  L.cvrs = L.cvrs.filter((cvr) => {
+    const l = byCvr.get(cvr);
+    const keep = !!l && sdrEligible(l, now) && sdrPassesRules(l, settings) && !sdrClaimedByOther(l, userId, now);
+    if (!keep && l && l.claimed_by === userId) sdrUnclaim(l);
+    return keep;
+  });
   if (L.cvrs.length !== before) dirty = true;
   const inList = new Set(L.cvrs);
   const due = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !inList.has(l.cvr) && !sdrClaimedByOther(l, userId, now) && !(L.done || []).includes(l.cvr))
@@ -13186,8 +13196,9 @@ function sdrEnsureList(d, userId, now, settings) {
     const skip = new Set([...L.cvrs, ...(L.done || [])]);
     for (const l of sdrQueue(d, userId, now, skip, settings).slice(0, target - L.cvrs.length)) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); dirty = true; }
   }
-  // Keep claims fresh on everything in my list (a claim is per-day).
-  for (const cvr of L.cvrs) { const l = byCvr.get(cvr); if (l && !sdrClaimActive(l, now)) { sdrClaim(l, userId, now); dirty = true; } }
+  // Re-stamp my claims at most once a day per lead (keeps pool writes down);
+  // a lead on my list that nobody holds, or whose claim lapsed, is taken back.
+  for (const cvr of L.cvrs) { const l = byCvr.get(cvr); if (l && (l.claimed_by !== userId || !l.claimed_at || now - new Date(l.claimed_at).getTime() > 86400e3)) { sdrClaim(l, userId, now); dirty = true; } }
   return { list: L, dirty };
 }
 function buildSdrState(userId, d) {
@@ -13212,7 +13223,7 @@ function buildSdrState(userId, d) {
   const t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const w0 = new Date(t0); w0.setDate(t0.getDate() - ((t0.getDay() + 6) % 7)); // Monday
   const per = {};
-  for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 };
+  for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, onList: (((d.sdr_lists || {})[u.id] || {}).cvrs || []).length };
   const todayCalls = [];
   for (const l of leads) {
     for (const c of (l.calls || [])) {
@@ -13313,7 +13324,7 @@ app.post("/api/sdr/claim", authMiddleware, (req, res) => {
     const d = loadPool(); const now = Date.now(); const { cvr } = req.body || {};
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
-    if (sdrClaimedByOther(lead, req.userId, now)) return res.status(409).json({ error: `${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "En anden SDR"} har det lead på sin liste i dag` });
+    if (sdrClaimedByOther(lead, req.userId, now)) return res.status(409).json({ error: `${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "En anden SDR"} har det lead på sin liste` });
     const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
     if (lead.callback_at && new Date(lead.callback_at).getTime() > now) lead.callback_at = new Date(now).toISOString();
@@ -13439,10 +13450,12 @@ app.post("/api/sdr/list/remove", authMiddleware, (req, res) => {
 app.post("/api/sdr/list/add-more", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const now = Date.now();
-    const n = Math.max(1, Math.min(50, Number((req.body || {}).n) || 10));
     const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
-    const picked = sdrQueue(d, req.userId, now, new Set([...L.cvrs, ...(L.done || [])]), settings).slice(0, n);
+    // Never beyond list_size — the list is a capped pool that fills itself.
+    const cap = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
+    const n = Math.max(0, Math.min(50, Number((req.body || {}).n) || 10, cap - L.cvrs.length));
+    const picked = n ? sdrQueue(d, req.userId, now, new Set([...L.cvrs, ...(L.done || [])]), settings).slice(0, n) : [];
     for (const l of picked) { L.cvrs.push(l.cvr); sdrClaim(l, req.userId, now); }
     savePool(d);
     res.json({ ok: true, added: picked.length, state: buildSdrState(req.userId, d) });
@@ -13458,7 +13471,7 @@ app.post("/api/sdr/list/add", authMiddleware, (req, res) => {
     if (!sdrCallable(lead)) return res.status(400).json({ error: "Leadet mangler dansk nummer eller navngivet kontakt — ret det først" });
     if (lead.lastAction === "not-relevant") return res.status(400).json({ error: "Leadet er arkiveret som ikke relevant" });
     if (lead.twenty_opportunity_id) return res.status(400).json({ error: "Leadet ligger i Twenty" });
-    if (sdrClaimedByOther(lead, req.userId, now)) return res.status(409).json({ error: `${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "En anden SDR"} har det lead på sin liste i dag` });
+    if (sdrClaimedByOther(lead, req.userId, now)) return res.status(409).json({ error: `${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "En anden SDR"} har det lead på sin liste` });
     const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
     lead.deferred_until = null; lead.resurface_at = null;

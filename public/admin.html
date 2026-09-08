@@ -122,8 +122,8 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <div id="digest-body" style="padding:18px 24px;font-size:14px;color:var(--txt-soft)">Ingen opsummering endnu.</div>
     </div>
     <div class="tablewrap">
-      <div class="thead"><div><h3>Per SDR</h3><p>I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder.</p></div></div>
-      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Afventer</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <div class="thead"><div><h3>Per SDR</h3><p>Hver SDR har sin egen liste, der altid fyldes op fra den fælles pulje. I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder.</p></div></div>
+      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Afventer</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
@@ -231,20 +231,20 @@ function renderOverview() {
   $('tiles').innerHTML = [
     ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Opkald denne uge', t.callsWeek], ['Konvertering · uge', t.convWeekPct + '%'], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
   ].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
-  $('tb-sdr').innerHTML = (O.perUser || []).length ? O.perUser.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}</td><td class="num">${u.demosPendingMonth || 0}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="8">Ingen SDR-aktivitet endnu.</td></tr>`;
+  $('tb-sdr').innerHTML = (O.perUser || []).length ? O.perUser.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.onList || 0}</td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}</td><td class="num">${u.demosPendingMonth || 0}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="9">Ingen SDR-aktivitet endnu.</td></tr>`;
   const days = O.days || [];
   const dl = (k) => { const d = new Date(k); return ['S', 'M', 'T', 'O', 'T', 'F', 'L'][d.getDay()] + ' ' + d.getDate(); };
   $('trend').innerHTML = `<div class="lbl">Opkald</div>${days.map((d) => `<div class="d"><div class="v ${d.calls ? '' : 'zero'}">${d.calls}</div></div>`).join('')}
     <div class="lbl">Demoer</div>${days.map((d) => `<div class="d"><div class="v ${d.demos ? 'demo' : 'zero'}">${d.demos}</div></div>`).join('')}
     <div class="lbl">Nye leads</div>${days.map((d) => `<div class="d"><div class="v ${d.newLeads ? 'new' : 'zero'}">${d.newLeads}</div>${dl(d.day)}</div>`).join('')}`;
-  $('pooltiles').innerHTML = [['ready', 'klar at ringe'], ['metaReady', 'klar · Meta-annoncører'], ['onLists', 'på SDR-lister i dag'], ['followupsOpen', 'opfølgninger åbne'], ['needs', 'mangler kontakt/nummer'], ['blockedByRules', 'holdt tilbage af regler'], ['archived', 'arkiveret'], ['total', 'leads i alt']]
+  $('pooltiles').innerHTML = [['ready', 'klar at ringe'], ['metaReady', 'klar · Meta-annoncører'], ['onLists', 'på SDR-lister'], ['followupsOpen', 'opfølgninger åbne'], ['needs', 'mangler kontakt/nummer'], ['blockedByRules', 'holdt tilbage af regler'], ['archived', 'arkiveret'], ['total', 'leads i alt']]
     .map(([k, l]) => `<div class="subtile"><b>${p[k] ?? 0}</b><span>${l}</span></div>`).join('');
   $('n-demos').textContent = p.pendingDemos || 0; $('n-demos').classList.toggle('due', (p.pendingDemos || 0) > 0);
 }
 function renderIntake() {
   const p = O.pool, src = O.sources || {}, ib = O.intakeBySource || {};
   $('intake-tiles').innerHTML = [['Nye · 7 dage', p.newLast7, true], ['Nye · 14 dage', p.newLast14], ['Mangler berigelse', p.needs], ['Klar at ringe', p.ready]].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
-  $('funnel').innerHTML = [['Leads i alt', p.total], ['Aktive (ikke arkiveret / i Twenty)', p.active], ['Har dansk nummer + navngivet kontakt', p.active - p.needs], ['Passerer dine regler → klar at ringe', p.ready], ['På en SDR-liste i dag', p.onLists]].map(([l, v]) => `<span>${l}</span><b>${v}</b>`).join('');
+  $('funnel').innerHTML = [['Leads i alt', p.total], ['Aktive (ikke arkiveret / i Twenty)', p.active], ['Har dansk nummer + navngivet kontakt', p.active - p.needs], ['Passerer dine regler → klar at ringe', p.ready], ['På en SDR-liste', p.onLists]].map(([l, v]) => `<span>${l}</span><b>${v}</b>`).join('');
   const rows = Object.entries(src).sort((a, b) => b[1].total - a[1].total);
   $('tb-sources').innerHTML = rows.length ? rows.map(([k, v]) => `<tr><td><b>${e(k)}</b></td><td class="num">${v.total}</td><td class="num">${v.ready}</td><td class="num">${v.total ? Math.round(100 * v.ready / v.total) : 0}%</td><td class="num">${v.meta}</td><td class="num">${ib[k] || 0}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="6">Ingen leads.</td></tr>`;
   $('tb-niches').innerHTML = (O.topNiches || []).length ? O.topNiches.map(([n, c]) => `<tr><td>${e(n)}</td><td class="num">${c}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="2">Ingen niche-data.</td></tr>`;

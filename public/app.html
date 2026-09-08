@@ -73,7 +73,6 @@
       </div>
     </div>
     <div class="tablewrap">
-      <div class="ttools"><button class="pill violet" onclick="addMore(10)">+ Hent 10 flere</button></div>
       <table>
         <thead><tr><th style="width:36px"></th><th style="width:44px">#</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th></th></tr></thead>
         <tbody id="tb-list"></tbody>
@@ -292,18 +291,12 @@ async function removeItem(cvr) {
   if (busy) return; busy = true;
   try { apply(await post('/api/sdr/list/remove', { cvr })); toast('Taget ud af dagens liste'); } catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
 }
-async function addMore(n) {
-  if (busy) return; busy = true;
-  try { const d = await post('/api/sdr/list/add-more', { n }); apply(d, { keepCurrent: true }); toast(d.added ? `+${d.added} leads hentet fra puljen` : 'Puljen er tom lige nu'); }
-  catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
-}
-
 /* Opkald card */
 function renderCard() {
   const w = $('cardwrap'); calling = false; chooserOpen = false; ceditOpen = false;
   const L = S.current;
   if (!L) {
-    w.innerHTML = `<div class="card empty"><h3>Din ringeliste er tom.</h3><div style="margin-bottom:16px">${(S.followups || []).length ? (S.followups || []).length + ' opfølgninger er planlagt — de dukker op når de forfalder.' : 'Nye leads lander automatisk når berigelsen kører.'}</div>${(S.stats && S.stats.poolAvailable) ? `<button class="pill violet" onclick="addMore(10)">+ Hent 10 fra puljen</button>` : ''}</div>`;
+    w.innerHTML = `<div class="card empty"><h3>Din ringeliste er tom.</h3><div style="margin-bottom:16px">${(S.followups || []).length ? (S.followups || []).length + ' opfølgninger er planlagt — de dukker op når de forfalder.' : 'Nye leads lander automatisk når berigelsen kører.'}</div></div>`;
     $('histbox').hidden = true; return;
   }
   const c = L.contact || null; const dk = isDk(L.phone);
@@ -427,7 +420,7 @@ const EXPLAIN = {
   demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald — filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
   callsWeek:    { t: 'Opkald denne uge', w: 'Dine udfald fra mandag 00:00 til nu.', s: 'Samme opkalds-log som "Opkald i dag", bare en længere periode.' },
   demosWeek:    { t: 'Demoer denne uge', w: 'Dine "Demo booket" fra mandag til nu.', s: 'Samme opkalds-log, filtreret på udfald.' },
-  listRemaining:{ t: 'Tilbage på listen', w: 'Leads på din ringeliste som endnu ikke har fået et udfald i dag.', s: 'Listen bygges hver morgen: forfaldne opfølgninger først, derefter de bedste friske leads (Meta-annoncører med flest annoncer øverst). Du kan flytte, fjerne og hente flere under Ringeliste.' },
+  listRemaining:{ t: 'Tilbage på listen', w: 'Leads på din ringeliste som endnu ikke har fået et udfald i dag.', s: 'Din liste er altid fyldt op fra den fælles pulje: forfaldne opfølgninger øverst, derefter de bedste leads (Meta-annoncører med flest annoncer først). Når du afslutter et lead, kommer et nyt ind nederst. Du kan flytte og fjerne under Ringeliste.' },
   poolAvailable:{ t: 'Klar i puljen', w: 'Leads der kan hentes ind på din liste lige nu: dansk nummer + navngivet kontakt, ikke arkiveret, ikke i Twenty, ikke på den anden SDR\'s liste i dag, og ingen fremtidig opfølgning.', s: 'Puljen fyldes af intake (webshops via StoreLeads, Meta-annoncører, CVR-registret, Google Maps) og beriges med kontakt + nummer (Apollo / Full Enrich) før leads kan ringes.' },
   followupsOpen:{ t: 'Opfølgninger åbne', w: 'Leads med en aftalt opfølgning — forfalden eller fremtidig — som stadig kan ringes.', s: 'Sat via udfaldet "Følg op", eller automatisk af "Ingen svar" (+3 timer hvis før 13, ellers næste hverdag 09:00; efter 4 forsøg parkeres leadet en uge).' },
   poolNeedsEnrich:{ t: 'Mangler kontakt/nummer', w: 'Leads i puljen uden dansk nummer eller uden navngivet kontakt. De vises ikke for SDR\'er før de er beriget.', s: 'Berigelsen kører automatisk når den er tændt. Kender du selv personen, kan du rette den på kortet under Opkald ("✎ Ret person / nummer").' },
