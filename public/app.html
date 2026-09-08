@@ -176,15 +176,16 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .coach .k{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--violet);white-space:nowrap;padding-top:2px}
 .coach .x{margin-left:auto;color:var(--violet);font-weight:700;font-size:12px}
 /* commission */
-.pay{background:var(--black);color:var(--white);border-radius:var(--radius-lg);padding:24px 28px;margin-bottom:22px;display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap}
+.pay{background:var(--violet);color:var(--white);border-radius:var(--radius-lg);padding:24px 28px;margin-bottom:22px;display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap}
 .pay .big{font-family:var(--display);font-size:56px;line-height:.9;letter-spacing:.005em;color:var(--white)}
-.pay .big em{font-style:normal;color:#c4b5fd}
-.pay .lbl{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-top:8px}
+.pay .big em{font-style:normal;color:var(--white)}
+.pay .lbl{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.72);margin-top:8px}
 .pay .side{margin-left:auto;display:flex;gap:26px}
 .pay .side div{display:flex;flex-direction:column;gap:2px}
-.pay .side b{font-size:20px;font-weight:800}
-.pay .side span{font-size:12px;color:rgba(255,255,255,.55);font-weight:600}
-.pay .rule{width:100%;font-size:12.5px;color:rgba(255,255,255,.6);border-top:1px solid var(--line-dark);padding-top:12px}
+.pay .side b{font-size:20px;font-weight:800;color:var(--white)}
+.pay .side span{font-size:12px;color:rgba(255,255,255,.72);font-weight:600}
+.pay .rule{width:100%;font-size:12.5px;color:rgba(255,255,255,.78);border-top:1px solid rgba(255,255,255,.22);padding-top:12px}
+.pay .rule b{color:var(--white)}
 .chip.st-pending{background:#fdf3e2;color:#9a5b00}
 .chip.st-qualified{background:#e6f6ec;color:var(--approve)}
 .chip.st-unqualified{background:#fdecec;color:#b42318}
@@ -762,7 +763,7 @@ function renderCard() {
       <div class="steplbl"><i>1</i> Ring</div>
       <div class="row">
         <a class="pill primary" id="callbtn" href="${dk ? telHref(L.phone) : '#'}" onclick="onCall(event)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg><span id="calllbl">Ring op</span></a>
-        ${S.settings && S.settings.calendly_url ? `<a class="pill violet-outline" href="${e(S.settings.calendly_url)}" target="_blank" rel="noopener">Book demo i Calendly ↗</a>` : ''}
+        ${S.settings && S.settings.calendly_url ? `<a class="pill violet-outline" href="${e(calendlyFor(L))}" target="_blank" rel="noopener" title="Åbner Calendly med kontakten udfyldt og SDR som kilde">Book demo i Calendly ↗</a>` : ''}
       </div>
       <div class="steplbl two"><i>2</i> Udfald</div>
       <div class="row disp">
@@ -1055,6 +1056,23 @@ async function demoReview(cvr, status) {
   busy = true;
   try { apply(await post('/api/sdr/demo-review', { cvr, status, reason }), { keepCurrent: true }); toast(status === 'qualified' ? '✓ Kvalificeret — provision tæller' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); }
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
+}
+// Calendly link per lead: prefill the contact + tag the booking with the SDR
+// (utm_source=sdr1/sdr2) so Calendly-side bookings are attributable too.
+function calendlyFor(L) {
+  const base = (S.settings && S.settings.calendly_url) || '';
+  if (!base) return '#';
+  try {
+    const u = new URL(base);
+    if (L.contact && L.contact.name) u.searchParams.set('name', L.contact.name);
+    if (L.contact && L.contact.email) u.searchParams.set('email', L.contact.email);
+    if (L.name) u.searchParams.set('a1', L.name);              // first custom question = company
+    u.searchParams.set('utm_source', (me && me.id) || 'sdr');
+    u.searchParams.set('utm_medium', 'vedio-ring');
+    u.searchParams.set('utm_campaign', (me && me.name) || '');
+    u.searchParams.set('utm_content', L.cvr || '');
+    return u.toString();
+  } catch { return base; }
 }
 async function selectContact(name) {
   const L = S.current; if (!L || busy) return; busy = true;
