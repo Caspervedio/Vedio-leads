@@ -63,6 +63,17 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 .modal.wide{max-width:640px}
 .kv{display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:13.5px}
 .kv span{color:var(--txt-soft)}.kv b{text-align:right;font-variant-numeric:tabular-nums}
+.integ{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--line)}
+.integ .ic{background:var(--white);padding:14px 20px;display:flex;flex-direction:column;gap:3px}
+.integ .ic b{font-size:14px}
+.integ .ic span{font-size:12px;color:var(--txt-soft)}
+.integ .ic.ok b{color:var(--approve)}.integ .ic.bad b{color:#b42318}.integ .ic.off b{color:var(--txt-faint)}
+.digest .hl{font-size:16px;font-weight:800;letter-spacing:-.01em;color:var(--txt);margin-bottom:14px}
+.digest .k{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--violet);margin-bottom:6px}
+.digest .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
+.digest ul{margin:0;padding-left:18px;color:var(--txt);font-size:13.5px;line-height:1.55}
+.digest li{margin-bottom:4px}
+.digest .cols > div > div:last-child{font-size:13.5px;color:var(--txt);line-height:1.5}
 @media (max-width:760px){.trend{grid-template-columns:repeat(7,1fr)}.rules{grid-template-columns:1fr}.toolbar .search input{width:100%}}
 </style>
 </head>
@@ -71,8 +82,9 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 <div id="login" hidden>
   <div class="wordmark corner"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
   <form class="lbox" onsubmit="doLogin(event)">
-    <h1>Admin<em>.</em></h1>
-    <p>Log ind for at se tal, pulje og demoer.</p>
+    <div class="kick"><span class="dotv"></span>Vedio Ring · Admin</div>
+    <h1><span>Sådan går salget.</span><em>Tal, pulje, demoer.</em></h1>
+    <p>Log ind — så ligger dagens overblik klar.</p>
     <div class="field"><input id="l-email" type="email" placeholder="Email" autocomplete="username" required></div>
     <div class="field"><input id="l-pass" type="password" placeholder="Adgangskode" autocomplete="current-password" required></div>
     <div class="err" id="l-err"></div>
@@ -105,6 +117,10 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <section id="view-overview" class="view active">
     <div class="alerts" id="alerts"></div>
     <div class="tiles" id="tiles" style="grid-template-columns:repeat(6,1fr)"></div>
+    <div class="tablewrap" id="digest-card">
+      <div class="thead"><div><h3>Ugens læring</h3><p id="digest-sub">Hvad virkede, hvad skal ændres — skrevet ud fra SDR'ernes debriefs og udfald.</p></div><button class="pill sm violet" id="digest-btn" onclick="genDigest()">Generér for denne uge</button></div>
+      <div id="digest-body" style="padding:18px 24px;font-size:14px;color:var(--txt-soft)">Ingen opsummering endnu.</div>
+    </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Per SDR</h3><p>I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder.</p></div></div>
       <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Afventer</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
@@ -143,6 +159,14 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <!-- TILGANG -->
   <section id="view-intake" class="view">
     <div class="tiles" id="intake-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Integrationer</h3><p>Om nøglerne accepteres lige nu — tjek her når du har gen-abonneret, før vi tænder cron-jobs.</p></div><button class="pill sm" onclick="loadIntegrations(true)">Test igen</button></div>
+      <div class="integ" id="integ">Tester…</div>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Importér leads (CSV)</h3><p>Kolonner genkendes automatisk (navn, CVR, telefon, email, website). CVR-numre slås op i CVR-registret. Max 5.000 rækker.</p></div><label class="pill sm violet" style="cursor:pointer">Vælg CSV-fil<input type="file" id="csvfile" accept=".csv,text/csv" hidden onchange="csvPick(this)"></label></div>
+      <div id="csv-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Ingen fil valgt.</div>
+    </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Tragten</h3><p>Fra pulje til noget en SDR faktisk kan ringe til.</p></div></div>
       <div class="kv" id="funnel" style="padding:18px 24px"></div>
@@ -376,13 +400,68 @@ async function saveSettings() {
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt — reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
 }
 
+/* integrations */
+let integLoaded = false;
+async function loadIntegrations(force) {
+  if (integLoaded && !force) return; integLoaded = true;
+  $('integ').innerHTML = '<span style="color:var(--txt-faint)">Tester nøgler…</span>';
+  try {
+    const d = await get('/api/sdr/admin/integrations');
+    $('integ').innerHTML = d.checks.map((c) => `<div class="ic ${c.ok ? 'ok' : (c.status === 'no-key' ? 'off' : 'bad')}"><b>${c.ok ? '●' : '○'} ${e(c.name)}</b><span>${e(c.detail || c.status)}${c.ms ? ` · ${c.ms} ms` : ''}</span></div>`).join('');
+  } catch (ex) { $('integ').innerHTML = `<span style="color:#b42318">${e(ex.message)}</span>`; }
+}
+/* weekly digest */
+function renderDigest(d) {
+  const b = $('digest-body'); const x = d.digest;
+  $('digest-sub').textContent = `Uge fra ${d.week} · ${d.counts.calls} opkald · ${d.counts.demos} demoer · ${d.counts.debriefs} debriefs${x ? ' · genereret ' + fmtWhen(x.generated_at) : ''}`;
+  $('digest-btn').textContent = x ? 'Generér igen' : 'Generér for denne uge';
+  if (!x) { b.innerHTML = `Ingen opsummering endnu. ${d.counts.calls || d.counts.debriefs ? 'Klik <b>Generér</b> — Gemini læser ugens debriefs og udfald.' : 'Kommer når der er opkald i ugen.'}`; return; }
+  const list = (arr) => (arr || []).length ? `<ul>${arr.map((s) => `<li>${e(s)}</li>`).join('')}</ul>` : '<span style="color:var(--txt-faint)">—</span>';
+  b.innerHTML = `<div class="digest"><div class="hl">${e(x.headline || '')}</div>
+    <div class="cols"><div><div class="k">Det virkede</div>${list(x.working)}</div><div><div class="k">Gør anderledes næste uge</div>${list(x.improve)}</div><div><div class="k">Indvendinger + svar</div>${list(x.objections)}</div></div>
+    ${(x.per_sdr || []).length ? `<div class="k" style="margin-top:14px">Pr. SDR</div><div class="cols">${x.per_sdr.map((p) => `<div><b>${e(p.sdr)}</b><div>${e(p.note)}</div></div>`).join('')}</div>` : ''}</div>`;
+}
+async function loadDigest() { try { renderDigest(await get('/api/sdr/admin/digest')); } catch (ex) { $('digest-body').textContent = ex.message; } }
+async function genDigest() { const btn = $('digest-btn'); btn.disabled = true; btn.textContent = 'Skriver…'; try { renderDigest({ ...(await get('/api/sdr/admin/digest')), digest: (await post('/api/sdr/admin/digest')).digest }); toast('Ugens læring er klar'); } catch (ex) { toast(ex.message, 5000); } finally { btn.disabled = false; if (btn.textContent === 'Skriver…') btn.textContent = 'Generér igen'; } }
+/* CSV import */
+function csvParse(text) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) { const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',' || ch === ';' || ch === '\t') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some((c) => c.trim() !== '')) rows.push(row); row = []; }
+    else cell += ch; }
+  row.push(cell); if (row.some((c) => c.trim() !== '')) rows.push(row);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((h) => h.trim());
+  return rows.slice(1).map((r) => Object.fromEntries(headers.map((h, i) => [h, (r[i] || '').trim()])));
+}
+let csvRows = [];
+function csvPick(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { csvRows = csvParse(String(rd.result || '')); const hdr = csvRows.length ? Object.keys(csvRows[0]) : [];
+    $('csv-body').innerHTML = csvRows.length ? `<b>${e(f.name)}</b> · ${csvRows.length} rækker · kolonner: ${hdr.map((h) => `<span class="chip">${e(h)}</span>`).join(' ')}<div style="margin-top:12px"><button class="pill sm primary" style="padding:9px 16px;font-size:13px" onclick="csvImport()">Importér ${csvRows.length} rækker til puljen</button></div>` : `<span style="color:#b42318">Kunne ikke læse rækker fra ${e(f.name)} — er der en overskriftsrække?</span>`; input.value = ''; };
+  rd.readAsText(f, 'utf-8');
+}
+async function csvImport() {
+  if (!csvRows.length) return; if (csvRows.length > 5000) { toast('Max 5.000 rækker pr. import', 4000); return; }
+  $('csv-body').innerHTML = `Importerer ${csvRows.length} rækker — CVR-opslag kan tage et minut…`;
+  try { const d = await post('/api/leads/import', { rows: csvRows });
+    const s = d.stats || d; $('csv-body').innerHTML = `<b>Færdig.</b> ${s.imported ?? 0} importeret · ${s.matched ?? 0} CVR-match · ${s.unmatched ?? 0} uden CVR · ${s.alreadyExists ?? 0} fandtes i forvejen${s.lookupFailures ? ` · <span style="color:#9a5b00">${s.lookupFailures} CVR-opslag fejlede</span>` : ''}${s.errors ? ` · ${s.errors} fejlrækker` : ''}. Leads uden kontakt/nummer ligger under <b>Mangler kontakt/nummer</b> til berigelse.`;
+    csvRows = []; loadOverview(); }
+  catch (ex) { $('csv-body').innerHTML = `<span style="color:#b42318">Import fejlede: ${e(ex.message)}</span>`; }
+}
+
 /* tabs / boot */
-function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); }
+function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') loadIntegrations(false); }
 async function boot() {
   if (!token) { $('login').hidden = false; $('app').hidden = true; return; }
   $('login').hidden = true; $('app').hidden = false;
   let tab = 'overview'; try { tab = localStorage.getItem('vl_admin_tab') || 'overview'; } catch {}
   await loadOverview();
+  loadDigest();
   showTab(['overview', 'leads', 'intake', 'demos'].includes(tab) ? tab : 'overview');
   clearInterval(pollTimer); pollTimer = setInterval(() => { if (!document.hidden && !$('settings') && !$('drawer')) loadOverview(); }, 30000);
 }

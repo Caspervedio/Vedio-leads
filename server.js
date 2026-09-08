@@ -13262,6 +13262,8 @@ function buildSdrState(userId, d) {
     followups: followups.map((l) => sdrSlim(l, nameById)),
     demos: demos.map((l) => sdrSlim(l, nameById)),
     todayCalls,
+    // This week's coaching lines from my own debriefs (newest first).
+    my_coaching: leads.flatMap((l) => (l.debriefs || []).filter((x) => x.by === userId && x.coaching && new Date(x.at).getTime() >= w0.getTime()).map((x) => ({ at: x.at, lead: l.name, coaching: x.coaching, next_step: x.next_step || "" }))).sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12),
   };
 }
 function sdrRespond(res, userId, d) { res.json({ ok: true, state: buildSdrState(userId, d) }); }
@@ -13757,6 +13759,93 @@ app.post("/api/sdr/admin/enrich", authMiddleware, async (req, res) => {
     logActivity("sdr-admin", `Admin kørte berigelse på ${lead.name}: ${msg}`, { cvr, userId: req.userId });
     res.json({ ok: !err, message: msg, before, after, stats });
   } catch (e) { sdrFail(res, e, "admin/enrich"); }
+});
+// Admin: live status of every external integration — used on /admin →
+// Tilgang while re-subscribing. Each probe is the cheapest authenticated
+// call the vendor offers (no credits spent).
+app.get("/api/sdr/admin/integrations", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+    const probe = async (name, keyPresent, fn) => {
+      if (!keyPresent) return { name, ok: false, status: "no-key", detail: "Ingen nøgle i Secret Manager" };
+      const t0 = Date.now();
+      try { const r = await withTimeout(fn(), 12000); return { name, ok: r.ok, status: r.status || (r.ok ? "ok" : "fail"), detail: r.detail || "", ms: Date.now() - t0 }; }
+      catch (e) { return { name, ok: false, status: "error", detail: e.message, ms: Date.now() - t0 }; }
+    };
+    const checks = await Promise.all([
+      probe("Apollo", !!process.env.APOLLO_API_KEY, async () => {
+        const r = await fetch("https://api.apollo.io/v1/auth/health", { headers: { "X-Api-Key": process.env.APOLLO_API_KEY } });
+        const j = await r.json().catch(() => ({}));
+        return { ok: r.ok && j.is_logged_in === true, status: r.ok ? (j.is_logged_in ? "ok" : "not-logged-in") : `http-${r.status}`, detail: r.ok ? (j.is_logged_in ? "Nøgle accepteret" : "Nøgle afvist") : (j.error || j.message || "") };
+      }),
+      probe("Full Enrich", !!process.env.FULLENRICH_API_KEY, async () => {
+        // A GET on a non-existent job id: 401/403 = bad key, 404 = key OK.
+        const r = await fetch(`${FULLENRICH_API_BASE}/api/v2/contact/enrich/bulk/00000000-0000-0000-0000-000000000000`, { headers: { "Authorization": `Bearer ${process.env.FULLENRICH_API_KEY}` } });
+        if (r.status === 401 || r.status === 403) return { ok: false, status: `http-${r.status}`, detail: "Nøgle afvist — er abonnementet aktivt?" };
+        if (r.status === 404 || r.ok) return { ok: true, status: "ok", detail: "Nøgle accepteret (credits ses i Full Enrich)" };
+        return { ok: false, status: `http-${r.status}`, detail: (await r.text().catch(() => "")).slice(0, 120) };
+      }),
+      probe("StoreLeads", !!process.env.STORELEADS_API_KEY, async () => {
+        const r = await fetch(`${STORELEADS_API_BASE}/domain?page_size=1`, { headers: { "Authorization": `Bearer ${process.env.STORELEADS_API_KEY}`, "Accept": "application/json" } });
+        if (r.status === 401 || r.status === 403 || r.status === 402) return { ok: false, status: `http-${r.status}`, detail: "Nøgle afvist / abonnement inaktivt" };
+        return { ok: r.ok, status: r.ok ? "ok" : `http-${r.status}`, detail: r.ok ? "Nøgle accepteret" : (await r.text().catch(() => "")).slice(0, 120) };
+      }),
+      probe("Apify", !!process.env.APIFY_API_TOKEN, async () => {
+        const r = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(process.env.APIFY_API_TOKEN)}`);
+        const j = await r.json().catch(() => ({}));
+        const u = j.data || {};
+        return { ok: r.ok, status: r.ok ? "ok" : `http-${r.status}`, detail: r.ok ? `Konto ${u.username || ""}${u.plan && u.plan.id ? " · plan " + u.plan.id : ""}` : (j.error && j.error.message) || "" };
+      }),
+      probe("Gemini", !!process.env.GEMINI_API_KEY, async () => {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}&pageSize=1`);
+        return { ok: r.ok, status: r.ok ? "ok" : `http-${r.status}`, detail: r.ok ? "Nøgle accepteret" : "Nøgle afvist" };
+      }),
+      probe("Datafordeler (CVR)", !!process.env.DATAFORDELER_KEY, async () => ({ ok: true, status: "ok", detail: "Gratis — nøgle sat" })),
+    ]);
+    const paused = [];
+    res.json({ ok: true, checks, checkedAt: new Date().toISOString() });
+  } catch (e) { sdrFail(res, e, "admin/integrations"); }
+});
+// Admin: weekly learning digest — what worked, what to change — generated
+// by Gemini from the week's debriefs + outcomes. Cached per ISO week.
+function sdrWeekKey(dt) { const d = new Date(dt || Date.now()); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return sdrDayKey(d); }
+app.get("/api/sdr/admin/digest", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const wk = sdrWeekKey();
+    const cached = (d.sdr_digests || {})[wk] || null;
+    const w0 = new Date(wk).getTime();
+    let debriefs = 0, calls = 0, demos = 0;
+    for (const l of d.leads || []) { for (const c of (l.calls || [])) if (new Date(c.at).getTime() >= w0) { calls++; if (c.action === "demo-booked") demos++; } for (const x of (l.debriefs || [])) if (new Date(x.at).getTime() >= w0) debriefs++; }
+    res.json({ ok: true, week: wk, digest: cached, counts: { calls, demos, debriefs } });
+  } catch (e) { sdrFail(res, e, "admin/digest"); }
+});
+app.post("/api/sdr/admin/digest", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const wk = sdrWeekKey(); const w0 = new Date(wk).getTime();
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const items = []; const outcomes = {}; const bySdr = {};
+    for (const l of d.leads || []) {
+      for (const c of (l.calls || [])) if (new Date(c.at).getTime() >= w0) { outcomes[c.action] = (outcomes[c.action] || 0) + 1; const s = bySdr[c.by] = bySdr[c.by] || { calls: 0, demos: 0 }; s.calls++; if (c.action === "demo-booked") s.demos++; }
+      for (const x of (l.debriefs || [])) if (new Date(x.at).getTime() >= w0) items.push({ sdr: nameById[x.by] || x.by, lead: l.name, ads: l.adsMatched || 0, outcome: l.lastAction, summary: x.summary, next: x.next_step, coaching: x.coaching, sentiment: x.sentiment });
+    }
+    if (!items.length && !Object.keys(outcomes).length) return res.status(400).json({ error: "Ingen opkald eller debriefs i denne uge endnu" });
+    const prompt = [
+      "Du er salgscoach for Vedio (video-annoncer til Meta/TikTok; produktet 'Vee' laver nye annoncer løbende så de ikke bliver trætte). Målgruppe: danske webshops der kører Meta-annoncer.",
+      `Ugen der gik (fra ${wk}): udfald ${JSON.stringify(outcomes)}; pr. SDR ${JSON.stringify(Object.fromEntries(Object.entries(bySdr).map(([k, v]) => [nameById[k] || k, v])))}.`,
+      items.length ? `SDR'ernes egne debriefs (${items.length}):\n${items.slice(0, 60).map((x) => `- [${x.sdr} · ${x.lead}${x.ads ? " · " + x.ads + " ads" : ""} · ${x.outcome || "?"}] ${x.summary}${x.next ? " | Næste: " + x.next : ""}${x.coaching ? " | Coach: " + x.coaching : ""}`).join("\n")}` : "Ingen debriefs endnu — brug kun udfaldene.",
+      "Svar KUN som JSON på dansk, kort og konkret, ingen floskler:",
+      `{"headline": "<én sætning om ugen>", "working": ["<3-5 ting der virkede — med hvem/hvad>"], "improve": ["<3-5 konkrete ting at gøre anderledes næste uge>"], "objections": ["<de 2-4 mest hørte indvendinger + et godt svar>"], "per_sdr": [{"sdr": "<navn>", "note": "<1-2 sætninger personlig feedback>"}]}`,
+    ].join("\n\n");
+    const out = await sdrGeminiJson(prompt, null);
+    const d2 = loadPool(); d2.sdr_digests = d2.sdr_digests || {};
+    const digest = { week: wk, generated_at: new Date().toISOString(), by: req.userId, counts: { calls: Object.values(outcomes).reduce((a, b) => a + b, 0), demos: outcomes["demo-booked"] || 0, debriefs: items.length }, ...out };
+    d2.sdr_digests[wk] = digest; const keys = Object.keys(d2.sdr_digests).sort(); if (keys.length > 12) for (const k of keys.slice(0, keys.length - 12)) delete d2.sdr_digests[k];
+    savePool(d2);
+    res.json({ ok: true, digest });
+  } catch (e) { sdrFail(res, e, "admin/digest"); }
 });
 // Pick which of the lead's people is "the one to call" — sticks on the lead.
 app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {

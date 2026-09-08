@@ -110,6 +110,10 @@
   <section id="view-results" class="view">
     <div class="pay" id="pay" hidden></div>
     <div class="tiles" id="tiles"></div>
+    <div class="tablewrap" id="coachwrap" hidden>
+      <div class="thead"><div><h3>Til dine næste opkald</h3><p>Fra dine debriefs i denne uge — én ting ad gangen.</p></div></div>
+      <div id="coachlist" style="padding:6px 24px 10px"></div>
+    </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Per SDR</h3><p>I dag og denne uge (mandag til nu).</p></div>
         <a class="pill tertiary" href="/legacy" target="_blank" id="legacy-link" hidden>Åbn admin-værktøj ↗</a>
@@ -248,7 +252,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('legacy-link').hidden = !(me && (me.role === 'admin' || me.id === 'admin'));
   renderList();
   if (!keepCurrent) renderCard(); else if ($('note')) $('note').value = prevNote;
-  renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderToday();
+  renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday();
 }
 
 /* Ringeliste */
@@ -466,6 +470,11 @@ const EXPLAIN = {
   demos:        { t: 'Bookede demoer', w: 'Alle leads med udfaldet "Demo booket", nyeste øverst.', s: 'Founders tager demoen fra Calendly-bookingen. Leadet forlader ringelisterne.' },
 };
 const tip = (k) => { const x = EXPLAIN[k]; return x ? `${x.t} — ${x.w}` : ''; };
+function renderCoaching() {
+  const rows = S.my_coaching || []; const w = $('coachwrap'); if (!w) return;
+  w.hidden = rows.length === 0; if (!rows.length) return;
+  $('coachlist').innerHTML = rows.map((c) => `<div class="coach" style="margin:8px 0"><span class="k">${e(c.lead)}</span><span>${e(c.coaching)}${c.next_step ? ` <span style="color:var(--txt-soft)">· Næste: ${e(c.next_step)}</span>` : ''}</span></div>`).join('');
+}
 function renderResults() {
   const st = S.stats || {};
   // Primary: what matters today. Anton, big, tooltips only.
