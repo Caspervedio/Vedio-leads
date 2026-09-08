@@ -1,4 +1,7 @@
 require("dotenv").config();
+// All SDR time rules ("næste hverdag 09:00", "før 13") are Danish wall-clock.
+// Cloud Run containers default to UTC, so pin the process timezone here.
+process.env.TZ = process.env.TZ || "Europe/Copenhagen";
 const express = require("express");
 const fetch = require("node-fetch");
 const cors = require("cors");
@@ -14,7 +17,7 @@ const DATA_FILE = path.join(DATA_DIR, "data.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "12mb" })); // voice debriefs arrive as base64 audio
 // Never cache the SPA shell (index.html) — it's a single-page app, so a
 // stale shell means the browser runs old in-memory JS after a deploy.
 // no-store guarantees a normal refresh always pulls the latest build.
@@ -12949,8 +12952,51 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
 // Opkald / Opfølgning / Resultater).
 // ═════════════════════════════════════════════════════════════════════════════
 const POOL_ID = "pool";
-const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant"]);
-const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 40 };
+const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant", "wrong-number"]);
+const SDR_DEFAULT_PITCH = [
+  "Hej {fornavn}, det er {sdr} fra Vedio. Jeg kan se I kører {annoncer} på Meta lige nu.",
+  "De fleste webshops oplever, at en annonce mister effekt efter 2–3 uger — publikum har set den. Vi laver nye video-annoncer løbende ud fra det, der virker for jer, så I aldrig kører på trætte annoncer.",
+  "Har du 20 minutter i denne uge til at se, hvordan det ville se ud for {firma}?",
+  "",
+  "Indvending · \"Vi har et bureau\": Fint — vi erstatter ikke bureauet, vi giver dem flere annoncer at teste. Mange af vores kunder kører begge.",
+  "Indvending · \"Ikke lige nu\": Forstået. Hvornår er et bedre tidspunkt — om 2 uger eller efter {måned}? Så ringer jeg der.",
+].join("\n");
+const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 40, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "" };
+const SDR_UNDO_WINDOW_MS = 10 * 60 * 1000;
+function sdrIsAdmin(userId) { if (userId === "admin") return true; const u = loadUsers().find((x) => x.id === userId); return !!(u && u.role === "admin"); }
+function sdrMonthKey(dt) { const d = dt ? new Date(dt) : new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+// Best-effort founder ping when a demo gets booked (Slack incoming webhook
+// or any endpoint that accepts {text}). Configured under ⚙ by admin.
+async function sdrNotifyDemo(url, lead, sdrName, note) {
+  if (!url || !/^https?:\/\//.test(url)) return;
+  const c = sdrPrimaryContact(lead) || {};
+  const ads = Number(lead.adsMatched || 0);
+  const text = [
+    `🎯 Demo booket af ${sdrName}: *${lead.name || "?"}*${lead.city ? " · " + lead.city : ""}`,
+    `👤 ${c.name || "—"}${c.title ? " · " + c.title : ""} · 📞 ${sdrPhone(lead).phone || "—"}${c.email ? " · ✉ " + c.email : ""}`,
+    lead.web ? `🌐 ${lead.web}` : null,
+    (lead.meta_advertiser || ads) ? `📣 Kører ${ads ? ads + " " : ""}Meta-annoncer lige nu` : null,
+    note ? `📝 ${note}` : null,
+  ].filter(Boolean).join("\n");
+  try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); }
+  catch (e) { console.warn("[sdr/demo-webhook]", e.message); }
+}
+// Gemini (2.5 Flash) JSON call with optional inline audio — used by the
+// post-call voice debrief. Returns parsed JSON or throws.
+async function sdrGeminiJson(prompt, audio) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY mangler på serveren");
+  const parts = [{ text: prompt }];
+  if (audio && audio.data) parts.push({ inline_data: { mime_type: audio.mime || "audio/webm", data: audio.data } });
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: { responseMimeType: "application/json", temperature: 0.3 } }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Gemini ${r.status}: ${(j.error && j.error.message) || "ukendt fejl"}`);
+  const txt = j.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+  try { return JSON.parse(txt); } catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error("Gemini svarede ikke med JSON"); }
+}
 function loadPool() { return loadUserData(POOL_ID); }
 function savePool(d) { saveUserData(POOL_ID, d); }
 function isDkPhone(p) {
@@ -12972,7 +13018,13 @@ function sdrClaimActive(l, now) { return !!(l.claimed_by && l.claimed_at && sdrD
 function sdrClaimedByOther(l, userId, now) { return sdrClaimActive(l, now) && l.claimed_by !== userId; }
 function sdrPrimaryContact(l) {
   const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
+  // SDR's explicit pick wins; else the first person with a direct DK line; else the first person.
+  if (l.preferred_contact_name) { const p = cs.find((c) => c.name.trim().toLowerCase() === String(l.preferred_contact_name).trim().toLowerCase()); if (p) return p; }
   return cs.find((c) => isDkPhone(c.phone || c.direct_phone || c.mobile)) || cs[0] || null;
+}
+function sdrContactList(l) {
+  const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
+  return cs.slice(0, 8).map((c) => { const p = c.phone || c.direct_phone || c.mobile || ""; return { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", phone: isDkPhone(p) ? String(p).trim() : "", has_phone: isDkPhone(p), seniority: c.seniority || "" }; });
 }
 // The one dialable number for the card: contact direct line first, else the
 // lead's main number. Returns {phone, label}.
@@ -13020,12 +13072,16 @@ function sdrSlim(l, nameById) {
     phone: ph.phone, phone_label: ph.label,
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
     contacts_count: Array.isArray(l.contacts) ? l.contacts.filter((x) => x && x.name).length : 0,
+    contacts: sdrContactList(l),
     meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, adsMatched: Number(l.adsMatched || 0), pageId: l.meta_page_id || l.facebook_page_id || "" },
     source_label: sdrSourceLabel(l),
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
     last_note: l.last_note || "",
-    demo_booked_at: l.demo_booked_at || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
+    demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
+    demo_status: l.demo_status || (l.lastAction === "demo-booked" ? "pending" : null), demo_review_reason: l.demo_review_reason || "",
+    undo_until: l._undo && l._undo.at ? new Date(new Date(l._undo.at).getTime() + SDR_UNDO_WINDOW_MS).toISOString() : null,
+    last_debrief: Array.isArray(l.debriefs) && l.debriefs.length ? l.debriefs[l.debriefs.length - 1] : null,
     claimed_by: l.claimed_by || null,
   };
 }
@@ -13112,15 +13168,29 @@ function buildSdrState(userId, d) {
       if (at >= t0.getTime()) {
         p.callsToday++; if (isDemo) p.demosToday++;
         todayCalls.push({
-          at: c.at, by: c.by, by_name: nameById[c.by] || c.by, action: c.action, note: c.note || "", callback_at: c.callback_at || null,
+          at: c.at, by: c.by, by_name: nameById[c.by] || c.by, action: c.action, note: c.note || "", callback_at: c.callback_at || null, duration_s: c.duration_s || null,
           cvr: l.cvr, name: l.name || "", city: l.city || "", phone: sdrPhone(l).phone, contact: (sdrPrimaryContact(l) || {}).name || "",
         });
       }
     }
   }
   todayCalls.sort((a, b) => new Date(b.at) - new Date(a.at));
-  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 };
-  const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || users.some((u) => u.id === p.id && !u.role)));
+  // Commission: {commission_dkk} per QUALIFIED meeting, counted in the month
+  // the demo was booked. pending = booked, not yet reviewed by admin.
+  const rate = Number(settings.commission_dkk || 0);
+  const mKey = sdrMonthKey(now);
+  const lm = new Date(now); lm.setDate(1); lm.setMonth(lm.getMonth() - 1); const lmKey = sdrMonthKey(lm);
+  for (const p of Object.values(per)) { p.demosQualMonth = 0; p.demosPendingMonth = 0; p.demosUnqualMonth = 0; p.commissionMonth = 0; p.commissionLastMonth = 0; p.demosQualLastMonth = 0; }
+  for (const l of demos) {
+    const by = l.demo_booked_by; if (!by) continue;
+    const p = per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
+    const k = sdrMonthKey(l.demo_booked_at || now); const st = l.demo_status || "pending";
+    if (k === mKey) { if (st === "qualified") { p.demosQualMonth++; p.commissionMonth += rate; } else if (st === "unqualified") p.demosUnqualMonth++; else p.demosPendingMonth++; }
+    else if (k === lmKey && st === "qualified") { p.demosQualLastMonth++; p.commissionLastMonth += rate; }
+  }
+  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
+  const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || p.demosPendingMonth > 0 || p.demosQualMonth > 0 || users.some((u) => u.id === p.id && !u.role)));
+  const commission = { month: mKey, rate, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs));
 
   const stats = {
@@ -13133,9 +13203,12 @@ function buildSdrState(userId, d) {
     poolNeedsEnrich: leads.filter((l) => l.lastAction !== "not-relevant" && !l.twenty_opportunity_id && !sdrCallable(l)).length,
     perUser,
   };
+  // Webhook URL is admin-only knowledge; SDRs get the rest of settings.
+  const isAdmin = sdrIsAdmin(userId);
+  const settingsOut = isAdmin ? settings : { ...settings, demo_webhook_url: settings.demo_webhook_url ? "(sat)" : "" };
   return {
-    me: { id: meUser.id, name: meUser.name, role: meUser.role || null },
-    settings, stats,
+    me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
+    settings: settingsOut, stats, commission,
     list: { date: L.date, items: items.map((l) => sdrSlim(l, nameById)), doneCount: (L.done || []).length },
     current: current ? sdrSlim(current, nameById) : null,
     upNext: upNext.map((l) => sdrSlim(l, nameById)),
@@ -13184,8 +13257,14 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
     const nowIso = new Date(now).toISOString();
     const cleanNote = String(note || "").trim().slice(0, 2000);
+    // Snapshot for "Fortryd" (10-min window, same SDR).
+    const UNDO_FIELDS = ["lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts"];
+    lead._undo = { at: nowIso, by: req.userId, prev: Object.fromEntries(UNDO_FIELDS.map((k) => [k, k === "contacts" ? JSON.parse(JSON.stringify(lead.contacts || [])) : (lead[k] === undefined ? null : lead[k])])) };
+    // Call duration ≈ tel: tap → outcome (ignore if the tap was >2h ago).
+    let duration_s = null;
+    if (lead.last_call_started_at) { const s = now - new Date(lead.last_call_started_at).getTime(); if (s > 0 && s < 2 * 3600000) duration_s = Math.round(s / 1000); lead.last_call_started_at = null; }
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
-    lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null });
+    lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
     lead.deferred_until = null;
     if (cleanNote) {
@@ -13193,7 +13272,19 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
       const stamp = new Date().toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit" });
       lead.notes = (lead.notes ? lead.notes + "\n" : "") + `[${stamp} ${meUser ? meUser.name : req.userId}] ${cleanNote}`;
     }
-    if (action === "demo-booked") { lead.demo_booked_at = nowIso; lead.demo_booked_by = req.userId; lead.callback_at = null; }
+    if (action === "demo-booked") {
+      lead.demo_booked_at = nowIso; lead.demo_booked_by = req.userId; lead.demo_status = "pending"; lead.demo_review_reason = ""; lead.callback_at = null;
+      const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+      sdrNotifyDemo(s.demo_webhook_url, lead, meUser ? meUser.name : req.userId, cleanNote); // fire-and-forget
+    }
+    else if (action === "wrong-number") {
+      // Number is dead: drop it from lead + the dialed contact, flag for
+      // enrichment. The lead leaves the list (no longer callable).
+      const dialed = sdrPhone(lead).phone;
+      for (const c of (lead.contacts || [])) { if (c && [c.phone, c.direct_phone, c.mobile].some((p) => p && normDkPhone(p) === normDkPhone(dialed))) { c.phone = ""; c.direct_phone = ""; c.mobile = ""; c.phones = []; c.phone_wrong_at = nowIso; } }
+      if (normDkPhone(lead.phone || lead.ph || "") === normDkPhone(dialed)) { lead.phone_wrong = dialed; lead.phone = ""; lead.ph = ""; lead.phone_missing = true; lead.phone_source = ""; }
+      lead.needs_enrichment = true; lead.callback_at = null;
+    }
     else if (action === "follow-up") {
       const t = callback_at ? new Date(callback_at) : null;
       if (!t || isNaN(t.getTime())) return res.status(400).json({ error: "Vælg et tidspunkt for opfølgning" });
@@ -13346,13 +13437,101 @@ app.post("/api/sdr/contact", authMiddleware, (req, res) => {
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "contact"); }
 });
+// "Fortryd" — revert the last outcome on a lead (same SDR, ≤10 min).
+app.post("/api/sdr/undo", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const u = lead._undo;
+    if (!u || u.by !== req.userId) return res.status(400).json({ error: "Intet at fortryde" });
+    if (now - new Date(u.at).getTime() > SDR_UNDO_WINDOW_MS) return res.status(400).json({ error: "Fortryd-vinduet er udløbet (10 min)" });
+    for (const [k, v] of Object.entries(u.prev)) lead[k] = v;
+    if (Array.isArray(lead.calls) && lead.calls.length && lead.calls[lead.calls.length - 1].at === u.at) lead.calls.pop();
+    lead.needs_enrichment = false; lead.phone_wrong = null;
+    delete lead._undo;
+    const settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    L.done = (L.done || []).filter((x) => x !== cvr);
+    L.cvrs = [cvr, ...L.cvrs.filter((x) => x !== cvr)];
+    sdrClaim(lead, req.userId, now);
+    savePool(d);
+    logActivity("sdr-undo", `${req.userId} fortrød udfald på ${lead.name}`, { cvr, userId: req.userId });
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "undo"); }
+});
+// Admin: qualify / disqualify a booked demo (drives commission).
+app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
+  try {
+    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin kan godkende møder" });
+    const d = loadPool(); const { cvr, status, reason } = req.body || {};
+    if (!["pending", "qualified", "unqualified"].includes(status)) return res.status(400).json({ error: "Ugyldig status" });
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead || lead.lastAction !== "demo-booked") return res.status(404).json({ error: "Ingen booket demo på det lead" });
+    lead.demo_status = status; lead.demo_review_reason = String(reason || "").trim().slice(0, 200);
+    lead.demo_reviewed_by = req.userId; lead.demo_reviewed_at = new Date().toISOString();
+    savePool(d);
+    logActivity("sdr-demo-review", `Demo ${lead.name}: ${status}${lead.demo_review_reason ? " — " + lead.demo_review_reason : ""}`, { cvr, userId: req.userId, status });
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "demo-review"); }
+});
+// Post-call debrief: voice memo (base64 audio) OR pasted transcript text →
+// Gemini → {summary, next_step, coaching}. Summary lands in the note field;
+// everything is kept on lead.debriefs[] for the weekly digest.
+app.post("/api/sdr/debrief", authMiddleware, async (req, res) => {
+  try {
+    const { cvr, audio_b64, mime, text } = req.body || {};
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const hasAudio = typeof audio_b64 === "string" && audio_b64.length > 100;
+    const hasText = typeof text === "string" && text.trim().length > 10;
+    if (!hasAudio && !hasText) return res.status(400).json({ error: "Ingen lyd eller tekst" });
+    if (hasAudio && audio_b64.length > 9 * 1024 * 1024) return res.status(413).json({ error: "Optagelsen er for lang (max ~60 sek.)" });
+    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
+    const c = sdrPrimaryContact(lead) || {};
+    const prompt = [
+      `Du hjælper en dansk SDR hos Vedio (video-annoncer til Meta/TikTok, sælger "Vee" — en AI der laver nye annoncer løbende så de ikke bliver trætte). SDR'en har lige ringet til ${lead.name || "et lead"}${c.name ? " (" + c.name + (c.title ? ", " + c.title : "") + ")" : ""}${lead.adsMatched ? ", som kører " + lead.adsMatched + " Meta-annoncer" : ""}.`,
+      hasAudio ? "Vedhæftet er SDR'ens korte mundtlige resumé af samtalen (dansk)." : `Her er et transskript/resumé af samtalen:\n"""${text.trim().slice(0, 12000)}"""`,
+      "Svar KUN som JSON med felterne:",
+      `{"transcript": "<hvad der blev sagt, kort og ordret på dansk — tom streng hvis tekst allerede er givet>", "summary": "<2 sætninger: hvem talte SDR med, hvad var deres situation/indvending, hvad blev aftalt>", "next_step": "<én konkret næste handling for SDR'en, fx 'Ring torsdag kl 10 — send case på forhånd'>", "coaching": "<én venlig, konkret forbedring til NÆSTE opkald (max 25 ord). Fokusér på åbning, spørgsmål, indvendinger eller afslutning. Ingen ros uden indhold.>", "sentiment": "<positiv|neutral|negativ>"}`,
+    ].join("\n\n");
+    const out = await sdrGeminiJson(prompt, hasAudio ? { data: audio_b64, mime: mime || "audio/webm" } : null);
+    const summary = String(out.summary || "").trim().slice(0, 600);
+    const next_step = String(out.next_step || "").trim().slice(0, 200);
+    const coaching = String(out.coaching || "").trim().slice(0, 300);
+    const transcript = hasText ? text.trim().slice(0, 4000) : String(out.transcript || "").trim().slice(0, 4000);
+    lead.debriefs = Array.isArray(lead.debriefs) ? lead.debriefs : [];
+    lead.debriefs.push({ at: new Date().toISOString(), by: req.userId, source: hasAudio ? "voice" : "text", transcript, summary, next_step, coaching, sentiment: out.sentiment || "" });
+    if (lead.debriefs.length > 20) lead.debriefs = lead.debriefs.slice(-20);
+    savePool(d);
+    logActivity("sdr-debrief", `${meUser ? meUser.name : req.userId} debrief på ${lead.name}: ${summary.slice(0, 80)}`, { cvr, userId: req.userId });
+    res.json({ ok: true, summary, next_step, coaching, transcript });
+  } catch (e) { sdrFail(res, e, "debrief"); }
+});
+// Pick which of the lead's people is "the one to call" — sticks on the lead.
+app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { cvr, name } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const c = (lead.contacts || []).find((x) => x && x.name && x.name.trim().toLowerCase() === String(name || "").trim().toLowerCase());
+    if (!c) return res.status(404).json({ error: "Kontakt ikke fundet" });
+    lead.preferred_contact_name = c.name;
+    savePool(d); sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "contact/select"); }
+});
 app.post("/api/sdr/settings", authMiddleware, (req, res) => {
   try {
-    const d = loadPool(); const { calendly_url, daily_target, list_size } = req.body || {};
+    const d = loadPool(); const b = req.body || {};
     d.sdr_settings = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
-    if (typeof calendly_url === "string") d.sdr_settings.calendly_url = calendly_url.trim().slice(0, 300);
-    if (Number.isFinite(Number(daily_target)) && Number(daily_target) > 0) d.sdr_settings.daily_target = Math.min(500, Math.round(Number(daily_target)));
-    if (Number.isFinite(Number(list_size)) && Number(list_size) > 0) d.sdr_settings.list_size = Math.min(200, Math.round(Number(list_size)));
+    if (typeof b.calendly_url === "string") d.sdr_settings.calendly_url = b.calendly_url.trim().slice(0, 300);
+    if (Number.isFinite(Number(b.daily_target)) && Number(b.daily_target) > 0) d.sdr_settings.daily_target = Math.min(500, Math.round(Number(b.daily_target)));
+    if (Number.isFinite(Number(b.list_size)) && Number(b.list_size) > 0) d.sdr_settings.list_size = Math.min(200, Math.round(Number(b.list_size)));
+    if (typeof b.pitch_text === "string") d.sdr_settings.pitch_text = b.pitch_text.slice(0, 4000);
+    if (sdrIsAdmin(req.userId)) {
+      if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
+      if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);
+    }
     savePool(d);
     res.json({ ok: true, settings: d.sdr_settings });
   } catch (e) { sdrFail(res, e, "settings"); }

@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#F4F2EE">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Vedio Ring">
@@ -118,6 +120,11 @@ main{max-width:1180px;margin:0 auto;padding:36px 28px 80px}
 .person .links a,.person .links button{font-size:12px;font-weight:600;color:var(--txt-soft);text-decoration:none;padding:6px 10px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white)}
 .person .links a:hover,.person .links button:hover{color:var(--txt);border-color:#cfcbc2}
 .person.none{color:var(--txt-faint);font-size:14px}
+.others{width:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding-top:10px;margin-top:4px;border-top:1px dashed var(--line)}
+.others .k{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-right:4px}
+.others .oc{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-size:12.5px;font-weight:600;color:var(--txt);transition:border-color .15s var(--ease),background .15s var(--ease)}
+.others .oc span{color:var(--txt-faint);font-weight:500}
+.others .oc:hover{border-color:var(--violet);background:var(--violet-soft)}
 .cedit{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);margin-top:4px;animation:rise .25s var(--ease) both}
 .cedit label{font-size:11px;font-weight:700;color:var(--txt-soft);display:block;margin-bottom:4px}
 .cedit input{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--white);font-size:14px}
@@ -151,6 +158,43 @@ textarea.note:focus{outline:none;border-color:var(--violet);box-shadow:0 0 0 3px
 @keyframes blink{50%{opacity:.35}}
 .linkbtn{font-size:12px;font-weight:700;color:var(--txt-soft);padding:4px 8px;border-radius:var(--pill)}
 .linkbtn:hover{color:var(--txt);background:var(--white)}
+/* pitch box */
+details.pitch{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);margin-bottom:14px}
+details.pitch summary{list-style:none;cursor:pointer;padding:11px 14px;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-soft);display:flex;align-items:center;gap:8px;user-select:none}
+details.pitch summary::-webkit-details-marker{display:none}
+details.pitch summary::before{content:"▸";color:var(--txt-faint);transition:transform .2s var(--ease)}
+details.pitch[open] summary::before{transform:rotate(90deg)}
+details.pitch .body{padding:0 16px 14px;font-size:14.5px;line-height:1.6;white-space:pre-wrap;color:var(--txt)}
+details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font-size:13.5px}
+/* debrief */
+.debrief{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.debrief .rec{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#b42318}
+.debrief .rec .dot{background:#b42318;box-shadow:0 0 0 0 rgba(180,35,24,.5);animation:pulsered 1.2s infinite}
+@keyframes pulsered{0%{box-shadow:0 0 0 0 rgba(180,35,24,.5)}70%{box-shadow:0 0 0 8px rgba(180,35,24,0)}100%{box-shadow:0 0 0 0 rgba(180,35,24,0)}}
+.debrief .busy{font-size:13px;color:var(--txt-soft)}
+.coach{margin-top:10px;background:var(--violet-soft);border-radius:var(--radius);padding:12px 14px;font-size:13.5px;line-height:1.5;display:flex;gap:10px;align-items:flex-start;animation:rise .3s var(--ease) both}
+.coach .k{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--violet);white-space:nowrap;padding-top:2px}
+.coach .x{margin-left:auto;color:var(--violet);font-weight:700;font-size:12px}
+/* commission */
+.pay{background:var(--black);color:var(--white);border-radius:var(--radius-lg);padding:24px 28px;margin-bottom:22px;display:flex;align-items:flex-end;gap:28px;flex-wrap:wrap}
+.pay .big{font-family:var(--display);font-size:56px;line-height:.9;letter-spacing:.005em;color:var(--white)}
+.pay .big em{font-style:normal;color:#c4b5fd}
+.pay .lbl{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-top:8px}
+.pay .side{margin-left:auto;display:flex;gap:26px}
+.pay .side div{display:flex;flex-direction:column;gap:2px}
+.pay .side b{font-size:20px;font-weight:800}
+.pay .side span{font-size:12px;color:rgba(255,255,255,.55);font-weight:600}
+.pay .rule{width:100%;font-size:12.5px;color:rgba(255,255,255,.6);border-top:1px solid var(--line-dark);padding-top:12px}
+.chip.st-pending{background:#fdf3e2;color:#9a5b00}
+.chip.st-qualified{background:#e6f6ec;color:var(--approve)}
+.chip.st-unqualified{background:#fdecec;color:#b42318}
+.review{display:inline-flex;gap:6px;flex-wrap:wrap}
+.review button{padding:6px 10px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-size:12px;font-weight:700;color:var(--txt-soft)}
+.review button:hover{color:var(--txt);border-color:#cfcbc2}
+.review button.ok{color:var(--approve);border-color:var(--approve)}.review button.ok:hover{background:#e6f6ec}
+.review button.no{color:#b42318;border-color:#e6b4b0}.review button.no:hover{background:#fdecec}
+#toast button{margin-left:14px;background:var(--violet);color:var(--white);border-radius:var(--pill);padding:6px 12px;font-size:13px;font-weight:700;pointer-events:auto}
+#toast.action{pointer-events:auto}
 .chooser{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);animation:rise .25s var(--ease) both}
 .chooser .pill{padding:8px 14px;font-size:13px}
 .chooser input[type=datetime-local]{border:1px solid var(--line);border-radius:var(--pill);padding:8px 12px;font-size:13px;background:var(--white)}
@@ -348,6 +392,14 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
   .upnext .r{padding:12px 10px}
   /* modal */
   .modal{padding:22px 20px}
+  /* commission + debrief + other contacts */
+  .pay{padding:18px 18px;gap:14px;border-radius:var(--radius)}
+  .pay .big{font-size:44px}
+  .pay .side{margin-left:0;width:100%;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .pay .side b{font-size:17px}
+  .debrief .pill{min-height:44px}
+  .others .oc{min-height:40px}
+  details.pitch .body{font-size:14px}
 }
 </style>
 </head>
@@ -441,12 +493,13 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
 
   <!-- ─── RESULTATER ───────────────────────────────────────────────────── -->
   <section id="view-results" class="view">
+    <div class="pay" id="pay" hidden></div>
     <div class="tiles" id="tiles"></div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Per SDR</h3><p>I dag og denne uge (mandag til nu).</p></div>
         <a class="pill tertiary" href="/legacy" target="_blank" id="legacy-link" hidden>Åbn admin-værktøj ↗</a>
       </div>
-      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
     </div>
     <div class="tablewrap">
       <div class="thead">
@@ -467,7 +520,7 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Bookede demoer</h3><p>Booket i Calendly under et opkald. Founders tager demoen.</p></div></div>
-      <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th></tr></thead><tbody id="tb-demo"></tbody></table>
+      <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
     <details class="deeper" id="deeper">
       <summary><span>Pulje &amp; pipeline</span><span class="sub">Hvor mange leads der er klar, venter på berigelse, eller er arkiveret — hold musen over et tal for forklaring.</span></summary>
@@ -513,9 +566,11 @@ function logout() { token = ''; me = null; localStorage.removeItem('vl_token'); 
 
 /* ─── State ────────────────────────────────────────────────────────────── */
 async function loadState({ keepCurrent = false } = {}) {
-  const r = await fetch('/api/sdr/state', { headers: ah() });
+  let r;
+  try { r = await fetch('/api/sdr/state', { headers: ah() }); }
+  catch (_) { if (!S) toast('Ingen forbindelse — prøver igen…', 3000); return; } // offline / server restart: keep what we have
   if (r.status === 401) { logout(); return; }
-  const d = await r.json();
+  const d = await r.json().catch(() => ({}));
   if (!r.ok) { toast(d.error || 'Kunne ikke hente listen'); return; }
   const prevCvr = S && S.current ? S.current.cvr : null;
   const prevNote = prevCvr && $('note') ? $('note').value : '';
@@ -687,6 +742,7 @@ function renderCard() {
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
       <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret person / nummer</button></div>`
       : `<span>Ingen navngivet kontakt — ring til omstillingen og spørg efter ejeren/marketingansvarlig.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
+      ${(L.contacts || []).length > 1 ? `<div class="others"><span class="k">Andre hos ${e(L.name || 'firmaet')}</span>${(L.contacts || []).filter((x) => !c || x.name !== c.name).map((x) => `<button class="oc" onclick="selectContact('${e(x.name).replace(/'/g, '&#39;')}')" title="${e(x.title || '')}${x.phone ? ' · ' + e(fmtPhone(x.phone)) : ''}">${x.has_phone ? '📞 ' : ''}${e(x.name)}${x.title ? `<span>${e(x.title)}</span>` : ''}</button>`).join('')}</div>` : ''}
       <div id="cedit" hidden></div>
     </div>
     <div class="phone">
@@ -694,7 +750,14 @@ function renderCard() {
       ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
+    <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
     <textarea id="note" class="note" placeholder="Note fra opkaldet — hvad sagde de, hvad er næste skridt?"></textarea>
+    <div class="debrief" id="debrief">
+      <button class="pill sm" id="rec-btn" onclick="debriefToggle()" title="Tal et kort resumé ind efter opkaldet — det bliver til note + næste skridt"><span class="key">D</span> 🎙 Debrief</button>
+      <button class="pill sm tertiary" onclick="debriefPaste()" title="Indsæt et transskript fra telefonens optagelse">Indsæt transskript</button>
+      <span id="rec-state"></span>
+    </div>
+    <div id="coach" hidden></div>
     <div class="actions">
       <div class="steplbl"><i>1</i> Ring</div>
       <div class="row">
@@ -708,6 +771,7 @@ function renderCard() {
         <button class="pill" onclick="disp('no-answer')"><span class="key">3</span>Ingen svar</button>
         <button class="pill" onclick="disp('not-now')"><span class="key">4</span>Ikke nu</button>
         <button class="pill" onclick="disp('not-relevant')"><span class="key">5</span>Ikke relevant</button>
+        <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke — leadet sendes til berigelse"><span class="key">6</span>Forkert nummer</button>
       </div>
       <div id="chooser" hidden></div>
       <div class="hint"><span><kbd>space</kbd> ring</span><span><kbd>1</kbd>–<kbd>5</kbd> udfald</span><span><kbd>N</kbd> note</span><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
@@ -739,7 +803,7 @@ function renderUpNext() {
 function renderHistory() {
   const L = S.current; const h = (L && L.calls) || [];
   $('histbox').hidden = !L || h.length === 0; if (!L || !h.length) return;
-  $('history').innerHTML = h.slice(-5).reverse().map((c) => `<div class="h"><time>${e(fmtAgo(c.at))}</time><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b>${c.by_name ? ` · ${e(c.by_name)}` : ''}${c.note ? `<div>${e(c.note)}</div>` : ''}</div></div>`).join('');
+  $('history').innerHTML = h.slice(-5).reverse().map((c) => `<div class="h"><time>${e(fmtAgo(c.at))}</time><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b>${c.by_name ? ` · ${e(c.by_name)}` : ''}${c.duration_s ? ` · ${e(fmtDur(c.duration_s))}` : ''}${c.note ? `<div>${e(c.note)}</div>` : ''}</div></div>`).join('');
 }
 function renderFollowups() {
   const rows = S.followups || [];
@@ -754,16 +818,22 @@ function renderFollowups() {
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">Ingen opfølgninger endnu. Vælg <b>Følg op</b> efter et opkald for at planlægge et nyt.</td></tr>`;
 }
 function renderDemos() {
-  const rows = S.demos || [];
-  $('tb-demo').innerHTML = rows.length ? rows.map((l) => `<tr>
+  const rows = S.demos || []; const admin = !!(me && me.is_admin);
+  const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
+  $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending';
+    const chip = `<span class="chip st-${e(st)}" title="${e(l.demo_review_reason || '')}">${ST[st] || st}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>`;
+    const ctl = admin ? `<div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">✓ Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">✕ Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div>` : '';
+    return `<tr class="rowlink" onclick="openLeadPeek('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '<span class="sub">—</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="6">Ingen demoer booket endnu.</td></tr>`;
+      <td onclick="event.stopPropagation()">${chip}${ctl}</td>
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer booket endnu.</td></tr>`;
 }
+function openLeadPeek(cvr) { const l = (S.demos || []).find((x) => x.cvr === cvr); if (!l) return; toast(`${l.name} · ${l.contact ? l.contact.name + ' · ' : ''}${fmtPhone(l.phone)}`, 3500); }
 
 /* Resultater — tiles + explainers */
 const EXPLAIN = {
@@ -790,7 +860,35 @@ function renderResults() {
   const sub = [['listRemaining', 'tilbage på listen'], ['poolAvailable', 'klar i puljen'], ['followupsOpen', 'opfølgninger åbne'], ['poolNeedsEnrich', 'mangler kontakt/nummer'], ['poolArchived', 'arkiveret'], ['poolTotal', 'leads i alt']];
   $('subtiles').innerHTML = sub.map(([k, lbl]) => `<div class="subtile" title="${e(tip(k))}"><b>${st[k] ?? 0}</b><span>${lbl}</span></div>`).join('');
   const per = st.perUser || [];
-  $('tb-sdr').innerHTML = per.length ? per.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="5">Ingen opkald endnu.</td></tr>`;
+  $('tb-sdr').innerHTML = per.length ? per.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}${u.demosPendingMonth ? `<span class="sub">+${u.demosPendingMonth} afventer</span>` : ''}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="7">Ingen opkald endnu.</td></tr>`;
+  // Commission panel — the SDR's own money this month. Admin sees the
+  // per-SDR table instead (their own row would always be 0).
+  const c = S.commission; const pay = $('pay');
+  if (!c) { pay.hidden = true; return; }
+  const mName = new Date(c.month + '-01').toLocaleDateString('da-DK', { month: 'long' });
+  const lName = new Date(c.last_month + '-01').toLocaleDateString('da-DK', { month: 'long' });
+  if (me && me.is_admin) {
+    // Admin: totals across SDRs this month + pending queue to review.
+    const sum = (k) => per.reduce((a, u) => a + (Number(u[k]) || 0), 0);
+    pay.innerHTML = `
+      <div><div class="big">${e(fmtKr(sum('commissionMonth')))}</div><div class="lbl">Provision i alt · ${e(mName)}</div></div>
+      <div class="side">
+        <div><b>${sum('demosQualMonth')}</b><span>kvalificerede møder</span></div>
+        <div><b style="color:#c4b5fd">${sum('demosPendingMonth')}</b><span>afventer din godkendelse</span></div>
+        <div><b>${e(fmtKr(sum('commissionLastMonth')))}</b><span>${e(lName)}</span></div>
+      </div>
+      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde. Godkend eller afvis under <b>Bookede demoer</b> herunder — SDR'en ser kun godkendte kroner.</div>`;
+    pay.hidden = false; return;
+  }
+  pay.innerHTML = `
+    <div><div class="big">${e(fmtKr(c.confirmed_kr))}</div><div class="lbl">Provision · ${e(mName)}</div></div>
+    <div class="side">
+      <div><b>${c.confirmed_n}</b><span>kvalificerede møder</span></div>
+      <div><b style="color:#c4b5fd">${c.pending_n}</b><span>afventer godkendelse</span></div>
+      <div><b>${e(fmtKr(c.last_kr))}</b><span>${e(lName)} · ${c.last_n} møder</span></div>
+    </div>
+    <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde — tæller når founders har holdt mødet og bekræftet, at det var ICP og interesseret.${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
+  pay.hidden = false;
 }
 let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';
 const TODAY_FILTERS = [['all', 'Alle'], ['demo-booked', 'Demo'], ['follow-up', 'Følg op'], ['no-answer', 'Ingen svar'], ['not-now', 'Ikke nu'], ['not-relevant', 'Ikke relevant']];
@@ -814,7 +912,7 @@ function renderToday() {
     const d = new Date(c.at); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
     const extra = c.action === 'follow-up' && c.callback_at ? ` · ${fmtWhen(c.callback_at)}` : '';
     return `<tr class="rowlink" onclick="jumpTo('${e(c.cvr)}')">
-      <td class="num">${hm}</td>
+      <td class="num">${hm}${c.duration_s ? `<span class="sub">${e(fmtDur(c.duration_s))}</span>` : ''}</td>
       <td><b>${e(c.name)}</b><span class="sub">${e(c.city || '')}${c.phone ? ' · ' + e(fmtPhone(c.phone)) : ''}</span></td>
       <td>${e(c.contact || '—')}</td>
       <td><span class="chip a-${e(c.action)}">${e(ACTION_LABEL[c.action] || c.action)}${e(extra)}</span></td>
@@ -838,7 +936,7 @@ function toggleChooser() {
   const local = new Date(dflt.getTime() - dflt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   c.innerHTML = `<div class="chooser">
     <span class="kicker">Følg op</span>
-    <button class="pill" onclick="disp('follow-up','${at(0, 15)}')">I dag 15:00</button>
+    ${new Date().getHours() < 15 ? `<button class="pill" onclick="disp('follow-up','${at(0, 15)}')">I dag 15:00</button>` : ''}
     <button class="pill" onclick="disp('follow-up','${at(1, 9)}')">I morgen 09:00</button>
     <button class="pill" onclick="disp('follow-up','${at(3, 9)}')">Om 3 dage</button>
     <button class="pill" onclick="disp('follow-up','${at(7, 9)}')">Næste uge</button>
@@ -850,8 +948,10 @@ async function disp(action, callback_at) {
   const L = S.current; if (!L || busy) return; busy = true;
   const note = ($('note') && $('note').value.trim()) || '';
   try {
+    if (recState.rec) await debriefStop(true); // don't lose a running memo
     apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null }));
-    toast({ 'demo-booked': '✓ Demo booket — godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar — prøver igen senere.', 'not-now': 'Ikke nu — dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant — arkiveret.' }[action] || 'Gemt');
+    const msg = { 'demo-booked': '✓ Demo booket — godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar — prøver igen senere.', 'not-now': 'Ikke nu — dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant — arkiveret.', 'wrong-number': 'Forkert nummer — sendt til berigelse.' }[action] || 'Gemt';
+    toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
   finally { busy = false; }
@@ -867,6 +967,103 @@ async function jumpTo(cvr) {
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
 }
 
+/* ─── Pitch ────────────────────────────────────────────────────────────── */
+let pitchOpen = false; try { pitchOpen = localStorage.getItem('vl_pitch_open') === '1'; } catch {}
+document.addEventListener('toggle', (ev) => { if (ev.target && ev.target.classList && ev.target.classList.contains('pitch')) { try { localStorage.setItem('vl_pitch_open', ev.target.open ? '1' : '0'); } catch {} } }, true);
+function pitchFor(L) {
+  const tpl = (S.settings && S.settings.pitch_text) || '';
+  const first = (L.contact && L.contact.name ? L.contact.name.split(/\s+/)[0] : '') || 'der';
+  const n = (L.meta && L.meta.adsMatched) || 0;
+  const ads = n > 0 ? `${n} annoncer` : 'annoncer';
+  const months = ['januar','februar','marts','april','maj','juni','juli','august','september','oktober','november','december'];
+  const filled = tpl.replace(/\{fornavn\}/g, first).replace(/\{firma\}/g, L.name || 'jer').replace(/\{annoncer\}/g, ads).replace(/\{sdr\}/g, (me && me.name) || 'os').replace(/\{måned\}/g, months[new Date().getMonth()]);
+  return filled.split('\n').map((line) => /^Indvending/i.test(line) ? `<span class="obj">${e(line)}</span>` : e(line)).join('\n');
+}
+
+/* ─── Undo ─────────────────────────────────────────────────────────────── */
+function toastAction(msg, label, fn, ms = 6000) {
+  const t = $('toast'); t.innerHTML = `${e(msg)}<button id="toast-act">${e(label)}</button>`; t.classList.add('show', 'action');
+  $('toast-act').onclick = () => { t.classList.remove('show', 'action'); fn(); };
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show', 'action'), ms);
+}
+async function undoLast(cvr) {
+  if (busy) return; busy = true;
+  try { apply(await post('/api/sdr/undo', { cvr })); showTab('ring'); toast('Fortrudt — leadet er tilbage øverst.'); }
+  catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
+}
+
+/* ─── Voice debrief (post-call memo → note + coaching) ─────────────────── */
+const recState = { rec: null, chunks: [], t0: 0, timer: null, mime: '' };
+function debriefUI(html) { const s = $('rec-state'); if (s) s.innerHTML = html; }
+async function debriefToggle() {
+  if (recState.rec) return debriefStop();
+  const L = S.current; if (!L) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) { toast('Din browser understøtter ikke optagelse — brug "Indsæt transskript".', 4000); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recState.rec = rec; recState.chunks = []; recState.t0 = Date.now(); recState.mime = rec.mimeType || mime || 'audio/webm';
+    rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) recState.chunks.push(ev.data); };
+    rec.onstop = () => { stream.getTracks().forEach((t) => t.stop()); };
+    rec.start(250);
+    const btn = $('rec-btn'); if (btn) btn.innerHTML = '<span class="key">D</span> ■ Stop';
+    recState.timer = setInterval(() => { const s = Math.round((Date.now() - recState.t0) / 1000); debriefUI(`<span class="rec"><span class="dot"></span>Optager ${s}s — tal kort: hvem, hvad, næste skridt</span>`); if (s >= 60) debriefStop(); }, 500);
+  } catch (ex) { toast('Kunne ikke starte mikrofonen: ' + ex.message, 4000); }
+}
+function debriefStop(silent) {
+  return new Promise((resolve) => {
+    const rec = recState.rec; if (!rec) return resolve();
+    clearInterval(recState.timer); recState.timer = null;
+    const btn = $('rec-btn'); if (btn) btn.innerHTML = '<span class="key">D</span> 🎙 Debrief';
+    rec.onstop = async () => {
+      rec.stream && rec.stream.getTracks().forEach((t) => t.stop());
+      recState.rec = null;
+      const blob = new Blob(recState.chunks, { type: recState.mime }); recState.chunks = [];
+      if (blob.size < 2000) { debriefUI(''); return resolve(); }
+      await debriefSend({ blob }, silent); resolve();
+    };
+    try { rec.stop(); } catch { recState.rec = null; resolve(); }
+  });
+}
+function blobToB64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); }); }
+async function debriefSend({ blob, text }, silent) {
+  const L = S.current; if (!L) return;
+  debriefUI('<span class="busy">Skriver resumé…</span>');
+  try {
+    const body = { cvr: L.cvr };
+    if (blob) { body.audio_b64 = await blobToB64(blob); body.mime = (blob.type || recState.mime || 'audio/webm').split(';')[0]; }
+    else body.text = text;
+    const d = await post('/api/sdr/debrief', body);
+    const n = $('note'); if (n) n.value = [n.value.trim(), d.summary, d.next_step ? 'Næste: ' + d.next_step : ''].filter(Boolean).join('\n');
+    debriefUI('<span class="busy" style="color:var(--approve)">✓ Resumé lagt i noten</span>');
+    const c = $('coach'); if (c && d.coaching) { c.innerHTML = `<div class="coach"><span class="k">Til næste opkald</span><span>${e(d.coaching)}</span><button class="x" onclick="$('coach').hidden=true">Skjul</button></div>`; c.hidden = false; }
+    if (!silent) toast('Debrief klar — tjek noten og vælg udfald.');
+  } catch (ex) { debriefUI(''); toast('Debrief fejlede: ' + ex.message, 4500); }
+}
+function debriefPaste() {
+  const L = S.current; if (!L) return;
+  const text = prompt('Indsæt transskriptet fra telefonens optagelse:');
+  if (text && text.trim().length > 10) debriefSend({ text: text.trim() });
+}
+
+/* ─── Admin: demo review (commission) ──────────────────────────────────── */
+async function demoReview(cvr, status) {
+  if (busy) return;
+  let reason = '';
+  if (status === 'unqualified') { reason = prompt('Hvorfor ikke kvalificeret? (fx no-show, ikke ICP, ikke interesseret)') || ''; if (reason === null) return; }
+  busy = true;
+  try { apply(await post('/api/sdr/demo-review', { cvr, status, reason }), { keepCurrent: true }); toast(status === 'qualified' ? '✓ Kvalificeret — provision tæller' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); }
+  catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
+}
+async function selectContact(name) {
+  const L = S.current; if (!L || busy) return; busy = true;
+  try { const note = $('note') ? $('note').value : ''; apply(await post('/api/sdr/contact/select', { cvr: L.cvr, name })); if ($('note')) $('note').value = note; toast(`Ringer til ${name}`); }
+  catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
+}
+function fmtDur(s) { if (!s && s !== 0) return ''; if (s < 60) return s + ' s'; return Math.round(s / 60) + ' min'; }
+function fmtKr(n) { return (Number(n) || 0).toLocaleString('da-DK') + ' kr'; }
+
 /* ─── Tabs / settings ──────────────────────────────────────────────────── */
 function showTab(id) {
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
@@ -881,13 +1078,21 @@ function openSettings() {
     <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Ringeliste pr. dag (leads der hentes automatisk)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 40)}">
+    <label>Pitch på kortet — brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
+    <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
+    ${me && me.is_admin ? `
+    <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
+    <label>Webhook når en demo bookes (Slack incoming webhook URL — valgfrit)</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">` : ''}
     <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
 }
 async function saveSettings() {
-  try { await post('/api/sdr/settings', { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 40 }); $('settings').remove(); toast('Gemt'); loadState({ keepCurrent: true }); }
+  const body = { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 40, pitch_text: $('st-pitch').value };
+  if ($('st-comm')) body.commission_dkk = Number($('st-comm').value);
+  if ($('st-hook')) body.demo_webhook_url = $('st-hook').value.trim();
+  try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt'); loadState({ keepCurrent: true }); }
   catch (ex) { toast('Fejl: ' + ex.message, 4000); }
 }
 
@@ -904,6 +1109,8 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '3') disp('no-answer');
   else if (ev.key === '4') disp('not-now');
   else if (ev.key === '5') disp('not-relevant');
+  else if (ev.key === '6') disp('wrong-number');
+  else if (ev.key.toLowerCase() === 'd') { ev.preventDefault(); debriefToggle(); }
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();
 });
