@@ -8035,6 +8035,73 @@ app.post("/api/cron/drain-enrichment", async (req, res) => {
 // so NO credits spent) to detect the Meta-advertiser signal. The leads are
 // already callable (name+phone from the CSV); this just adds the 🎯 badge.
 // Awaited within the request so Cloud Run keeps CPU allocated.
+// ── Find people (Full Enrich People Search backlog) ────────────────────────
+// A lead with a main number but no named person is not callable. Full Enrich
+// People Search is FREE (0 credits) and returns DK-located people by company
+// domain, so run it once on every active lead that has a website and no
+// named contact. Stamped fullenrich_search_at even on a miss, so each lead is
+// searched once. Added 2026-09-08: 429 leads had sat un-searched since June.
+app.post("/api/cron/find-people", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!isFullEnrichConfigured()) return res.status(503).json({ error: "Full Enrich not configured" });
+  const TARGET_USER = (req.query.userId || "pool").toString();
+  const BATCH = Math.max(1, Math.min(60, Number(req.query.batch_size) || 15));
+  const CONCURRENCY = Math.max(1, Math.min(5, Number(req.query.concurrency) || 3));
+  const PER_DOMAIN = Math.max(1, Math.min(5, Number(req.query.per_domain) || 3));
+  const stats = { candidates: 0, skippedForeign: 0, searched: 0, feHits: 0, geminiTried: 0, geminiHits: 0, hits: 0, people: 0, nowCallable: 0, errors: 0 };
+  const named = (l) => (Array.isArray(l.contacts) ? l.contacts : []).some((c) => c && c.name);
+  const domainOf = (l) => String(l.web || l.website || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+  // Localised storefronts of foreign brands (nu-denmark.de, dk.brand.com,
+  // *.glopalstore.com) are not Danish companies — nobody Danish to call.
+  const FOREIGN = /\.(de|fr|fi|se|no|nl|be|at|ch|it|es|pl|uk|us|ca|au|nz|ie|pt|cz|hu|ro|lt|lv|ee|jp|cn|in|br|mx)$|glopalstore\.com$|^dk[.-]/;
+  const d0 = loadUserData(TARGET_USER);
+  const all = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && !named(l) && domainOf(l).includes(".") && !l.fullenrich_search_at);
+  const todo = all.filter((l) => { if (FOREIGN.test(domainOf(l))) { stats.skippedForeign++; return false; } return true; });
+  stats.candidates = todo.length;
+  const batch = todo.slice(0, BATCH);
+  const found = new Map(); // cvr → contacts (or [] on a miss)
+  const confRank = { high: 0, medium: 1, low: 2 };
+  for (let i = 0; i < batch.length; i += CONCURRENCY) {
+    await Promise.all(batch.slice(i, i + CONCURRENCY).map(async (l) => {
+      try {
+        const dom = domainOf(l);
+        const people = await fullEnrichPeopleSearch(dom, { limit: PER_DOMAIN });
+        stats.searched++;
+        let cs = (people || [])
+          .filter((p) => !p.country_code || String(p.country_code).toUpperCase() === "DK")
+          .map((p) => ({ name: p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim(), title: p.title || "", seniority: p.seniority || "", linkedin: "", email: "", phone: "", source_discovery: "fullenrich-people-search" }))
+          .filter((c) => c.name);
+        if (cs.length) stats.feHits++;
+        // Fallback: read the website's om os / team / kontakt pages with
+        // Gemini (≈ $0.005). Small DK shops usually name the owner there.
+        if (!cs.length && process.env.GEMINI_API_KEY) {
+          stats.geminiTried++;
+          const g = await geminiExtractDecisionMakers(dom, l.name).catch(() => []);
+          g.sort((a, b) => ((a.is_decision_maker ? 0 : 1) - (b.is_decision_maker ? 0 : 1)) || ((confRank[a.confidence] ?? 9) - (confRank[b.confidence] ?? 9)));
+          cs = g.slice(0, 5).map((p) => ({ name: p.name, title: p.title || "", linkedin: "", email: p.email || "", phone: p.phone || "", source_discovery: "gemini-website", source_url: p.source_url || "", confidence: p.confidence, is_decision_maker: p.is_decision_maker === true }));
+          if (cs.length) stats.geminiHits++;
+        }
+        found.set(l.cvr, cs);
+      } catch (e) { stats.errors++; found.set(l.cvr, []); }
+    }));
+  }
+  if (batch.length) {
+    // Apply onto a fresh copy so a cron that saved meanwhile isn't clobbered.
+    const d = loadUserData(TARGET_USER);
+    const nowIso = new Date().toISOString();
+    for (const l of d.leads || []) {
+      if (!found.has(l.cvr)) continue;
+      const cs = found.get(l.cvr);
+      l.fullenrich_search_at = nowIso;
+      if (cs.length && !named(l)) { l.contacts = cs; stats.hits++; stats.people += cs.length; if (sdrCallable(l)) stats.nowCallable++; }
+    }
+    saveUserData(TARGET_USER, d);
+  }
+  console.log("[find-people] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, remaining: Math.max(0, todo.length - batch.length) });
+});
 app.post("/api/cron/check-advertisers", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
@@ -8056,8 +8123,15 @@ app.post("/api/cron/check-advertisers", async (req, res) => {
         if (budget <= 0) break;
         if (lead.ads_check_pending !== true) continue;
         budget--;
-        const domain = lead.web || businessDomainFromEmail(lead.em);
+        let domain = lead.web || businessDomainFromEmail(lead.em);
         try {
+          // No website on file (CVR-walk leads): resolve one by name via
+          // Apollo's free company search and keep it — a domain is what
+          // lets find-people / intake-enrich make the lead callable.
+          if (!domain && lead.name) {
+            const found = await apolloFindCompany({ name: lead.name }).catch(() => null);
+            if (found && found.domain) { domain = found.domain; if (!lead.web) lead.web = found.domain; }
+          }
           const org = domain ? await apolloOrgEnrich(domain) : null;
           lead.ads_check_pending = false;
           lead.ads_checked_at = new Date().toISOString();
@@ -10368,12 +10442,20 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   //       = ~$4/day = ~$88/month Apify on top of existing spend.
   //
   // Pre-verify count is captured in stats so we can see verify hit-rate.
+  //
+  // 2026-09-08: the gate is OFF by default (BRANCHE_WALK_META_GATE=1 turns
+  // it back on). Since July it verified ~500 companies and passed 0 — the
+  // keyword-phrase search looks for the legal name inside ad copy, which
+  // real advertisers rarely write. Casper's call: Meta is INFORMATION, not
+  // a filter. Candidates are saved and flagged ads_check_pending so
+  // check-advertisers sets meta_advertiser via Apollo's org signal; the
+  // SDR queue ranks confirmed advertisers first either way.
   stats.preVerifyCount = candidatesForApollo.length;
   stats.metaVerifyAttempted = 0;
   stats.metaVerified = 0;
   stats.metaVerifyNoAds = 0;
   stats.metaVerifyNameMismatch = 0;
-  if (candidatesForApollo.length > 0 && process.env.APIFY_API_TOKEN) {
+  if (process.env.BRANCHE_WALK_META_GATE === "1" && candidatesForApollo.length > 0 && process.env.APIFY_API_TOKEN) {
     const verifyStartUrls = candidatesForApollo.map((cand) => ({
       url: buildAdsLibraryUrl(brandForMetaAdsSearch(cand.name)),
       _cvr: cand.cvr,
@@ -10515,21 +10597,22 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
         source: `branche-walk-${codeEntry.code}`,
         source_label: codeEntry.label,
         source_category: deriveSourceCategory(`branche-walk-${codeEntry.code}`, codeEntry.code),
-        // PR5: Datafordeler-direct AND Meta-verified. Real ICP — size +
-        // industry + DK + currently advertising on Meta. Same quality
-        // bar as meta-ads-discover leads.
+        // Datafordeler-direct DK SMB in a curated industry. Meta is
+        // information, not a gate: verified → true, otherwise unknown until
+        // check-advertisers (Apollo org signal) fills it in.
         icpFit: true,
-        meta_advertiser: true,
-        meta_verified_active: cand.meta_ads_active_now > 0,
-        meta_verified_at: cand.meta_verified_at,
+        meta_advertiser: cand.meta_verified_at ? true : null,
+        meta_verified_active: cand.meta_verified_at ? cand.meta_ads_active_now > 0 : null,
+        meta_verified_at: cand.meta_verified_at || null,
         meta_ads_active_now: cand.meta_ads_active_now || 0,
         meta_ads_recent90d: cand.meta_ads_recent90d || 0,
         meta_ads_total_in_library: cand.meta_ads_total || 0,
-        ad_signals: [
+        ad_signals: cand.meta_verified_at ? [
           cand.meta_ads_active_now > 0
             ? `${cand.meta_ads_active_now} aktive ad${cand.meta_ads_active_now === 1 ? "" : "s"} på Meta`
             : `${cand.meta_ads_recent90d} ad${cand.meta_ads_recent90d === 1 ? "" : "s"} sidste 90 dage`,
-        ],
+        ] : [],
+        ads_check_pending: true,
         marketing_tech_match: "",
         apollo_company: null,
         // Skip drain — no apollo_enrichment_pending. SDR fetches contacts
@@ -11992,10 +12075,12 @@ async function runBackfillContacts(req, res) {
   // ?force=1 ignores the skip guard. Used to re-process leads that got
   // bulk_enriched_at stamped by an earlier broken run.
   const FORCE = req.query.force === "1";
-  // 24h skip guard — failed enrichments get retried daily via the cron.
-  // Successful ones (lead now has a contact-level phone) are filtered out
-  // by the candidate selector regardless of skip window.
-  const RECENT_MS = 24 * 60 * 60 * 1000;
+  // Skip guard — a miss is retried after 30 days, not daily (2026-09-08:
+  // the cron now runs intraday, and re-trying ~500 known misses every day
+  // would burn the Apollo budget on the same leads). Successful ones (lead
+  // now has a contact-level phone) are filtered out by the candidate
+  // selector regardless of skip window.
+  const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - RECENT_MS;
   // Parallelism within each batch — 5 leads concurrent so 10-lead batches
   // finish in ~2× single-lead time instead of 10×. Apollo + FE + Lusha
