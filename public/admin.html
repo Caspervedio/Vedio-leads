@@ -33,6 +33,17 @@
 .pager{display:flex;align-items:center;gap:10px;padding:12px 24px;border-top:1px solid var(--line);font-size:13px;color:var(--txt-soft)}
 .pager .pill{padding:7px 12px;font-size:12.5px}
 tr.sel td{background:var(--violet-soft)}
+/* The pool table has 10 columns; keep it inside the card and cap the
+   columns that carry free text, rather than letting them push it wide. */
+#view-leads .tablewrap{overflow-x:auto}
+#view-leads td,#view-leads th{padding-left:12px;padding-right:12px}
+#view-leads td:first-child,#view-leads th:first-child{padding-left:18px}
+#view-leads td:last-child,#view-leads th:last-child{padding-right:18px}
+#view-leads td.niche{color:var(--txt-soft);font-size:12.5px;max-width:105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#view-leads td b,#view-leads td .sub{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#view-leads td .tag{white-space:nowrap}
+#view-leads td:nth-child(9){max-width:130px}
+#view-leads td.rowacts button{margin-left:3px}
 td.rowacts{white-space:nowrap;text-align:right}
 td.rowacts button{width:28px;height:28px;border-radius:8px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);font-size:13px;margin-left:4px;opacity:0;transition:opacity .15s}
 tr:hover td.rowacts button,td.rowacts button:focus{opacity:1}
@@ -157,7 +168,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
         <button class="pill sm" id="bulk-del" onclick="bulkDelete()" style="color:#b42318" hidden>🗑 Slet permanent</button>
       </div>
       <table>
-        <thead><tr><th style="width:36px"><input type="checkbox" onchange="selAll(this.checked)"></th><th>Virksomhed</th><th>Niche</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th>Kilde</th><th>Tilføjet</th><th>Status</th><th style="width:104px"></th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" onchange="selAll(this.checked)"></th><th>Virksomhed</th><th>Niche</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th>Kilde</th><th>Tilføjet</th><th>Status</th><th style="width:100px"></th></tr></thead>
         <tbody id="tb-leads"></tbody>
       </table>
       <div class="pager" id="pager"></div>
@@ -321,6 +332,15 @@ async function leadsReload() {
       + (p.total ? ` · ${p.ready.toLocaleString('da-DK')} klar · ${p.active.toLocaleString('da-DK')} aktive · ${p.total.toLocaleString('da-DK')} i alt` : '');
   } catch (ex) { toast(ex.message, 4000); }
 }
+// StoreLeads categories arrive as full paths ("/Home & Garden/Kitchen &
+// Dining/Small Kitchen Appliances") and blew the table past the frame.
+// Show the leaf; the full path is on the title attribute.
+function shortNiche(n) {
+  const s = String(n || '').trim();
+  if (!s) return '-';
+  const parts = s.split('/').map((x) => x.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : s;
+}
 function statusTag(l) {
   if (l.lastAction === 'not-relevant') return `<span class="tag no">Arkiveret</span>`;
   if (l.lastAction === 'demo-booked') return `<span class="tag ok">Demo</span>`;
@@ -341,7 +361,7 @@ function renderLeads(rows) {
   $('tb-leads').innerHTML = rows.length ? rows.map((l) => `<tr class="rowlink ${SEL.has(l.cvr) ? 'sel' : ''}" onclick="openLead('${e(l.cvr)}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" ${SEL.has(l.cvr) ? 'checked' : ''} onchange="selOne('${e(l.cvr)}',this.checked)"></td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span></td>
-      <td style="color:var(--txt-soft);font-size:13px">${e(l.niche || '-')}</td>
+      <td class="niche" title="${e(l.niche || '')}">${e(shortNiche(l.niche))}</td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contacts_count > 1 ? ' · +' + (l.contacts_count - 1) : ''}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone)) || '-'}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>
       <td>${l.meta && l.meta.advertiser ? `<span class="tag meta">${l.ads ? l.ads + ' ads' : 'Meta'}</span>` : ''}</td>
