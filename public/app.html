@@ -167,6 +167,8 @@ let busy = false;
 const $ = (id) => document.getElementById(id);
 const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ah = () => ({ 'Authorization': 'Bearer ' + token });
+// /api/auth/login returns role; /api/sdr/state returns is_admin. Accept both.
+const isAdminUser = (u) => !!u && (u.is_admin === true || u.role === 'admin' || u.id === 'admin');
 function toast(msg, ms = 2200) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), ms); }
 
 /* ─── Auth ─────────────────────────────────────────────────────────────── */
@@ -178,6 +180,9 @@ async function doLogin(ev) {
     if (!r.ok) { $('l-err').textContent = d.error || 'Login fejlede'; return; }
     token = d.token; me = d.user;
     localStorage.setItem('vl_token', token); localStorage.setItem('vl_current_user', JSON.stringify(me));
+    // An admin logging in here belongs on /admin — go straight there, and
+    // land on Overblik rather than whatever tab was open last time.
+    if (isAdminUser(me) && !impersonating) { try { localStorage.removeItem('vl_admin_tab'); } catch {} location.replace('/admin'); return; }
     boot();
   } catch (ex) { $('l-err').textContent = 'Netværksfejl: ' + ex.message; }
 }
@@ -733,17 +738,22 @@ document.addEventListener('keydown', (ev) => {
 async function boot() {
   if (!token) { $('login').hidden = false; $('app').hidden = true; return; }
   try { me = impersonating ? null : JSON.parse(localStorage.getItem('vl_current_user') || 'null'); } catch { me = null; }
+  // Admins live on /admin. "?as=sdr" (or "Se som <SDR>" there) lets them
+  // preview the SDR view for this browser session. Decide BEFORE showing
+  // anything — an admin should never see the SDR interface flash past.
+  try { if (new URLSearchParams(location.search).get('as') === 'sdr') sessionStorage.setItem('vl_as_sdr', '1'); } catch {}
+  let asSdr = false; try { asSdr = sessionStorage.getItem('vl_as_sdr') === '1'; } catch {}
+  const goAdmin = !impersonating && !asSdr;
+  if (goAdmin && isAdminUser(me)) { location.replace('/admin'); return; }
   $('login').hidden = true; $('app').hidden = false;
   let tab = 'list'; try { tab = localStorage.getItem('vl_tab') || 'list'; } catch {}
   if (!['list', 'ring', 'followups', 'results'].includes(tab)) tab = 'list';
   showTab(tab);
   await loadState();
-  // Admins live on /admin. "?as=sdr" (or the header link there) lets them
-  // preview the SDR view for this browser session.
-  try { if (new URLSearchParams(location.search).get('as') === 'sdr') sessionStorage.setItem('vl_as_sdr', '1'); } catch {}
-  let asSdr = false; try { asSdr = sessionStorage.getItem('vl_as_sdr') === '1'; } catch {}
-  if (!impersonating && me && me.is_admin && !asSdr) { location.replace('/admin'); return; }
-  const al = $('admin-link'); if (al) al.hidden = impersonating || !(me && me.is_admin);
+  // Safety net: a token without a cached user (cleared storage) only reveals
+  // the role once the state comes back.
+  if (goAdmin && isAdminUser(me)) { location.replace('/admin'); return; }
+  const al = $('admin-link'); if (al) al.hidden = impersonating || !isAdminUser(me);
   const ic = $('imp-chip'); if (ic) { ic.hidden = !impersonating; if (impersonating) ic.innerHTML = 'Admin · du ser som <b>' + e((me && me.name) || '') + '</b> · tilbage'; }
   clearInterval(pollTimer);
   pollTimer = setInterval(() => { if (!document.hidden && !busy && !dragCvr) loadState({ keepCurrent: true }); }, 20000);
