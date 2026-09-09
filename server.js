@@ -8176,6 +8176,74 @@ app.post("/api/cron/meta-pages-check", async (req, res) => {
   console.log("[meta-pages-check] done:", JSON.stringify(stats));
   res.json({ ok: true, stats, remaining: Math.max(0, todo.length - batch.length) });
 });
+// ── Describe companies (two Danish lines under the company name) ───────────
+// The SDR opens a card and should know in one glance what the shop sells and
+// to whom. Gemini Flash writes two short factual lines from the shop's own
+// homepage text (title, meta description, visible copy) once per lead; the
+// result is stored as lead.about (stamped about_at even on a miss). Leads on
+// SDR lists first, then callable, then newest. ≈ $0.002 per lead.
+async function fetchHomepageText(web) {
+  const url = /^https?:/.test(String(web || "")) ? String(web) : "https://" + String(web || "");
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 6000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "User-Agent": "Mozilla/5.0 (compatible; VedioBot/1.0)", "Accept-Language": "da,en" } });
+    if (!r.ok) return null;
+    const html = (await r.text()).slice(0, 400000);
+    const meta = (re) => { const m = html.match(re); return m ? htmlToText(m[1]).slice(0, 300) : ""; };
+    return {
+      title: meta(/<title[^>]*>([\s\S]*?)<\/title>/i),
+      description: meta(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || meta(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i),
+      text: htmlToText(html).slice(0, 3500),
+    };
+  } catch (_) { return null; } finally { clearTimeout(timer); }
+}
+app.post("/api/cron/describe-companies", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini not configured" });
+  const TARGET_USER = (req.query.userId || "pool").toString();
+  const BATCH = Math.max(1, Math.min(60, Number(req.query.batch_size) || 25));
+  const CONCURRENCY = Math.max(1, Math.min(6, Number(req.query.concurrency) || 4));
+  const stats = { candidates: 0, tried: 0, described: 0, noSite: 0, errors: 0 };
+  const d0 = loadUserData(TARGET_USER);
+  const onList = new Set(Object.values(d0.sdr_lists || {}).flatMap((L) => L.cvrs || []));
+  const rank = (l) => (onList.has(l.cvr) ? 0 : sdrCallable(l) ? 1 : 2);
+  const todo = (d0.leads || [])
+    .filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && (l.web || l.website) && !l.about_at)
+    .sort((a, b) => rank(a) - rank(b) || new Date(b.addedAt || b.discovered_at || 0) - new Date(a.addedAt || a.discovered_at || 0));
+  stats.candidates = todo.length;
+  const batch = todo.slice(0, BATCH);
+  const out = new Map(); // cvr → about ("" on a miss)
+  for (let i = 0; i < batch.length; i += CONCURRENCY) {
+    await Promise.all(batch.slice(i, i + CONCURRENCY).map(async (l) => {
+      stats.tried++;
+      try {
+        const site = await fetchHomepageText(l.web || l.website);
+        if (!site || (!site.text && !site.description)) { stats.noSite++; out.set(l.cvr, ""); return; }
+        const prompt = `Du skriver til en dansk sælger, der skal ringe til virksomheden om et sekund. Skriv PRÆCIS to korte linjer på dansk om, hvad virksomheden laver: linje 1 = hvad de sælger/tilbyder (konkrete produkter/ydelser), linje 2 = til hvem og hvad der kendetegner dem (fx priser, materialer, kendt for, B2B/B2C). Faktuelt, ingen salgsfloskler, ingen gæt ud over teksten, MAX 70 tegn pr. linje (de skal kunne stå på hver sin linje i et smalt kort). Svar som JSON: {"about":"linje 1\\nlinje 2"}.
+
+Virksomhed: ${l.name || ""}
+Website: ${l.web || l.website || ""}
+Titel: ${site.title || ""}
+Meta-beskrivelse: ${site.description || ""}
+Synlig tekst (uddrag): ${site.text || ""}`;
+        const j = await callGemini(prompt);
+        const about = String((j && j.about) || "").replace(/\r/g, "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 2).join("\n").slice(0, 220);
+        out.set(l.cvr, about);
+        if (about) stats.described++;
+      } catch (e) { stats.errors++; out.set(l.cvr, ""); }
+    }));
+  }
+  if (batch.length) {
+    const d = loadUserData(TARGET_USER);
+    const nowIso = new Date().toISOString();
+    for (const l of d.leads || []) { if (!out.has(l.cvr)) continue; l.about_at = nowIso; const a = out.get(l.cvr); if (a) l.about = a; }
+    saveUserData(TARGET_USER, d);
+  }
+  console.log("[describe-companies] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats, remaining: Math.max(0, todo.length - batch.length) });
+});
 // ── Find people (Full Enrich People Search backlog) ────────────────────────
 // A lead with a main number but no named person is not callable. Full Enrich
 // People Search is FREE (0 credits) and returns DK-located people by company
@@ -13351,6 +13419,7 @@ function sdrSlim(l, nameById) {
   const calls = Array.isArray(l.calls) ? l.calls.slice(-8) : [];
   return {
     cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "",
+    about: l.about || "",
     niche: l.ind || l.industry || l.niche || "",
     phone: ph.phone, phone_label: ph.label,
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,

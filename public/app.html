@@ -328,6 +328,7 @@ function renderCard() {
       </div>
       ${proof}
     </div>
+    ${L.about ? `<p class="about">${e(L.about)}</p>` : ''}
     <div class="person ${c ? '' : 'none'}">
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
