@@ -13297,7 +13297,7 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
 // Opkald / Opfølgning / Resultater).
 // ═════════════════════════════════════════════════════════════════════════════
 const POOL_ID = "pool";
-const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant", "wrong-number"]);
+const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant", "wrong-number", "email-sent"]);
 const SDR_DEFAULT_PITCH = [
   "Hej {fornavn}, det er {sdr} fra Vedio. Jeg kan se I kører {annoncer} på Meta lige nu.",
   "De fleste webshops oplever, at en annonce mister effekt efter 2–3 uger — publikum har set den. Vi laver nye video-annoncer løbende ud fra det, der virker for jer, så I aldrig kører på trætte annoncer.",
@@ -13307,8 +13307,74 @@ const SDR_DEFAULT_PITCH = [
   "Indvending · \"Ikke lige nu\": Forstået. Hvornår er et bedre tidspunkt — om 2 uger eller efter {måned}? Så ringer jeg der.",
 ].join("\n");
 const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0 };
-const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", rules: SDR_DEFAULT_RULES };
-function sdrSettings(d) { const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) }; s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) }; return s; }
+// "Send me an email" is the most common ask on a cold call. Templates are
+// filled client-side and opened in the SDR's own mail app, so the mail comes
+// from their vedio.dk address and replies land in their inbox.
+// Placeholders: {fornavn} {firma} {sdr} {calendly} {note} {om}
+const SDR_DEFAULT_EMAIL_TEMPLATES = [
+  {
+    id: "efter-samtalen",
+    name: "Efter samtalen",
+    subject: "Vedio · video-annoncer til {firma}",
+    body: [
+      "Hej {fornavn}",
+      "",
+      "Tak for snakken. Kort om det, jeg nævnte:",
+      "",
+      "Vi laver løbende nye video-annoncer til webshops, så I aldrig kører på trætte annoncer. I stedet for én stor produktion får I friske videoer hver måned, bygget på det, der allerede virker for jer.",
+      "",
+      "Vil du se, hvordan det kunne se ud for {firma}? Så tager vi 20 minutter her:",
+      "{calendly}",
+      "",
+      "Bedste hilsner",
+      "{sdr}",
+      "Vedio",
+    ].join("\n"),
+  },
+  {
+    id: "kort-intro",
+    name: "Kort intro (kunne ikke tale)",
+    subject: "20 minutter om video-annoncer til {firma}?",
+    body: [
+      "Hej {fornavn}",
+      "",
+      "Jeg ringede lige, men fangede dig på et skidt tidspunkt.",
+      "",
+      "Kort fortalt: vi laver løbende video-annoncer til danske webshops, så annoncerne ikke når at blive trætte. Vi producerer nye hver måned ud fra det, der performer.",
+      "",
+      "Er det noget, der er relevant for jer? Du kan smide 20 minutter i kalenderen her:",
+      "{calendly}",
+      "",
+      "Bedste hilsner",
+      "{sdr}",
+      "Vedio",
+    ].join("\n"),
+  },
+  {
+    id: "materiale",
+    name: "Send materiale",
+    subject: "Eksempler på vores video-annoncer",
+    body: [
+      "Hej {fornavn}",
+      "",
+      "Som aftalt sender jeg lidt materiale, så du kan se, hvad vi laver.",
+      "",
+      "Sig til, hvis det giver mening at tage en snak — 20 minutter er nok:",
+      "{calendly}",
+      "",
+      "Bedste hilsner",
+      "{sdr}",
+      "Vedio",
+    ].join("\n"),
+  },
+];
+const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, rules: SDR_DEFAULT_RULES };
+function sdrSettings(d) {
+  const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
+  s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) };
+  if (!Array.isArray(s.email_templates) || !s.email_templates.length) s.email_templates = SDR_DEFAULT_EMAIL_TEMPLATES;
+  return s;
+}
 // Admin fine-tune rules — what the pool is allowed to serve to SDRs.
 function sdrPassesRules(l, settings) {
   const r = (settings && settings.rules) || SDR_DEFAULT_RULES;
@@ -13360,7 +13426,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13431,9 +13497,11 @@ function sdrEligible(l, now) {
   return sdrCallable(l);
 }
 function sdrIsDue(l, now) { return !!(l.callback_at && new Date(l.callback_at).getTime() <= now); }
-function sdrNextWeekdayAt(hour) {
-  const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(hour, 0, 0, 0);
-  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+// `days` weekdays ahead at `hour` (default: the next weekday).
+function sdrNextWeekdayAt(hour, days) {
+  const d = new Date(); d.setHours(hour, 0, 0, 0);
+  let left = Math.max(1, Number(days) || 1);
+  while (left > 0) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) left--; }
   return d.toISOString();
 }
 function sdrSourceLabel(l) {
@@ -13463,6 +13531,7 @@ function sdrSlim(l, nameById) {
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
     last_note: l.last_note || "",
+    email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
     demo_status: l.demo_status || (l.lastAction === "demo-booked" ? "pending" : null), demo_review_reason: l.demo_review_reason || "",
     undo_until: l._undo && l._undo.at ? new Date(new Date(l._undo.at).getTime() + SDR_UNDO_WINDOW_MS).toISOString() : null,
@@ -13518,7 +13587,9 @@ function sdrEnsureList(d, userId, now, settings) {
   const before = L.cvrs.length;
   L.cvrs = L.cvrs.filter((cvr) => {
     const l = byCvr.get(cvr);
-    const keep = !!l && sdrEligible(l, now) && sdrPassesRules(l, settings) && !sdrClaimedByOther(l, userId, now);
+    // A promised callback stays on the list even if a rule change would now
+    // exclude the lead — we told them we'd ring back.
+    const keep = !!l && sdrEligible(l, now) && (sdrPassesRules(l, settings) || sdrIsDue(l, now)) && !sdrClaimedByOther(l, userId, now);
     if (!keep && l && l.claimed_by === userId) sdrUnclaim(l);
     return keep;
   });
@@ -13559,7 +13630,12 @@ function buildSdrState(userId, d) {
   const current = items[0] || null;
   const upNext = items.slice(1, 6);
 
-  const followups = leads.filter((l) => l.callback_at && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l))
+  // Opfølgning shows what THIS SDR can act on: their own follow-ups plus the
+  // unclaimed ones. Without the claim filter both SDRs saw all 12 open
+  // callbacks, including the other's — "Ring nu" then jumped to a lead that
+  // wasn't on their list. Admins see everything (oversight, no list).
+  const followups = leads.filter((l) => l.callback_at && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l)
+    && (sdrIsAdmin(userId) || !sdrClaimedByOther(l, userId, now)))
     .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const demos = leads.filter((l) => l.lastAction === "demo-booked").sort((a, b) => new Date(b.demo_booked_at || 0) - new Date(a.demo_booked_at || 0));
 
@@ -13695,7 +13771,7 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     const nowIso = new Date(now).toISOString();
     const cleanNote = String(note || "").trim().slice(0, 2000);
     // Snapshot for "Fortryd" (10-min window, same SDR).
-    const UNDO_FIELDS = ["lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts"];
+    const UNDO_FIELDS = ["lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to"];
     lead._undo = { at: nowIso, by: req.userId, prev: Object.fromEntries(UNDO_FIELDS.map((k) => [k, k === "contacts" ? JSON.parse(JSON.stringify(lead.contacts || [])) : (lead[k] === undefined ? null : lead[k])])) };
     // Call duration ≈ tel: tap → outcome (ignore if the tap was >2h ago).
     let duration_s = null;
@@ -13732,6 +13808,19 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
       const h = new Date().getHours();
       // Retry same day if early, else next weekday 09:00. After 4 misses, park a week.
       lead.callback_at = lead.no_answer_count >= 4 ? new Date(now + 7 * 86400000).toISOString() : (h < 13 ? new Date(now + 3 * 3600000).toISOString() : sdrNextWeekdayAt(9));
+    }
+    else if (action === "email-sent") {
+      // "Send me an email" — the SDR opened it in their own mail app. Record
+      // it and put the lead back in Opfølgning so the mail is always chased.
+      const s0 = sdrSettings(d);
+      lead.email_sent_at = nowIso;
+      lead.email_sent_by = req.userId;
+      lead.email_count = (lead.email_count || 0) + 1;
+      lead.email_template = String((req.body || {}).email_template || "").slice(0, 60);
+      lead.email_to = String((req.body || {}).email_to || "").trim().slice(0, 160);
+      const t = callback_at ? new Date(callback_at) : null;
+      lead.callback_at = (t && !isNaN(t.getTime())) ? t.toISOString() : sdrNextWeekdayAt(10, Math.max(1, Number(s0.email_followup_days) || 2));
+      lead.resurface_at = null;
     }
     else if (action === "not-now") { lead.resurface_at = new Date(now + 90 * 86400000).toISOString(); lead.callback_at = null; }
     else if (action === "not-relevant") { lead.archived_at = nowIso; lead.callback_at = null; }
@@ -14254,6 +14343,19 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     if (Number.isFinite(Number(b.list_size)) && Number(b.list_size) > 0) d.sdr_settings.list_size = Math.min(200, Math.round(Number(b.list_size)));
     if (typeof b.pitch_text === "string") d.sdr_settings.pitch_text = b.pitch_text.slice(0, 4000);
     if (sdrIsAdmin(req.userId)) {
+      if (Number.isFinite(Number(b.email_followup_days)) && Number(b.email_followup_days) > 0) d.sdr_settings.email_followup_days = Math.min(30, Math.round(Number(b.email_followup_days)));
+      if (Array.isArray(b.email_templates)) {
+        const t = b.email_templates
+          .map((x, i) => ({
+            id: String((x && x.id) || `mail-${i + 1}`).replace(/[^a-z0-9-]/gi, "").slice(0, 40) || `mail-${i + 1}`,
+            name: String((x && x.name) || "").trim().slice(0, 60),
+            subject: String((x && x.subject) || "").trim().slice(0, 200),
+            body: String((x && x.body) || "").slice(0, 4000),
+          }))
+          .filter((x) => x.name && x.subject && x.body)
+          .slice(0, 10);
+        if (t.length) d.sdr_settings.email_templates = t;
+      }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);
       if (b.rules && typeof b.rules === "object") {

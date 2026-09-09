@@ -181,6 +181,18 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 #toast button{margin-left:14px;background:var(--violet);color:var(--white);border-radius:var(--pill);padding:6px 12px;font-size:13px;font-weight:700;pointer-events:auto}
 #toast.action{pointer-events:auto}
 .chooser{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);animation:rise .25s var(--ease) both}
+/* "Send mig en mail" — template picker + editable draft, opened in the SDR's own mail app */
+.mailbox{padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);animation:rise .25s var(--ease) both}
+.mailbox label{display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin:10px 0 4px}
+.mailbox input,.mailbox select,.mailbox textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13.5px;color:var(--txt)}
+.mailbox select{width:auto;min-width:190px;font-weight:700}
+.mailbox textarea{line-height:1.5;resize:vertical}
+.chip.mail{background:var(--violet-soft);color:var(--violet)}
+.chip.sm{padding:2px 7px;font-size:11px}
+.chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
+/* admin: one editable mail template */
+.mailtpl{border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:10px;background:var(--paper);display:grid;gap:8px}
+.mailtpl textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13px;line-height:1.5;resize:vertical}
 .chooser .pill{padding:8px 14px;font-size:13px}
 .chooser input[type=datetime-local]{border:1px solid var(--line);border-radius:var(--pill);padding:8px 12px;font-size:13px;background:var(--white)}
 .hint{font-size:12px;color:var(--txt-faint);display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
@@ -232,6 +244,8 @@ td.num,th.num{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowr
 .chip.a-no-answer{background:var(--paper);color:var(--txt-soft)}
 .chip.a-not-now{background:#fdf3e2;color:#9a5b00}
 .chip.a-not-relevant{background:#fdecec;color:#b42318}
+.chip.a-email-sent{background:var(--violet-soft);color:var(--violet)}
+.chip.a-wrong-number{background:var(--paper);color:var(--txt-soft)}
 .empty-row td{padding:36px 24px;text-align:center;color:var(--txt-soft)}
 th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
 th.sortable:hover{color:var(--txt)}

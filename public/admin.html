@@ -383,17 +383,36 @@ function openSettings() {
     </div>
     <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Leads på hver SDR's ringeliste (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
+    <label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}">
     <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}">
     <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
     <label>Pitch på kortet ({fornavn} {firma} {annoncer} {sdr} {måned})</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
+    <label>Mailskabeloner — SDR'en vælger én når et lead beder om en mail ({fornavn} {firma} {sdr} {calendly} {note} {om})</label>
+    <div id="st-mails"></div>
+    <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button>
     <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+  mailTpls = JSON.parse(JSON.stringify(s.email_templates || []));
+  mailTplRender();
 }
+/* mail templates */
+let mailTpls = [];
+function mailTplRender() {
+  const box = $('st-mails'); if (!box) return;
+  box.innerHTML = mailTpls.map((t, i) => `<div class="mailtpl">
+    <div class="row" style="gap:8px"><input value="${e(t.name || '')}" placeholder="Navn (vises for SDR'en)" oninput="mailTpls[${i}].name=this.value" style="font-weight:700">
+    <button class="pill sm tertiary" onclick="mailTpls.splice(${i},1);mailTplRender()" title="Slet skabelon">Slet</button></div>
+    <input value="${e(t.subject || '')}" placeholder="Emne" oninput="mailTpls[${i}].subject=this.value">
+    <textarea rows="7" placeholder="Besked" oninput="mailTpls[${i}].body=this.value">${e(t.body || '')}</textarea>
+  </div>`).join('') || `<p class="sub">Ingen skabeloner — SDR'erne kan ikke sende mails før der er mindst én.</p>`;
+}
+function mailTplAdd() { mailTpls.push({ id: 'mail-' + (mailTpls.length + 1), name: '', subject: '', body: '' }); mailTplRender(); }
 async function saveSettings() {
   const body = {
+    email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };

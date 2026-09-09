@@ -234,9 +234,12 @@ function fmtWhen(iso) {
   return d.toLocaleDateString('da-DK', { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + hm;
 }
 function fmtAgo(iso) { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); if (m < 1) return 'lige nu'; if (m < 60) return m + ' min'; const h = Math.round(m / 60); if (h < 24) return h + ' t'; return Math.round(h / 24) + ' d'; }
-const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'interested': 'Interesseret', 'sms': 'SMS', 'call-back': 'Ring tilbage' };
+const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer', 'email-sent': 'Mail sendt', 'interested': 'Interesseret', 'sms': 'SMS', 'call-back': 'Ring tilbage' };
 function signalChip(l) {
-  if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) return `<span class="chip due">Opfølgning · ${e(fmtWhen(l.callback_at))}</span>`;
+  // A due callback outranks the Meta signal — it's what the SDR must act on.
+  // Which kind matters: agreed callback, our own retry, or a sent mail.
+  if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) { const k = dueKind(l); return `<span class="chip ${k.cls}">${k.label} · ${e(fmtWhen(l.callback_at))}</span>`; }
+  if (l.email_sent_at) return `<span class="chip mail">✉ Mail sendt ${e(fmtAgo(l.email_sent_at))}</span>`;
   if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.adsMatched > 0 ? l.meta.adsMatched + ' Meta-annoncer' : 'Meta-annoncør'}</span>`;
   return `<span class="chip">${e(l.source_label || '—')}</span>`;
 }
@@ -263,6 +266,16 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
 }
 
 /* Ringeliste */
+// A promised callback (and a sent mail) has to be obvious in the calling list
+// itself — not only in the Opfølgning tab.
+// A callback the customer agreed to is not the same as our own retry after no
+// answer — the SDR must never open with "as we agreed" when nobody agreed.
+function dueKind(l) {
+  if (l.lastAction === 'follow-up') return { label: '◆ Aftalt', cls: 'due' };
+  if (l.lastAction === 'email-sent') return { label: '✉ Mail sendt', cls: 'mail' };
+  if (l.lastAction === 'no-answer') return { label: '↻ Ring igen', cls: 'retry' };
+  return { label: '◆ Planlagt', cls: 'due' };
+}
 function renderList() {
   const items = (S.list && S.list.items) || [];
   $('tb-list').innerHTML = items.length ? items.map((l, i) => `
@@ -325,7 +338,7 @@ function renderCard() {
   const web = (L.web || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   w.innerHTML = `
   <div class="card" data-cvr="${e(L.cvr)}">
-    ${isDue ? `<div class="kicker violet" style="margin-bottom:10px">◆ Aftalt opfølgning · ${e(fmtWhen(L.callback_at))}</div>` : ''}
+    ${isDue ? `<div class="kicker violet" style="margin-bottom:10px">${L.lastAction === 'no-answer' ? `↻ Nyt forsøg — ingen svar ${e(fmtAgo(L.lastCallAt || L.callback_at))}` : L.lastAction === 'email-sent' ? `✉ Du sendte ${L.email_template ? '“' + e(L.email_template) + '”' : 'en mail'} ${e(fmtAgo(L.email_sent_at))} — følg op` : `◆ Aftalt opfølgning · ${e(fmtWhen(L.callback_at))}`}</div>` : ''}
     <div class="co">
       <div>
         <h2>${e(L.name || '—')}</h2>
@@ -369,8 +382,10 @@ function renderCard() {
         <button class="pill" onclick="disp('not-now')"><span class="key">4</span>Ikke nu</button>
         <button class="pill" onclick="disp('not-relevant')"><span class="key">5</span>Ikke relevant</button>
         <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke — leadet sendes til berigelse"><span class="key">6</span>Forkert nummer</button>
+        <button class="pill" onclick="toggleMail()" title="De bad om en mail — skabelon klar, og opfølgning planlægges automatisk"><span class="key">7</span>Send mail ▾</button>
       </div>
       <div id="chooser" hidden></div>
+      <div id="mailbox" hidden></div>
       <div class="hint"><span><kbd>space</kbd> ring</span><span><kbd>1</kbd>–<kbd>5</kbd> udfald</span><span><kbd>N</kbd> note</span><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
     </div>
   </div>`;
@@ -406,8 +421,8 @@ function renderFollowups() {
   const rows = S.followups || [];
   $('tb-fu').innerHTML = rows.length ? rows.map((l) => { const over = new Date(l.callback_at).getTime() <= Date.now();
     return `<tr class="rowlink" onclick="jumpTo('${e(l.cvr)}')">
-      <td><span class="chip ${over ? 'over' : 'due'}">${e(fmtWhen(l.callback_at))}</span></td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}</span></td>
+      <td><span class="chip ${over ? 'over' : 'due'}">${e(fmtWhen(l.callback_at))}</span><span class="sub">${e(dueKind(l).label.replace(/^[◆✉↻]\s*/, ''))}</span></td>
+      <td><b>${e(l.name)}</b><span class="sub">${l.email_sent_at ? `<span class="chip mail sm">✉ Mail ${e(fmtAgo(l.email_sent_at))}</span>` : e(l.city || '')}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">—</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
@@ -546,13 +561,77 @@ function toggleChooser() {
     <button class="pill violet" onclick="disp('follow-up', new Date($('fu-dt').value).toISOString())">Planlæg</button>
   </div>`;
 }
-async function disp(action, callback_at) {
+/* ─── "Send mig en mail" ───────────────────────────────────────────────────
+   The most common ask on a cold call. Pick a template, check the address,
+   open it in the SDR's own mail app (so it comes from their vedio.dk address
+   and replies land in their inbox), and the lead goes to Opfølgning with the
+   follow-up already scheduled. */
+let mailOpen = false;
+function mailTemplates() { return (S.settings && S.settings.email_templates) || []; }
+function fillMail(text, L) {
+  const c = L.contact || {};
+  const first = String(c.name || '').trim().split(/\s+/)[0] || 'der';
+  return String(text || '')
+    .replace(/\{fornavn\}/g, first)
+    .replace(/\{firma\}/g, L.name || '')
+    .replace(/\{sdr\}/g, (me && me.name) || '')
+    .replace(/\{calendly\}/g, (S.settings && S.settings.calendly_url) || '')
+    .replace(/\{note\}/g, ($('note') && $('note').value.trim()) || '')
+    .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
+}
+function toggleMail() {
+  const box = $('mailbox'); const L = S.current; if (!L) return;
+  mailOpen = !mailOpen; box.hidden = !mailOpen; if (!mailOpen) return;
+  if (chooserOpen) { chooserOpen = false; $('chooser').hidden = true; }
+  const ts = mailTemplates();
+  if (!ts.length) { box.innerHTML = `<div class="chooser">Ingen mailskabeloner endnu — admin opretter dem under ⚙.</div>`; return; }
+  const to = (L.contact && L.contact.email) || L.email_to || '';
+  box.innerHTML = `<div class="mailbox">
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <span class="kicker">Send mail</span>
+      <select id="m-tpl" onchange="mailPick()">${ts.map((t, i) => `<option value="${i}">${e(t.name)}</option>`).join('')}</select>
+    </div>
+    <label>Til</label><input id="m-to" type="email" placeholder="navn@firma.dk" value="${e(to)}">
+    <label>Emne</label><input id="m-sub" type="text">
+    <label>Besked</label><textarea id="m-body" rows="10"></textarea>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="pill violet" onclick="mailSend()">Åbn i mail og planlæg opfølgning</button>
+      <button class="pill sm tertiary" onclick="mailCopy()">Kopiér tekst</button>
+      <span class="sub" style="margin-left:auto">Følges op om ${e(String((S.settings && S.settings.email_followup_days) || 2))} hverdage</span>
+    </div>
+  </div>`;
+  mailPick();
+}
+function mailPick() {
+  const L = S.current; if (!L) return;
+  const t = mailTemplates()[Number($('m-tpl').value) || 0]; if (!t) return;
+  $('m-sub').value = fillMail(t.subject, L);
+  $('m-body').value = fillMail(t.body, L);
+}
+function mailCopy() {
+  const txt = $('m-sub').value + '\n\n' + $('m-body').value;
+  navigator.clipboard.writeText(txt).then(() => toast('Kopieret — indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
+}
+async function mailSend() {
+  const L = S.current; if (!L || busy) return;
+  const to = $('m-to').value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse — spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
+  const t = mailTemplates()[Number($('m-tpl').value) || 0] || {};
+  // Keep the address on the contact so it's there next time.
+  if (L.contact && L.contact.name && to !== (L.contact.email || '')) {
+    try { await post('/api/sdr/contact', { cvr: L.cvr, name: L.contact.name, title: L.contact.title || '', email: to }); } catch (_) {}
+  }
+  window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent($('m-sub').value)}&body=${encodeURIComponent($('m-body').value)}`;
+  mailOpen = false; $('mailbox').hidden = true;
+  await disp('email-sent', null, { email_template: t.name || '', email_to: to });
+}
+async function disp(action, callback_at, extra) {
   const L = S.current; if (!L || busy) return; busy = true;
   const note = ($('note') && $('note').value.trim()) || '';
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
-    apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null }));
-    const msg = { 'demo-booked': '✓ Demo booket — godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar — prøver igen senere.', 'not-now': 'Ikke nu — dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant — arkiveret.', 'wrong-number': 'Forkert nummer — sendt til berigelse.' }[action] || 'Gemt';
+    apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, ...(extra || {}) }));
+    const msg = { 'demo-booked': '✓ Demo booket — godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar — prøver igen senere.', 'not-now': 'Ikke nu — dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant — arkiveret.', 'wrong-number': 'Forkert nummer — sendt til berigelse.', 'email-sent': '✓ Mail klar i dit mailprogram — opfølgning planlagt.' }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -729,6 +808,7 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '4') disp('not-now');
   else if (ev.key === '5') disp('not-relevant');
   else if (ev.key === '6') disp('wrong-number');
+  else if (ev.key === '7') { ev.preventDefault(); toggleMail(); }
   else if (ev.key.toLowerCase() === 'd') { ev.preventDefault(); debriefToggle(); }
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();
