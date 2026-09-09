@@ -46,7 +46,7 @@
     <div class="hright">
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
       <a class="pill sm violet" id="imp-chip" href="/admin" title="Tilbage til admin" hidden></a>
-      <div class="me"><span class="dot"></span><span id="me-name">—</span></div>
+      <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
       <button class="iconbtn" title="Indstillinger" onclick="openSettings()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
@@ -105,7 +105,7 @@
     <div class="pay" id="pay" hidden></div>
     <div class="tiles" id="tiles"></div>
     <div class="tablewrap" id="coachwrap" hidden>
-      <div class="thead"><div><h3>Til dine næste opkald</h3><p>Fra dine debriefs i denne uge — én ting ad gangen.</p></div></div>
+      <div class="thead"><div><h3>Til dine næste opkald</h3><p>Fra dine debriefs i denne uge - én ting ad gangen.</p></div></div>
       <div id="coachlist" style="padding:6px 24px 10px"></div>
     </div>
     <div class="tablewrap">
@@ -134,7 +134,7 @@
       <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
     <details class="deeper" id="deeper">
-      <summary><span>Pulje &amp; pipeline</span><span class="sub">Hvor mange leads der er klar, venter på berigelse, eller er arkiveret — hold musen over et tal for forklaring.</span></summary>
+      <summary><span>Pulje &amp; pipeline</span><span class="sub">Hvor mange leads der er klar, venter på berigelse, eller er arkiveret - hold musen over et tal for forklaring.</span></summary>
       <div class="subtiles" id="subtiles"></div>
     </details>
   </section>
@@ -145,7 +145,7 @@
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
-   Vedio Ring — SDR app. One page, four tabs. Talks to /api/sdr/*.
+   Vedio Ring - SDR app. One page, four tabs. Talks to /api/sdr/*.
    ═══════════════════════════════════════════════════════════════════════════ */
 // Admin "Se som <SDR>": /#imp=<token> puts a tab-scoped token in sessionStorage,
 // so this tab runs as the SDR while the admin tab stays logged in as admin.
@@ -180,7 +180,7 @@ async function doLogin(ev) {
     if (!r.ok) { $('l-err').textContent = d.error || 'Login fejlede'; return; }
     token = d.token; me = d.user;
     localStorage.setItem('vl_token', token); localStorage.setItem('vl_current_user', JSON.stringify(me));
-    // An admin logging in here belongs on /admin — go straight there, and
+    // An admin logging in here belongs on /admin - go straight there, and
     // land on Overblik rather than whatever tab was open last time.
     if (isAdminUser(me) && !impersonating) { try { localStorage.removeItem('vl_admin_tab'); } catch {} location.replace('/admin'); return; }
     boot();
@@ -195,7 +195,7 @@ function logout() {
 async function loadState({ keepCurrent = false } = {}) {
   let r;
   try { r = await fetch('/api/sdr/state', { headers: ah() }); }
-  catch (_) { if (!S) toast('Ingen forbindelse — prøver igen…', 3000); return; } // offline / server restart: keep what we have
+  catch (_) { if (!S) toast('Ingen forbindelse - prøver igen…', 3000); return; } // offline / server restart: keep what we have
   if (r.status === 401) { logout(); return; }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { toast(d.error || 'Kunne ikke hente listen'); return; }
@@ -236,12 +236,12 @@ function fmtWhen(iso) {
 function fmtAgo(iso) { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); if (m < 1) return 'lige nu'; if (m < 60) return m + ' min'; const h = Math.round(m / 60); if (h < 24) return h + ' t'; return Math.round(h / 24) + ' d'; }
 const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer', 'email-sent': 'Mail sendt', 'interested': 'Interesseret', 'sms': 'SMS', 'call-back': 'Ring tilbage' };
 function signalChip(l) {
-  // A due callback outranks the Meta signal — it's what the SDR must act on.
+  // A due callback outranks the Meta signal - it's what the SDR must act on.
   // Which kind matters: agreed callback, our own retry, or a sent mail.
   if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) { const k = dueKind(l); return `<span class="chip ${k.cls}">${k.label} · ${e(fmtWhen(l.callback_at))}</span>`; }
   if (l.email_sent_at) return `<span class="chip mail">✉ Mail sendt ${e(fmtAgo(l.email_sent_at))}</span>`;
   if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.adsMatched > 0 ? l.meta.adsMatched + ' Meta-annoncer' : 'Meta-annoncør'}</span>`;
-  return `<span class="chip">${e(l.source_label || '—')}</span>`;
+  return `<span class="chip">${e(l.source_label || '-')}</span>`;
 }
 function adLibUrl(L) {
   return L.meta && L.meta.pageId
@@ -251,7 +251,7 @@ function adLibUrl(L) {
 
 /* ─── Render ───────────────────────────────────────────────────────────── */
 function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
-  $('me-name').textContent = (me && me.name) || '—';
+  $('me-name').textContent = (me && me.name) || '-';
   const st = S.stats || {}; const target = (S.settings && S.settings.daily_target) || 60;
   $('s-calls').textContent = st.callsToday || 0; $('s-target').textContent = target;
   $('s-bar').style.width = Math.min(100, Math.round(100 * (st.callsToday || 0) / target)) + '%';
@@ -267,9 +267,9 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
 
 /* Ringeliste */
 // A promised callback (and a sent mail) has to be obvious in the calling list
-// itself — not only in the Opfølgning tab.
+// itself - not only in the Opfølgning tab.
 // A callback the customer agreed to is not the same as our own retry after no
-// answer — the SDR must never open with "as we agreed" when nobody agreed.
+// answer - the SDR must never open with "as we agreed" when nobody agreed.
 function dueKind(l) {
   if (l.lastAction === 'follow-up') return { label: '◆ Aftalt', cls: 'due' };
   if (l.lastAction === 'email-sent') return { label: '✉ Mail sendt', cls: 'mail' };
@@ -283,7 +283,7 @@ function renderList() {
       <td class="handle" onclick="event.stopPropagation()">⋮⋮</td>
       <td class="num" style="color:var(--txt-faint)">${i + 1}</td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(l.niche) : ''}</span></td>
-      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">—</span>'}</td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>
       <td>${signalChip(l)}</td>
       <td class="acts" onclick="event.stopPropagation()">
@@ -291,7 +291,7 @@ function renderList() {
         <button class="go" onclick="jumpTo('${e(l.cvr)}')">Ring →</button>
         <button title="Tag ud af dagens liste (arkiverer ikke)" onclick="removeItem('${e(l.cvr)}')">Fjern</button>
       </td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="7">${(S.me && S.me.is_admin) ? 'Admin får ingen ringeliste — SDR\'erne får automatisk fyldt deres lister fra puljen. Log ind som SDR for at se en liste.' : (S.stats && S.stats.poolAvailable) ? 'Listen er tom.' : 'Listen er tom — og puljen er også tom. Nye leads lander når berigelsen kører.'}</td></tr>`;
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="7">${(S.me && S.me.is_admin) ? 'Admin får ingen ringeliste - SDR\'erne får automatisk fyldt deres lister fra puljen. Log ind som SDR for at se en liste.' : (S.stats && S.stats.poolAvailable) ? 'Listen er tom.' : 'Listen er tom - og puljen er også tom. Nye leads lander når berigelsen kører.'}</td></tr>`;
 }
 let dragCvr = null;
 function dragStart(ev, cvr) { dragCvr = cvr; ev.dataTransfer.effectAllowed = 'move'; ev.currentTarget.classList.add('dragging'); }
@@ -326,7 +326,7 @@ function renderCard() {
   const w = $('cardwrap'); calling = false; chooserOpen = false; ceditOpen = false;
   const L = S.current;
   if (!L) {
-    w.innerHTML = `<div class="card empty"><h3>Din ringeliste er tom.</h3><div style="margin-bottom:16px">${(S.followups || []).length ? (S.followups || []).length + ' opfølgninger er planlagt — de dukker op når de forfalder.' : 'Nye leads lander automatisk når berigelsen kører.'}</div></div>`;
+    w.innerHTML = `<div class="card empty"><h3>Din ringeliste er tom.</h3><div style="margin-bottom:16px">${(S.followups || []).length ? (S.followups || []).length + ' opfølgninger er planlagt - de dukker op når de forfalder.' : 'Nye leads lander automatisk når berigelsen kører.'}</div></div>`;
     $('histbox').hidden = true; return;
   }
   const c = L.contact || null; const dk = isDk(L.phone);
@@ -338,10 +338,10 @@ function renderCard() {
   const web = (L.web || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   w.innerHTML = `
   <div class="card" data-cvr="${e(L.cvr)}">
-    ${isDue ? `<div class="kicker violet" style="margin-bottom:10px">${L.lastAction === 'no-answer' ? `↻ Nyt forsøg — ingen svar ${e(fmtAgo(L.lastCallAt || L.callback_at))}` : L.lastAction === 'email-sent' ? `✉ Du sendte ${L.email_template ? '“' + e(L.email_template) + '”' : 'en mail'} ${e(fmtAgo(L.email_sent_at))} — følg op` : `◆ Aftalt opfølgning · ${e(fmtWhen(L.callback_at))}`}</div>` : ''}
+    ${isDue ? `<div class="kicker violet" style="margin-bottom:10px">${L.lastAction === 'no-answer' ? `↻ Nyt forsøg - ingen svar ${e(fmtAgo(L.lastCallAt || L.callback_at))}` : L.lastAction === 'email-sent' ? `✉ Du sendte ${L.email_template ? '“' + e(L.email_template) + '”' : 'en mail'} ${e(fmtAgo(L.email_sent_at))} - følg op` : `◆ Aftalt opfølgning · ${e(fmtWhen(L.callback_at))}`}</div>` : ''}
     <div class="co">
       <div>
-        <h2>${e(L.name || '—')}</h2>
+        <h2>${e(L.name || '-')}</h2>
         <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${web ? `<span>·</span><a href="${e(/^https?:/.test(L.web) ? L.web : 'https://' + L.web)}" target="_blank" rel="noopener">${e(web)}</a>` : ''}${L.niche ? `<span>·</span><span>${e(L.niche)}</span>` : ''}</div>
       </div>
       ${proof}
@@ -351,42 +351,39 @@ function renderCard() {
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
       <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret person / nummer</button></div>`
-      : `<span>Ingen navngivet kontakt — ring til omstillingen og spørg efter ejeren/marketingansvarlig.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
+      : `<span>Ingen navngivet kontakt - ring til omstillingen og spørg efter ejeren/marketingansvarlig.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
       ${(L.contacts || []).length > 1 ? `<div class="others"><span class="k">Andre hos ${e(L.name || 'firmaet')}</span>${(L.contacts || []).filter((x) => !c || x.name !== c.name).map((x) => `<button class="oc" onclick="selectContact('${e(x.name).replace(/'/g, '&#39;')}')" title="${e(x.title || '')}${x.phone ? ' · ' + e(fmtPhone(x.phone)) : ''}">${x.has_phone ? '📞 ' : ''}${e(x.name)}${x.title ? `<span>${e(x.title)}</span>` : ''}</button>`).join('')}</div>` : ''}
       <div id="cedit" hidden></div>
     </div>
     <div class="phone">
-      ${dk ? `<a class="num" href="${telHref(L.phone)}" onclick="onCall(event)" title="Ring op">${e(fmtPhone(L.phone))}</a>` : `<span class="num warn">${e(fmtPhone(L.phone) || '—')}</span>`}
+      ${dk ? `<a class="num" href="${telHref(L.phone)}" onclick="onCall(event)" title="Ring op">${e(fmtPhone(L.phone))}</a>` : `<span class="num warn">${e(fmtPhone(L.phone) || '-')}</span>`}
       ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
-    <textarea id="note" class="note" placeholder="Note fra opkaldet — hvad sagde de, hvad er næste skridt?"></textarea>
-    <div class="debrief" id="debrief">
-      <button class="pill sm" id="rec-btn" onclick="debriefToggle()" title="Tal et kort resumé ind efter opkaldet — det bliver til note + næste skridt"><span class="key">D</span> 🎙 Debrief</button>
-      <button class="pill sm tertiary" onclick="debriefPaste()" title="Indsæt et transskript fra telefonens optagelse">Indsæt transskript</button>
-      <span id="rec-state"></span>
-    </div>
+    <textarea id="note" class="note" placeholder="Note fra opkaldet - hvad sagde de, hvad er næste skridt?"></textarea>
     <div id="coach" hidden></div>
     <div class="actions">
       <div class="steplbl"><i>1</i> Ring</div>
       <div class="row">
         <a class="pill primary" id="callbtn" href="${dk ? telHref(L.phone) : '#'}" onclick="onCall(event)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg><span id="calllbl">Ring op</span></a>
-        ${S.settings && S.settings.calendly_url ? `<a class="pill violet-outline" href="${e(calendlyFor(L))}" target="_blank" rel="noopener" title="Åbner Calendly med kontakten udfyldt og SDR som kilde">Book demo i Calendly ↗</a>` : ''}
+        ${S.settings && S.settings.calendly_url ? `<a class="pill primary violet-cta" href="${e(calendlyFor(L))}" target="_blank" rel="noopener" title="Åbner Calendly med kontakten udfyldt og SDR som kilde">Book demo i Calendly ↗</a>` : ''}
       </div>
       <div class="steplbl two"><i>2</i> Udfald</div>
       <div class="row disp">
         <button class="pill approve" onclick="disp('demo-booked')"><span class="key">1</span>Demo booket</button>
-        <button class="pill" onclick="toggleChooser()"><span class="key">2</span>Følg op ▾</button>
-        <button class="pill" onclick="disp('no-answer')"><span class="key">3</span>Ingen svar</button>
-        <button class="pill" onclick="disp('not-now')"><span class="key">4</span>Ikke nu</button>
-        <button class="pill" onclick="disp('not-relevant')"><span class="key">5</span>Ikke relevant</button>
-        <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke — leadet sendes til berigelse"><span class="key">6</span>Forkert nummer</button>
-        <button class="pill" onclick="toggleMail()" title="De bad om en mail — skabelon klar, og opfølgning planlægges automatisk"><span class="key">7</span>Send mail ▾</button>
+        <button class="pill" onclick="toggleMail()" title="De bad om en mail - skabelon klar, og opfølgning planlægges automatisk"><span class="key">2</span>Send mail ▾</button>
+        <button class="pill" onclick="toggleChooser()"><span class="key">3</span>Følg op ▾</button>
+      </div>
+      <div class="row disp muted">
+        <button class="pill" onclick="disp('no-answer')"><span class="key">4</span>Ingen svar</button>
+        <button class="pill" onclick="disp('not-now')"><span class="key">5</span>Ikke nu</button>
+        <button class="pill" onclick="disp('not-relevant')"><span class="key">6</span>Ikke relevant</button>
+        <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke - leadet sendes til berigelse"><span class="key">7</span>Forkert nummer</button>
       </div>
       <div id="chooser" hidden></div>
       <div id="mailbox" hidden></div>
-      <div class="hint"><span><kbd>space</kbd> ring</span><span><kbd>1</kbd>–<kbd>5</kbd> udfald</span><span><kbd>N</kbd> note</span><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
+      <div class="hint"><span><kbd>space</kbd> ring</span><span><kbd>1</kbd>-<kbd>7</kbd> udfald</span><span><kbd>N</kbd> note</span><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
     </div>
   </div>`;
 }
@@ -398,7 +395,7 @@ function toggleCedit() {
     <div><label>Titel</label><input id="ce-title" value="${e(c.title || '')}" placeholder="fx Ejer, Marketingchef"></div>
     <div><label>Direkte nummer (DK)</label><input id="ce-phone" value="${e(L.phone_label === 'direkte' ? L.phone : '')}" placeholder="+45 …"></div>
     <div><label>Email</label><input id="ce-email" value="${e(c.email || '')}" placeholder="navn@firma.dk"></div>
-    <div class="full"><span class="hint2">Gemmes som primær kontakt på leadet — et nyt navn tilføjes, et kendt navn opdateres.</span><button class="pill sm tertiary" onclick="toggleCedit()">Annuller</button><button class="pill sm primary" style="padding:8px 16px;font-size:13px" onclick="saveContact()">Gem</button></div>
+    <div class="full"><span class="hint2">Gemmes som primær kontakt på leadet - et nyt navn tilføjes, et kendt navn opdateres.</span><button class="pill sm tertiary" onclick="toggleCedit()">Annuller</button><button class="pill sm primary" style="padding:8px 16px;font-size:13px" onclick="saveContact()">Gem</button></div>
   </div>`;
   setTimeout(() => $('ce-name').focus(), 30);
 }
@@ -423,7 +420,7 @@ function renderFollowups() {
     return `<tr class="rowlink" onclick="jumpTo('${e(l.cvr)}')">
       <td><span class="chip ${over ? 'over' : 'due'}">${e(fmtWhen(l.callback_at))}</span><span class="sub">${e(dueKind(l).label.replace(/^[◆✉↻]\s*/, ''))}</span></td>
       <td><b>${e(l.name)}</b><span class="sub">${l.email_sent_at ? `<span class="chip mail sm">✉ Mail ${e(fmtAgo(l.email_sent_at))}</span>` : e(l.city || '')}</span></td>
-      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">—</span>'}</td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td style="text-align:right"><button class="pill sm" onclick="event.stopPropagation();jumpTo('${e(l.cvr)}')">Ring nu</button></td>
@@ -438,7 +435,7 @@ function renderDemos() {
     return `<tr class="rowlink" onclick="openLeadPeek('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
-      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '<span class="sub">—</span>'}</td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>
@@ -447,22 +444,22 @@ function renderDemos() {
 }
 function openLeadPeek(cvr) { const l = (S.demos || []).find((x) => x.cvr === cvr); if (!l) return; toast(`${l.name} · ${l.contact ? l.contact.name + ' · ' : ''}${fmtPhone(l.phone)}`, 3500); }
 
-/* Resultater — tiles + explainers */
+/* Resultater - tiles + explainers */
 const EXPLAIN = {
-  callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag. Alle fem udfald tæller som et opkald — også "Ingen svar".', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
-  demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald — filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
+  callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag. Alle fem udfald tæller som et opkald - også "Ingen svar".', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
+  demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald - filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
   callsWeek:    { t: 'Opkald denne uge', w: 'Dine udfald fra mandag 00:00 til nu.', s: 'Samme opkalds-log som "Opkald i dag", bare en længere periode.' },
   demosWeek:    { t: 'Demoer denne uge', w: 'Dine "Demo booket" fra mandag til nu.', s: 'Samme opkalds-log, filtreret på udfald.' },
   listRemaining:{ t: 'Tilbage på listen', w: 'Leads på din ringeliste som endnu ikke har fået et udfald i dag.', s: 'Din liste er altid fyldt op fra den fælles pulje: forfaldne opfølgninger øverst, derefter de bedste leads (Meta-annoncører med flest annoncer først). Når du afslutter et lead, kommer et nyt ind nederst. Du kan flytte og fjerne under Ringeliste.' },
   poolAvailable:{ t: 'Klar i puljen', w: 'Leads der kan hentes ind på din liste lige nu: dansk nummer + navngivet kontakt, ikke arkiveret, ikke i Twenty, ikke på den anden SDR\'s liste i dag, og ingen fremtidig opfølgning.', s: 'Puljen fyldes af intake (webshops via StoreLeads, Meta-annoncører, CVR-registret, Google Maps) og beriges med kontakt + nummer (Apollo / Full Enrich) før leads kan ringes.' },
-  followupsOpen:{ t: 'Opfølgninger åbne', w: 'Leads med en aftalt opfølgning — forfalden eller fremtidig — som stadig kan ringes.', s: 'Sat via udfaldet "Følg op", eller automatisk af "Ingen svar" (+3 timer hvis før 13, ellers næste hverdag 09:00; efter 4 forsøg parkeres leadet en uge).' },
+  followupsOpen:{ t: 'Opfølgninger åbne', w: 'Leads med en aftalt opfølgning - forfalden eller fremtidig - som stadig kan ringes.', s: 'Sat via udfaldet "Følg op", eller automatisk af "Ingen svar" (+3 timer hvis før 13, ellers næste hverdag 09:00; efter 4 forsøg parkeres leadet en uge).' },
   poolNeedsEnrich:{ t: 'Mangler kontakt/nummer', w: 'Leads i puljen uden dansk nummer eller uden navngivet kontakt. De vises ikke for SDR\'er før de er beriget.', s: 'Berigelsen kører automatisk når den er tændt. Kender du selv personen, kan du rette den på kortet under Opkald ("✎ Ret person / nummer").' },
-  poolArchived: { t: 'Arkiveret', w: 'Leads markeret "Ikke relevant". De kommer aldrig tilbage i køen.', s: 'Sat af en SDR via udfaldet Ikke relevant — inkl. historik fra det gamle værktøj.' },
+  poolArchived: { t: 'Arkiveret', w: 'Leads markeret "Ikke relevant". De kommer aldrig tilbage i køen.', s: 'Sat af en SDR via udfaldet Ikke relevant - inkl. historik fra det gamle værktøj.' },
   poolTotal:    { t: 'Leads i alt', w: 'Alle leads i puljen uanset status.', s: 'Én fælles pulje for alle SDR\'er. Den vokser når intake kører.' },
-  udfald:       { t: 'Udfald', w: 'Demo booket = mødet er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Ikke nu = rigtig kunde, forkert timing — kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
+  udfald:       { t: 'Udfald', w: 'Demo booket = mødet er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Ikke nu = rigtig kunde, forkert timing - kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
   demos:        { t: 'Bookede demoer', w: 'Alle leads med udfaldet "Demo booket", nyeste øverst.', s: 'Founders tager demoen fra Calendly-bookingen. Leadet forlader ringelisterne.' },
 };
-const tip = (k) => { const x = EXPLAIN[k]; return x ? `${x.t} — ${x.w}` : ''; };
+const tip = (k) => { const x = EXPLAIN[k]; return x ? `${x.t} - ${x.w}` : ''; };
 function renderCoaching() {
   const rows = S.my_coaching || []; const w = $('coachwrap'); if (!w) return;
   w.hidden = rows.length === 0; if (!rows.length) return;
@@ -478,7 +475,7 @@ function renderResults() {
   $('subtiles').innerHTML = sub.map(([k, lbl]) => `<div class="subtile" title="${e(tip(k))}"><b>${st[k] ?? 0}</b><span>${lbl}</span></div>`).join('');
   const per = st.perUser || [];
   $('tb-sdr').innerHTML = per.length ? per.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}${u.demosPendingMonth ? `<span class="sub">+${u.demosPendingMonth} afventer</span>` : ''}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="7">Ingen opkald endnu.</td></tr>`;
-  // Commission panel — the SDR's own money this month. Admin sees the
+  // Commission panel - the SDR's own money this month. Admin sees the
   // per-SDR table instead (their own row would always be 0).
   const c = S.commission; const pay = $('pay');
   if (!c) { pay.hidden = true; return; }
@@ -494,7 +491,7 @@ function renderResults() {
         <div><b style="color:#c4b5fd">${sum('demosPendingMonth')}</b><span>afventer din godkendelse</span></div>
         <div><b>${e(fmtKr(sum('commissionLastMonth')))}</b><span>${e(lName)}</span></div>
       </div>
-      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde. Godkend eller afvis under <b>Bookede demoer</b> herunder — SDR'en ser kun godkendte kroner.</div>`;
+      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde. Godkend eller afvis under <b>Bookede demoer</b> herunder - SDR'en ser kun godkendte kroner.</div>`;
     pay.hidden = false; return;
   }
   pay.innerHTML = `
@@ -504,7 +501,7 @@ function renderResults() {
       <div><b style="color:#c4b5fd">${c.pending_n}</b><span>afventer godkendelse</span></div>
       <div><b>${e(fmtKr(c.last_kr))}</b><span>${e(lName)} · ${c.last_n} møder</span></div>
     </div>
-    <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde — tæller når founders har holdt mødet og bekræftet, at det var ICP og interesseret.${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
+    <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde - tæller når founders har holdt mødet og bekræftet, at det var ICP og interesseret.${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
   pay.hidden = false;
 }
 let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';
@@ -531,7 +528,7 @@ function renderToday() {
     return `<tr class="rowlink" onclick="jumpTo('${e(c.cvr)}')">
       <td class="num">${hm}${c.duration_s ? `<span class="sub">${e(fmtDur(c.duration_s))}</span>` : ''}</td>
       <td><b>${e(c.name)}</b><span class="sub">${e(c.city || '')}${c.phone ? ' · ' + e(fmtPhone(c.phone)) : ''}</span></td>
-      <td>${e(c.contact || '—')}</td>
+      <td>${e(c.contact || '-')}</td>
       <td><span class="chip a-${e(c.action)}">${e(ACTION_LABEL[c.action] || c.action)}${e(extra)}</span></td>
       <td style="max-width:360px;color:var(--txt-soft)">${e(c.note || '')}</td>
       <td>${e(c.by_name || '')}</td>
@@ -541,7 +538,7 @@ function renderToday() {
 /* ─── Actions ──────────────────────────────────────────────────────────── */
 function onCall(ev) {
   const L = S.current; if (!L) return;
-  if (!isDk(L.phone)) { ev.preventDefault(); toast('Vi ringer kun til danske numre — ret nummeret via "✎ Ret person / nummer".', 3500); return; }
+  if (!isDk(L.phone)) { ev.preventDefault(); toast('Vi ringer kun til danske numre - ret nummeret via "✎ Ret person / nummer".', 3500); return; }
   calling = true;
   const b = $('callbtn'); if (b) { b.classList.add('calling'); const lbl = $('calllbl'); if (lbl) lbl.innerHTML = '<span class="dot" style="margin-right:6px"></span>Ringer… vælg udfald'; }
   post('/api/sdr/call-started', { cvr: L.cvr }).catch(() => {});
@@ -584,7 +581,7 @@ function toggleMail() {
   mailOpen = !mailOpen; box.hidden = !mailOpen; if (!mailOpen) return;
   if (chooserOpen) { chooserOpen = false; $('chooser').hidden = true; }
   const ts = mailTemplates();
-  if (!ts.length) { box.innerHTML = `<div class="chooser">Ingen mailskabeloner endnu — admin opretter dem under ⚙.</div>`; return; }
+  if (!ts.length) { box.innerHTML = `<div class="chooser">Ingen mailskabeloner endnu - admin opretter dem under ⚙.</div>`; return; }
   const to = (L.contact && L.contact.email) || L.email_to || '';
   box.innerHTML = `<div class="mailbox">
     <div class="row" style="gap:8px;flex-wrap:wrap">
@@ -610,12 +607,12 @@ function mailPick() {
 }
 function mailCopy() {
   const txt = $('m-sub').value + '\n\n' + $('m-body').value;
-  navigator.clipboard.writeText(txt).then(() => toast('Kopieret — indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
+  navigator.clipboard.writeText(txt).then(() => toast('Kopieret - indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
 }
 async function mailSend() {
   const L = S.current; if (!L || busy) return;
   const to = $('m-to').value.trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse — spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse - spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
   const t = mailTemplates()[Number($('m-tpl').value) || 0] || {};
   // Keep the address on the contact so it's there next time.
   if (L.contact && L.contact.name && to !== (L.contact.email || '')) {
@@ -631,7 +628,7 @@ async function disp(action, callback_at, extra) {
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
     apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, ...(extra || {}) }));
-    const msg = { 'demo-booked': '✓ Demo booket — godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar — prøver igen senere.', 'not-now': 'Ikke nu — dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant — arkiveret.', 'wrong-number': 'Forkert nummer — sendt til berigelse.', 'email-sent': '✓ Mail klar i dit mailprogram — opfølgning planlagt.' }[action] || 'Gemt';
+    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': '✓ Mail klar i dit mailprogram - opfølgning planlagt.' }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -669,7 +666,7 @@ function toastAction(msg, label, fn, ms = 6000) {
 }
 async function undoLast(cvr) {
   if (busy) return; busy = true;
-  try { apply(await post('/api/sdr/undo', { cvr })); showTab('ring'); toast('Fortrudt — leadet er tilbage øverst.'); }
+  try { apply(await post('/api/sdr/undo', { cvr })); showTab('ring'); toast('Fortrudt - leadet er tilbage øverst.'); }
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
 }
 
@@ -679,7 +676,7 @@ function debriefUI(html) { const s = $('rec-state'); if (s) s.innerHTML = html; 
 async function debriefToggle() {
   if (recState.rec) return debriefStop();
   const L = S.current; if (!L) return;
-  if (!navigator.mediaDevices || !window.MediaRecorder) { toast('Din browser understøtter ikke optagelse — brug "Indsæt transskript".', 4000); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) { toast('Din browser understøtter ikke optagelse - brug "Indsæt transskript".', 4000); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
@@ -689,7 +686,7 @@ async function debriefToggle() {
     rec.onstop = () => { stream.getTracks().forEach((t) => t.stop()); };
     rec.start(250);
     const btn = $('rec-btn'); if (btn) btn.innerHTML = '<span class="key">D</span> ■ Stop';
-    recState.timer = setInterval(() => { const s = Math.round((Date.now() - recState.t0) / 1000); debriefUI(`<span class="rec"><span class="dot"></span>Optager ${s}s — tal kort: hvem, hvad, næste skridt</span>`); if (s >= 60) debriefStop(); }, 500);
+    recState.timer = setInterval(() => { const s = Math.round((Date.now() - recState.t0) / 1000); debriefUI(`<span class="rec"><span class="dot"></span>Optager ${s}s - tal kort: hvem, hvad, næste skridt</span>`); if (s >= 60) debriefStop(); }, 500);
   } catch (ex) { toast('Kunne ikke starte mikrofonen: ' + ex.message, 4000); }
 }
 function debriefStop(silent) {
@@ -719,7 +716,7 @@ async function debriefSend({ blob, text }, silent) {
     const n = $('note'); if (n) n.value = [n.value.trim(), d.summary, d.next_step ? 'Næste: ' + d.next_step : ''].filter(Boolean).join('\n');
     debriefUI('<span class="busy" style="color:var(--approve)">✓ Resumé lagt i noten</span>');
     const c = $('coach'); if (c && d.coaching) { c.innerHTML = `<div class="coach"><span class="k">Til næste opkald</span><span>${e(d.coaching)}</span><button class="x" onclick="$('coach').hidden=true">Skjul</button></div>`; c.hidden = false; }
-    if (!silent) toast('Debrief klar — tjek noten og vælg udfald.');
+    if (!silent) toast('Debrief klar - tjek noten og vælg udfald.');
   } catch (ex) { debriefUI(''); toast('Debrief fejlede: ' + ex.message, 4500); }
 }
 function debriefPaste() {
@@ -734,7 +731,7 @@ async function demoReview(cvr, status) {
   let reason = '';
   if (status === 'unqualified') { reason = prompt('Hvorfor ikke kvalificeret? (fx no-show, ikke ICP, ikke interesseret)') || ''; if (reason === null) return; }
   busy = true;
-  try { apply(await post('/api/sdr/demo-review', { cvr, status, reason }), { keepCurrent: true }); toast(status === 'qualified' ? '✓ Kvalificeret — provision tæller' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); }
+  try { apply(await post('/api/sdr/demo-review', { cvr, status, reason }), { keepCurrent: true }); toast(status === 'qualified' ? '✓ Kvalificeret - provision tæller' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); }
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
 }
 // Calendly link per lead: prefill the contact + tag the booking with the SDR
@@ -776,11 +773,11 @@ function openSettings() {
     <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Leads på ringelisten (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
-    <label>Pitch på kortet — brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
+    <label>Pitch på kortet - brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
     <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
     ${me && me.is_admin ? `
     <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
-    <label>Webhook når en demo bookes (Slack incoming webhook URL — valgfrit)</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">` : ''}
+    <label>Webhook når en demo bookes (Slack incoming webhook URL - valgfrit)</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">` : ''}
     <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
@@ -809,7 +806,6 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '5') disp('not-relevant');
   else if (ev.key === '6') disp('wrong-number');
   else if (ev.key === '7') { ev.preventDefault(); toggleMail(); }
-  else if (ev.key.toLowerCase() === 'd') { ev.preventDefault(); debriefToggle(); }
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();
 });
@@ -820,7 +816,7 @@ async function boot() {
   try { me = impersonating ? null : JSON.parse(localStorage.getItem('vl_current_user') || 'null'); } catch { me = null; }
   // Admins live on /admin. "?as=sdr" (or "Se som <SDR>" there) lets them
   // preview the SDR view for this browser session. Decide BEFORE showing
-  // anything — an admin should never see the SDR interface flash past.
+  // anything - an admin should never see the SDR interface flash past.
   try { if (new URLSearchParams(location.search).get('as') === 'sdr') sessionStorage.setItem('vl_as_sdr', '1'); } catch {}
   let asSdr = false; try { asSdr = sessionStorage.getItem('vl_as_sdr') === '1'; } catch {}
   const goAdmin = !impersonating && !asSdr;

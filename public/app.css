@@ -1,4 +1,4 @@
-/* Vedio Ring — shared styles (SDR app + admin). Tokens from Brand Manual v1.0. */
+/* Vedio Ring - shared styles (SDR app + admin). Tokens from Brand Manual v1.0. */
 /* ─── Vedio brand tokens (Brand Manual v1.0, Aug 2026) ─────────────────── */
 :root{
   --paper:#F4F2EE; --white:#FFFFFF; --black:#0E0E0C; --black-2:#1A1A17;
@@ -25,12 +25,21 @@ input,textarea{font-family:var(--sans);font-size:15px;color:var(--txt)}
 .pill{display:inline-flex;align-items:center;gap:8px;border-radius:var(--pill);padding:11px 20px;font-weight:600;font-size:14px;line-height:1;border:1px solid var(--line);background:var(--white);color:var(--txt);transition:transform .2s var(--ease),background .2s var(--ease),border-color .2s var(--ease);white-space:nowrap;text-decoration:none}
 .pill:hover{transform:translateY(-2px);border-color:#cfcbc2}
 .pill:active{transform:translateY(0)}
-.pill.primary{background:var(--black);color:var(--white);border-color:var(--black);padding:15px 28px;font-size:16px}
+/* min-height so "Ring op" (has an icon) and "Book demo" (text only) line up. */
+.pill.primary{background:var(--black);color:var(--white);border-color:var(--black);padding:15px 28px;font-size:16px;min-height:50px}
 .pill.primary:hover{background:var(--black-2);border-color:var(--black-2)}
 .pill.violet{background:var(--violet);color:var(--white);border-color:var(--violet)}
 .pill.violet:hover{background:var(--violet-deep);border-color:var(--violet-deep)}
 .pill.violet-outline{color:var(--violet);border-color:var(--violet)}
 .pill.violet-outline:hover{background:var(--violet-soft)}
+/* Book demo sits next to "Ring op" and matches its size: same .primary
+   metrics, violet outline instead of ink fill. */
+.pill.primary.violet-cta{background:var(--white);color:var(--violet);border-color:var(--violet)}
+.pill.primary.violet-cta:hover{background:var(--violet-soft);border-color:var(--violet)}
+/* Second row of outcomes: same size, quieter, so the eye lands on the first row. */
+.row.disp.muted{margin-top:8px}
+.row.disp.muted .pill{color:var(--txt-soft)}
+.row.disp.muted .pill:hover{color:var(--txt)}
 .pill.approve{color:var(--approve);border-color:var(--approve)}
 .pill.approve:hover{background:#e6f6ec}
 .pill.tertiary{border-color:transparent;background:transparent;color:var(--txt-soft)}
@@ -181,7 +190,7 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 #toast button{margin-left:14px;background:var(--violet);color:var(--white);border-radius:var(--pill);padding:6px 12px;font-size:13px;font-weight:700;pointer-events:auto}
 #toast.action{pointer-events:auto}
 .chooser{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);animation:rise .25s var(--ease) both}
-/* "Send mig en mail" — template picker + editable draft, opened in the SDR's own mail app */
+/* "Send mig en mail" - template picker + editable draft, opened in the SDR's own mail app */
 .mailbox{padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);animation:rise .25s var(--ease) both}
 .mailbox label{display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin:10px 0 4px}
 .mailbox input,.mailbox select,.mailbox textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13.5px;color:var(--txt)}
@@ -222,7 +231,7 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .thead h3{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .thead p{font-size:13px;color:var(--txt-soft);margin-top:2px;max-width:640px}
 /* Two short Danish lines on what the company does. white-space:pre-line keeps
-   them as two lines; no clamp — cutting a sentence mid-word reads worse than
+   them as two lines; no clamp - cutting a sentence mid-word reads worse than
    one extra wrapped line. */
 .card .about{font-size:13.5px;line-height:1.5;color:var(--txt-soft);margin:10px 0 0;white-space:pre-line}
 table{width:100%;border-collapse:collapse}
@@ -291,7 +300,9 @@ details.deeper summary::-webkit-details-marker{display:none}
 details.deeper summary::before{content:"▸";color:var(--txt-faint);font-size:13px;transition:transform .2s var(--ease)}
 details.deeper[open] summary::before{transform:rotate(90deg)}
 details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)}
-.subtiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line)}
+/* One row, always - auto-fit used to wrap the 8th tile onto an empty second row. */
+.subtiles{display:grid;grid-template-columns:repeat(8,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line)}
+@media (max-width:1100px){.subtiles{grid-template-columns:repeat(4,1fr)}}
 .subtile{background:var(--white);padding:16px 22px;cursor:default}
 .subtile b{display:block;font-size:24px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .subtile span{display:block;margin-top:4px;font-size:12px;font-weight:600;color:var(--txt-soft)}
@@ -328,7 +339,7 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-/* ─── Phone (≤760px) — SDRs dial from the handset they hold ─────────────── */
+/* ─── Phone (≤760px) - SDRs dial from the handset they hold ─────────────── */
 @media (max-width:760px){
   html{-webkit-text-size-adjust:100%}
   input,textarea,select{font-size:16px}                 /* no iOS zoom on focus */
