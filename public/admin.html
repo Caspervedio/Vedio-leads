@@ -44,12 +44,17 @@ tr.sel td{background:var(--violet-soft)}
 #view-leads td .tag{white-space:nowrap}
 #view-leads td:nth-child(9){max-width:130px}
 #view-leads td.rowacts button{margin-left:3px}
-td.rowacts{white-space:nowrap;text-align:right}
-td.rowacts button{width:28px;height:28px;border-radius:8px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);font-size:13px;margin-left:4px;opacity:0;transition:opacity .15s}
-tr:hover td.rowacts button,td.rowacts button:focus{opacity:1}
+/* The actions reserve no column width - an empty 100px gutter looked like a
+   layout bug. The cell collapses and the buttons float over the row's right
+   edge on hover, fading the row out behind them. */
+td.rowacts{width:0;padding:0!important;position:relative}
+td.rowacts .acts{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;gap:4px;white-space:nowrap;padding-left:28px;opacity:0;transition:opacity .15s;background:linear-gradient(90deg,rgba(255,255,255,0),var(--white) 26%)}
+tr:hover td.rowacts .acts,td.rowacts .acts:focus-within{opacity:1}
+td.rowacts button{width:28px;height:28px;border-radius:8px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);font-size:13px}
 td.rowacts button:hover{border-color:var(--txt-soft);color:var(--txt)}
 td.rowacts button.del:hover{border-color:#b42318;color:#b42318;background:#fdecec}
-@media (max-width:900px){td.rowacts button{opacity:1}}
+tr.sel td.rowacts .acts{background:linear-gradient(90deg,rgba(239,233,251,0),var(--violet-soft) 26%)}
+@media (max-width:900px){td.rowacts .acts{opacity:1}}
 td .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--paper);color:var(--txt-soft);margin-right:4px}
 td .tag.meta{background:var(--violet-soft);color:var(--violet)}
 td .tag.ok{background:#e6f6ec;color:var(--approve)}
@@ -168,7 +173,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
         <button class="pill sm" id="bulk-del" onclick="bulkDelete()" style="color:#b42318" hidden>🗑 Slet permanent</button>
       </div>
       <table>
-        <thead><tr><th style="width:36px"><input type="checkbox" onchange="selAll(this.checked)"></th><th>Virksomhed</th><th>Niche</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th>Kilde</th><th>Tilføjet</th><th>Status</th><th style="width:100px"></th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" onchange="selAll(this.checked)"></th><th>Virksomhed</th><th>Niche</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th>Kilde</th><th>Tilføjet</th><th>Status</th><th style="width:0;padding:0"></th></tr></thead>
         <tbody id="tb-leads"></tbody>
       </table>
       <div class="pager" id="pager"></div>
@@ -368,13 +373,13 @@ function renderLeads(rows) {
       <td style="font-size:12.5px;color:var(--txt-soft)">${e(l.source)}</td>
       <td style="font-size:12.5px;color:var(--txt-soft);white-space:nowrap">${e(fmtDate(l.addedAt))}</td>
       <td>${statusTag(l)}</td>
-      <td class="rowacts" onclick="event.stopPropagation()">
+      <td class="rowacts" onclick="event.stopPropagation()"><div class="acts">
         <button title="Ret lead / kontakt" onclick="openLead('${e(l.cvr)}')">✎</button>
         ${l.lastAction === 'not-relevant'
           ? `<button title="Genåbn" onclick="leadStatus('${e(l.cvr)}','reopen')">↩</button>`
           : `<button title="Arkivér (kan genåbnes)" onclick="leadStatus('${e(l.cvr)}','archive')">✕</button>`}
         <button class="del" title="Slet permanent" onclick="delOne('${e(l.cvr)}','${e(l.name)}')">🗑</button>
-      </td>
+      </div></td>
     </tr>`).join('') : `<tr class="empty-row"><td colspan="10">Ingen leads matcher.</td></tr>`;
   updSel();
 }
