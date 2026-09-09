@@ -13506,7 +13506,13 @@ function sdrPhone(l) {
   if (isDkPhone(main)) return { phone: main, label: (l.phone_source === "contact-sync" || l.phone_source === "sdr-manual") ? "direkte" : "hovednummer" };
   return { phone: main, label: "" };
 }
-function sdrCallable(l) { return !!sdrPrimaryContact(l) && isDkPhone(sdrPhone(l).phone); }
+// Callable = there is a Danish number to dial. A named person is better but
+// not required: 41 of today's 65 "not ready" leads already had a valid main
+// number and were only missing a name, which is exactly the switchboard call
+// an SDR makes anyway ("må jeg tale med den marketingansvarlige?"). Leads
+// WITH a named person still sort first - see sdrQueue.
+function sdrCallable(l) { return isDkPhone(sdrPhone(l).phone); }
+function sdrHasPerson(l) { return !!sdrPrimaryContact(l); }
 // Eligible = could be dialed today (ignores who holds the claim).
 function sdrEligible(l, now) {
   if (!l || l.lastAction === "not-relevant" || l.lastAction === "demo-booked") return false;
@@ -13551,6 +13557,7 @@ function sdrSlim(l, nameById) {
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
     last_note: l.last_note || "",
+    has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
     demo_status: l.demo_status || (l.lastAction === "demo-booked" ? "pending" : null), demo_review_reason: l.demo_review_reason || "",
@@ -13567,6 +13574,10 @@ function sdrQueue(d, userId, now, exclude, settings) {
   const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && !ex.has(l.cvr));
   const due = eligible.filter((l) => sdrIsDue(l, now)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
+    // A named decision-maker outranks everything else: you can have the
+    // conversation. Switchboard-only leads are real work, just further down.
+    const ap = sdrHasPerson(a) ? 1 : 0, bp = sdrHasPerson(b) ? 1 : 0;
+    if (ap !== bp) return bp - ap;
     const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
     if (am !== bm) return bm - am;
     const aa = Number(a.adsMatched || 0), ba = Number(b.adsMatched || 0);
@@ -14120,6 +14131,7 @@ app.get("/api/sdr/admin/leads", authMiddleware, (req, res) => {
     const preds = {
       ready: (l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, settings),
       needs: (l) => sdrIsActive(l) && !sdrCallable(l),
+      noperson: (l) => sdrIsActive(l) && sdrCallable(l) && !sdrHasPerson(l),
       blocked: (l) => sdrIsActive(l) && sdrCallable(l) && !sdrPassesRules(l, settings),
       meta: (l) => sdrIsActive(l) && (l.meta_advertiser === true || l.meta_verified_active === true),
       onlists: (l) => sdrClaimActive(l, now),

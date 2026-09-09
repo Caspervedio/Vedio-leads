@@ -283,7 +283,7 @@ function renderList() {
       <td class="handle" onclick="event.stopPropagation()">⋮⋮</td>
       <td class="num" style="color:var(--txt-faint)">${i + 1}</td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(l.niche) : ''}</span></td>
-      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">-</span>'}</td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="chip sm">Omstilling</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>
       <td>${signalChip(l)}</td>
       <td class="acts" onclick="event.stopPropagation()">
@@ -351,7 +351,7 @@ function renderCard() {
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
       <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret person / nummer</button></div>`
-      : `<span>Ingen navngivet kontakt - ring til omstillingen og spørg efter ejeren/marketingansvarlig.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
+      : `<span><b>Omstillingsopkald.</b> Vi har ikke fundet et navn - ring på hovednummeret og spørg: <i>"Hvem står for jeres markedsføring - må jeg tale med dem?"</i> Skriv navnet ind, når du får det.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
       ${(L.contacts || []).length > 1 ? `<div class="others"><span class="k">Andre hos ${e(L.name || 'firmaet')}</span>${(L.contacts || []).filter((x) => !c || x.name !== c.name).map((x) => `<button class="oc" onclick="selectContact('${e(x.name).replace(/'/g, '&#39;')}')" title="${e(x.title || '')}${x.phone ? ' · ' + e(fmtPhone(x.phone)) : ''}">${x.has_phone ? '📞 ' : ''}${e(x.name)}${x.title ? `<span>${e(x.title)}</span>` : ''}</button>`).join('')}</div>` : ''}
       <div id="cedit" hidden></div>
     </div>
@@ -420,7 +420,7 @@ function renderFollowups() {
     return `<tr class="rowlink" onclick="jumpTo('${e(l.cvr)}')">
       <td><span class="chip ${over ? 'over' : 'due'}">${e(fmtWhen(l.callback_at))}</span><span class="sub">${e(dueKind(l).label.replace(/^[◆✉↻]\s*/, ''))}</span></td>
       <td><b>${e(l.name)}</b><span class="sub">${l.email_sent_at ? `<span class="chip mail sm">✉ Mail ${e(fmtAgo(l.email_sent_at))}</span>` : e(l.city || '')}</span></td>
-      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="sub">-</span>'}</td>
+      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="chip sm">Omstilling</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td style="text-align:right"><button class="pill sm" onclick="event.stopPropagation();jumpTo('${e(l.cvr)}')">Ring nu</button></td>
@@ -567,7 +567,13 @@ let mailOpen = false;
 function mailTemplates() { return (S.settings && S.settings.email_templates) || []; }
 function fillMail(text, L) {
   const c = L.contact || {};
-  const first = String(c.name || '').trim().split(/\s+/)[0] || 'der';
+  const first = String(c.name || '').trim().split(/\s+/)[0];
+  // No name yet (switchboard lead): "Hej {fornavn}" must not become "Hej der".
+  if (!first) return String(text || '').replace(/\{fornavn\}/g, '').split('\n').map((s) => s.replace(/\s+$/, '')).join('\n')
+    .replace(/\{firma\}/g, L.name || '').replace(/\{sdr\}/g, (me && me.name) || '')
+    .replace(/\{calendly\}/g, (S.settings && S.settings.calendly_url) || '')
+    .replace(/\{note\}/g, ($('note') && $('note').value.trim()) || '')
+    .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
   return String(text || '')
     .replace(/\{fornavn\}/g, first)
     .replace(/\{firma\}/g, L.name || '')
@@ -655,7 +661,12 @@ function pitchFor(L) {
   const ads = n > 0 ? `${n} annoncer` : 'annoncer';
   const months = ['januar','februar','marts','april','maj','juni','juli','august','september','oktober','november','december'];
   const filled = tpl.replace(/\{fornavn\}/g, first).replace(/\{firma\}/g, L.name || 'jer').replace(/\{annoncer\}/g, ads).replace(/\{sdr\}/g, (me && me.name) || 'os').replace(/\{måned\}/g, months[new Date().getMonth()]);
-  return filled.split('\n').map((line) => /^Indvending/i.test(line) ? `<span class="obj">${e(line)}</span>` : e(line)).join('\n');
+  const out = filled.split('\n').map((line) => /^(Indvending|Hvis de siger)/i.test(line) ? `<span class="obj">${e(line)}</span>` : e(line)).join('\n');
+  // No name on the lead: the opener is different, so say so before the script.
+  if (!(L.contact && L.contact.name)) {
+    return `<span class="obj">Omstilling: "Hej, det er ${e((me && me.name) || 'os')} fra Vedio. Hvem står for jeres markedsføring - må jeg tale med dem?"</span>\n\n` + out;
+  }
+  return out;
 }
 
 /* ─── Undo ─────────────────────────────────────────────────────────────── */

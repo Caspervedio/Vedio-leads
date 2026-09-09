@@ -321,7 +321,7 @@ async function demoReview(cvr, status) {
 
 /* leads browser */
 let LF = 'ready', LQ = '', LS = '', LP = 1, LT = 0; const SEL = new Set(); let qTimer = null;
-const FILTERS = [['ready', 'Klar at ringe'], ['blocked', 'Holdt tilbage af regler'], ['needs', 'Mangler person/nummer'], ['meta', 'Meta-annoncører'], ['onlists', 'På lister i dag'], ['followups', 'Opfølgninger'], ['demos', 'Demoer'], ['archived', 'Arkiveret'], ['all', 'Alle']];
+const FILTERS = [['ready', 'Klar at ringe'], ['blocked', 'Holdt tilbage af regler'], ['noperson', 'Kun omstilling'], ['needs', 'Mangler nummer'], ['meta', 'Meta-annoncører'], ['onlists', 'På lister i dag'], ['followups', 'Opfølgninger'], ['demos', 'Demoer'], ['archived', 'Arkiveret'], ['all', 'Alle']];
 function setFilter(f) { LF = f; LP = 1; SEL.clear(); leadsReload(); }
 function leadSearch() { clearTimeout(qTimer); qTimer = setTimeout(() => { LQ = $('lq').value.trim(); LP = 1; leadsReload(); }, 250); }
 function fillSources() { const sel = $('lsrc'); const cur = sel.value; const opts = Object.keys(O.sources || {}).sort(); sel.innerHTML = '<option value="">Alle kilder</option>' + opts.map((s) => `<option value="${e(s)}" ${s === cur ? 'selected' : ''}>${e(s)}</option>`).join(''); }
@@ -352,11 +352,12 @@ function statusTag(l) {
   const t = [];
   // "Mangler kontakt" read as "we haven't called them yet". It is about the
   // data on the lead, so name the missing piece.
-  if (!l.callable) t.push(!l.contact
-    ? `<span class="tag warn" title="Vi har ikke fundet en navngiven person hos virksomheden endnu. Berigelsen leder videre; du kan også skrive personen ind i drawer'en.">Mangler person</span>`
-    : `<span class="tag warn" title="Vi har en person, men intet dansk telefonnummer at ringe til.">Mangler nummer</span>`);
+  if (!l.callable) t.push(`<span class="tag warn" title="Der er intet dansk telefonnummer på leadet - hverken hovednummer eller direkte.">Mangler nummer</span>`);
   else if (!l.passesRules) t.push(`<span class="tag warn">Regel</span>`);
   else t.push(`<span class="tag ok">Klar</span>`);
+  // Callable on the main number, but nobody named yet: the SDR rings the
+  // switchboard and asks for the marketing lead.
+  if (l.callable && !l.has_person) t.push(`<span class="tag" title="Vi har et dansk nummer, men ingen navngiven person. SDR'en ringer til omstillingen og spørger efter den marketingansvarlige. Berigelsen leder videre imens.">Omstilling</span>`);
   if (l.claimed_by_name) t.push(`<span class="tag">${e(l.claimed_by_name)} i dag</span>`);
   if (l.callback_at) t.push(`<span class="tag">Opf. ${e(fmtDate(l.callback_at))}</span>`);
   if (l.calls_count) t.push(`<span class="tag">${l.calls_count} opkald</span>`);
