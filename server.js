@@ -8205,40 +8205,72 @@ app.post("/api/cron/describe-companies", async (req, res) => {
   const TARGET_USER = (req.query.userId || "pool").toString();
   const BATCH = Math.max(1, Math.min(60, Number(req.query.batch_size) || 25));
   const CONCURRENCY = Math.max(1, Math.min(6, Number(req.query.concurrency) || 4));
-  const stats = { candidates: 0, tried: 0, described: 0, noSite: 0, errors: 0 };
+  const stats = { candidates: 0, tried: 0, described: 0, fromSite: 0, fromSearch: 0, domainResolved: 0, noSite: 0, errors: 0 };
   const d0 = loadUserData(TARGET_USER);
   const onList = new Set(Object.values(d0.sdr_lists || {}).flatMap((L) => L.cvrs || []));
   const rank = (l) => (onList.has(l.cvr) ? 0 : sdrCallable(l) ? 1 : 2);
+  // No website filter: leads that came from the CVR walk have only a name +
+  // city, and those are exactly the cards that read as a bare company name.
+  // They get a domain resolved (free Apollo company search) or, failing that,
+  // a Google-grounded description from name + city + industry.
+  const RETRY_MS = 21 * 86400e3; // a miss (site down, nothing found) is retried after 3 weeks
   const todo = (d0.leads || [])
-    .filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && (l.web || l.website) && !l.about_at)
+    .filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && !l.about
+      && !(l.about_at && Date.now() - new Date(l.about_at).getTime() < RETRY_MS))
     .sort((a, b) => rank(a) - rank(b) || new Date(b.addedAt || b.discovered_at || 0) - new Date(a.addedAt || a.discovered_at || 0));
   stats.candidates = todo.length;
   const batch = todo.slice(0, BATCH);
-  const out = new Map(); // cvr → about ("" on a miss)
+  const RULES = `Skriv PRÆCIS to korte linjer på dansk om, hvad virksomheden laver: linje 1 = hvad de sælger/tilbyder (konkrete produkter/ydelser), linje 2 = til hvem og hvad der kendetegner dem (fx priser, materialer, kendt for, B2B/B2C). Faktuelt, ingen salgsfloskler, MAX 70 tegn pr. linje (de skal kunne stå på hver sin linje i et smalt kort).`;
+  const twoLines = (v) => String(v || "").replace(/\r/g, "").split("\n").map((s) => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean).slice(0, 2).join("\n").slice(0, 220);
+  const out = new Map(); // cvr → { about, domain }
   for (let i = 0; i < batch.length; i += CONCURRENCY) {
     await Promise.all(batch.slice(i, i + CONCURRENCY).map(async (l) => {
       stats.tried++;
+      let domain = String(l.web || l.website || "").trim();
       try {
-        const site = await fetchHomepageText(l.web || l.website);
-        if (!site || (!site.text && !site.description)) { stats.noSite++; out.set(l.cvr, ""); return; }
-        const prompt = `Du skriver til en dansk sælger, der skal ringe til virksomheden om et sekund. Skriv PRÆCIS to korte linjer på dansk om, hvad virksomheden laver: linje 1 = hvad de sælger/tilbyder (konkrete produkter/ydelser), linje 2 = til hvem og hvad der kendetegner dem (fx priser, materialer, kendt for, B2B/B2C). Faktuelt, ingen salgsfloskler, ingen gæt ud over teksten, MAX 70 tegn pr. linje (de skal kunne stå på hver sin linje i et smalt kort). Svar som JSON: {"about":"linje 1\\nlinje 2"}.
+        // No website on file (CVR-walk leads) → resolve one for free first.
+        if (!domain && l.name && isApolloConfigured()) {
+          const found = await apolloFindCompany({ name: l.name }).catch(() => null);
+          if (found && found.domain) { domain = found.domain; stats.domainResolved++; }
+        }
+        const site = domain ? await fetchHomepageText(domain) : null;
+        if (site && (site.text || site.description)) {
+          const j = await callGemini(`Du skriver til en dansk sælger, der skal ringe til virksomheden om et sekund. ${RULES} Ingen gæt ud over teksten. Svar som JSON: {"about":"linje 1\\nlinje 2"}.
 
 Virksomhed: ${l.name || ""}
-Website: ${l.web || l.website || ""}
+Website: ${domain}
 Titel: ${site.title || ""}
 Meta-beskrivelse: ${site.description || ""}
-Synlig tekst (uddrag): ${site.text || ""}`;
-        const j = await callGemini(prompt);
-        const about = String((j && j.about) || "").replace(/\r/g, "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 2).join("\n").slice(0, 220);
-        out.set(l.cvr, about);
-        if (about) stats.described++;
-      } catch (e) { stats.errors++; out.set(l.cvr, ""); }
+Synlig tekst (uddrag): ${site.text || ""}`);
+          const about = twoLines(j && j.about);
+          if (about) { stats.described++; stats.fromSite++; out.set(l.cvr, { about, domain }); return; }
+        }
+        // No usable site → Google-grounded description from what we do know.
+        stats.noSite++;
+        const r = await callGeminiWithSearch(`Brug Google Search til at finde ud af, hvad den danske virksomhed nedenfor laver. ${RULES} Hvis du ikke med sikkerhed kan finde virksomheden, så svar præcis: UKENDT.
+
+Virksomhed: ${l.name || ""}
+By: ${l.city || ""}
+Branche (CVR): ${l.ind || l.industry || ""}
+CVR: ${/^\d{8}$/.test(String(l.cvr)) ? l.cvr : ""}
+
+Svar KUN med de to linjer (eller UKENDT).`);
+        const txt = String((r && r.text) || "").trim();
+        const about = /UKENDT/i.test(txt.slice(0, 30)) ? "" : twoLines(txt);
+        if (about) { stats.described++; stats.fromSearch++; }
+        out.set(l.cvr, { about, domain });
+      } catch (e) { stats.errors++; out.set(l.cvr, { about: "", domain }); }
     }));
   }
   if (batch.length) {
     const d = loadUserData(TARGET_USER);
     const nowIso = new Date().toISOString();
-    for (const l of d.leads || []) { if (!out.has(l.cvr)) continue; l.about_at = nowIso; const a = out.get(l.cvr); if (a) l.about = a; }
+    for (const l of d.leads || []) {
+      const r = out.get(l.cvr); if (!r) continue;
+      l.about_at = nowIso;
+      if (r.about) l.about = r.about;
+      if (r.domain && !l.web && !l.website) { l.web = r.domain; l.website = r.domain; } // a resolved domain is worth keeping
+    }
     saveUserData(TARGET_USER, d);
   }
   console.log("[describe-companies] done:", JSON.stringify(stats));
