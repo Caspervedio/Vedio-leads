@@ -13446,7 +13446,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13676,7 +13676,7 @@ function buildSdrState(userId, d) {
   // Talk time comes from duration_s on each call (tel: tap → outcome). Only
   // calls that were actually dialled from the tool carry it, so `talkCalls`
   // says how many the average rests on.
-  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0 };
+  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0, researchToday: 0 };
   for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk, onList: (((d.sdr_lists || {})[u.id] || {}).cvrs || []).length };
   const todayCalls = [];
   for (const l of leads) {
@@ -13696,6 +13696,12 @@ function buildSdrState(userId, d) {
         });
       }
     }
+  }
+  // Manual enrichment done from the Research tab today, per SDR.
+  for (const l of leads) {
+    if (!l.research_by || !l.research_at) continue;
+    if (new Date(l.research_at).getTime() < t0.getTime()) continue;
+    const p = per[l.research_by]; if (p) p.researchToday = (p.researchToday || 0) + 1;
   }
   todayCalls.sort((a, b) => new Date(b.at) - new Date(a.at));
   // Commission: {commission_dkk} per QUALIFIED meeting, counted in the month
@@ -13738,6 +13744,7 @@ function buildSdrState(userId, d) {
     followups: followups.map((l) => sdrSlim(l, nameById)),
     demos: demos.map((l) => sdrSlim(l, nameById)),
     todayCalls,
+    research: sdrIsAdmin(userId) ? { remaining: 0, fixedToday: 0 } : sdrResearchStats(d, userId, now),
     // This week's coaching lines from my own debriefs (newest first).
     my_coaching: leads.flatMap((l) => (l.debriefs || []).filter((x) => x.by === userId && x.coaching && new Date(x.at).getTime() >= w0.getTime()).map((x) => ({ at: x.at, lead: l.name, coaching: x.coaching, next_step: x.next_step || "" }))).sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12),
   };
@@ -13874,6 +13881,123 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
   } catch (e) { sdrFail(res, e, "disposition"); }
 });
 // Skip = move to the end of my list (not out of it).
+// ─── Research: the between-calls task ─────────────────────────────────────
+// Leads the automated enrichment could not finish still have value - a human
+// finds the owner's name on the shop's About page in 30 seconds. Casper: "one
+// task for them when they don't call." Highest value first: a lead that only
+// needs a name (we can already dial it) beats one with no number at all, and
+// confirmed Meta advertisers beat the rest.
+const SDR_RESEARCH_SKIP_MS = 90 * 86400e3;   // "kunne ikke findes" rests 90 days
+const SDR_RESEARCH_HOLD_MS = 20 * 60e3;      // soft lock so two SDRs don't collide
+function sdrResearchScore(l) {
+  let s = 0;
+  if (isDkPhone(sdrPhone(l).phone)) s += 100;                       // dialable already - only a name missing
+  if (l.meta_advertiser === true || l.meta_verified_active === true) s += 40;
+  s += Math.min(20, Number(l.adsMatched || 0));
+  if (l.web || l.website) s += 10;                                   // something to research from
+  if ((l.contacts || []).some((c) => c && c.name)) s += 5;
+  return s;
+}
+function sdrResearchNeeds(l) {
+  const person = !sdrHasPerson(l);
+  const phone = !isDkPhone(sdrPhone(l).phone);
+  return { person, phone, any: person || phone };
+}
+function sdrResearchQueue(d, userId, now) {
+  return (d.leads || []).filter((l) => {
+    if (!sdrIsActive(l)) return false;
+    if (l.lastAction === "demo-booked") return false;
+    if (!sdrResearchNeeds(l).any) return false;
+    if (!(l.web || l.website)) return false;                         // nothing to look at
+    if (l.research_skipped_at && now - new Date(l.research_skipped_at).getTime() < SDR_RESEARCH_SKIP_MS) return false;
+    if (l.research_hold_by && l.research_hold_by !== userId && l.research_hold_at && now - new Date(l.research_hold_at).getTime() < SDR_RESEARCH_HOLD_MS) return false;
+    return true;
+  }).sort((a, b) => sdrResearchScore(b) - sdrResearchScore(a) || new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
+}
+function sdrResearchSlim(l) {
+  const needs = sdrResearchNeeds(l);
+  const web = String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return {
+    cvr: l.cvr, name: l.name || "", city: l.city || "", web, about: l.about || "",
+    niche: l.ind || l.industry || l.niche || "", source_label: sdrSourceLabel(l),
+    phone: sdrPhone(l).phone, phone_label: sdrPhone(l).label,
+    contacts: sdrContactList(l),
+    meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, adsMatched: Number(l.adsMatched || 0) },
+    needs_person: needs.person, needs_phone: needs.phone,
+    real_cvr: /^\d{8}$/.test(String(l.cvr || "")) ? l.cvr : "",
+  };
+}
+function sdrResearchStats(d, userId, now) {
+  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  let fixedToday = 0;
+  for (const l of d.leads || []) {
+    if (l.research_by === userId && l.research_at && new Date(l.research_at).getTime() >= t0.getTime()) fixedToday++;
+    void now;
+  }
+  return { remaining: sdrResearchQueue(d, userId, now).length, fixedToday };
+}
+app.get("/api/sdr/research", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now();
+    const q = sdrResearchQueue(d, req.userId, now);
+    const lead = q[0] || null;
+    if (lead) { lead.research_hold_by = req.userId; lead.research_hold_at = new Date(now).toISOString(); sdrTouch(lead); savePool(d); }
+    res.json({ ok: true, lead: lead ? sdrResearchSlim(lead) : null, ...sdrResearchStats(d, req.userId, now) });
+  } catch (e) { sdrFail(res, e, "research"); }
+});
+app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const b = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === b.cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
+    const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    const nowIso = new Date().toISOString(); const changed = [];
+    const mainPhone = str(b.main_phone, 30);
+    if (mainPhone) {
+      if (!isDkPhone(mainPhone)) return res.status(400).json({ error: "Hovednummer skal være et dansk nummer (+45)" });
+      const np = normDkPhone(mainPhone);
+      if (np !== (lead.phone || "")) { lead.phone = np; lead.ph = np; lead.phone_missing = false; lead.phone_source = "sdr-research"; changed.push("hovednummer"); }
+    }
+    const name = str(b.name, 120);
+    if (name) {
+      const phone = str(b.phone, 30);
+      if (phone && !isDkPhone(phone)) return res.status(400).json({ error: "Kontaktens nummer skal være et dansk nummer (+45)" });
+      lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+      let x = lead.contacts.find((y) => y && y.name && y.name.trim().toLowerCase() === name.toLowerCase());
+      if (!x) { x = { name, source_discovery: "sdr-research", addedAt: nowIso, added_by: req.userId }; lead.contacts.unshift(x); changed.push("kontakt"); }
+      else { lead.contacts = [x, ...lead.contacts.filter((y) => y !== x)]; x.editedAt = nowIso; x.edited_by = req.userId; changed.push("kontakt rettet"); }
+      x.name = name;
+      if (str(b.title, 120)) x.title = str(b.title, 120);
+      if (str(b.email, 160)) x.email = str(b.email, 160);
+      if (str(b.linkedin, 300)) x.linkedin = str(b.linkedin, 300);
+      if (phone) { const np = normDkPhone(phone); x.phone = np; x.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; x.source_phone = "sdr-research"; }
+      lead.preferred_contact_name = name;
+    }
+    if (!changed.length) return res.status(400).json({ error: "Udfyld mindst et navn eller et nummer" });
+    if (sdrCallable(lead)) lead.needs_enrichment = false;
+    lead.research_at = nowIso; lead.research_by = req.userId;
+    lead.research_hold_by = null; lead.research_hold_at = null;
+    lead.research_skipped_at = null;
+    sdrTouch(lead, true);
+    savePool(d);
+    logActivity("sdr-research", `${meUser ? meUser.name : req.userId} berigede ${lead.name}: ${changed.join(", ")}`, { cvr: lead.cvr, userId: req.userId });
+    res.json({ ok: true, changed, callable: sdrCallable(lead), ...sdrResearchStats(d, req.userId, Date.now()) });
+  } catch (e) { sdrFail(res, e, "research/save"); }
+});
+app.post("/api/sdr/research/skip", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    lead.research_skipped_at = new Date().toISOString();
+    lead.research_skipped_by = req.userId;
+    lead.research_hold_by = null; lead.research_hold_at = null;
+    sdrTouch(lead);
+    savePool(d);
+    res.json({ ok: true, ...sdrResearchStats(d, req.userId, Date.now()) });
+  } catch (e) { sdrFail(res, e, "research/skip"); }
+});
 // Save a note without ending the call. The note used to live only in the
 // browser until an outcome was picked, so a reload lost it.
 app.post("/api/sdr/note", authMiddleware, (req, res) => {

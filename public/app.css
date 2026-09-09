@@ -199,6 +199,17 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
+/* Research tab - the between-calls task */
+.rshneed{display:flex;align-items:center;gap:8px;margin:12px 0}
+.rshlinks{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:14px}
+.rshform{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.rshform .full{grid-column:1/-1}
+.rshform label{display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:4px}
+.rshform input{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px}
+.rshform input:focus{outline:none;border-color:var(--violet);background:var(--white)}
+.rshhelp p{font-size:13px;color:var(--txt-soft);line-height:1.55;margin-bottom:10px}
+.rshhelp p:last-child{margin-bottom:0}
+@media (max-width:760px){.rshform{grid-template-columns:1fr}}
 .noterow{display:flex;align-items:center;gap:12px;margin:-6px 0 14px}
 .noterow .sub{font-size:12.5px;color:var(--txt-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* admin: one editable mail template */

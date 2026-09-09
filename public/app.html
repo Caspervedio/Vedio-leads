@@ -42,6 +42,7 @@
       <button data-tab="ring" onclick="showTab('ring')">Opkald</button>
       <button data-tab="followups" onclick="showTab('followups')">Opfølgning<span class="n" id="n-fu">0</span></button>
       <button data-tab="results" onclick="showTab('results')">Resultater<span class="n" id="n-res">0</span></button>
+      <button data-tab="research" onclick="showTab('research')">Research<span class="n" id="n-rsh">0</span></button>
     </nav>
     <div class="hright">
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
@@ -101,6 +102,21 @@
   </section>
 
   <!-- ─── RESULTATER ───────────────────────────────────────────────────── -->
+  <!-- ─── RESEARCH (opgaven mellem opkaldene) ──────────────────────────── -->
+  <section id="view-research" class="view">
+    <div class="ring">
+      <div id="rshwrap"></div>
+      <aside class="side">
+        <div class="box"><h4>Sådan gør du</h4><div class="rshhelp">
+          <p>Her ligger de leads, systemet ikke kunne færdiggøre. Find navnet på ejeren eller den marketingansvarlige - og et dansk nummer, hvis der mangler et.</p>
+          <p><b>Hurtigste vej:</b> åbn shoppen, kig på "Om os" / "Kontakt". Ellers LinkedIn eller CVR.</p>
+          <p>Kan du ikke finde noget på et par minutter, så tryk <b>Kunne ikke findes</b> og gå videre. Leadet kommer ikke igen foreløbig.</p>
+          <p>Alt du gemmer, ryger direkte i puljen - også til den anden SDR.</p>
+        </div></div>
+      </aside>
+    </div>
+  </section>
+
   <section id="view-results" class="view">
     <div class="pay" id="pay" hidden></div>
     <div class="tiles" id="tiles"></div>
@@ -204,6 +220,13 @@ async function loadState({ keepCurrent = false } = {}) {
   S = d; me = d.me || me;
   renderAll({ keepCurrent: keepCurrent && S.current && S.current.cvr === prevCvr, prevNote });
 }
+async function get(path) {
+  const r = await fetch(path, { headers: ah() });
+  if (r.status === 401) { logout(); throw new Error('Logget ud'); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
 async function post(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { ...ah(), 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const d = await r.json().catch(() => ({}));
@@ -260,6 +283,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('n-list').textContent = st.listRemaining || 0; $('n-list').classList.toggle('due', (st.followupsDue || 0) > 0);
   $('n-fu').textContent = (S.followups || []).length;
   $('n-res').textContent = (S.todayCalls || []).length;
+  if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; const nr = $('n-rsh'); if (nr) nr.textContent = S.research.remaining || 0; }
   renderList();
   if (!keepCurrent) renderCard(); else if ($('note')) $('note').value = prevNote;
   renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday();
@@ -819,6 +843,82 @@ function showTab(id) {
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id));
   try { localStorage.setItem('vl_tab', id); } catch {}
+  if (id === 'research' && !RSH.lead) rshLoad();
+}
+
+/* ─── Research: fill the gaps the automated enrichment left ───────────────
+   One lead at a time with the links to look it up, and a form that writes
+   straight back into the shared pool. */
+let RSH = { lead: null, remaining: 0, fixedToday: 0, busy: false };
+async function rshLoad() {
+  if (RSH.busy) return; RSH.busy = true;
+  $('rshwrap').innerHTML = `<div class="card empty"><h3>Henter…</h3></div>`;
+  try { const d = await get('/api/sdr/research'); RSH.lead = d.lead; RSH.remaining = d.remaining; RSH.fixedToday = d.fixedToday; }
+  catch (ex) { $('rshwrap').innerHTML = `<div class="card empty"><h3>Kunne ikke hente</h3><div>${e(ex.message)}</div></div>`; RSH.busy = false; return; }
+  RSH.busy = false; renderResearch();
+}
+function renderResearch() {
+  const n = $('n-rsh'); if (n) n.textContent = RSH.remaining || 0;
+  const L = RSH.lead;
+  if (!L) {
+    $('rshwrap').innerHTML = `<div class="card empty"><h3>Alt er beriget.</h3><div>Der er ikke flere leads at researche lige nu. Godt gået${RSH.fixedToday ? ` - du har klaret ${RSH.fixedToday} i dag` : ''}.</div></div>`;
+    return;
+  }
+  const site = L.web ? 'https://' + L.web : '';
+  const q = encodeURIComponent(L.name || '');
+  $('rshwrap').innerHTML = `
+  <div class="card">
+    <div class="kicker violet" style="margin-bottom:10px">${RSH.remaining} tilbage${RSH.fixedToday ? ` · ${RSH.fixedToday} klaret i dag` : ''}</div>
+    <div class="co">
+      <div>
+        <h2>${e(L.name || '-')}</h2>
+        <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${L.web ? `<span>·</span><a href="${e(site)}" target="_blank" rel="noopener">${e(L.web)}</a>` : ''}${L.niche ? `<span>·</span><span>${e(L.niche)}</span>` : ''}</div>
+      </div>
+      ${L.meta.advertiser ? `<span class="proof quiet"><span class="shape"></span>${L.meta.adsMatched > 0 ? L.meta.adsMatched + ' Meta-annoncer' : 'Meta-annoncør'}</span>` : ''}
+    </div>
+    ${L.about ? `<p class="about">${e(L.about)}</p>` : ''}
+    <div class="rshneed">${L.needs_person ? '<span class="chip due sm">Mangler person</span>' : ''}${L.needs_phone ? '<span class="chip retry sm">Mangler nummer</span>' : ''}${!L.needs_phone ? `<span class="sub">Har nummer: ${e(fmtPhone(L.phone))}</span>` : ''}</div>
+    <div class="rshlinks">
+      ${site ? `<a class="pill sm" href="${e(site)}" target="_blank" rel="noopener">Shoppen ↗</a>
+      <a class="pill sm" href="${e(site)}/pages/about" target="_blank" rel="noopener">Om os ↗</a>
+      <a class="pill sm" href="${e(site)}/pages/contact" target="_blank" rel="noopener">Kontakt ↗</a>` : ''}
+      <a class="pill sm" href="https://www.linkedin.com/search/results/people/?keywords=${q}" target="_blank" rel="noopener">LinkedIn ↗</a>
+      ${L.real_cvr ? `<a class="pill sm" href="https://datacvr.virk.dk/enhed/virksomhed/${e(L.real_cvr)}" target="_blank" rel="noopener">CVR ↗</a>` : ''}
+      <a class="pill sm" href="https://www.google.com/search?q=${q}+ejer+OR+indehaver+OR+direkt%C3%B8r" target="_blank" rel="noopener">Google ↗</a>
+    </div>
+    ${(L.contacts || []).length ? `<div class="others"><span class="k">Kendte navne</span>${L.contacts.map((c) => `<span class="pill sm tertiary">${e(c.name)}${c.title ? ' · ' + e(c.title) : ''}</span>`).join('')}</div>` : ''}
+    <div class="rshform">
+      <div><label>Navn</label><input id="r-name" placeholder="fx Mette Jensen" autocomplete="off"></div>
+      <div><label>Titel</label><input id="r-title" placeholder="Ejer, direktør, marketing…" autocomplete="off"></div>
+      <div><label>Direkte nummer</label><input id="r-phone" placeholder="+45 …" autocomplete="off"></div>
+      <div><label>Email</label><input id="r-email" type="email" placeholder="navn@firma.dk" autocomplete="off"></div>
+      ${L.needs_phone ? `<div class="full"><label>Hovednummer (firmaets)</label><input id="r-main" placeholder="+45 …" autocomplete="off"></div>` : ''}
+      <div class="full"><label>LinkedIn-profil (valgfri)</label><input id="r-li" placeholder="https://www.linkedin.com/in/…" autocomplete="off"></div>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:14px">
+      <button class="pill primary" onclick="rshSave()">Gem og næste</button>
+      <button class="pill sm tertiary" onclick="rshSkip()">Kunne ikke findes</button>
+      <button class="pill sm tertiary" onclick="rshLoad()" style="margin-left:auto">Spring over</button>
+    </div>
+    <div class="sub" id="r-msg" style="margin-top:8px"></div>
+  </div>`;
+}
+async function rshSave() {
+  const L = RSH.lead; if (!L || RSH.busy) return;
+  const v = (id) => ($(id) ? $(id).value.trim() : '');
+  if (!v('r-name') && !v('r-main') && !v('r-phone')) { toast('Udfyld et navn eller et nummer'); return; }
+  RSH.busy = true; $('r-msg').textContent = 'Gemmer…';
+  try {
+    const d = await post('/api/sdr/research/save', { cvr: L.cvr, name: v('r-name'), title: v('r-title'), phone: v('r-phone'), email: v('r-email'), linkedin: v('r-li'), main_phone: v('r-main') });
+    toast(d.callable ? '✓ Gemt - leadet kan nu ringes op' : '✓ Gemt', 3000);
+    RSH.busy = false; await rshLoad();
+  } catch (ex) { RSH.busy = false; $('r-msg').textContent = ''; toast('Fejl: ' + ex.message, 4000); }
+}
+async function rshSkip() {
+  const L = RSH.lead; if (!L || RSH.busy) return;
+  RSH.busy = true;
+  try { await post('/api/sdr/research/skip', { cvr: L.cvr }); RSH.busy = false; await rshLoad(); }
+  catch (ex) { RSH.busy = false; toast('Fejl: ' + ex.message, 4000); }
 }
 function openSettings() {
   const s = (S && S.settings) || {};
@@ -878,7 +978,7 @@ async function boot() {
   if (goAdmin && isAdminUser(me)) { location.replace('/admin'); return; }
   $('login').hidden = true; $('app').hidden = false;
   let tab = 'list'; try { tab = localStorage.getItem('vl_tab') || 'list'; } catch {}
-  if (!['list', 'ring', 'followups', 'results'].includes(tab)) tab = 'list';
+  if (!['list', 'ring', 'followups', 'results', 'research'].includes(tab)) tab = 'list';
   showTab(tab);
   gmailProbe();
   await loadState();
