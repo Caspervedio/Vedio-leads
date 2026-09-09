@@ -8214,9 +8214,10 @@ app.post("/api/cron/describe-companies", async (req, res) => {
   // They get a domain resolved (free Apollo company search) or, failing that,
   // a Google-grounded description from name + city + industry.
   const RETRY_MS = 21 * 86400e3; // a miss (site down, nothing found) is retried after 3 weeks
+  const FORCE = req.query.force === "1"; // ignore that window — after a fix to the describe path
   const todo = (d0.leads || [])
     .filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && !l.about
-      && !(l.about_at && Date.now() - new Date(l.about_at).getTime() < RETRY_MS))
+      && !(!FORCE && l.about_at && Date.now() - new Date(l.about_at).getTime() < RETRY_MS))
     .sort((a, b) => rank(a) - rank(b) || new Date(b.addedAt || b.discovered_at || 0) - new Date(a.addedAt || a.discovered_at || 0));
   stats.candidates = todo.length;
   const batch = todo.slice(0, BATCH);
