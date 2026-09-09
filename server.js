@@ -14602,18 +14602,130 @@ function gmailRaw({ from, fromName, to, subject, body }) {
   ];
   return b64url(lines.join("\r\n"));
 }
+// ── Per-user Gmail: each SDR connects their own account once ───────────────
+// Casper: "they need to login with their own G-mails - so make it a setup
+// setting in their profiles." Standard OAuth2 authorisation-code flow with a
+// refresh token stored per user. Domain-wide delegation (above) stays as a
+// silent fallback if it is ever configured, but the connect button is the
+// path we tell people to use.
+const GMAIL_TOKENS_FILE = path.join(DATA_DIR, "gmail_tokens.json");
+function loadGmailTokens() { try { return JSON.parse(fs.readFileSync(GMAIL_TOKENS_FILE, "utf8")); } catch { return {}; } }
+function saveGmailTokens(t) { try { fs.writeFileSync(GMAIL_TOKENS_FILE, JSON.stringify(t, null, 2)); } catch (e) { console.warn("[gmail] save tokens:", e.message); } }
+// The secrets exist with a placeholder so the Cloud Run mount works before
+// Casper has created the OAuth client; treat that placeholder as "not set".
+const gmailReal = (v) => { const s = String(v || "").trim(); return s && s !== "ikke-sat-endnu" ? s : ""; };
+function gmailOauthConfigured() { return !!(gmailReal(process.env.GOOGLE_OAUTH_CLIENT_ID) && gmailReal(process.env.GOOGLE_OAUTH_CLIENT_SECRET)); }
+function gmailRedirectUri(req) {
+  if (process.env.GMAIL_REDIRECT_URI) return process.env.GMAIL_REDIRECT_URI;
+  const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0];
+  return `${proto}://${req.headers.host}/api/sdr/gmail/callback`;
+}
+// Signed state so the callback can't be forged or replayed onto another user.
+function gmailState(userId) {
+  const payload = b64url(JSON.stringify({ u: userId, t: Date.now() }));
+  return `${payload}.${crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url")}`;
+}
+function gmailStateVerify(state) {
+  const [payload, sig] = String(state || "").split(".");
+  if (!payload || !sig) return null;
+  const expect = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
+  try {
+    const p = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!p.u || Date.now() - p.t > 15 * 60e3) return null;
+    return p.u;
+  } catch { return null; }
+}
+// Trade the stored refresh token for a short-lived access token.
+async function gmailUserAccessToken(userId) {
+  const rec = loadGmailTokens()[userId];
+  if (!rec || !rec.refresh_token) return null;
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID, client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      refresh_token: rec.refresh_token, grant_type: "refresh_token",
+    }).toString(),
+  });
+  const j = await r.json();
+  if (!r.ok || !j.access_token) {
+    // Revoked or expired: drop it so the UI asks them to reconnect.
+    if (/invalid_grant/i.test(j.error || "")) { const t = loadGmailTokens(); delete t[userId]; saveGmailTokens(t); }
+    throw new Error(j.error_description || j.error || `token ${r.status}`);
+  }
+  return { token: j.access_token, email: rec.email };
+}
+app.get("/api/sdr/gmail/connect", authMiddleware, (req, res) => {
+  try {
+    if (!gmailOauthConfigured()) return res.status(503).json({ error: "Gmail er ikke sat op endnu - admin skal tilføje OAuth-nøglerne" });
+    const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      redirect_uri: gmailRedirectUri(req),
+      response_type: "code",
+      scope: `${GMAIL_SCOPE} https://www.googleapis.com/auth/userinfo.email`,
+      access_type: "offline",
+      prompt: "consent",
+      include_granted_scopes: "true",
+      state: gmailState(req.userId),
+    }).toString();
+    res.json({ ok: true, url });
+  } catch (e) { sdrFail(res, e, "gmail/connect"); }
+});
+// Google redirects the browser here. No auth header on this hop - the signed
+// state carries the user, which is why it is HMAC'd and short-lived.
+app.get("/api/sdr/gmail/callback", async (req, res) => {
+  const done = (msg, ok) => res.redirect(`/?gmail=${ok ? "ok" : "fejl"}&msg=${encodeURIComponent(msg)}`);
+  try {
+    if (req.query.error) return done(String(req.query.error), false);
+    const userId = gmailStateVerify(req.query.state);
+    if (!userId) return done("Linket er udløbet - prøv igen", false);
+    const r = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(req.query.code || ""), client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+        client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET, redirect_uri: gmailRedirectUri(req),
+        grant_type: "authorization_code",
+      }).toString(),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.access_token) return done(j.error_description || j.error || "kunne ikke forbinde", false);
+    let email = "";
+    try {
+      const ui = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { headers: { Authorization: `Bearer ${j.access_token}` } });
+      if (ui.ok) email = (await ui.json()).email || "";
+    } catch (_) {}
+    const tokens = loadGmailTokens();
+    // Google only returns a refresh token on first consent; keep the old one
+    // if this was a re-consent that omitted it.
+    const prev = tokens[userId] || {};
+    tokens[userId] = { refresh_token: j.refresh_token || prev.refresh_token || "", email: email || prev.email || "", connected_at: new Date().toISOString() };
+    if (!tokens[userId].refresh_token) return done("Google gav ingen refresh-token - prøv igen", false);
+    saveGmailTokens(tokens);
+    logActivity("sdr-mail", `${userId} forbandt Gmail (${tokens[userId].email})`, { userId });
+    done(tokens[userId].email || "forbundet", true);
+  } catch (e) { console.error("[gmail/callback]", e); done(e.message, false); }
+});
+app.post("/api/sdr/gmail/disconnect", authMiddleware, (req, res) => {
+  try {
+    const t = loadGmailTokens(); delete t[req.userId]; saveGmailTokens(t);
+    res.json({ ok: true });
+  } catch (e) { sdrFail(res, e, "gmail/disconnect"); }
+});
 app.get("/api/sdr/gmail/status", authMiddleware, async (req, res) => {
   try {
     const users = loadUsers(); const me = users.find((u) => u.id === req.userId);
-    const email = me && me.email;
-    let signer = null; try { signer = await gmailSignerEmail(); } catch (_) {}
-    if (!email || !signer) return res.json({ ok: true, ready: false, reason: "ikke konfigureret", signer });
-    try {
-      await gmailAccessToken(email);
-      res.json({ ok: true, ready: true, email, signer });
-    } catch (e) {
-      res.json({ ok: true, ready: false, email, signer, reason: e.message });
+    const rec = loadGmailTokens()[req.userId];
+    const out = { ok: true, ready: false, configured: gmailOauthConfigured(), connected: !!(rec && rec.refresh_token), email: (rec && rec.email) || "" };
+    if (out.connected) {
+      try { await gmailUserAccessToken(req.userId); out.ready = true; return res.json(out); }
+      catch (e) { out.connected = false; out.reason = "Forbindelsen er udløbet - forbind igen"; return res.json(out); }
     }
+    // Fallback: domain-wide delegation, if it was ever configured.
+    if (me && me.email) {
+      try { await gmailAccessToken(me.email); return res.json({ ...out, ready: true, email: me.email, via: "delegation" }); }
+      catch (e) { out.reason = out.reason || (out.configured ? "Ikke forbundet endnu" : "Gmail er ikke sat op endnu"); }
+    }
+    res.json(out);
   } catch (e) { sdrFail(res, e, "gmail/status"); }
 });
 app.post("/api/sdr/gmail/send", authMiddleware, async (req, res) => {
@@ -14626,15 +14738,22 @@ app.post("/api/sdr/gmail/send", authMiddleware, async (req, res) => {
     const body = String(b.body || "").slice(0, 20000);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: "Ugyldig modtageradresse" });
     if (!subject || !body) return res.status(400).json({ error: "Emne og besked skal udfyldes" });
-    const token = await gmailAccessToken(me.email);
+    // The SDR's own connected account first; delegation only as a fallback.
+    let token = null, from = me.email;
+    const conn = await gmailUserAccessToken(req.userId).catch(() => null);
+    if (conn) { token = conn.token; from = conn.email || me.email; }
+    else {
+      try { token = await gmailAccessToken(me.email); }
+      catch (e) { return res.status(412).json({ error: "Din Gmail er ikke forbundet - gør det under Indstillinger" }); }
+    }
     const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ raw: gmailRaw({ from: me.email, fromName: me.name, to, subject, body }) }),
+      body: JSON.stringify({ raw: gmailRaw({ from, fromName: me.name, to, subject, body }) }),
     });
     const j = await r.json();
     if (!r.ok) return res.status(502).json({ error: `Gmail: ${(j.error && j.error.message) || r.status}` });
     logActivity("sdr-mail", `${me.name} sendte mail til ${to}`, { userId: req.userId, cvr: b.cvr || null });
-    res.json({ ok: true, id: j.id, from: me.email });
+    res.json({ ok: true, id: j.id, from });
   } catch (e) { sdrFail(res, e, "gmail/send"); }
 });
 // Admin debug: run a Datafordeler GraphQL query from prod (the only IP on

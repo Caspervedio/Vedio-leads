@@ -199,6 +199,8 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
+.gmailbox{border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px}
+.gmailbox .sub{color:var(--txt-soft);font-size:13px}
 /* Research tab - the between-calls task */
 .rshneed{display:flex;align-items:center;gap:8px;margin:12px 0}
 .rshlinks{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:14px}
