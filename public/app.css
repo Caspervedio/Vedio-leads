@@ -199,6 +199,8 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
+.noterow{display:flex;align-items:center;gap:12px;margin:-6px 0 14px}
+.noterow .sub{font-size:12.5px;color:var(--txt-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* admin: one editable mail template */
 .mailtpl{border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:10px;background:var(--paper);display:grid;gap:8px}
 .mailtpl textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13px;line-height:1.5;resize:vertical}

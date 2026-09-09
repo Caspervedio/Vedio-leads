@@ -145,7 +145,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Per SDR</h3><p>Hver SDR har sin egen liste, der altid fyldes op fra den fælles pulje. I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder.</p></div></div>
-      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Afventer</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num">Opkald i dag</th><th class="num" title="Samlet tid fra der trykkes Ring op til der vælges et udfald. Tæller kun opkald, der er ringet fra værktøjet.">Taletid i dag</th><th class="num" title="Taletid delt med antal opkald, der har en varighed.">Snit pr. opkald</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Afventer</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
@@ -232,6 +232,13 @@ function fmtPhone(p) { const d = String(p || '').replace(/[^0-9+]/g, ''); if (/^
 function fmtWhen(iso) { if (!iso) return ''; const d = new Date(iso), now = new Date(); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); if (d.toDateString() === now.toDateString()) return 'I dag ' + hm; return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }) + ' ' + hm; }
 function fmtDate(iso) { if (!iso) return '-'; return new Date(iso).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }); }
 function fmtKr(n) { return (Number(n) || 0).toLocaleString('da-DK') + ' kr'; }
+function fmtDur(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if (!s) return '-';
+  if (s < 60) return s + 's';
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  return h ? `${h}t ${String(m).padStart(2, '0')}m` : `${Math.floor(s / 60)}m`;
+}
 const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer' };
 
 /* auth */
@@ -259,11 +266,12 @@ function renderOverview() {
   $('tiles').innerHTML = [
     ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Opkald denne uge', t.callsWeek], ['Konvertering · uge', t.convWeekPct + '%'], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
   ].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
-  $('tb-sdr').innerHTML = (O.perUser || []).length ? O.perUser.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.onList || 0}</td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}</td><td class="num">${u.demosPendingMonth || 0}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="9">Ingen SDR-aktivitet endnu.</td></tr>`;
+  $('tb-sdr').innerHTML = (O.perUser || []).length ? O.perUser.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.onList || 0}</td><td class="num">${u.callsToday || 0}</td><td class="num">${fmtDur(u.talkTodaySec)}</td><td class="num">${u.talkCallsToday ? fmtDur(Math.round(u.talkTodaySec / u.talkCallsToday)) : '-'}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}</td><td class="num">${u.demosPendingMonth || 0}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="11">Ingen SDR-aktivitet endnu.</td></tr>`;
   const days = O.days || [];
   const dl = (k) => { const d = new Date(k); return ['S', 'M', 'T', 'O', 'T', 'F', 'L'][d.getDay()] + ' ' + d.getDate(); };
   $('trend').innerHTML = `<div class="lbl">Opkald</div>${days.map((d) => `<div class="d"><div class="v ${d.calls ? '' : 'zero'}">${d.calls}</div></div>`).join('')}
     <div class="lbl">Demoer</div>${days.map((d) => `<div class="d"><div class="v ${d.demos ? 'demo' : 'zero'}">${d.demos}</div></div>`).join('')}
+    <div class="lbl">Taletid</div>${days.map((d) => `<div class="d"><div class="v ${d.talkSec ? '' : 'zero'}" title="${d.talkCalls || 0} opkald med varighed">${d.talkSec ? fmtDur(d.talkSec) : '-'}</div></div>`).join('')}
     <div class="lbl">Nye leads</div>${days.map((d) => `<div class="d"><div class="v ${d.newLeads ? 'new' : 'zero'}">${d.newLeads}</div>${dl(d.day)}</div>`).join('')}`;
   $('pooltiles').innerHTML = [['ready', 'klar at ringe'], ['metaReady', 'heraf Meta'], ['onLists', 'på lister'], ['followupsOpen', 'opfølgninger'], ['needs', 'ikke klar endnu'], ['blockedByRules', 'holdt af regler'], ['archived', 'arkiveret'], ['total', 'i alt']]
     .map(([k, l]) => `<div class="subtile"><b>${p[k] ?? 0}</b><span>${l}</span></div>`).join('');

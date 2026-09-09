@@ -13446,7 +13446,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13556,7 +13556,7 @@ function sdrSlim(l, nameById) {
     source_label: sdrSourceLabel(l),
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
-    last_note: l.last_note || "",
+    last_note: l.last_note || "", note_saved_at: l.note_saved_at || null,
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
@@ -13673,16 +13673,23 @@ function buildSdrState(userId, d) {
   const t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const w0 = new Date(t0); w0.setDate(t0.getDate() - ((t0.getDay() + 6) % 7)); // Monday
   const per = {};
-  for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, onList: (((d.sdr_lists || {})[u.id] || {}).cvrs || []).length };
+  // Talk time comes from duration_s on each call (tel: tap → outcome). Only
+  // calls that were actually dialled from the tool carry it, so `talkCalls`
+  // says how many the average rests on.
+  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0 };
+  for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk, onList: (((d.sdr_lists || {})[u.id] || {}).cvrs || []).length };
   const todayCalls = [];
   for (const l of leads) {
     for (const c of (l.calls || [])) {
       const at = new Date(c.at).getTime(); if (!(at >= w0.getTime())) continue;
-      const p = per[c.by] || (per[c.by] = { id: c.by, name: nameById[c.by] || c.by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0 });
+      const p = per[c.by] || (per[c.by] = { id: c.by, name: nameById[c.by] || c.by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk });
       const isDemo = c.action === "demo-booked";
+      const secs = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0;
       p.callsWeek++; if (isDemo) p.demosWeek++;
+      if (secs) { p.talkWeekSec += secs; p.talkCallsWeek++; }
       if (at >= t0.getTime()) {
         p.callsToday++; if (isDemo) p.demosToday++;
+        if (secs) { p.talkTodaySec += secs; p.talkCallsToday++; }
         todayCalls.push({
           at: c.at, by: c.by, by_name: nameById[c.by] || c.by, action: c.action, note: c.note || "", callback_at: c.callback_at || null, duration_s: c.duration_s || null,
           cvr: l.cvr, name: l.name || "", city: l.city || "", phone: sdrPhone(l).phone, contact: (sdrPrimaryContact(l) || {}).name || "",
@@ -13735,7 +13742,7 @@ function buildSdrState(userId, d) {
     my_coaching: leads.flatMap((l) => (l.debriefs || []).filter((x) => x.by === userId && x.coaching && new Date(x.at).getTime() >= w0.getTime()).map((x) => ({ at: x.at, lead: l.name, coaching: x.coaching, next_step: x.next_step || "" }))).sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12),
   };
 }
-function sdrRespond(res, userId, d) { res.json({ ok: true, state: buildSdrState(userId, d) }); }
+function sdrRespond(res, userId, d, extra) { res.json({ ok: true, ...(extra || {}), state: buildSdrState(userId, d) }); }
 function sdrFail(res, e, where) { console.error(`[sdr/${where}]`, e); res.status(500).json({ error: e.message }); }
 
 // Daily snapshot of the single-file pool → DATA_DIR/backup/pool-YYYY-MM-DD.json
@@ -13867,6 +13874,27 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
   } catch (e) { sdrFail(res, e, "disposition"); }
 });
 // Skip = move to the end of my list (not out of it).
+// Save a note without ending the call. The note used to live only in the
+// browser until an outcome was picked, so a reload lost it.
+app.post("/api/sdr/note", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const { cvr } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const note = String((req.body || {}).note || "").trim().slice(0, 2000);
+    if (!note) return res.status(400).json({ error: "Tom note" });
+    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
+    const nowIso = new Date().toISOString();
+    const stamp = new Date().toLocaleString("da-DK", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    lead.last_note = note;
+    lead.note_saved_at = nowIso;
+    lead.note_saved_by = req.userId;
+    lead.notes = (lead.notes ? lead.notes + "\n" : "") + `[${stamp} ${meUser ? meUser.name : req.userId}] ${note}`;
+    sdrTouch(lead);
+    savePool(d);
+    sdrRespond(res, req.userId, d, { saved_at: nowIso });
+  } catch (e) { sdrFail(res, e, "note"); }
+});
 app.post("/api/sdr/skip", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const now = Date.now(); const { cvr, note } = req.body || {};
@@ -14089,11 +14117,11 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const days = sdrDayKeys(14, now);
     // newCallable = added that day AND callable today. That is the real
     // intake number: raw leads are cheap, callable ones are the bottleneck.
-    const byDay = Object.fromEntries(days.map((k) => [k, { calls: 0, demos: 0, newLeads: 0, newCallable: 0 }]));
+    const byDay = Object.fromEntries(days.map((k) => [k, { calls: 0, demos: 0, newLeads: 0, newCallable: 0, talkSec: 0, talkCalls: 0 }]));
     const intakeBySource = {};
     for (const l of leads) {
       if (l.addedAt) { const k = sdrDayKey(l.addedAt); if (byDay[k]) { byDay[k].newLeads++; if (sdrCallable(l)) byDay[k].newCallable++; const s = sdrSourceLabel(l) || "ukendt"; intakeBySource[s] = (intakeBySource[s] || 0) + 1; } }
-      for (const c of (l.calls || [])) { const k = sdrDayKey(c.at); if (byDay[k]) { byDay[k].calls++; if (c.action === "demo-booked") byDay[k].demos++; } }
+      for (const c of (l.calls || [])) { const k = sdrDayKey(c.at); if (byDay[k]) { byDay[k].calls++; if (c.action === "demo-booked") byDay[k].demos++; const s = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0; if (s) { byDay[k].talkSec += s; byDay[k].talkCalls++; } } }
     }
     const active = leads.filter(sdrIsActive);
     const ready = active.filter((l) => l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, settings));
@@ -14369,6 +14397,122 @@ app.post("/api/sdr/contact/select", authMiddleware, (req, res) => {
 });
 // Admin "Se som <SDR>": a session token per SDR so the admin can open the SDR
 // app as that user in a new tab (/#imp=<token>, tab-scoped on the client).
+// ─── Gmail (send as the SDR's own vedio.dk address) ───────────────────────
+// Domain-wide delegation: the Cloud Run service account is authorised once in
+// the Workspace admin console for gmail.send, then impersonates each SDR. No
+// per-user consent screen, no refresh tokens to store, and the mail lands in
+// that SDR's own Sent folder so replies come back to them.
+//
+// Signing the assertion, in order of preference:
+//   1. GMAIL_SA_KEY  - a service-account JSON key (sign locally, no IAM setup)
+//   2. IAM Credentials signJwt on the runtime SA (keyless; needs the SA to
+//      hold roles/iam.serviceAccountTokenCreator on itself)
+// Either way Casper must paste the SA's client id + the gmail.send scope into
+// admin.google.com → Security → Access and data control → API controls →
+// Domain-wide delegation. Until that is done, /status reports not-ready and
+// the app falls back to opening the draft in the SDR's mail client.
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function gmailSaKey() {
+  const raw = process.env.GMAIL_SA_KEY;
+  if (!raw) return null;
+  try { const k = JSON.parse(raw); return (k.client_email && k.private_key) ? k : null; } catch { return null; }
+}
+async function metadata(pathname) {
+  const r = await fetch(`http://metadata.google.internal/computeMetadata/v1/${pathname}`, { headers: { "Metadata-Flavor": "Google" } });
+  if (!r.ok) throw new Error(`metadata ${pathname}: ${r.status}`);
+  return r.text();
+}
+// The identity we impersonate FROM. Key file wins; else the runtime SA.
+async function gmailSignerEmail() {
+  const k = gmailSaKey(); if (k) return k.client_email;
+  if (process.env.GMAIL_SA_EMAIL) return process.env.GMAIL_SA_EMAIL;
+  return metadata("instance/service-accounts/default/email");
+}
+async function gmailSignJwt(claims) {
+  const key = gmailSaKey();
+  const header = { alg: "RS256", typ: "JWT" };
+  if (key) {
+    const input = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
+    const sig = crypto.createSign("RSA-SHA256").update(input).end().sign(key.private_key);
+    return `${input}.${b64url(sig)}`;
+  }
+  // Keyless: ask IAM Credentials to sign it as the runtime service account.
+  const sa = await gmailSignerEmail();
+  const token = JSON.parse(await metadata("instance/service-accounts/default/token")).access_token;
+  const r = await fetch(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(sa)}:signJwt`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ payload: JSON.stringify(claims) }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(`signJwt: ${(j.error && j.error.message) || r.status}`);
+  return j.signedJwt;
+}
+async function gmailAccessToken(userEmail) {
+  const iat = Math.floor(Date.now() / 1000);
+  const assertion = await gmailSignJwt({
+    iss: await gmailSignerEmail(), sub: userEmail, scope: GMAIL_SCOPE,
+    aud: "https://oauth2.googleapis.com/token", iat, exp: iat + 3600,
+  });
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }).toString(),
+  });
+  const j = await r.json();
+  if (!r.ok || !j.access_token) throw new Error(`token: ${j.error_description || j.error || r.status}`);
+  return j.access_token;
+}
+// RFC 2822 with the headers Danish text needs (encoded-word subject, base64 body).
+function gmailRaw({ from, fromName, to, subject, body }) {
+  const enc = (s) => `=?UTF-8?B?${Buffer.from(String(s), "utf8").toString("base64")}?=`;
+  const lines = [
+    `From: ${fromName ? `${enc(fromName)} <${from}>` : from}`,
+    `To: ${to}`,
+    `Subject: ${enc(subject)}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(String(body), "utf8").toString("base64").replace(/(.{76})/g, "$1\r\n"),
+  ];
+  return b64url(lines.join("\r\n"));
+}
+app.get("/api/sdr/gmail/status", authMiddleware, async (req, res) => {
+  try {
+    const users = loadUsers(); const me = users.find((u) => u.id === req.userId);
+    const email = me && me.email;
+    let signer = null; try { signer = await gmailSignerEmail(); } catch (_) {}
+    if (!email || !signer) return res.json({ ok: true, ready: false, reason: "ikke konfigureret", signer });
+    try {
+      await gmailAccessToken(email);
+      res.json({ ok: true, ready: true, email, signer });
+    } catch (e) {
+      res.json({ ok: true, ready: false, email, signer, reason: e.message });
+    }
+  } catch (e) { sdrFail(res, e, "gmail/status"); }
+});
+app.post("/api/sdr/gmail/send", authMiddleware, async (req, res) => {
+  try {
+    const users = loadUsers(); const me = users.find((u) => u.id === req.userId);
+    if (!me || !me.email) return res.status(400).json({ error: "Din bruger mangler en mailadresse" });
+    const b = req.body || {};
+    const to = String(b.to || "").trim();
+    const subject = String(b.subject || "").trim().slice(0, 300);
+    const body = String(b.body || "").slice(0, 20000);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: "Ugyldig modtageradresse" });
+    if (!subject || !body) return res.status(400).json({ error: "Emne og besked skal udfyldes" });
+    const token = await gmailAccessToken(me.email);
+    const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ raw: gmailRaw({ from: me.email, fromName: me.name, to, subject, body }) }),
+    });
+    const j = await r.json();
+    if (!r.ok) return res.status(502).json({ error: `Gmail: ${(j.error && j.error.message) || r.status}` });
+    logActivity("sdr-mail", `${me.name} sendte mail til ${to}`, { userId: req.userId, cvr: b.cvr || null });
+    res.json({ ok: true, id: j.id, from: me.email });
+  } catch (e) { sdrFail(res, e, "gmail/send"); }
+});
 // Admin debug: run a Datafordeler GraphQL query from prod (the only IP on
 // the registry's allow-list). Used to probe entities / match rules.
 app.post("/api/sdr/admin/df-probe", authMiddleware, async (req, res) => {

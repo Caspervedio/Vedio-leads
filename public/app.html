@@ -361,7 +361,11 @@ function renderCard() {
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
-    <textarea id="note" class="note" placeholder="Note fra opkaldet - hvad sagde de, hvad er næste skridt?"></textarea>
+    <textarea id="note" class="note" placeholder="Note fra opkaldet - hvad sagde de, hvad er næste skridt?" oninput="noteDirty()"></textarea>
+    <div class="noterow">
+      <button class="pill sm" id="note-save" onclick="saveNote()">Gem note</button>
+      <span class="sub" id="note-state">${L.last_note ? `Sidst gemt ${e(fmtAgo(L.note_saved_at || L.lastCallAt))}: "${e(L.last_note.slice(0, 90))}${L.last_note.length > 90 ? '…' : ''}"` : 'Noten gemmes også automatisk, når du vælger et udfald.'}</span>
+    </div>
     <div id="coach" hidden></div>
     <div class="actions">
       <div class="steplbl"><i>1</i> Ring</div>
@@ -564,6 +568,13 @@ function toggleChooser() {
    and replies land in their inbox), and the lead goes to Opfølgning with the
    follow-up already scheduled. */
 let mailOpen = false;
+// Gmail sends server-side as the SDR's own vedio.dk address when the Workspace
+// delegation is in place; otherwise we fall back to their mail client.
+let gmailReady = false, gmailAddr = '';
+async function gmailProbe() {
+  try { const d = await get('/api/sdr/gmail/status'); gmailReady = !!d.ready; gmailAddr = d.email || ''; }
+  catch { gmailReady = false; }
+}
 function mailTemplates() { return (S.settings && S.settings.email_templates) || []; }
 function fillMail(text, L) {
   const c = L.contact || {};
@@ -598,9 +609,10 @@ function toggleMail() {
     <label>Emne</label><input id="m-sub" type="text">
     <label>Besked</label><textarea id="m-body" rows="10"></textarea>
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
-      <button class="pill violet" onclick="mailSend()">Åbn i mail og planlæg opfølgning</button>
+      <button class="pill violet" id="m-send" onclick="mailSend()">${gmailReady ? 'Send med Gmail' : 'Åbn i mail og planlæg opfølgning'}</button>
+      ${gmailReady ? `<button class="pill sm tertiary" onclick="mailSend(true)" title="Åbn i dit eget mailprogram i stedet">Åbn i mailprogram</button>` : ''}
       <button class="pill sm tertiary" onclick="mailCopy()">Kopiér tekst</button>
-      <span class="sub" style="margin-left:auto">Følges op om ${e(String((S.settings && S.settings.email_followup_days) || 2))} hverdage</span>
+      <span class="sub" style="margin-left:auto">${gmailReady ? `Sendes fra ${e(gmailAddr)} · ` : ''}følges op om ${e(String((S.settings && S.settings.email_followup_days) || 2))} hverdage</span>
     </div>
   </div>`;
   mailPick();
@@ -615,16 +627,28 @@ function mailCopy() {
   const txt = $('m-sub').value + '\n\n' + $('m-body').value;
   navigator.clipboard.writeText(txt).then(() => toast('Kopieret - indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
 }
-async function mailSend() {
+async function mailSend(forceClient) {
   const L = S.current; if (!L || busy) return;
   const to = $('m-to').value.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse - spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
   const t = mailTemplates()[Number($('m-tpl').value) || 0] || {};
+  const subject = $('m-sub').value, body = $('m-body').value;
   // Keep the address on the contact so it's there next time.
   if (L.contact && L.contact.name && to !== (L.contact.email || '')) {
     try { await post('/api/sdr/contact', { cvr: L.cvr, name: L.contact.name, title: L.contact.title || '', email: to }); } catch (_) {}
   }
-  window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent($('m-sub').value)}&body=${encodeURIComponent($('m-body').value)}`;
+  if (gmailReady && !forceClient) {
+    const btn = $('m-send'); if (btn) { btn.disabled = true; btn.textContent = 'Sender…'; }
+    try {
+      await post('/api/sdr/gmail/send', { cvr: L.cvr, to, subject, body });
+    } catch (ex) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Send med Gmail'; }
+      toast('Kunne ikke sende: ' + ex.message + ' - prøv "Åbn i mailprogram"', 6000);
+      return;
+    }
+  } else {
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
   mailOpen = false; $('mailbox').hidden = true;
   await disp('email-sent', null, { email_template: t.name || '', email_to: to });
 }
@@ -634,9 +658,29 @@ async function disp(action, callback_at, extra) {
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
     apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, ...(extra || {}) }));
-    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': '✓ Mail klar i dit mailprogram - opfølgning planlagt.' }[action] || 'Gemt';
+    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': (gmailReady ? '✓ Mail sendt fra din Gmail - opfølgning planlagt.' : '✓ Mail klar i dit mailprogram - opfølgning planlagt.') }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
+  finally { busy = false; }
+}
+/* Notes: a note used to exist only until you picked an outcome - close the tab
+   mid-call and it was gone. Now it saves on its own button and is stamped. */
+function noteDirty() {
+  const b = $('note-save'); if (!b) return;
+  b.classList.add('violet'); b.textContent = 'Gem note';
+}
+async function saveNote() {
+  const L = S.current; if (!L || busy) return;
+  const txt = ($('note') && $('note').value.trim()) || '';
+  if (!txt) { toast('Skriv en note først'); return; }
+  busy = true;
+  try {
+    const d = await post('/api/sdr/note', { cvr: L.cvr, note: txt });
+    apply(d, { keepCurrent: true, prevNote: txt });
+    const b = $('note-save'); if (b) { b.classList.remove('violet'); b.textContent = '✓ Gemt'; }
+    const st = $('note-state'); if (st) st.textContent = `Gemt ${fmtWhen(d.saved_at)}`;
+    toast('Note gemt');
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
   finally { busy = false; }
 }
@@ -836,6 +880,7 @@ async function boot() {
   let tab = 'list'; try { tab = localStorage.getItem('vl_tab') || 'list'; } catch {}
   if (!['list', 'ring', 'followups', 'results'].includes(tab)) tab = 'list';
   showTab(tab);
+  gmailProbe();
   await loadState();
   // Safety net: a token without a cached user (cleared storage) only reveals
   // the role once the state comes back.
