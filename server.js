@@ -13581,28 +13581,33 @@ const CAT_LABEL = {
   "transport-bil": "Transport og bil", "andet": "Andet",
 };
 // Keyword map for LEADS - free and instant, no model call per lead.
+// JS \b treats æøå as non-word characters, so "\bøl\b" misfires on Danish.
+// W() brackets a token with letter lookarounds that know about æøå - without
+// it "ure" matched inside "Agriculture" and put a poultry supplier next to
+// our jewellery customers.
+const W = (s) => `(?<![a-zæøå0-9])(?:${s})(?![a-zæøå0-9])`;
 const CAT_RULES = [
-  ["webshop-mode", /apparel|t[øo]j|mode|fashion|cloth|shoe|sko\b|footwear|undergarment|herret[øo]j|damet[øo]j|outerwear/i],
-  ["webshop-smykker", /jewel|smykke|watch|ure\b|guld|s[øo]lv/i],
-  ["webshop-bolig", /home|garden|furnish|m[øo]bl|bolig|interi[øo]r|lamp|belysning|glas|keramik|kitchen|dining|decor/i],
-  ["webshop-sport", /sport|fitness|outdoor|cykel|bike|ski|snowboard|water sports|lystfisk|jagt/i],
-  ["webshop-mad-drikke", /food|drink|beverage|vin\b|wine|kaffe|coffee|[øo]l\b|beer|slik|chokolade|delikatesse|k[øo]d/i],
-  ["webshop-skonhed", /beauty|cosmet|sk[øo]nhed|hud|hair|h[åa]r|parfume|wellness|personal care/i],
-  ["webshop-elektronik", /electronic|elektronik|computer|gadget|mobil|audio|hifi/i],
-  ["webshop-boern", /baby|b[øo]rn|kids|children|toy|leget[øo]j|barnevogn/i],
-  ["webshop-dyr", /\bpet\b|dyr\b|hund|kat\b|foder|animal/i],
-  ["webshop-hobby", /hobby|craft|game|spil\b|book|b[øo]ger|musik|instrument|kunst|art\b/i],
-  ["sundhed-klinik", /klinik|clinic|tand|dental|fysio|kiroprakt|l[æa]ge|health|sundhed|optik|briller|dyrl[æa]ge|hospital|psykolog/i],
-  ["byggeri-haandvaerk", /bygge|h[åa]ndv[æa]rk|t[øo]mrer|murer|vvs|elektriker|maler|snedker|entrepren|construction|installat/i],
-  ["ejendom-bolig", /ejendom|m[æa]gler|real estate|udlejning|bolig(?!.*shop)|property/i],
-  ["finans-forsikring", /forsikring|insurance|bank|finans|revisor|advokat|regnskab|pension|l[åa]n\b/i],
-  ["rejser-oplevelser", /rejse|travel|tourism|hotel|ferie|oplevelse|event|charter/i],
-  ["restauration", /restaurant|caf[eé]|cafeteri|bar\b|catering|k[øo]kken.*restaur|takeaway|bageri/i],
-  ["bureau-marketing", /bureau|marketing|reklame|agency|kommunikation|design.*web|web.*design|seo|media\b/i],
-  ["it-software", /software|saas|\bit\b|tech|digital|app\b|udvikling|hosting|data\b/i],
-  ["produktion-industri", /produktion|industri|fabrik|manufact|maskin|metal|tr[æa]industri|engros/i],
-  ["uddannelse", /skole|uddann|kursus|academy|education|efterskole|gymnasium/i],
-  ["transport-bil", /\bbil\b|auto|vogn|transport|logistik|fragt|d[æa]k|motor|marine|b[åa]d/i],
+  ["webshop-mode", new RegExp(`apparel|fashion|cloth|footwear|outerwear|undergarment|herret[øo]j|damet[øo]j|${W("t[øo]j|mode|sko|shoes?")}`, "i")],
+  ["webshop-smykker", new RegExp(`jewel|smykke|guld|s[øo]lv|${W("ure|ur|watch|watches")}`, "i")],
+  ["webshop-bolig", new RegExp(`garden|furnish|m[øo]bl|interi[øo]r|belysning|keramik|kitchen|dining|decor|${W("home|bolig|lampe|lamper|glas")}`, "i")],
+  ["webshop-sport", new RegExp(`sport|fitness|outdoor|cykel|snowboard|lystfisk|${W("bike|ski|jagt")}`, "i")],
+  ["webshop-mad-drikke", new RegExp(`beverage|kaffe|coffee|chokolade|delikatesse|bryggeri|${W("food|drink|vin|wine|[øo]l|beer|slik|k[øo]d")}`, "i")],
+  ["webshop-skonhed", new RegExp(`beauty|cosmet|sk[øo]nhed|parfume|wellness|personal care|${W("hud|hair|h[åa]r|makeup")}`, "i")],
+  ["webshop-elektronik", new RegExp(`electronic|elektronik|computer|gadget|${W("mobil|audio|hifi")}`, "i")],
+  ["webshop-boern", new RegExp(`baby|b[øo]rn|kids|children|leget[øo]j|barnevogn|${W("toys?")}`, "i")],
+  ["webshop-dyr", new RegExp(`foder|animal|hundefoder|${W("pet|pets|dyr|hund|hunde|kat|katte|hest|heste|fjerkr[æa]")}`, "i")],
+  ["webshop-hobby", new RegExp(`hobby|craft|leget|musik|instrument|kunst|${W("game|games|spil|book|books|b[øo]ger")}`, "i")],
+  ["sundhed-klinik", new RegExp(`klinik|clinic|dental|fysio|kiroprakt|sundhed|optik|briller|hospital|psykolog|dyrl[æa]ge|${W("tand|l[æa]ge|health")}`, "i")],
+  ["byggeri-haandvaerk", new RegExp(`bygge|h[åa]ndv[æa]rk|t[øo]mrer|murer|elektriker|snedker|entrepren|construction|installat|${W("vvs|maler")}`, "i")],
+  ["ejendom-bolig", new RegExp(`ejendom|m[æa]gler|real estate|udlejning|property/i|${W("bolig")}`, "i")],
+  ["finans-forsikring", new RegExp(`forsikring|insurance|finans|revisor|advokat|regnskab|pension|${W("bank|l[åa]n")}`, "i")],
+  ["rejser-oplevelser", new RegExp(`rejse|travel|tourism|ferie|oplevelse|charter|${W("hotel|hoteller|event|events")}`, "i")],
+  ["restauration", new RegExp(`restaurant|caf[eé]|cafeteri|catering|takeaway|bageri|${W("bar|barer|pizzeria")}`, "i")],
+  ["bureau-marketing", new RegExp(`bureau|marketing|reklame|agency|kommunikation|design.*web|web.*design|${W("seo|media|some")}`, "i")],
+  ["it-software", new RegExp(`software|saas|tech|digital|udvikling|hosting|${W("it|app|apps|data|cloud|erp|crm")}`, "i")],
+  ["produktion-industri", new RegExp(`produktion|industri|fabrik|manufact|maskin|tr[æa]industri|engros|${W("metal")}`, "i")],
+  ["uddannelse", new RegExp(`uddann|kursus|academy|education|efterskole|gymnasium|${W("skole|skoler")}`, "i")],
+  ["transport-bil", new RegExp(`auto|transport|logistik|fragt|${W("bil|biler|vogn|d[æa]k|motor|marine|b[åa]d|b[åa]de")}`, "i")],
 ];
 function catFromText(...parts) {
   const s = parts.filter(Boolean).join(" ").toLowerCase();
