@@ -263,13 +263,19 @@ function signalChip(l) {
   // Which kind matters: agreed callback, our own retry, or a sent mail.
   if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) { const k = dueKind(l); return `<span class="chip ${k.cls}">${k.label} · ${e(fmtWhen(l.callback_at))}</span>`; }
   if (l.email_sent_at) return `<span class="chip mail">✉ Mail sendt ${e(fmtAgo(l.email_sent_at))}</span>`;
-  if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.adsMatched > 0 ? l.meta.adsMatched + ' Meta-annoncer' : 'Meta-annoncør'}</span>`;
+  if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.activeNow ? (l.meta.adsMatched > 0 ? l.meta.adsMatched + ' annoncer nu' : 'Annoncerer nu') : 'Meta-annoncør'}</span>`;
   return `<span class="chip">${e(l.source_label || '-')}</span>`;
 }
+/* Ad Library link. With a page id we open that advertiser's own page - the
+   only form that reliably shows their ads. Filter to currently-active ads
+   only when the page check says they are running some right now; otherwise
+   show everything, so the SDR lands on ad history rather than an empty page.
+   Without a page id there is nothing dependable to link to. */
 function adLibUrl(L) {
-  return L.meta && L.meta.pageId
-    ? `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&view_all_page_id=${encodeURIComponent(L.meta.pageId)}`
-    : `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${encodeURIComponent(L.name || '')}&search_type=keyword_unordered`;
+  const m = (L && L.meta) || {};
+  if (!m.pageId) return '';
+  const status = m.activeNow ? 'active' : 'all';
+  return `https://www.facebook.com/ads/library/?active_status=${status}&ad_type=all&country=DK&view_all_page_id=${encodeURIComponent(m.pageId)}`;
 }
 
 /* ─── Render ───────────────────────────────────────────────────────────── */
@@ -355,8 +361,19 @@ function renderCard() {
   }
   const c = L.contact || null; const dk = isDk(L.phone);
   const adsN = (L.meta && L.meta.adsMatched) || 0;
-  const proof = (L.meta && L.meta.advertiser)
-    ? `<a class="proof" href="${adLibUrl(L)}" target="_blank" rel="noopener" title="Se annoncerne i Meta Ad Library"><span class="shape"></span>Kører ${adsN > 0 ? adsN + ' Meta-annoncer' : 'Meta-annoncer'} lige nu ↗</a>`
+  // Say only what we actually checked. "lige nu" is reserved for leads whose
+  // own Facebook page reports it; a count only appears when a real check
+  // produced one. Without a page id there is no link worth following.
+  const m = L.meta || {};
+  const url = adLibUrl(L);
+  const proof = m.advertiser
+    ? (m.activeNow
+        ? (url
+            ? `<a class="proof" href="${url}" target="_blank" rel="noopener" title="Åbner deres egen side i Meta Ad Library${m.pageName ? ' (' + e(m.pageName) + ')' : ''}"><span class="shape"></span>Kører ${adsN > 0 ? adsN + ' Meta-annoncer' : 'Meta-annoncer'} lige nu ↗</a>`
+            : `<span class="proof"><span class="shape"></span>Kører Meta-annoncer lige nu</span>`)
+        : (url
+            ? `<a class="proof quiet" href="${url}" target="_blank" rel="noopener" title="Vi har set dem annoncere - se deres annoncehistorik i Meta Ad Library"><span class="shape"></span>Meta-annoncør ↗</a>`
+            : `<span class="proof quiet"><span class="shape"></span>Meta-annoncør</span>`))
     : `<span class="proof quiet"><span class="shape"></span>${e(L.source_label || 'Kvalificeret lead')}</span>`;
   const isDue = L.callback_at && new Date(L.callback_at).getTime() <= Date.now();
   const web = (L.web || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -387,10 +404,12 @@ function renderCard() {
     ${refsHtml(L)}
     <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
     ${noteThreadHtml(L)}
-    <textarea id="note" class="note" placeholder="Skriv en note - den lægges nederst i tråden" oninput="noteDirty()"></textarea>
-    <div class="noterow">
-      <button class="pill sm" id="note-save" onclick="saveNote()">Gem note</button>
-      <span class="sub" id="note-state">Noten gemmes også automatisk, når du vælger et udfald.</span>
+    <div class="composer" id="composer">
+      <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
+      <div class="cfoot">
+        <span class="sub" id="note-state">Gemmes også automatisk, når du vælger et udfald</span>
+        <button class="pill sm violet" id="note-save" onclick="saveNote()" disabled>Gem note</button>
+      </div>
     </div>
     <div id="coach" hidden></div>
     <div class="actions">
@@ -721,9 +740,11 @@ function noteThreadHtml(L) {
 }
 /* A note used to exist only until you picked an outcome - close the tab
    mid-call and it was gone. Now it saves on its own button and is stamped. */
+function composerFocus(on) { const c = $('composer'); if (c) c.classList.toggle('on', !!on); }
 function noteDirty() {
-  const b = $('note-save'); if (!b) return;
-  b.classList.add('violet'); b.textContent = 'Gem note';
+  const b = $('note-save'), n = $('note'); if (!b || !n) return;
+  b.disabled = !n.value.trim();
+  b.textContent = 'Gem note';
 }
 async function saveNote() {
   const L = S.current; if (!L || busy) return;
@@ -905,7 +926,7 @@ function renderResearch() {
         <h2>${e(L.name || '-')}</h2>
         <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${L.web ? `<span>·</span><a href="${e(site)}" target="_blank" rel="noopener">${e(L.web)}</a>` : ''}${L.niche ? `<span>·</span><span>${e(L.niche)}</span>` : ''}</div>
       </div>
-      ${L.meta.advertiser ? `<span class="proof quiet"><span class="shape"></span>${L.meta.adsMatched > 0 ? L.meta.adsMatched + ' Meta-annoncer' : 'Meta-annoncør'}</span>` : ''}
+      ${L.meta.advertiser ? `<span class="proof quiet"><span class="shape"></span>${L.meta.activeNow ? (L.meta.adsMatched > 0 ? L.meta.adsMatched + ' annoncer nu' : 'Annoncerer nu') : 'Meta-annoncør'}</span>` : ''}
     </div>
     ${L.about ? `<p class="about">${e(L.about)}</p>` : ''}
     <div class="rshneed">${L.needs_person ? '<span class="chip due sm">Mangler person</span>' : ''}${L.needs_phone ? '<span class="chip retry sm">Mangler nummer</span>' : ''}${!L.needs_phone ? `<span class="sub">Har nummer: ${e(fmtPhone(L.phone))}</span>` : ''}</div>

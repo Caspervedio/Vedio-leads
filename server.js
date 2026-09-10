@@ -8122,14 +8122,22 @@ app.post("/api/cron/meta-pages-check", async (req, res) => {
   const stats = { candidates: 0, checked: 0, advertising: 0, notAdvertising: 0, unknown: 0, pageIds: 0, errors: 0, usd: null };
   const now = Date.now();
   const norm = (u) => String(u || "").trim().replace(/^https?:\/\/(www\.|m\.|[a-z]{2}-[a-z]{2}\.)?facebook\.com\//i, "https://www.facebook.com/").replace(/[?#].*$/, "").replace(/\/$/, "");
-  const usable = (l) => /^https:\/\/www\.facebook\.com\/[^/]+/.test(norm(l.facebook_url)) && !/facebook\.com\/(sharer|share|login|dialog|plugins|groups|events|profile\.php)/i.test(norm(l.facebook_url));
+  // A stored page id is itself a valid page URL, so leads whose facebook_url
+  // we never captured can still be checked and kept fresh.
+  const pageUrl = (l) => {
+    const u = norm(l.facebook_url);
+    if (/^https:\/\/www\.facebook\.com\/[^/]+/.test(u) && !/facebook\.com\/(sharer|share|login|dialog|plugins|groups|events|profile\.php)\/?$/i.test(u)) return u;
+    if (/^\d{5,}$/.test(String(l.facebook_page_id || ""))) return `https://www.facebook.com/${l.facebook_page_id}`;
+    return "";
+  };
+  const usable = (l) => !!pageUrl(l);
   const d0 = loadUserData(TARGET_USER);
   const todo = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && usable(l)
     && !(l.meta_pages_checked_at && now - new Date(l.meta_pages_checked_at).getTime() < RECHECK_MS));
   stats.candidates = todo.length;
   const batch = todo.slice(0, BATCH);
   if (!batch.length) return res.json({ ok: true, stats });
-  const urlByCvr = new Map(batch.map((l) => [l.cvr, norm(l.facebook_url)]));
+  const urlByCvr = new Map(batch.map((l) => [l.cvr, pageUrl(l)]));
   let items = [];
   try {
     const r = await apifyRunActorSync("apify~facebook-pages-scraper", { startUrls: [...new Set(urlByCvr.values())].map((url) => ({ url })) }, { memory: 1024 });
@@ -13684,7 +13692,18 @@ function sdrSlim(l, nameById) {
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
     contacts_count: Array.isArray(l.contacts) ? l.contacts.filter((x) => x && x.name).length : 0,
     contacts: sdrContactList(l),
-    meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, adsMatched: Number(l.adsMatched || 0), pageId: l.meta_page_id || l.facebook_page_id || "" },
+    // Two very different signals, kept apart so the card can't overclaim:
+    // activeNow comes from reading the company's Facebook page ("currently
+    // running ads"); adsMatched is an old keyword scrape whose count was
+    // wrong often enough that it is only shown when a real check produced it.
+    meta: {
+      advertiser: l.meta_advertiser === true || l.meta_verified_active === true,
+      activeNow: l.meta_verified_active === true,
+      checked: !!(l.meta_pages_checked_at || l.meta_verified_at),
+      adsMatched: Number(l.meta_ads_active_now || 0) > 0 ? Number(l.meta_ads_active_now) : 0,
+      pageId: l.meta_page_id || l.facebook_page_id || "",
+      pageName: l.facebook_page_name || "",
+    },
     source_label: sdrSourceLabel(l),
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
@@ -14056,7 +14075,7 @@ function sdrResearchSlim(l) {
     niche: l.ind || l.industry || l.niche || "", source_label: sdrSourceLabel(l),
     phone: sdrPhone(l).phone, phone_label: sdrPhone(l).label,
     contacts: sdrContactList(l),
-    meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, adsMatched: Number(l.adsMatched || 0) },
+    meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, activeNow: l.meta_verified_active === true, adsMatched: Number(l.meta_ads_active_now || 0) },
     needs_person: needs.person, needs_phone: needs.phone,
     real_cvr: /^\d{8}$/.test(String(l.cvr || "")) ? l.cvr : "",
   };
