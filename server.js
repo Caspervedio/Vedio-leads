@@ -13643,9 +13643,11 @@ const CAT_RULES = [
   ["webshop-mode", new RegExp(`apparel|fashion|cloth|footwear|outerwear|undergarment|herret[øo]j|damet[øo]j|${W("t[øo]j|mode|sko|shoes?")}`, "i")],
   ["webshop-smykker", new RegExp(`jewel|smykke|guld|s[øo]lv|${W("ure|ur|watch|watches")}`, "i")],
   ["webshop-bolig", new RegExp(`garden|furnish|m[øo]bl|interi[øo]r|belysning|keramik|kitchen|dining|decor|${W("home|bolig|lampe|lamper|glas")}`, "i")],
-  ["webshop-sport", new RegExp(`sport|fitness|outdoor|cykel|snowboard|lystfisk|${W("bike|ski|jagt")}`, "i")],
+  // Skønhed before sport: Google's taxonomy files skin care under
+  // "Beauty & Fitness", and the word fitness used to drag it into sport.
+  ["webshop-skonhed", new RegExp(`beauty|cosmet|sk[øo]nhed|parfume|hudpleje|h[åa]rpleje|frisør|frisor|barber|makeup|wellness|personal care|nail care|skin care|${W("hud|hair|h[åa]r|salon|klinik")}`, "i")],
+  ["webshop-sport", new RegExp(`sport|outdoor|cykel|snowboard|lystfisk|vintersport|${W("fitness|bike|ski|jagt")}`, "i")],
   ["webshop-mad-drikke", new RegExp(`beverage|kaffe|coffee|chokolade|delikatesse|bryggeri|${W("food|drink|vin|wine|[øo]l|beer|slik|k[øo]d")}`, "i")],
-  ["webshop-skonhed", new RegExp(`beauty|cosmet|sk[øo]nhed|parfume|wellness|personal care|${W("hud|hair|h[åa]r|makeup")}`, "i")],
   ["webshop-elektronik", new RegExp(`electronic|elektronik|computer|gadget|${W("mobil|audio|hifi")}`, "i")],
   ["webshop-boern", new RegExp(`baby|b[øo]rn|kids|children|leget[øo]j|barnevogn|${W("toys?")}`, "i")],
   ["webshop-dyr", new RegExp(`foder|animal|hundefoder|${W("pet|pets|dyr|hund|hunde|kat|katte|hest|heste|fjerkr[æa]")}`, "i")],
@@ -13662,11 +13664,20 @@ const CAT_RULES = [
   ["uddannelse", new RegExp(`uddann|kursus|academy|education|efterskole|gymnasium|${W("skole|skoler")}`, "i")],
   ["transport-bil", new RegExp(`auto|transport|logistik|fragt|${W("bil|biler|vogn|d[æa]k|motor|marine|b[åa]d|b[åa]de")}`, "i")],
 ];
-function catFromText(...parts) {
-  const s = parts.filter(Boolean).join(" ").toLowerCase();
-  if (!s.trim()) return "";
-  for (const [cat, re] of CAT_RULES) if (re.test(s)) return cat;
+function catMatch(s) {
+  const t = String(s || "").toLowerCase();
+  if (!t.trim()) return "";
+  for (const [cat, re] of CAT_RULES) if (re.test(t)) return cat;
   return "";
+}
+// Sources are consulted strongest first, each one fully, before falling to the
+// next. The niche LEAF is the most specific signal we hold: Carlsens
+// Barbershop's leaf is "frisor", while its description happens to say "fokus
+// på håndværk" - read together, that put a barber among our builders.
+function catFromText(niche, about, name) {
+  const path = String(niche || "").split("/").map((x) => x.trim()).filter(Boolean);
+  const leaf = path.length ? path[path.length - 1] : "";
+  return catMatch(leaf) || catMatch(niche) || catMatch(about) || catMatch(name) || "";
 }
 function loadCustomers() { try { return JSON.parse(fs.readFileSync(CUSTOMERS_FILE, "utf8")); } catch { return { updated_at: null, include_former: false, items: [] }; } }
 function saveCustomers(c) { c.updated_at = new Date().toISOString(); fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(c, null, 2)); }
@@ -13683,24 +13694,38 @@ function customerIndex() {
   _custIdx = { mtime, byCat, all: usable };
   return _custIdx;
 }
-// Up to 3 customers to name on the call: same category first, then the same
-// broad family (any webshop for a webshop lead), never a random one.
+// A handful of category pairs that genuinely sell to the same buyer. The lead
+// side is classified by keyword and the customer side by Gemini, so the two
+// land either side of a line that isn't real: a skin-care webshop reads as
+// "beauty", a skin clinic as "clinic". One hop, hand-picked - not a fallback
+// to anything vaguely related.
+const CAT_NEIGHBOURS = {
+  "webshop-skonhed": ["sundhed-klinik"],
+  "sundhed-klinik": ["webshop-skonhed"],
+  "webshop-mode": ["webshop-smykker"],
+  "webshop-smykker": ["webshop-mode"],
+  "webshop-mad-drikke": ["restauration"],
+  "restauration": ["webshop-mad-drikke"],
+};
+// Up to 3 customers to name on the call - only from the lead's own category,
+// or one of the neighbours above. Casper: "don't force it if they are not
+// similar, then it's better to leave it blank." A ski shop handed a wine
+// merchant helps nobody, so there is no broader fallback: no genuine match
+// means no badges.
 function sdrRefCustomers(l) {
   const idx = customerIndex();
   if (!idx.all.length) return [];
   const cat = catFromText(l.ind || l.industry || l.niche, l.about, l.name);
-  if (!cat) return [];
-  const out = [...(idx.byCat[cat] || [])];
-  if (out.length < 3 && cat.startsWith("webshop-")) {
-    for (const k of Object.keys(idx.byCat)) {
-      if (k === cat || !k.startsWith("webshop-")) continue;
-      for (const x of idx.byCat[k]) { if (out.length >= 6) break; out.push(x); }
-    }
+  if (!cat || cat === "andet") return [];
+  const pool = [...(idx.byCat[cat] || [])];
+  for (const n of (CAT_NEIGHBOURS[cat] || [])) {
+    if (pool.length >= 3) break;
+    for (const x of (idx.byCat[n] || [])) { if (pool.length >= 3) break; pool.push(x); }
   }
-  return out.slice(0, 3).map((x) => ({
+  return pool.slice(0, 3).map((x) => ({
     name: x.name, domain: x.domain || "", blurb: x.blurb || "",
     current: !!x.subscribed, cat: x.cat || "", cat_label: CAT_LABEL[x.cat] || "",
-    same_cat: x.cat === cat,
+    same_cat: true,
   }));
 }
 // Notes as one running thread per lead: everything anyone has written, oldest

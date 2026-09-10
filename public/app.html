@@ -720,9 +720,10 @@ function refsHtml(L) {
   const chip = (x) => {
     const logo = x.domain ? `<img src="https://www.google.com/s2/favicons?domain=${e(x.domain)}&sz=64" alt="" loading="lazy" onerror="this.remove()">` : '';
     const tip = `${x.blurb || x.name}${x.cat_label ? ' · ' + x.cat_label : ''}${x.current ? ' · kunde nu' : ' · tidligere kunde'}`;
-    return `<span class="ref" title="${e(tip)}">${logo}<b>${e(x.name)}</b>${x.same_cat ? '' : '<i>lignende</i>'}</span>`;
+    return `<span class="ref" title="${e(tip)}">${logo}<b>${e(x.name)}</b></span>`;
   };
-  return `<div class="refs"><span class="k">Nævn en af vores kunder</span>${r.map(chip).join('')}</div>`;
+  const label = r[0].cat_label ? `Vores kunder i ${r[0].cat_label.toLowerCase()}` : 'Nævn en af vores kunder';
+  return `<div class="refs"><span class="k">${e(label)}</span>${r.map(chip).join('')}</div>`;
 }
 function noteThreadHtml(L) {
   const t = (L && L.note_thread) || [];
