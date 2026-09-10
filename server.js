@@ -6737,6 +6737,15 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
+  // Supply cap: skip discovery while the pool already holds plenty. ?force=1
+  // overrides for a manual run.
+  {
+    const st = sdrIntakeStatus();
+    if (st.paused && req.query.force !== "1") {
+      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      return res.json({ ok: true, skipped: "pool-full", ...st });
+    }
+  }
   if (!isStoreLeadsConfigured()) {
     return res.status(503).json({ error: "STORELEADS_API_KEY not configured" });
   }
@@ -6994,27 +7003,15 @@ async function intakeEnrichLead(lead) {
   //
   // Cost: ~$0.025 per lead (Apify $5/1000 dataset items × resultsLimit:5).
   // At ~19 leads/day intake = ~$0.48/day = ~$14/month. Same actor as the
-  // SDR-triggered Tjek Meta Ads click - just runs automatically now.
-  // Non-fatal: any Apify failure leaves the lead with the keyword-search
-  // fallback URL.
-  try {
-    if (lead.name && process.env.APIFY_API_TOKEN) {
-      await enrichLeadWithMetaAds(lead);
-      stats.meta_checked = true;
-      if (lead.meta_verified_active) stats.meta_advertiser = true;
-      if (lead.facebook_page_id) stats.meta_page_id = true;
-    }
-  } catch (e) {
-    stats.meta_error = e.message;
-  }
-  // Ad Library URL - page-specific deep-link when we captured a page ID,
-  // otherwise fall back to keyword search by company name.
+  // The Meta check used to run here: one Apify ads-scraper run per new lead,
+  // searching the Ad Library for the company's legal name. That matcher was
+  // measured passing ~0 of ~500, so it cost about $83/month to learn almost
+  // nothing. meta-pages-check does the job properly and far cheaper by
+  // reading the company's own Facebook page, and the socials fetch above is
+  // what hands it the facebook_url. Nothing to do here any more.
   try {
     if (lead.facebook_page_id) {
       lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
-      stats.ad_library = true;
-    } else if (lead.name) {
-      lead.ad_library_url = buildAdsLibraryUrl(lead.name);
       stats.ad_library = true;
     }
   } catch (_) {}
@@ -10016,6 +10013,15 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
+  // Supply cap: skip discovery while the pool already holds plenty. ?force=1
+  // overrides for a manual run.
+  {
+    const st = sdrIntakeStatus();
+    if (st.paused && req.query.force !== "1") {
+      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      return res.json({ ok: true, skipped: "pool-full", ...st });
+    }
+  }
   if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
   if (!process.env.APIFY_API_TOKEN) return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
 
@@ -10548,6 +10554,15 @@ function saveBrancheWalkState(s) {
 app.post("/api/cron/branche-walk-discover", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  // Supply cap: skip discovery while the pool already holds plenty. ?force=1
+  // overrides for a manual run.
+  {
+    const st = sdrIntakeStatus();
+    if (st.paused && req.query.force !== "1") {
+      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      return res.json({ ok: true, skipped: "pool-full", ...st });
+    }
   }
   if (!isApolloConfigured()) return res.status(503).json({ error: "Apollo not configured" });
 
@@ -11238,6 +11253,15 @@ function adsToUniqueAdvertisers(items, scannedPageIds) {
 app.post("/api/cron/meta-ads-discover", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  // Supply cap: skip discovery while the pool already holds plenty. ?force=1
+  // overrides for a manual run.
+  {
+    const st = sdrIntakeStatus();
+    if (st.paused && req.query.force !== "1") {
+      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      return res.json({ ok: true, skipped: "pool-full", ...st });
+    }
   }
   if (!process.env.APIFY_API_TOKEN) {
     return res.status(503).json({ error: "APIFY_API_TOKEN not configured" });
@@ -13396,7 +13420,20 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
     ].join("\n"),
   },
 ];
-const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 500, rules: SDR_DEFAULT_RULES };
+// Every new lead costs money downstream - a description, a people search, a
+// Meta page check, sometimes a paid phone reveal - whether or not anyone ever
+// rings it. Two SDRs burn roughly 50 leads a weekday, so once the pool holds
+// a couple of weeks of supply, discovery pauses itself until it is drawn down.
+function sdrIntakeStatus() {
+  try {
+    const d = loadUserData(POOL_ID);
+    const s = sdrSettings(d);
+    const target = Math.max(0, Number(s.pool_target_ready) || 0);
+    const ready = (d.leads || []).filter((l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, s)).length;
+    return { ready, target, paused: target > 0 && ready >= target };
+  } catch { return { ready: 0, target: 0, paused: false }; }
+}
 function sdrSettings(d) {
   const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
   s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) };
@@ -15048,6 +15085,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     if (typeof b.pitch_text === "string") d.sdr_settings.pitch_text = b.pitch_text.slice(0, 4000);
     if (sdrIsAdmin(req.userId)) {
       if (Number.isFinite(Number(b.email_followup_days)) && Number(b.email_followup_days) > 0) d.sdr_settings.email_followup_days = Math.min(30, Math.round(Number(b.email_followup_days)));
+      if (Number.isFinite(Number(b.pool_target_ready)) && Number(b.pool_target_ready) >= 0) d.sdr_settings.pool_target_ready = Math.min(10000, Math.round(Number(b.pool_target_ready)));
       if (Array.isArray(b.email_templates)) {
         const t = b.email_templates
           .map((x, i) => ({
