@@ -192,6 +192,10 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <div id="csv-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Ingen fil valgt.</div>
     </div>
     <div class="tablewrap">
+      <div class="thead"><div><h3>Referencekunder</h3><p>Vedio-kundelisten. SDR'erne får op til tre kunder i samme branche på lead-kortet, så de har noget konkret at nævne. Kun rigtige kunder - gratis prøver kommer aldrig med.</p></div><label class="pill sm violet" style="cursor:pointer">Importér kunde-CSV<input type="file" id="custfile" accept=".csv,text/csv" hidden onchange="custPick(this)"></label></div>
+      <div id="cust-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Henter…</div>
+    </div>
+    <div class="tablewrap">
       <div class="thead"><div><h3>Nye leads pr. dag</h3><p>Tilgangen er den første flaskehals. Øverste tal er alt nyt; det violette er dem, der faktisk kan ringes til - det er det tal, der skal følge med forbruget.</p></div><div id="intake-rate" style="text-align:right;font-size:13px;color:var(--txt-soft)"></div></div>
       <div class="trend" id="intake-trend"></div>
     </div>
@@ -549,6 +553,58 @@ function csvParse(text) {
   return rows.slice(1).map((r) => Object.fromEntries(headers.map((h, i) => [h, (r[i] || '').trim()])));
 }
 let csvRows = [];
+/* Reference customers: import the Vedio export, let Gemini file each one
+   under a category, and keep a switch for whether former customers count. */
+let CUST = null;
+async function custLoad() {
+  const box = $('cust-body'); if (!box) return;
+  try { CUST = await get('/api/sdr/admin/customers'); } catch (ex) { box.textContent = ex.message; return; }
+  if (!CUST.total) { box.innerHTML = 'Ingen kundeliste endnu - importér CSV-eksporten fra Vedio.'; return; }
+  const cats = Object.entries(CUST.byCat).sort((a, b) => b[1] - a[1]);
+  box.innerHTML = `
+    <div class="row" style="gap:14px;flex-wrap:wrap;align-items:center">
+      <b>${CUST.total}</b> kunder · <b>${CUST.subscribed}</b> aktive · ${CUST.total - CUST.subscribed} tidligere${CUST.hidden ? ` · ${CUST.hidden} skjult` : ''}
+      <label class="chk" style="display:flex;align-items:center;gap:8px;margin-left:auto"><input type="checkbox" ${CUST.include_former ? 'checked' : ''} onchange="custFormer(this.checked)"> Må også nævne tidligere kunder</label>
+    </div>
+    ${CUST.unclassified ? `<div style="margin-top:12px"><b>${CUST.unclassified}</b> mangler kategori - de vises ikke for SDR'erne endnu.
+      <button class="pill sm violet" style="margin-left:8px" onclick="custClassify()">Kategorisér med AI</button></div>` : ''}
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">${cats.map(([k, n]) => `<span class="chip">${e((CUST.cats.find((c) => c.key === k) || {}).label || k)} · ${n}</span>`).join('')}</div>
+    <details style="margin-top:14px"><summary style="cursor:pointer;font-weight:700">Se listen</summary>
+      <div style="max-height:320px;overflow-y:auto;margin-top:10px">${CUST.items.map((x) => `<div class="row" style="gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)">
+        ${x.domain ? `<img src="https://www.google.com/s2/favicons?domain=${e(x.domain)}&sz=32" width="16" height="16" alt="" onerror="this.remove()">` : ''}
+        <b style="min-width:190px">${e(x.name)}</b>
+        <span class="chip ${x.subscribed ? 'a-demo-booked' : ''}">${x.subscribed ? 'kunde nu' : 'tidligere'}</span>
+        <span class="sub" style="min-width:150px">${e((CUST.cats.find((c) => c.key === x.cat) || {}).label || x.cat || '-')}</span>
+        <span class="sub" style="flex:1;color:var(--txt-faint)">${e(x.blurb || '')}</span>
+        <button class="pill sm tertiary" onclick="custHide('${e(x.key)}',${x.hidden ? 'false' : 'true'})">${x.hidden ? 'Vis igen' : 'Skjul'}</button>
+      </div>`).join('')}</div>
+    </details>`;
+}
+function custPick(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = async () => {
+    $('cust-body').innerHTML = 'Importerer…';
+    try { const d = await post('/api/sdr/admin/customers/import', { csv: String(rd.result || '') });
+      toast(`${d.stats.kept} kunder importeret (${d.stats.subscribed} aktive)`, 5000);
+      await custLoad();
+      if (d.unclassified) custClassify();
+    } catch (ex) { $('cust-body').innerHTML = `<span style="color:#b42318">${e(ex.message)}</span>`; }
+  };
+  rd.readAsText(f, 'utf-8');
+}
+async function custClassify() {
+  let guard = 0;
+  while (guard++ < 40) {
+    $('cust-body').innerHTML = `Kategoriserer med AI… (${guard})`;
+    let d; try { d = await post('/api/sdr/admin/customers/classify', { batch: 25 }); }
+    catch (ex) { toast(ex.message, 5000); break; }
+    if (d.done || !d.classified) break;
+  }
+  custLoad();
+}
+async function custFormer(on) { try { await post('/api/sdr/admin/customers/update', { include_former: on }); custLoad(); } catch (ex) { toast(ex.message, 4000); } }
+async function custHide(key, hidden) { try { await post('/api/sdr/admin/customers/update', { key, hidden }); custLoad(); } catch (ex) { toast(ex.message, 4000); } }
 function csvPick(input) {
   const f = input.files && input.files[0]; if (!f) return;
   const rd = new FileReader();
@@ -566,7 +622,7 @@ async function csvImport() {
 }
 
 /* tabs / boot */
-function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') loadIntegrations(false); }
+function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') { loadIntegrations(false); custLoad(); } }
 // "Se som Christian / Marcus": opens the SDR app as that user in a new tab.
 async function loadImpersonateLinks() {
   try {

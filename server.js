@@ -13540,6 +13540,111 @@ function sdrSourceLabel(l) {
   if (/^manual/.test(s)) return "Manuel";
   return s || "";
 }
+// ─── Reference customers ("vi laver også video for …") ────────────────────
+// Casper's Vedio customer export, so the SDR can name a company in the same
+// line of business on the call. Only real customers are offered: currently
+// subscribed by default, former payers only if the admin turns them on -
+// naming a free-trial signup as a customer would be a false claim.
+const CUSTOMERS_FILE = path.join(DATA_DIR, "customers.json");
+// RFC4180-ish: quoted fields, doubled quotes, commas and newlines inside quotes.
+function csvParseRows(text) {
+  const rows = []; let field = "", row = [], inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else field += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else if (ch !== "\r") field += ch;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+const VEDIO_CATS = [
+  "webshop-mode", "webshop-bolig", "webshop-sport", "webshop-mad-drikke", "webshop-skonhed",
+  "webshop-elektronik", "webshop-boern", "webshop-dyr", "webshop-smykker", "webshop-hobby",
+  "byggeri-haandvaerk", "ejendom-bolig", "sundhed-klinik", "finans-forsikring", "rejser-oplevelser",
+  "restauration", "bureau-marketing", "it-software", "produktion-industri", "b2b-service",
+  "uddannelse", "transport-bil", "andet",
+];
+const CAT_LABEL = {
+  "webshop-mode": "Mode og tøj", "webshop-bolig": "Bolig og interiør", "webshop-sport": "Sport og fritid",
+  "webshop-mad-drikke": "Mad og drikke", "webshop-skonhed": "Skønhed og pleje", "webshop-elektronik": "Elektronik",
+  "webshop-boern": "Børn og baby", "webshop-dyr": "Dyr", "webshop-smykker": "Smykker og ure",
+  "webshop-hobby": "Hobby og fritid", "byggeri-haandvaerk": "Byggeri og håndværk", "ejendom-bolig": "Ejendom og bolig",
+  "sundhed-klinik": "Sundhed og klinik", "finans-forsikring": "Finans og forsikring", "rejser-oplevelser": "Rejser og oplevelser",
+  "restauration": "Restauration", "bureau-marketing": "Bureau og marketing", "it-software": "IT og software",
+  "produktion-industri": "Produktion og industri", "b2b-service": "B2B-service", "uddannelse": "Uddannelse",
+  "transport-bil": "Transport og bil", "andet": "Andet",
+};
+// Keyword map for LEADS - free and instant, no model call per lead.
+const CAT_RULES = [
+  ["webshop-mode", /apparel|t[øo]j|mode|fashion|cloth|shoe|sko\b|footwear|undergarment|herret[øo]j|damet[øo]j|outerwear/i],
+  ["webshop-smykker", /jewel|smykke|watch|ure\b|guld|s[øo]lv/i],
+  ["webshop-bolig", /home|garden|furnish|m[øo]bl|bolig|interi[øo]r|lamp|belysning|glas|keramik|kitchen|dining|decor/i],
+  ["webshop-sport", /sport|fitness|outdoor|cykel|bike|ski|snowboard|water sports|lystfisk|jagt/i],
+  ["webshop-mad-drikke", /food|drink|beverage|vin\b|wine|kaffe|coffee|[øo]l\b|beer|slik|chokolade|delikatesse|k[øo]d/i],
+  ["webshop-skonhed", /beauty|cosmet|sk[øo]nhed|hud|hair|h[åa]r|parfume|wellness|personal care/i],
+  ["webshop-elektronik", /electronic|elektronik|computer|gadget|mobil|audio|hifi/i],
+  ["webshop-boern", /baby|b[øo]rn|kids|children|toy|leget[øo]j|barnevogn/i],
+  ["webshop-dyr", /\bpet\b|dyr\b|hund|kat\b|foder|animal/i],
+  ["webshop-hobby", /hobby|craft|game|spil\b|book|b[øo]ger|musik|instrument|kunst|art\b/i],
+  ["sundhed-klinik", /klinik|clinic|tand|dental|fysio|kiroprakt|l[æa]ge|health|sundhed|optik|briller|dyrl[æa]ge|hospital|psykolog/i],
+  ["byggeri-haandvaerk", /bygge|h[åa]ndv[æa]rk|t[øo]mrer|murer|vvs|elektriker|maler|snedker|entrepren|construction|installat/i],
+  ["ejendom-bolig", /ejendom|m[æa]gler|real estate|udlejning|bolig(?!.*shop)|property/i],
+  ["finans-forsikring", /forsikring|insurance|bank|finans|revisor|advokat|regnskab|pension|l[åa]n\b/i],
+  ["rejser-oplevelser", /rejse|travel|tourism|hotel|ferie|oplevelse|event|charter/i],
+  ["restauration", /restaurant|caf[eé]|cafeteri|bar\b|catering|k[øo]kken.*restaur|takeaway|bageri/i],
+  ["bureau-marketing", /bureau|marketing|reklame|agency|kommunikation|design.*web|web.*design|seo|media\b/i],
+  ["it-software", /software|saas|\bit\b|tech|digital|app\b|udvikling|hosting|data\b/i],
+  ["produktion-industri", /produktion|industri|fabrik|manufact|maskin|metal|tr[æa]industri|engros/i],
+  ["uddannelse", /skole|uddann|kursus|academy|education|efterskole|gymnasium/i],
+  ["transport-bil", /\bbil\b|auto|vogn|transport|logistik|fragt|d[æa]k|motor|marine|b[åa]d/i],
+];
+function catFromText(...parts) {
+  const s = parts.filter(Boolean).join(" ").toLowerCase();
+  if (!s.trim()) return "";
+  for (const [cat, re] of CAT_RULES) if (re.test(s)) return cat;
+  return "";
+}
+function loadCustomers() { try { return JSON.parse(fs.readFileSync(CUSTOMERS_FILE, "utf8")); } catch { return { updated_at: null, include_former: false, items: [] }; } }
+function saveCustomers(c) { c.updated_at = new Date().toISOString(); fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(c, null, 2)); }
+let _custIdx = { mtime: 0, byCat: {}, all: [] };
+function customerIndex() {
+  let mtime = 0; try { mtime = fs.statSync(CUSTOMERS_FILE).mtimeMs; } catch { return _custIdx; }
+  if (mtime === _custIdx.mtime) return _custIdx;
+  const c = loadCustomers();
+  const usable = (c.items || []).filter((x) => x && x.name && !x.hidden && (x.subscribed || (c.include_former && x.paid)));
+  const byCat = {};
+  for (const x of usable) { const k = x.cat || "andet"; (byCat[k] = byCat[k] || []).push(x); }
+  // Best first: current customers, then the ones we can show a logo for.
+  for (const k of Object.keys(byCat)) byCat[k].sort((a, b) => (b.subscribed - a.subscribed) || (b.domain ? 1 : 0) - (a.domain ? 1 : 0));
+  _custIdx = { mtime, byCat, all: usable };
+  return _custIdx;
+}
+// Up to 3 customers to name on the call: same category first, then the same
+// broad family (any webshop for a webshop lead), never a random one.
+function sdrRefCustomers(l) {
+  const idx = customerIndex();
+  if (!idx.all.length) return [];
+  const cat = catFromText(l.ind || l.industry || l.niche, l.about, l.name);
+  if (!cat) return [];
+  const out = [...(idx.byCat[cat] || [])];
+  if (out.length < 3 && cat.startsWith("webshop-")) {
+    for (const k of Object.keys(idx.byCat)) {
+      if (k === cat || !k.startsWith("webshop-")) continue;
+      for (const x of idx.byCat[k]) { if (out.length >= 6) break; out.push(x); }
+    }
+  }
+  return out.slice(0, 3).map((x) => ({
+    name: x.name, domain: x.domain || "", blurb: x.blurb || "",
+    current: !!x.subscribed, cat: x.cat || "", cat_label: CAT_LABEL[x.cat] || "",
+    same_cat: x.cat === cat,
+  }));
+}
 // Notes as one running thread per lead: everything anyone has written, oldest
 // first, like a conversation. Three sources, merged and de-duplicated:
 //   • note_log  - notes saved from the card without ending the call
@@ -13580,6 +13685,7 @@ function sdrSlim(l, nameById) {
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
     last_note: l.last_note || "", note_saved_at: l.note_saved_at || null,
     note_thread: sdrNoteThread(l, nameById),
+    refs: sdrRefCustomers(l),
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
@@ -14781,6 +14887,115 @@ app.post("/api/sdr/gmail/send", authMiddleware, async (req, res) => {
     logActivity("sdr-mail", `${me.name} sendte mail til ${to}`, { userId: req.userId, cvr: b.cvr || null });
     res.json({ ok: true, id: j.id, from });
   } catch (e) { sdrFail(res, e, "gmail/send"); }
+});
+// ── Admin: reference-customer list ────────────────────────────────────────
+app.post("/api/sdr/admin/customers/import", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const csv = String((req.body || {}).csv || "");
+    if (!csv.trim()) return res.status(400).json({ error: "Tom CSV" });
+    const rows = csvParseRows(csv.replace(/^﻿/, ""));
+    if (rows.length < 2) return res.status(400).json({ error: "Kunne ikke læse CSV" });
+    const hdr = rows[0].map((h) => String(h).trim());
+    const ix = Object.fromEntries(hdr.map((h, i) => [h, i]));
+    const need = ["Company Name", "Is Subscribed", "First User Email"];
+    for (const n of need) if (!(n in ix)) return res.status(400).json({ error: `CSV mangler kolonnen "${n}"` });
+    const FREE = new Set(["gmail.com", "googlemail.com", "hotmail.com", "hotmail.dk", "hotmail.co.uk", "outlook.com", "outlook.dk", "yahoo.com", "yahoo.dk", "live.dk", "live.com", "me.com", "icloud.com", "mail.dk", "msn.com", "webspeed.dk", "stofanet.dk"]);
+    const prev = loadCustomers();
+    const byKey = new Map((prev.items || []).map((x) => [x.key, x]));
+    const stats = { rows: 0, kept: 0, subscribed: 0, former: 0, skippedNoName: 0, new: 0 };
+    for (const r of rows.slice(1)) {
+      if (r.length < 3) continue;
+      stats.rows++;
+      const g = (k) => String(r[ix[k]] || "").trim();
+      const name = g("Company Name");
+      if (!name) { stats.skippedNoName++; continue; }
+      const email = g("First User Email").toLowerCase();
+      const d = (email.split("@")[1] || "").trim();
+      const domain = d && !FREE.has(d) ? d : "";
+      const subscribed = g("Is Subscribed") === "Yes";
+      const paid = !!g("Stripe ID") || subscribed;
+      if (!subscribed && !paid) continue;                 // trial-only: never a reference
+      const key = (domain || name).toLowerCase();
+      const old = byKey.get(key) || {};
+      byKey.set(key, {
+        key, name, domain, subscribed, paid,
+        cat: old.cat || "", blurb: old.blurb || "", hidden: old.hidden || false,
+        company_id: g("Company ID") || old.company_id || "",
+      });
+      if (!old.key) stats.new++;
+      stats.kept++; if (subscribed) stats.subscribed++; else stats.former++;
+    }
+    const next = { ...prev, items: [...byKey.values()] };
+    saveCustomers(next);
+    logActivity("sdr-admin", `Admin importerede kundeliste: ${stats.kept} kunder (${stats.subscribed} aktive)`, { userId: req.userId });
+    res.json({ ok: true, stats, total: next.items.length, unclassified: next.items.filter((x) => !x.cat).length });
+  } catch (e) { sdrFail(res, e, "customers/import"); }
+});
+// One Gemini pass to put each customer in a category and write the one-liner
+// the SDR sees on hover. Batched; safe to call repeatedly until 0 remain.
+app.post("/api/sdr/admin/customers/classify", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini ikke konfigureret" });
+    const c = loadCustomers();
+    // 60 per call truncated Gemini's JSON mid-array; 25 leaves headroom.
+    const todo = (c.items || []).filter((x) => !x.cat).slice(0, Math.max(1, Math.min(40, Number((req.body || {}).batch) || 25)));
+    if (!todo.length) return res.json({ ok: true, done: true, remaining: 0 });
+    const list = todo.map((x, i) => `${i + 1}. ${x.name}${x.domain ? " (" + x.domain + ")" : ""}`).join("\n");
+    const prompt = `Du får en liste af danske virksomheder, der er kunder hos et videobureau. For hver: vælg den bedst passende kategori fra listen, og skriv EN kort dansk linje (max 60 tegn) om hvad de laver - faktuelt, ingen salgssprog. Hvis du ikke kender virksomheden, så gæt ud fra navn og domæne og skriv en neutral linje.
+
+Kategorier: ${VEDIO_CATS.join(", ")}
+
+Virksomheder:
+${list}
+
+Svar som JSON: {"items":[{"n":1,"cat":"webshop-mode","blurb":"..."}]}`;
+    const j = await callGemini(prompt);
+    const byN = new Map((j && Array.isArray(j.items) ? j.items : []).map((x) => [Number(x.n), x]));
+    let done = 0;
+    todo.forEach((x, i) => {
+      const r = byN.get(i + 1); if (!r) return;
+      const cat = VEDIO_CATS.includes(String(r.cat)) ? String(r.cat) : "andet";
+      x.cat = cat; x.blurb = String(r.blurb || "").trim().slice(0, 120); done++;
+    });
+    saveCustomers(c);
+    const remaining = c.items.filter((y) => !y.cat).length;
+    res.json({ ok: true, classified: done, remaining, done: remaining === 0 });
+  } catch (e) { sdrFail(res, e, "customers/classify"); }
+});
+app.get("/api/sdr/admin/customers", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const c = loadCustomers();
+    const byCat = {};
+    for (const x of c.items || []) { const k = x.cat || "(ikke kategoriseret)"; byCat[k] = (byCat[k] || 0) + 1; }
+    res.json({
+      ok: true, updated_at: c.updated_at, include_former: !!c.include_former,
+      total: (c.items || []).length,
+      subscribed: (c.items || []).filter((x) => x.subscribed).length,
+      hidden: (c.items || []).filter((x) => x.hidden).length,
+      unclassified: (c.items || []).filter((x) => !x.cat).length,
+      byCat, cats: VEDIO_CATS.map((k) => ({ key: k, label: CAT_LABEL[k] })),
+      items: (c.items || []).slice().sort((a, b) => (b.subscribed - a.subscribed) || String(a.name).localeCompare(b.name, "da")),
+    });
+  } catch (e) { sdrFail(res, e, "customers"); }
+});
+app.post("/api/sdr/admin/customers/update", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const c = loadCustomers(); const b = req.body || {};
+    if (typeof b.include_former === "boolean") c.include_former = b.include_former;
+    if (b.key) {
+      const x = (c.items || []).find((y) => y.key === b.key);
+      if (!x) return res.status(404).json({ error: "Kunde ikke fundet" });
+      if (typeof b.hidden === "boolean") x.hidden = b.hidden;
+      if (typeof b.cat === "string" && VEDIO_CATS.includes(b.cat)) x.cat = b.cat;
+      if (typeof b.blurb === "string") x.blurb = b.blurb.trim().slice(0, 120);
+    }
+    saveCustomers(c);
+    res.json({ ok: true });
+  } catch (e) { sdrFail(res, e, "customers/update"); }
 });
 // Admin debug: run a Datafordeler GraphQL query from prod (the only IP on
 // the registry's allow-list). Used to probe entities / match rules.

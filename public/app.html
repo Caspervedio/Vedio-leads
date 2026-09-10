@@ -384,6 +384,7 @@ function renderCard() {
       ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
+    ${refsHtml(L)}
     <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
     ${noteThreadHtml(L)}
     <textarea id="note" class="note" placeholder="Skriv en note - den lægges nederst i tråden" oninput="noteDirty()"></textarea>
@@ -692,6 +693,18 @@ async function disp(action, callback_at, extra) {
 /* Notes as a thread: everything ever written on the lead, oldest first, with
    who wrote it and when. Outcome notes sit in the same stream as free notes,
    so a follow-up call reads like a conversation. */
+/* Reference customers in the same line of business - something concrete to
+   name on the call. Only real customers appear here (see sdrRefCustomers). */
+function refsHtml(L) {
+  const r = (L && L.refs) || [];
+  if (!r.length) return '';
+  const chip = (x) => {
+    const logo = x.domain ? `<img src="https://www.google.com/s2/favicons?domain=${e(x.domain)}&sz=64" alt="" loading="lazy" onerror="this.remove()">` : '';
+    const tip = `${x.blurb || x.name}${x.cat_label ? ' · ' + x.cat_label : ''}${x.current ? ' · kunde nu' : ' · tidligere kunde'}`;
+    return `<span class="ref" title="${e(tip)}">${logo}<b>${e(x.name)}</b>${x.same_cat ? '' : '<i>lignende</i>'}</span>`;
+  };
+  return `<div class="refs"><span class="k">Nævn en af vores kunder</span>${r.map(chip).join('')}</div>`;
+}
 function noteThreadHtml(L) {
   const t = (L && L.note_thread) || [];
   if (!t.length) return '';

@@ -212,6 +212,13 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .rshhelp p{font-size:13px;color:var(--txt-soft);line-height:1.55;margin-bottom:10px}
 .rshhelp p:last-child{margin-bottom:0}
 @media (max-width:760px){.rshform{grid-template-columns:1fr}}
+/* Reference customers to name on the call */
+.refs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
+.refs .k{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-right:2px}
+.ref{display:inline-flex;align-items:center;gap:7px;padding:5px 11px 5px 6px;border-radius:var(--pill);background:var(--white);border:1px solid var(--line);font-size:13px;cursor:help}
+.ref img{width:18px;height:18px;border-radius:4px;display:block;object-fit:contain}
+.ref b{font-weight:650}
+.ref i{font-style:normal;font-size:10.5px;color:var(--txt-faint);text-transform:uppercase;letter-spacing:.06em}
 /* Note thread - the running conversation on a lead */
 .notethread{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);padding:12px 14px;margin-bottom:12px;max-height:240px;overflow-y:auto}
 .notethread .k{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
