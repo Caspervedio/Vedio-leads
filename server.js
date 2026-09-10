@@ -6742,7 +6742,7 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -10018,7 +10018,7 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -10560,7 +10560,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -11259,7 +11259,7 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s klar >= mål %s", st.ready, st.target);
+      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -13420,19 +13420,27 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
     ].join("\n"),
   },
 ];
-const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 500, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
 // Every new lead costs money downstream - a description, a people search, a
 // Meta page check, sometimes a paid phone reveal - whether or not anyone ever
 // rings it. Two SDRs burn roughly 50 leads a weekday, so once the pool holds
-// a couple of weeks of supply, discovery pauses itself until it is drawn down.
+// weeks of supply, discovery pauses itself until it is drawn down.
+//
+// It counts leads with a NAMED PERSON, not every callable lead. Those are what
+// sdrQueue serves first, so they are what actually runs out. Measured on the
+// live pool: 945 callable, but only 472 with a person and 333 that also
+// advertise. Capping on the raw number would let intake stay paused while the
+// SDRs worked their way down to nothing but switchboard leads.
 function sdrIntakeStatus() {
   try {
     const d = loadUserData(POOL_ID);
     const s = sdrSettings(d);
     const target = Math.max(0, Number(s.pool_target_ready) || 0);
-    const ready = (d.leads || []).filter((l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, s)).length;
-    return { ready, target, paused: target > 0 && ready >= target };
-  } catch { return { ready: 0, target: 0, paused: false }; }
+    const usable = (d.leads || []).filter((l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, s));
+    const ready = usable.length;
+    const named = usable.filter((l) => sdrHasPerson(l)).length;
+    return { ready, named, target, paused: target > 0 && named >= target };
+  } catch { return { ready: 0, named: 0, target: 0, paused: false }; }
 }
 function sdrSettings(d) {
   const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
