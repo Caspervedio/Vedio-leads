@@ -440,7 +440,7 @@ async function openLead(cvr) {
     <h4>Opkald (${L.calls_all.length})</h4>
     ${L.calls_all.length ? L.calls_all.slice().reverse().map((c) => `<div class="p"><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b> <span>· ${e(c.by_name)}${c.duration_s ? ' · ' + Math.round(c.duration_s / 60) + ' min' : ''}</span>${c.note ? `<div style="font-size:13px;color:var(--txt-soft)">${e(c.note)}</div>` : ''}</div><span style="white-space:nowrap">${e(fmtWhen(c.at))}</span></div>`).join('') : '<div class="p"><span>Ikke ringet endnu.</span></div>'}
     ${L.debriefs && L.debriefs.length ? `<h4>Debriefs</h4>${L.debriefs.slice().reverse().map((d) => `<pre><b>${e(fmtWhen(d.at))}</b> · ${e(d.summary)}${d.next_step ? '\nNæste: ' + e(d.next_step) : ''}${d.coaching ? '\nCoaching: ' + e(d.coaching) : ''}</pre>`).join('')}` : ''}
-    ${L.notes ? `<h4>Noter</h4><pre>${e(L.notes)}</pre>` : ''}
+    ${(L.note_thread || []).length ? `<h4>Noter (${L.note_thread.length})</h4><div class="notethread" style="max-height:none">${L.note_thread.map((n) => `<div class="nt ${n.kind === 'call' ? 'call' : ''}"><div class="h"><b>${e(n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || ''))}</b>${n.at ? `<time>${e(fmtWhen(n.at))}</time>` : ''}${n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">${e(ACTION_LABEL[n.action] || n.action)}</span>` : ''}</div><div class="t">${e(n.text)}</div></div>`).join('')}</div>` : ''}
     <h4>Berig manuelt</h4>
     <div class="edit" id="ledit">
       <div><label>Kontakt · navn</label><input id="le-name" value="${e(L.contact ? L.contact.name : '')}" placeholder="Fornavn Efternavn"></div>

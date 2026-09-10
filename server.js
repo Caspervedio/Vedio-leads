@@ -13446,7 +13446,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13540,6 +13540,28 @@ function sdrSourceLabel(l) {
   if (/^manual/.test(s)) return "Manuel";
   return s || "";
 }
+// Notes as one running thread per lead: everything anyone has written, oldest
+// first, like a conversation. Three sources, merged and de-duplicated:
+//   • note_log  - notes saved from the card without ending the call
+//   • calls[]   - the note written when an outcome was picked
+//   • notes     - the legacy free-text field (31 leads carry an undated line
+//     like "8:30-11:30 40191899"); lines in "[dd.MM Name]" form are skipped
+//     because those are the same call notes written a second time.
+function sdrNoteThread(l, nameById) {
+  const out = [];
+  const legacy = String(l.notes || "").split("\n").map((s) => s.trim()).filter((s) => s && !/^\[/.test(s));
+  if (legacy.length) out.push({ at: null, by: "", by_name: "", text: legacy.join("\n"), kind: "legacy" });
+  for (const c of (l.calls || [])) {
+    if (!c || !String(c.note || "").trim()) continue;
+    out.push({ at: c.at, by: c.by, by_name: (nameById || {})[c.by] || c.by, text: String(c.note).trim(), kind: "call", action: c.action || "" });
+  }
+  for (const n of (Array.isArray(l.note_log) ? l.note_log : [])) {
+    if (!n || !String(n.text || "").trim()) continue;
+    out.push({ at: n.at, by: n.by, by_name: (nameById || {})[n.by] || n.by, text: String(n.text).trim(), kind: "note" });
+  }
+  out.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+  return out.slice(-40);
+}
 function sdrSlim(l, nameById) {
   const c = sdrPrimaryContact(l);
   const ph = sdrPhone(l);
@@ -13557,6 +13579,7 @@ function sdrSlim(l, nameById) {
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
     calls: calls.map((x) => ({ ...x, by_name: nameById[x.by] || x.by })),
     last_note: l.last_note || "", note_saved_at: l.note_saved_at || null,
+    note_thread: sdrNoteThread(l, nameById),
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
@@ -14013,7 +14036,10 @@ app.post("/api/sdr/note", authMiddleware, (req, res) => {
     lead.last_note = note;
     lead.note_saved_at = nowIso;
     lead.note_saved_by = req.userId;
-    lead.notes = (lead.notes ? lead.notes + "\n" : "") + `[${stamp} ${meUser ? meUser.name : req.userId}] ${note}`;
+    lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+    lead.note_log.push({ at: nowIso, by: req.userId, text: note });
+    if (lead.note_log.length > 200) lead.note_log = lead.note_log.slice(-200);
+    void stamp;
     sdrTouch(lead);
     savePool(d);
     sdrRespond(res, req.userId, d, { saved_at: nowIso });

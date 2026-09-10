@@ -212,6 +212,16 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .rshhelp p{font-size:13px;color:var(--txt-soft);line-height:1.55;margin-bottom:10px}
 .rshhelp p:last-child{margin-bottom:0}
 @media (max-width:760px){.rshform{grid-template-columns:1fr}}
+/* Note thread - the running conversation on a lead */
+.notethread{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);padding:12px 14px;margin-bottom:12px;max-height:240px;overflow-y:auto}
+.notethread .k{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
+.nt{padding:8px 0;border-top:1px solid var(--line)}
+.nt:first-of-type{border-top:0;padding-top:0}
+.nt .h{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.nt .h b{font-size:12.5px;font-weight:700}
+.nt .h time{font-size:11.5px;color:var(--txt-faint)}
+.nt .t{font-size:13.5px;line-height:1.5;color:var(--txt);white-space:pre-wrap}
+.nt.call .t{color:var(--txt-soft)}
 .noterow{display:flex;align-items:center;gap:12px;margin:-6px 0 14px}
 .noterow .sub{font-size:12.5px;color:var(--txt-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* admin: one editable mail template */

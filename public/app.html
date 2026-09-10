@@ -385,10 +385,11 @@ function renderCard() {
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
-    <textarea id="note" class="note" placeholder="Note fra opkaldet - hvad sagde de, hvad er næste skridt?" oninput="noteDirty()"></textarea>
+    ${noteThreadHtml(L)}
+    <textarea id="note" class="note" placeholder="Skriv en note - den lægges nederst i tråden" oninput="noteDirty()"></textarea>
     <div class="noterow">
       <button class="pill sm" id="note-save" onclick="saveNote()">Gem note</button>
-      <span class="sub" id="note-state">${L.last_note ? `Sidst gemt ${e(fmtAgo(L.note_saved_at || L.lastCallAt))}: "${e(L.last_note.slice(0, 90))}${L.last_note.length > 90 ? '…' : ''}"` : 'Noten gemmes også automatisk, når du vælger et udfald.'}</span>
+      <span class="sub" id="note-state">Noten gemmes også automatisk, når du vælger et udfald.</span>
     </div>
     <div id="coach" hidden></div>
     <div class="actions">
@@ -688,7 +689,24 @@ async function disp(action, callback_at, extra) {
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
   finally { busy = false; }
 }
-/* Notes: a note used to exist only until you picked an outcome - close the tab
+/* Notes as a thread: everything ever written on the lead, oldest first, with
+   who wrote it and when. Outcome notes sit in the same stream as free notes,
+   so a follow-up call reads like a conversation. */
+function noteThreadHtml(L) {
+  const t = (L && L.note_thread) || [];
+  if (!t.length) return '';
+  const rows = t.map((n) => {
+    const who = n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || '');
+    const when = n.at ? fmtWhen(n.at) : '';
+    const tag = n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">${e(ACTION_LABEL[n.action] || n.action)}</span>` : '';
+    return `<div class="nt ${n.kind === 'call' ? 'call' : ''}">
+      <div class="h"><b>${e(who)}</b>${when ? `<time>${e(when)}</time>` : ''}${tag}</div>
+      <div class="t">${e(n.text)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="notethread" id="notethread"><div class="k">Noter (${t.length})</div>${rows}</div>`;
+}
+/* A note used to exist only until you picked an outcome - close the tab
    mid-call and it was gone. Now it saves on its own button and is stamped. */
 function noteDirty() {
   const b = $('note-save'); if (!b) return;
@@ -701,9 +719,9 @@ async function saveNote() {
   busy = true;
   try {
     const d = await post('/api/sdr/note', { cvr: L.cvr, note: txt });
-    apply(d, { keepCurrent: true, prevNote: txt });
-    const b = $('note-save'); if (b) { b.classList.remove('violet'); b.textContent = '✓ Gemt'; }
-    const st = $('note-state'); if (st) st.textContent = `Gemt ${fmtWhen(d.saved_at)}`;
+    // Re-render the card so the note appears in the thread, and clear the box.
+    apply(d, { keepCurrent: false });
+    const th = $('notethread'); if (th) th.scrollTop = th.scrollHeight;
     toast('Note gemt');
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
   finally { busy = false; }
