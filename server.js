@@ -13696,19 +13696,12 @@ function customerIndex() {
   _custIdx = { mtime, byCat, all: usable };
   return _custIdx;
 }
-// A handful of category pairs that genuinely sell to the same buyer. The lead
-// side is classified by keyword and the customer side by Gemini, so the two
-// land either side of a line that isn't real: a skin-care webshop reads as
-// "beauty", a skin clinic as "clinic". One hop, hand-picked - not a fallback
-// to anything vaguely related.
-const CAT_NEIGHBOURS = {
-  "webshop-skonhed": ["sundhed-klinik"],
-  "sundhed-klinik": ["webshop-skonhed"],
-  "webshop-mode": ["webshop-smykker"],
-  "webshop-smykker": ["webshop-mode"],
-  "webshop-mad-drikke": ["restauration"],
-  "restauration": ["webshop-mad-drikke"],
-};
+// No neighbour categories. The bridge existed to paper over the old guessed
+// customer data; now that every customer is read from their own website, it
+// only did harm - a skin-care shop was being offered a family counselling
+// centre and a foot clinic because both sit under "clinic". Same category or
+// nothing.
+const CAT_NEIGHBOURS = {};
 // Up to 3 customers to name on the call - only from the lead's own category,
 // or one of the neighbours above. Casper: "don't force it if they are not
 // similar, then it's better to leave it blank." A ski shop handed a wine
