@@ -597,9 +597,9 @@ function custPick(input) {
 }
 async function custClassify() {
   let guard = 0;
-  while (guard++ < 40) {
-    $('cust-body').innerHTML = `Kategoriserer med AI… (${guard})`;
-    let d; try { d = await post('/api/sdr/admin/customers/classify', { batch: 25 }); }
+  while (guard++ < 60) {
+    $('cust-body').innerHTML = `Læser kundernes websites og kategoriserer… (runde ${guard})`;
+    let d; try { d = await post('/api/sdr/admin/customers/classify', { batch: 10 }); }
     catch (ex) { toast(ex.message, 5000); break; }
     if (d.done || !d.classified) break;
   }

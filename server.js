@@ -13686,7 +13686,9 @@ function customerIndex() {
   let mtime = 0; try { mtime = fs.statSync(CUSTOMERS_FILE).mtimeMs; } catch { return _custIdx; }
   if (mtime === _custIdx.mtime) return _custIdx;
   const c = loadCustomers();
-  const usable = (c.items || []).filter((x) => x && x.name && !x.hidden && (x.subscribed || (c.include_former && x.paid)));
+  // verified = we read their website and learned what they do. Anything else
+  // stays out; a wrong name-drop is worse than none.
+  const usable = (c.items || []).filter((x) => x && x.name && x.verified && !x.hidden && (x.subscribed || (c.include_former && x.paid)));
   const byCat = {};
   for (const x of usable) { const k = x.cat || "andet"; (byCat[k] = byCat[k] || []).push(x); }
   // Best first: current customers, then the ones we can show a logo for.
@@ -15028,34 +15030,74 @@ app.post("/api/sdr/admin/customers/import", authMiddleware, async (req, res) => 
 });
 // One Gemini pass to put each customer in a category and write the one-liner
 // the SDR sees on hover. Batched; safe to call repeatedly until 0 remain.
+// Work out what each customer actually does by READING THEIR WEBSITE, then
+// categorise from that text. The first version asked Gemini to judge from the
+// company name and told it to guess when unsure - it duly invented plausible
+// descriptions, filing a growth agency, a Spanish estate agent and a
+// restaurant all as jewellery webshops, which is what an SDR would then have
+// name-dropped. A customer we cannot read is left unverified and never shown.
+// ?reset=1 clears existing categories so the whole list can be redone.
 app.post("/api/sdr/admin/customers/classify", authMiddleware, async (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
     if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini ikke konfigureret" });
     const c = loadCustomers();
-    // 60 per call truncated Gemini's JSON mid-array; 25 leaves headroom.
-    const todo = (c.items || []).filter((x) => !x.cat).slice(0, Math.max(1, Math.min(40, Number((req.body || {}).batch) || 25)));
-    if (!todo.length) return res.json({ ok: true, done: true, remaining: 0 });
-    const list = todo.map((x, i) => `${i + 1}. ${x.name}${x.domain ? " (" + x.domain + ")" : ""}`).join("\n");
-    const prompt = `Du får en liste af danske virksomheder, der er kunder hos et videobureau. For hver: vælg den bedst passende kategori fra listen, og skriv EN kort dansk linje (max 60 tegn) om hvad de laver - faktuelt, ingen salgssprog. Hvis du ikke kender virksomheden, så gæt ud fra navn og domæne og skriv en neutral linje.
+    if (req.query.reset === "1") {
+      for (const x of c.items || []) { x.cat = ""; x.blurb = ""; x.verified = false; x.site_ok = undefined; }
+      saveCustomers(c);
+      return res.json({ ok: true, reset: (c.items || []).length, remaining: (c.items || []).length });
+    }
+    const pending = (c.items || []).filter((x) => !x.cat);
+    // No website means no way to know what they do - do not guess.
+    for (const x of pending) if (!x.domain) { x.cat = "andet"; x.blurb = ""; x.verified = false; x.site_ok = false; }
+    const todo = pending.filter((x) => x.domain).slice(0, Math.max(1, Math.min(20, Number((req.body || {}).batch) || 10)));
+    if (!todo.length) {
+      saveCustomers(c);
+      const left = (c.items || []).filter((y) => !y.cat).length;
+      return res.json({ ok: true, done: left === 0, remaining: left, classified: 0 });
+    }
+    const CONC = 4;
+    const pages = new Map();
+    for (let i = 0; i < todo.length; i += CONC) {
+      await Promise.all(todo.slice(i, i + CONC).map(async (x) => {
+        try {
+          const s = await fetchHomepageText(x.domain);
+          const text = [s && s.title, s && s.description, s && s.text].filter(Boolean).join(" - ").replace(/\s+/g, " ").trim();
+          if (text.length > 40) pages.set(x.key, text.slice(0, 700));
+        } catch (_) {}
+      }));
+    }
+    let done = 0, unreachable = 0;
+    const readable = todo.filter((x) => pages.has(x.key));
+    for (const x of todo) {
+      if (pages.has(x.key)) continue;
+      x.cat = "andet"; x.blurb = ""; x.verified = false; x.site_ok = false; unreachable++;
+    }
+    if (readable.length) {
+      const list = readable.map((x, i) => `${i + 1}. ${x.name} (${x.domain})\n   WEBSITE: ${pages.get(x.key)}`).join("\n\n");
+      const j = await callGemini(`Nedenfor staar danske virksomheder med tekst hentet fra deres egen forside. Bedoem UDELUKKENDE ud fra teksten, hvad virksomheden laver.
+
+For hver: vaelg den bedst passende kategori, og skriv EN kort dansk linje (max 60 tegn) om hvad de laver - faktuelt, ingen salgssprog. Gaet ikke: hvis teksten ikke fortaeller hvad de laver (fx cookie-tekst, fejlside eller parkeret domaene), saa saet cat til "andet" og lad blurb vaere tom.
 
 Kategorier: ${VEDIO_CATS.join(", ")}
 
-Virksomheder:
 ${list}
 
-Svar som JSON: {"items":[{"n":1,"cat":"webshop-mode","blurb":"..."}]}`;
-    const j = await callGemini(prompt);
-    const byN = new Map((j && Array.isArray(j.items) ? j.items : []).map((x) => [Number(x.n), x]));
-    let done = 0;
-    todo.forEach((x, i) => {
-      const r = byN.get(i + 1); if (!r) return;
-      const cat = VEDIO_CATS.includes(String(r.cat)) ? String(r.cat) : "andet";
-      x.cat = cat; x.blurb = String(r.blurb || "").trim().slice(0, 120); done++;
-    });
+Svar som JSON: {"items":[{"n":1,"cat":"webshop-mode","blurb":"..."}]}`);
+      const byN = new Map((j && Array.isArray(j.items) ? j.items : []).map((x) => [Number(x.n), x]));
+      readable.forEach((x, i) => {
+        const r = byN.get(i + 1);
+        if (!r) { x.cat = "andet"; x.blurb = ""; x.verified = false; x.site_ok = true; return; }
+        const cat = VEDIO_CATS.includes(String(r.cat)) ? String(r.cat) : "andet";
+        const blurb = String(r.blurb || "").trim().slice(0, 120);
+        x.cat = cat; x.blurb = blurb; x.site_ok = true;
+        x.verified = cat !== "andet" && !!blurb;
+        done++;
+      });
+    }
     saveCustomers(c);
-    const remaining = c.items.filter((y) => !y.cat).length;
-    res.json({ ok: true, classified: done, remaining, done: remaining === 0 });
+    const remaining = (c.items || []).filter((y) => !y.cat).length;
+    res.json({ ok: true, classified: done, unreachable, remaining, done: remaining === 0 });
   } catch (e) { sdrFail(res, e, "customers/classify"); }
 });
 app.get("/api/sdr/admin/customers", authMiddleware, (req, res) => {
