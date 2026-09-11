@@ -266,16 +266,26 @@ function signalChip(l) {
   if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.activeNow ? (l.meta.adsMatched > 0 ? l.meta.adsMatched + ' annoncer nu' : 'Annoncerer nu') : 'Meta-annoncør'}</span>`;
   return `<span class="chip">${e(l.source_label || '-')}</span>`;
 }
-/* Ad Library link. With a page id we open that advertiser's own page - the
-   only form that reliably shows their ads. Filter to currently-active ads
-   only when the page check says they are running some right now; otherwise
-   show everything, so the SDR lands on ad history rather than an empty page.
-   Without a page id there is nothing dependable to link to. */
+/* Ad Library link.
+
+   view_all_page_id does NOT work with the ids we hold. The Facebook page
+   scraper returns the page's profile id (Cornhole.dk = 100063668373944), and
+   the Ad Library wants its own advertiser id - so every deep link opened an
+   empty library with a blank search box, which is what Casper hit. Tested in
+   a browser against three of our leads: the deep link is empty every time.
+
+   An exact-phrase search on the Facebook PAGE NAME does work: "Cornhole.dk"
+   returns 76 ads against the 74 he found by hand. The page name beats the
+   registered company name here - it is what the advertiser calls itself. */
 function adLibUrl(L) {
   const m = (L && L.meta) || {};
-  if (!m.pageId) return '';
+  // Page names often carry a location suffix ("N'AGE | Copenhagen"), which no
+  // ad text contains - search the brand half only.
+  const q = String(m.pageName || L.name || '').split('|')[0].replace(/\s+/g, ' ').trim();
+  if (!q) return '';
   const status = m.activeNow ? 'active' : 'all';
-  return `https://www.facebook.com/ads/library/?active_status=${status}&ad_type=all&country=DK&view_all_page_id=${encodeURIComponent(m.pageId)}`;
+  return `https://www.facebook.com/ads/library/?active_status=${status}&ad_type=all&country=DK&media_type=all`
+    + `&search_type=keyword_exact_phrase&q=${encodeURIComponent('"' + q + '"')}`;
 }
 
 /* ─── Render ───────────────────────────────────────────────────────────── */
@@ -369,10 +379,10 @@ function renderCard() {
   const proof = m.advertiser
     ? (m.activeNow
         ? (url
-            ? `<a class="proof" href="${url}" target="_blank" rel="noopener" title="Åbner deres egen side i Meta Ad Library${m.pageName ? ' (' + e(m.pageName) + ')' : ''}"><span class="shape"></span>Kører ${adsN > 0 ? adsN + ' Meta-annoncer' : 'Meta-annoncer'} lige nu ↗</a>`
+            ? `<a class="proof" href="${url}" target="_blank" rel="noopener" title="Søger Meta Ad Library efter &quot;${e(m.pageName || L.name || '')}&quot;"><span class="shape"></span>Kører ${adsN > 0 ? adsN + ' Meta-annoncer' : 'Meta-annoncer'} lige nu ↗</a>`
             : `<span class="proof"><span class="shape"></span>Kører Meta-annoncer lige nu</span>`)
         : (url
-            ? `<a class="proof quiet" href="${url}" target="_blank" rel="noopener" title="Vi har set dem annoncere - se deres annoncehistorik i Meta Ad Library"><span class="shape"></span>Meta-annoncør ↗</a>`
+            ? `<a class="proof quiet" href="${url}" target="_blank" rel="noopener" title="Søger Meta Ad Library efter &quot;${e(m.pageName || L.name || '')}&quot; - inkl. tidligere annoncer"><span class="shape"></span>Meta-annoncør ↗</a>`
             : `<span class="proof quiet"><span class="shape"></span>Meta-annoncør</span>`))
     : `<span class="proof quiet"><span class="shape"></span>${e(L.source_label || 'Kvalificeret lead')}</span>`;
   const isDue = L.callback_at && new Date(L.callback_at).getTime() <= Date.now();
