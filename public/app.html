@@ -662,7 +662,10 @@ function toggleMail() {
     </div>
     <label>Til</label><input id="m-to" type="email" placeholder="navn@firma.dk" value="${e(to)}">
     <label>Emne</label><input id="m-sub" type="text">
-    <label>Besked</label><textarea id="m-body" rows="10"></textarea>
+    <div class="row" style="gap:8px;align-items:baseline"><label style="margin:0">Besked</label>
+      <button class="pill sm tertiary" style="margin-left:auto" onclick="mailLink()" title="Markér teksten der skal være klikbar, og klik her">🔗 Indsæt link</button></div>
+    <textarea id="m-body" rows="10"></textarea>
+    <div class="sub" style="margin-top:4px">Links skrives som <code>[tekst](https://…)</code> - rene URL'er bliver klikbare af sig selv.</div>
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
       <button class="pill violet" id="m-send" onclick="mailSend()">${gmailReady ? 'Send med Gmail' : 'Åbn i mail og planlæg opfølgning'}</button>
       ${gmailReady ? `<button class="pill sm tertiary" onclick="mailSend(true)" title="Åbn i dit eget mailprogram i stedet">Åbn i mailprogram</button>` : ''}
@@ -678,8 +681,29 @@ function mailPick() {
   $('m-sub').value = fillMail(t.subject, L);
   $('m-body').value = fillMail(t.body, L);
 }
+/* Links: mark the words that should be clickable, click 🔗, paste the URL.
+   Stored as [tekst](url) and turned into a real anchor when the mail goes out
+   through Gmail - and into "tekst (url)" everywhere HTML can't reach. */
+function mailLink() {
+  const ta = $('m-body'); if (!ta) return;
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const sel = ta.value.slice(start, end).trim();
+  let url = (prompt('Link til:', 'https://') || '').trim();
+  if (!url || url === 'https://') return;
+  if (/^www\./i.test(url)) url = 'https://' + url;
+  if (!/^(https?:\/\/|mailto:)/i.test(url)) { toast('Linket skal starte med https:// eller mailto:', 4500); return; }
+  const text = (sel || prompt('Tekst der skal være klikbar:', url) || '').trim();
+  if (!text) return;
+  const md = `[${text}](${url})`;
+  ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = start + md.length;
+}
+/* mailto: and the clipboard can't carry HTML, so links are flattened. */
+function mailPlain(body) {
+  return String(body || '').replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, t, u) => (t.trim() === u.trim() ? u : `${t} (${u})`));
+}
 function mailCopy() {
-  const txt = $('m-sub').value + '\n\n' + $('m-body').value;
+  const txt = $('m-sub').value + '\n\n' + mailPlain($('m-body').value);
   navigator.clipboard.writeText(txt).then(() => toast('Kopieret - indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
 }
 async function mailSend(forceClient) {
@@ -702,7 +726,7 @@ async function mailSend(forceClient) {
       return;
     }
   } else {
-    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(mailPlain(body))}`;
   }
   mailOpen = false; $('mailbox').hidden = true;
   await disp('email-sent', null, { email_template: t.name || '', email_to: to });

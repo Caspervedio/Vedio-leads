@@ -14808,18 +14808,77 @@ async function gmailAccessToken(userEmail) {
   if (!r.ok || !j.access_token) throw new Error(`token: ${j.error_description || j.error || r.status}`);
   return j.access_token;
 }
-// RFC 2822 with the headers Danish text needs (encoded-word subject, base64 body).
+// Links in mails. The SDR marks the words and clicks 🔗, which writes
+// [tekst](url) into the body; bare URLs are linked as they stand, so a pasted
+// Calendly link is clickable without anyone doing anything. Only http(s) and
+// mailto become anchors - a javascript: URL stays flat text, never a link in
+// someone's inbox.
+function mailSafeUrl(u) {
+  const s = String(u || "").trim();
+  const full = /^(https?:|mailto:)/i.test(s) ? s : (/^www\./i.test(s) ? `https://${s}` : "");
+  return /^(https?:\/\/|mailto:)/i.test(full) ? full : "";
+}
+const MAIL_LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)|(\bhttps?:\/\/[^\s<>()]+|\bwww\.[^\s<>()]+)/gi;
+// The plain-text half: a link stays readable as "tekst (url)".
+function mailBodyText(body) {
+  return String(body || "").replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, txt, url) => {
+    const safe = mailSafeUrl(url);
+    if (!safe) return m;
+    return txt.trim() === safe ? safe : `${txt} (${safe})`;
+  });
+}
+// The HTML half. Everything outside a link is escaped, so nothing the SDR
+// types can inject markup.
+function mailBodyHtml(body) {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const anchor = (href, text) => `<a href="${esc(href)}" style="color:#6d4aff">${esc(text)}</a>`;
+  const src = String(body || "");
+  const out = [];
+  let last = 0, m;
+  MAIL_LINK_RE.lastIndex = 0;
+  while ((m = MAIL_LINK_RE.exec(src))) {
+    out.push(esc(src.slice(last, m.index)));
+    last = MAIL_LINK_RE.lastIndex;
+    if (m[1]) {
+      const u = mailSafeUrl(m[2]);
+      out.push(u ? anchor(u, m[1]) : esc(m[0]));
+    } else {
+      // Trailing punctuation belongs to the sentence, not to the URL.
+      const raw = m[3].replace(/[.,;:!?]+$/, "");
+      const u = mailSafeUrl(raw);
+      out.push((u ? anchor(u, raw) : esc(raw)) + esc(m[3].slice(raw.length)));
+    }
+  }
+  out.push(esc(src.slice(last)));
+  return `<div style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.55;color:#111">`
+    + out.join("").replace(/\r?\n/g, "<br>") + `</div>`;
+}
+// RFC 2822 with the headers Danish text needs (encoded-word subject, base64
+// body). multipart/alternative: the HTML half carries the links, the text half
+// keeps the mail readable where HTML is stripped.
 function gmailRaw({ from, fromName, to, subject, body }) {
   const enc = (s) => `=?UTF-8?B?${Buffer.from(String(s), "utf8").toString("base64")}?=`;
+  const b64 = (s) => Buffer.from(String(s), "utf8").toString("base64").replace(/(.{76})/g, "$1\r\n");
+  const bound = `vedio_${crypto.randomBytes(12).toString("hex")}`;
   const lines = [
     `From: ${fromName ? `${enc(fromName)} <${from}>` : from}`,
     `To: ${to}`,
     `Subject: ${enc(subject)}`,
     "MIME-Version: 1.0",
+    `Content-Type: multipart/alternative; boundary="${bound}"`,
+    "",
+    `--${bound}`,
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
     "",
-    Buffer.from(String(body), "utf8").toString("base64").replace(/(.{76})/g, "$1\r\n"),
+    b64(mailBodyText(body)),
+    `--${bound}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    b64(mailBodyHtml(body)),
+    `--${bound}--`,
+    "",
   ];
   return b64url(lines.join("\r\n"));
 }
