@@ -687,14 +687,18 @@ function mailPick() {
 function mailLink() {
   const ta = $('m-body'); if (!ta) return;
   const start = ta.selectionStart, end = ta.selectionEnd;
-  const sel = ta.value.slice(start, end).trim();
+  // Double-clicking a word often takes the space with it - keep that space
+  // outside the link so the sentence doesn't lose it.
+  const raw = ta.value.slice(start, end);
+  const lead = raw.match(/^\s*/)[0], trail = raw.slice(lead.length).match(/\s*$/)[0];
+  const sel = raw.trim();
   let url = (prompt('Link til:', 'https://') || '').trim();
   if (!url || url === 'https://') return;
   if (/^www\./i.test(url)) url = 'https://' + url;
   if (!/^(https?:\/\/|mailto:)/i.test(url)) { toast('Linket skal starte med https:// eller mailto:', 4500); return; }
   const text = (sel || prompt('Tekst der skal være klikbar:', url) || '').trim();
   if (!text) return;
-  const md = `[${text}](${url})`;
+  const md = `${lead}[${text}](${url})${trail}`;
   ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
   ta.focus(); ta.selectionStart = ta.selectionEnd = start + md.length;
 }
