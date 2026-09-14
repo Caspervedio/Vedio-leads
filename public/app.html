@@ -715,6 +715,7 @@ function mailGetBody() {
     for (const n of node.childNodes) {
       if (n.nodeType === 3) { out += n.nodeValue; continue; }
       if (n.nodeType !== 1) continue;
+      if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(n.tagName)) continue; // never the mail's words
       if (n.tagName === 'BR') { out += '\n'; continue; }
       if (n.tagName === 'A') {
         const href = (n.getAttribute('href') || '').trim();
