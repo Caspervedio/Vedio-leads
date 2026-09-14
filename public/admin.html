@@ -257,22 +257,18 @@ async function loadOverview() {
 }
 function renderOverview() {
   const t = O.totals, p = O.pool, s = O.settings;
-  // Days of supply from the tempo the team actually calls at - no daily goal
-  // to measure against. Only days with calls count, so a weekend doesn't read
-  // as a slow week.
-  const busy = (O.days || []).filter((d) => (d.calls || 0) > 0);
-  const pace = busy.length ? Math.round(busy.reduce((a, d) => a + d.calls, 0) / busy.length) : 0;
-  const daysLeft = pace ? (p.ready / pace).toFixed(1) : null;
+  const target = Number(s.daily_target || 60) * Math.max(1, (O.perUser || []).filter((u) => u.id !== 'admin').length || 2);
+  const daysLeft = target ? (p.ready / target).toFixed(1) : '-';
   const alerts = [];
   if (p.pendingDemos > 0) alerts.push(`<div class="alert act"><span>🎯</span><span><b>${p.pendingDemos} demo${p.pendingDemos === 1 ? '' : 'er'}</b> afventer din godkendelse.</span><button class="pill sm violet" onclick="showTab('demos')">Gennemgå</button></div>`);
-  if (p.newLast7 === 0) alerts.push(`<div class="alert warn"><span>⏸</span><span><b>Ingen nye leads de sidste 7 dage.</b> Intake (StoreLeads / berigelse) kører ikke${daysLeft ? ` - puljen rækker ca. <b>${daysLeft} kaldedage</b> i det tempo der ringes nu` : ''}.</span></div>`);
-  else if (daysLeft && Number(daysLeft) < 5) alerts.push(`<div class="alert warn"><span>⚠</span><span>Kun <b>${p.ready} leads klar</b> - ca. ${daysLeft} kaldedage ved ${pace} opkald/dag.</span></div>`);
+  if (p.newLast7 === 0) alerts.push(`<div class="alert warn"><span>⏸</span><span><b>Ingen nye leads de sidste 7 dage.</b> Intake (StoreLeads / berigelse) kører ikke - puljen rækker ca. <b>${daysLeft} dage</b> ved fuldt tempo.</span></div>`);
+  else if (p.ready < target * 2) alerts.push(`<div class="alert warn"><span>⚠</span><span>Kun <b>${p.ready} leads klar</b> - ca. ${daysLeft} dages opkald ved ${target}/dag.</span></div>`);
   if (p.blockedByRules > 0) alerts.push(`<div class="alert"><span>🧭</span><span><b>${p.blockedByRules} callable leads</b> holdes tilbage af dine regler (⚙).</span><button class="pill sm" onclick="showTab('leads');setFilter('blocked')">Se dem</button></div>`);
   $('alerts').innerHTML = alerts.join('');
   const sumC = (O.perUser || []).reduce((a, u) => a + (u.commissionMonth || 0), 0);
   const sumQ = (O.perUser || []).reduce((a, u) => a + (u.demosQualMonth || 0), 0);
   $('tiles').innerHTML = [
-    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Opkald denne uge', t.callsWeek], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
+    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Opkald denne uge', t.callsWeek], ['Konvertering · uge', t.convWeekPct + '%'], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
   ].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
   $('tb-sdr').innerHTML = (O.perUser || []).length ? O.perUser.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.onList || 0}</td><td class="num">${u.callsToday || 0}</td><td class="num">${fmtDur(u.talkTodaySec)}</td><td class="num">${u.talkCallsToday ? fmtDur(Math.round(u.talkTodaySec / u.talkCallsToday)) : '-'}</td><td class="num">${u.researchToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.callsPerDemo30 == null ? '-' : u.callsPerDemo30}</td><td class="num">${u.demosQualMonth || 0}</td><td class="num">${u.demosPendingMonth || 0}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="13">Ingen SDR-aktivitet endnu.</td></tr>`;
   const days = O.days || [];
@@ -481,6 +477,7 @@ function openSettings() {
       <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk kilder</div>${sources.map((x) => `<label class="chk" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="r-src" value="${e(x)}" ${(r.exclude_sources || []).includes(x) ? 'checked' : ''}> ${e(x)}</label>`).join('') || '<span style="font-size:13px;color:var(--txt-faint)">Ingen kilder endnu.</span>'}</div>
       <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk nicher (kommasepareret, matcher på del af ordet)</div><input id="r-niches" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}"></div>
     </div>
+    <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Leads på hver SDR's ringeliste (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
     <label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}">
     <label>Stop med at hente nye leads når puljen har så mange klar <b>med navngiven person</b> (0 = hent altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.pool_target_ready ?? 350)}">
@@ -514,7 +511,7 @@ async function saveSettings() {
   const body = {
     email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
     pool_target_ready: Number($('st-cap').value) || 0,
-    list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
+    daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }

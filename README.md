@@ -71,10 +71,8 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   referencekundelisten.
 - **Demoer** — godkend eller afvis bookede demoer. Provision følger de
   godkendte.
-- **⚙** — Calendly-link, listestørrelse, provision, pitch, mailskabeloner,
-  Slack-webhook og reglerne for hvad puljen må servere. Der er med vilje
-  ingen daglig opkaldskvote: tælleren viser hvad der er ringet, ikke hvad
-  der mangler.
+- **⚙** — Calendly-link, dagligt mål, listestørrelse, provision, pitch,
+  mailskabeloner, Slack-webhook og reglerne for hvad puljen må servere.
 
 ---
 

@@ -63,8 +63,9 @@
   <section id="view-list" class="view active">
     <div class="statrow">
       <div class="stat">
-        <div class="num"><span id="s-calls">0</span></div>
+        <div class="num"><span id="s-calls">0</span> <em>/</em> <span id="s-target">60</span></div>
         <div class="lbl">opkald i dag</div>
+        <div class="bar"><i id="s-bar" style="width:0%"></i></div>
       </div>
       <div class="mini">
         <div><b id="s-remaining">0</b><span>tilbage på listen</span></div>
@@ -291,8 +292,9 @@ function adLibUrl(L) {
 /* ─── Render ───────────────────────────────────────────────────────────── */
 function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('me-name').textContent = (me && me.name) || '-';
-  const st = S.stats || {};
-  $('s-calls').textContent = st.callsToday || 0;
+  const st = S.stats || {}; const target = (S.settings && S.settings.daily_target) || 60;
+  $('s-calls').textContent = st.callsToday || 0; $('s-target').textContent = target;
+  $('s-bar').style.width = Math.min(100, Math.round(100 * (st.callsToday || 0) / target)) + '%';
   $('s-remaining').textContent = st.listRemaining || 0; $('s-done').textContent = st.listDone || 0;
   $('s-demos').textContent = st.demosToday || 0; $('s-avail').textContent = st.poolAvailable || 0;
   $('s-perdemo').textContent = st.callsPerDemo30 == null ? '-' : st.callsPerDemo30;
@@ -1085,6 +1087,7 @@ function openSettings() {
     <label>Din Gmail - mails til leads sendes herfra</label>
     <div class="gmailbox" id="gmail-box">Tjekker…</div>
     <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
+    <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Leads på ringelisten (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
     <label>Pitch på kortet - brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
     <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
@@ -1127,7 +1130,7 @@ async function gmailDisconnect() {
   catch (ex) { toast('Fejl: ' + ex.message, 4000); }
 }
 async function saveSettings() {
-  const body = { calendly_url: $('st-cal').value.trim(), list_size: Number($('st-size').value) || 60, pitch_text: $('st-pitch').value };
+  const body = { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, pitch_text: $('st-pitch').value };
   if ($('st-comm')) body.commission_dkk = Number($('st-comm').value);
   if ($('st-hook')) body.demo_webhook_url = $('st-hook').value.trim();
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt'); loadState({ keepCurrent: true }); }
