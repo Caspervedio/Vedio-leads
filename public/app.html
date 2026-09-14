@@ -63,14 +63,14 @@
   <section id="view-list" class="view active">
     <div class="statrow">
       <div class="stat">
-        <div class="num"><span id="s-calls">0</span> <em>/</em> <span id="s-target">60</span></div>
+        <div class="num"><span id="s-calls">0</span></div>
         <div class="lbl">opkald i dag</div>
-        <div class="bar"><i id="s-bar" style="width:0%"></i></div>
       </div>
       <div class="mini">
         <div><b id="s-remaining">0</b><span>tilbage på listen</span></div>
         <div><b id="s-done">0</b><span>ringet i dag</span></div>
         <div><b id="s-demos">0</b><span>demoer i dag</span></div>
+        <div title="Dine opkald pr. bookede demo de sidste 30 dage. Vises når du har booket mindst én."><b id="s-perdemo">-</b><span>opkald pr. demo</span></div>
         <div><b id="s-avail">0</b><span>klar i puljen</span></div>
       </div>
     </div>
@@ -291,11 +291,11 @@ function adLibUrl(L) {
 /* ─── Render ───────────────────────────────────────────────────────────── */
 function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('me-name').textContent = (me && me.name) || '-';
-  const st = S.stats || {}; const target = (S.settings && S.settings.daily_target) || 60;
-  $('s-calls').textContent = st.callsToday || 0; $('s-target').textContent = target;
-  $('s-bar').style.width = Math.min(100, Math.round(100 * (st.callsToday || 0) / target)) + '%';
+  const st = S.stats || {};
+  $('s-calls').textContent = st.callsToday || 0;
   $('s-remaining').textContent = st.listRemaining || 0; $('s-done').textContent = st.listDone || 0;
   $('s-demos').textContent = st.demosToday || 0; $('s-avail').textContent = st.poolAvailable || 0;
+  $('s-perdemo').textContent = st.callsPerDemo30 == null ? '-' : st.callsPerDemo30;
   $('n-list').textContent = st.listRemaining || 0; $('n-list').classList.toggle('due', (st.followupsDue || 0) > 0);
   $('n-fu').textContent = (S.followups || []).length;
   $('n-res').textContent = (S.todayCalls || []).length;
@@ -509,6 +509,7 @@ const EXPLAIN = {
   demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald - filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
   callsWeek:    { t: 'Opkald denne uge', w: 'Dine udfald fra mandag 00:00 til nu.', s: 'Samme opkalds-log som "Opkald i dag", bare en længere periode.' },
   demosWeek:    { t: 'Demoer denne uge', w: 'Dine "Demo booket" fra mandag til nu.', s: 'Samme opkalds-log, filtreret på udfald.' },
+  callsPerDemo30:{ t: 'Opkald pr. demo', w: 'Hvor mange opkald der i gennemsnit ligger bag én booket demo, målt på dine sidste 30 dage. Står der "-", har du ikke booket en demo endnu i perioden.', s: 'Dine opkald de sidste 30 dage delt med dine "Demo booket" i samme periode. 30 dage, fordi tallet kun rykker sig når en demo lander - en enkelt stille uge ville ellers se ud som et fald. Det er ikke et mål, men et pejlemærke: bliver tallet mindre, virker samtalerne bedre.' },
   listRemaining:{ t: 'Tilbage på listen', w: 'Leads på din ringeliste som endnu ikke har fået et udfald i dag.', s: 'Din liste er altid fyldt op fra den fælles pulje: forfaldne opfølgninger øverst, derefter de bedste leads (Meta-annoncører med flest annoncer først). Når du afslutter et lead, kommer et nyt ind nederst. Du kan flytte og fjerne under Ringeliste.' },
   poolAvailable:{ t: 'Klar i puljen', w: 'Leads der kan hentes ind på din liste lige nu: dansk nummer + navngivet kontakt, ikke arkiveret, ikke i Twenty, ikke på den anden SDR\'s liste i dag, og ingen fremtidig opfølgning.', s: 'Puljen fyldes af intake (webshops via StoreLeads, Meta-annoncører, CVR-registret, Google Maps) og beriges med kontakt + nummer (Apollo / Full Enrich) før leads kan ringes.' },
   followupsOpen:{ t: 'Opfølgninger åbne', w: 'Leads med en aftalt opfølgning - forfalden eller fremtidig - som stadig kan ringes.', s: 'Sat via udfaldet "Følg op", eller automatisk af "Ingen svar" (+3 timer hvis før 13, ellers næste hverdag 09:00; efter 4 forsøg parkeres leadet en uge).' },
@@ -527,8 +528,9 @@ function renderCoaching() {
 function renderResults() {
   const st = S.stats || {};
   // Primary: what matters today. Anton, big, tooltips only.
-  const primary = [['callsToday', 'opkald i dag', true], ['demosToday', 'demoer i dag', true], ['callsWeek', 'opkald denne uge'], ['demosWeek', 'demoer denne uge']];
-  $('tiles').innerHTML = primary.map(([k, lbl, v]) => `<div class="tile" title="${e(tip(k))}"><b class="${v ? 'v' : ''}">${st[k] ?? 0}</b><span>${lbl}</span></div>`).join('');
+  const primary = [['callsToday', 'opkald i dag', true], ['demosToday', 'demoer i dag', true], ['callsWeek', 'opkald denne uge'], ['demosWeek', 'demoer denne uge'], ['callsPerDemo30', 'opkald pr. demo · 30 dage']];
+  $('tiles').className = 'tiles five';
+  $('tiles').innerHTML = primary.map(([k, lbl, v]) => `<div class="tile" title="${e(tip(k))}"><b class="${v ? 'v' : ''}">${st[k] == null ? '-' : st[k]}</b><span>${lbl}</span></div>`).join('');
   // Deeper: pool & pipeline, collapsed by default.
   const sub = [['listRemaining', 'tilbage på listen'], ['poolAvailable', 'klar i puljen'], ['followupsOpen', 'opfølgninger åbne'], ['poolNeedsEnrich', 'mangler kontakt/nummer'], ['poolArchived', 'arkiveret'], ['poolTotal', 'leads i alt']];
   $('subtiles').innerHTML = sub.map(([k, lbl]) => `<div class="subtile" title="${e(tip(k))}"><b>${st[k] ?? 0}</b><span>${lbl}</span></div>`).join('');
@@ -1083,7 +1085,6 @@ function openSettings() {
     <label>Din Gmail - mails til leads sendes herfra</label>
     <div class="gmailbox" id="gmail-box">Tjekker…</div>
     <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
-    <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Leads på ringelisten (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
     <label>Pitch på kortet - brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
     <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
@@ -1126,7 +1127,7 @@ async function gmailDisconnect() {
   catch (ex) { toast('Fejl: ' + ex.message, 4000); }
 }
 async function saveSettings() {
-  const body = { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, pitch_text: $('st-pitch').value };
+  const body = { calendly_url: $('st-cal').value.trim(), list_size: Number($('st-size').value) || 60, pitch_text: $('st-pitch').value };
   if ($('st-comm')) body.commission_dkk = Number($('st-comm').value);
   if ($('st-hook')) body.demo_webhook_url = $('st-hook').value.trim();
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt'); loadState({ keepCurrent: true }); }

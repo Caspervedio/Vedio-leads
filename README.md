@@ -61,9 +61,9 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 
 ## Admin (`/admin`)
 
-- **Overblik** — tal for i dag og ugen, per SDR med opkald, taletid og
-  manuelt berigede leads, provision, puljens tilstand, 14-dages strip og
-  Gemini-opsummering af ugen.
+- **Overblik** — tal for i dag og ugen, opkald pr. bookede demo over 30 dage,
+  per SDR med opkald, taletid og manuelt berigede leads, provision, puljens
+  tilstand, 14-dages strip og Gemini-opsummering af ugen.
 - **Leads** — hele puljen med filtre. Ret et lead, arkivér det, eller slet
   det permanent. "Se som Christian / Marcus" åbner SDR-appen som dem.
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
@@ -71,8 +71,10 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   referencekundelisten.
 - **Demoer** — godkend eller afvis bookede demoer. Provision følger de
   godkendte.
-- **⚙** — Calendly-link, dagligt mål, listestørrelse, provision, pitch,
-  mailskabeloner, Slack-webhook og reglerne for hvad puljen må servere.
+- **⚙** — Calendly-link, listestørrelse, provision, pitch, mailskabeloner,
+  Slack-webhook og reglerne for hvad puljen må servere. Der er med vilje
+  ingen daglig opkaldskvote: tælleren viser hvad der er ringet, ikke hvad
+  der mangler.
 
 ---
 

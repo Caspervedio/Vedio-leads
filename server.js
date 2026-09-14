@@ -13891,20 +13891,27 @@ function buildSdrState(userId, d) {
   const t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const w0 = new Date(t0); w0.setDate(t0.getDate() - ((t0.getDay() + 6) % 7)); // Monday
   const per = {};
+  // 30 days is the window for "opkald pr. demo": a week is too short for a
+  // ratio that only moves when a demo lands, so a single quiet week would
+  // read as a collapse.
+  const d30 = t0.getTime() - 29 * 86400e3;
   // Talk time comes from duration_s on each call (tel: tap → outcome). Only
   // calls that were actually dialled from the tool carry it, so `talkCalls`
   // says how many the average rests on.
-  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0, researchToday: 0 };
+  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0, researchToday: 0, calls30: 0, demos30: 0 };
   for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk, onList: (((d.sdr_lists || {})[u.id] || {}).cvrs || []).length };
   const todayCalls = [];
   for (const l of leads) {
     for (const c of (l.calls || [])) {
-      const at = new Date(c.at).getTime(); if (!(at >= w0.getTime())) continue;
+      const at = new Date(c.at).getTime(); if (!(at >= d30)) continue;
       const p = per[c.by] || (per[c.by] = { id: c.by, name: nameById[c.by] || c.by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk });
       const isDemo = c.action === "demo-booked";
       const secs = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0;
-      p.callsWeek++; if (isDemo) p.demosWeek++;
-      if (secs) { p.talkWeekSec += secs; p.talkCallsWeek++; }
+      p.calls30++; if (isDemo) p.demos30++;
+      if (at >= w0.getTime()) {
+        p.callsWeek++; if (isDemo) p.demosWeek++;
+        if (secs) { p.talkWeekSec += secs; p.talkCallsWeek++; }
+      }
       if (at >= t0.getTime()) {
         p.callsToday++; if (isDemo) p.demosToday++;
         if (secs) { p.talkTodaySec += secs; p.talkCallsToday++; }
@@ -13930,18 +13937,23 @@ function buildSdrState(userId, d) {
   for (const p of Object.values(per)) { p.demosQualMonth = 0; p.demosPendingMonth = 0; p.demosUnqualMonth = 0; p.commissionMonth = 0; p.commissionLastMonth = 0; p.demosQualLastMonth = 0; }
   for (const l of demos) {
     const by = l.demo_booked_by; if (!by) continue;
-    const p = per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
+    const p = per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
     const k = sdrMonthKey(l.demo_booked_at || now); const st = l.demo_status || "pending";
     if (k === mKey) { if (st === "qualified") { p.demosQualMonth++; p.commissionMonth += rate; } else if (st === "unqualified") p.demosUnqualMonth++; else p.demosPendingMonth++; }
     else if (k === lmKey && st === "qualified") { p.demosQualLastMonth++; p.commissionLastMonth += rate; }
   }
-  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
+  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
   const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || p.demosPendingMonth > 0 || p.demosQualMonth > 0 || users.some((u) => u.id === p.id && !u.role)));
+  // How many dials it takes to book one meeting. Null until a demo exists -
+  // "0 opkald pr. demo" would be a lie, and dividing by nothing is worse.
+  const perDemo = (calls, demos) => (demos > 0 ? Math.round(calls / demos) : null);
+  for (const p of perUser) p.callsPerDemo30 = perDemo(p.calls30 || 0, p.demos30 || 0);
   const commission = { month: mKey, rate, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
 
   const stats = {
     callsToday: mine.callsToday, demosToday: mine.demosToday, callsWeek: mine.callsWeek, demosWeek: mine.demosWeek,
+    calls30: mine.calls30 || 0, demos30: mine.demos30 || 0, callsPerDemo30: perDemo(mine.calls30 || 0, mine.demos30 || 0),
     listRemaining: items.length, listDone: (L.done || []).length,
     followupsDue: items.filter((l) => sdrIsDue(l, now)).length, followupsOpen: followups.length,
     poolAvailable: available.length,
@@ -14478,6 +14490,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const perUser = base.stats.perUser || [];
     const callsWeek = perUser.reduce((a, u) => a + (u.callsWeek || 0), 0), demosWeek = perUser.reduce((a, u) => a + (u.demosWeek || 0), 0);
     const callsToday = perUser.reduce((a, u) => a + (u.callsToday || 0), 0), demosToday = perUser.reduce((a, u) => a + (u.demosToday || 0), 0);
+    const calls30 = perUser.reduce((a, u) => a + (u.calls30 || 0), 0), demos30 = perUser.reduce((a, u) => a + (u.demos30 || 0), 0);
     res.json({
       ok: true, me: base.me, settings: base.settings, commission: base.commission, perUser, demos: base.demos, followups: base.followups,
       days: days.map((k) => ({ day: k, ...byDay[k] })), intakeBySource,
@@ -14490,7 +14503,10 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
         onLists: leads.filter((l) => sdrClaimActive(l, now)).length,
       },
       sources, topNiches: Object.entries(niches).sort((a, b) => b[1] - a[1]).slice(0, 12),
-      totals: { callsToday, demosToday, callsWeek, demosWeek, convWeekPct: callsWeek ? Math.round(100 * demosWeek / callsWeek) : 0 },
+      totals: {
+        callsToday, demosToday, callsWeek, demosWeek, convWeekPct: callsWeek ? Math.round(100 * demosWeek / callsWeek) : 0,
+        calls30, demos30, callsPerDemo30: demos30 > 0 ? Math.round(calls30 / demos30) : null,
+      },
     });
   } catch (e) { sdrFail(res, e, "admin/overview"); }
 });
