@@ -203,6 +203,10 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .mailbox input,.mailbox select,.mailbox textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13.5px;color:var(--txt)}
 .mailbox select{width:auto;min-width:190px;font-weight:700}
 .mailbox textarea{line-height:1.5;resize:vertical}
+/* The message body is rich text: a link shows as the words, not the URL. */
+.mbody{width:100%;min-height:190px;max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13.5px;line-height:1.5;color:var(--txt);white-space:pre-wrap;word-break:break-word}
+.mbody:focus{outline:none;border-color:var(--violet)}
+.mbody a{color:var(--violet);text-decoration:underline;cursor:text}
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}

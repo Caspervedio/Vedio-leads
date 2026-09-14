@@ -663,9 +663,9 @@ function toggleMail() {
     <label>Til</label><input id="m-to" type="email" placeholder="navn@firma.dk" value="${e(to)}">
     <label>Emne</label><input id="m-sub" type="text">
     <div class="row" style="gap:8px;align-items:baseline"><label style="margin:0">Besked</label>
-      <button class="pill sm tertiary" style="margin-left:auto" onclick="mailLink()" title="Markér teksten der skal være klikbar, og klik her">🔗 Indsæt link</button></div>
-    <textarea id="m-body" rows="10"></textarea>
-    <div class="sub" style="margin-top:4px">Links skrives som <code>[tekst](https://…)</code> - rene URL'er bliver klikbare af sig selv.</div>
+      <button class="pill sm tertiary" style="margin-left:auto" onclick="mailLink()" title="Markér de ord der skal være klikbare, og klik her">🔗 Indsæt link</button></div>
+    <div id="m-body" class="mbody" contenteditable="true" spellcheck="true"></div>
+    <div class="sub" style="margin-top:4px">Markér de ord linket skal ligge bag, og klik 🔗 - modtageren ser kun ordene.</div>
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
       <button class="pill violet" id="m-send" onclick="mailSend()">${gmailReady ? 'Send med Gmail' : 'Åbn i mail og planlæg opfølgning'}</button>
       ${gmailReady ? `<button class="pill sm tertiary" onclick="mailSend(true)" title="Åbn i dit eget mailprogram i stedet">Åbn i mailprogram</button>` : ''}
@@ -679,35 +679,98 @@ function mailPick() {
   const L = S.current; if (!L) return;
   const t = mailTemplates()[Number($('m-tpl').value) || 0]; if (!t) return;
   $('m-sub').value = fillMail(t.subject, L);
-  $('m-body').value = fillMail(t.body, L);
+  mailSetBody(fillMail(t.body, L));
 }
-/* Links: mark the words that should be clickable, click 🔗, paste the URL.
-   Stored as [tekst](url) and turned into a real anchor when the mail goes out
-   through Gmail - and into "tekst (url)" everywhere HTML can't reach. */
+/* The body is rich text, so the SDR sees the link the way the recipient will:
+   the words, underlined, with the URL behind them. On the wire it is still
+   [tekst](url) - the server never has to trust HTML from the browser. */
+function mailUrlOk(u) { return /^(https?:\/\/|mailto:)/i.test(String(u || '').trim()); }
+function mailSetBody(text) {
+  const root = $('m-body'); if (!root) return;
+  root.innerHTML = '';
+  String(text || '').split('\n').forEach((line) => {
+    const div = document.createElement('div');
+    const re = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+    let last = 0, m;
+    while ((m = re.exec(line))) {
+      if (m.index > last) div.appendChild(document.createTextNode(line.slice(last, m.index)));
+      if (mailUrlOk(m[2])) {
+        const a = document.createElement('a');
+        a.href = m[2]; a.textContent = m[1];
+        div.appendChild(a);
+      } else div.appendChild(document.createTextNode(m[0]));
+      last = re.lastIndex;
+    }
+    if (last < line.length) div.appendChild(document.createTextNode(line.slice(last)));
+    if (!div.childNodes.length) div.appendChild(document.createElement('br'));
+    root.appendChild(div);
+  });
+}
+/* Back to text. Anything pasted in from a website is flattened to its words;
+   only the links survive, as [tekst](url). */
+function mailGetBody() {
+  const root = $('m-body'); if (!root) return '';
+  let out = '';
+  (function walk(node) {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) { out += n.nodeValue; continue; }
+      if (n.nodeType !== 1) continue;
+      if (n.tagName === 'BR') { out += '\n'; continue; }
+      if (n.tagName === 'A') {
+        const href = (n.getAttribute('href') || '').trim();
+        const text = (n.textContent || '').replace(/\s+/g, ' ').trim();
+        out += text ? (mailUrlOk(href) ? `[${text}](${href})` : text) : '';
+        continue;
+      }
+      const block = /^(DIV|P|LI|TR|H[1-6]|BLOCKQUOTE|UL|OL)$/.test(n.tagName);
+      if (block && out && !out.endsWith('\n')) out += '\n';
+      walk(n);
+      if (block && out && !out.endsWith('\n')) out += '\n';
+    }
+  })(root);
+  return out.replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+}
 function mailLink() {
-  const ta = $('m-body'); if (!ta) return;
-  const start = ta.selectionStart, end = ta.selectionEnd;
-  // Double-clicking a word often takes the space with it - keep that space
-  // outside the link so the sentence doesn't lose it.
-  const raw = ta.value.slice(start, end);
-  const lead = raw.match(/^\s*/)[0], trail = raw.slice(lead.length).match(/\s*$/)[0];
-  const sel = raw.trim();
-  let url = (prompt('Link til:', 'https://') || '').trim();
+  const root = $('m-body'); if (!root) return;
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || !root.contains(sel.anchorNode)) { root.focus(); toast('Markér først de ord linket skal ligge bag', 4000); return; }
+  const range = sel.getRangeAt(0);
+  // Caret inside a link: 🔗 edits that one, and a blank field removes it.
+  let existing = range.startContainer;
+  while (existing && existing !== root && !(existing.nodeType === 1 && existing.tagName === 'A')) existing = existing.parentNode;
+  existing = existing && existing !== root ? existing : null;
+  let url = (prompt(existing ? 'Ret linket (tomt felt fjerner det):' : 'Link til:', (existing && existing.getAttribute('href')) || 'https://') || '').trim();
+  if (existing && !url) {
+    const p = existing.parentNode;
+    while (existing.firstChild) p.insertBefore(existing.firstChild, existing);
+    p.removeChild(existing); root.focus(); return;
+  }
   if (!url || url === 'https://') return;
   if (/^www\./i.test(url)) url = 'https://' + url;
-  if (!/^(https?:\/\/|mailto:)/i.test(url)) { toast('Linket skal starte med https:// eller mailto:', 4500); return; }
-  const text = (sel || prompt('Tekst der skal være klikbar:', url) || '').trim();
+  if (!mailUrlOk(url)) { toast('Linket skal starte med https:// eller mailto:', 4500); return; }
+  if (existing) { existing.setAttribute('href', url); root.focus(); return; }
+  // Double-clicking a word often takes the space with it - keep that space
+  // outside the link so the sentence doesn't lose it.
+  const raw = range.toString();
+  const lead = raw.match(/^\s*/)[0], trail = raw.slice(lead.length).match(/\s*$/)[0];
+  const text = (raw.trim() || prompt('Tekst der skal være klikbar:', url) || '').trim();
   if (!text) return;
-  const md = `${lead}[${text}](${url})${trail}`;
-  ta.value = ta.value.slice(0, start) + md + ta.value.slice(end);
-  ta.focus(); ta.selectionStart = ta.selectionEnd = start + md.length;
+  const a = document.createElement('a');
+  a.href = url; a.textContent = text;
+  const frag = document.createDocumentFragment();
+  if (lead) frag.appendChild(document.createTextNode(lead));
+  frag.appendChild(a);
+  if (trail) frag.appendChild(document.createTextNode(trail));
+  range.deleteContents(); range.insertNode(frag);
+  const after = document.createRange(); after.setStartAfter(a); after.collapse(true);
+  sel.removeAllRanges(); sel.addRange(after); root.focus();
 }
 /* mailto: and the clipboard can't carry HTML, so links are flattened. */
 function mailPlain(body) {
   return String(body || '').replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, t, u) => (t.trim() === u.trim() ? u : `${t} (${u})`));
 }
 function mailCopy() {
-  const txt = $('m-sub').value + '\n\n' + mailPlain($('m-body').value);
+  const txt = $('m-sub').value + '\n\n' + mailPlain(mailGetBody());
   navigator.clipboard.writeText(txt).then(() => toast('Kopieret - indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
 }
 async function mailSend(forceClient) {
@@ -715,7 +778,7 @@ async function mailSend(forceClient) {
   const to = $('m-to').value.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse - spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
   const t = mailTemplates()[Number($('m-tpl').value) || 0] || {};
-  const subject = $('m-sub').value, body = $('m-body').value;
+  const subject = $('m-sub').value, body = mailGetBody();
   // Keep the address on the contact so it's there next time.
   if (L.contact && L.contact.name && to !== (L.contact.email || '')) {
     try { await post('/api/sdr/contact', { cvr: L.cvr, name: L.contact.name, title: L.contact.title || '', email: to }); } catch (_) {}
