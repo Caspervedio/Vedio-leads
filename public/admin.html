@@ -118,7 +118,12 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 .rules{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-top:6px}
 .rules label.chk{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--txt);margin:0;text-transform:none;letter-spacing:0}
 .rules label.chk input{width:auto}
-.modal.wide{max-width:640px}
+.modal.wide{max-width:880px}
+/* The short settings sit two-up so the panel is a screen, not a scroll. */
+.setgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 22px}
+.setgrid > div{min-width:0}
+.setgrid input{width:100%}
+@media (max-width:760px){.setgrid{grid-template-columns:1fr}}
 .kv{display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:13.5px}
 .kv span{color:var(--txt-soft)}.kv b{text-align:right;font-variant-numeric:tabular-nums}
 .integ{display:flex;flex-direction:column}
@@ -568,14 +573,16 @@ function openSettings() {
       <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk kilder</div>${sources.map((x) => `<label class="chk" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="r-src" value="${e(x)}" ${(r.exclude_sources || []).includes(x) ? 'checked' : ''}> ${e(x)}</label>`).join('') || '<span style="font-size:13px;color:var(--txt-faint)">Ingen kilder endnu.</span>'}</div>
       <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk nicher (kommasepareret, matcher på del af ordet)</div><input id="r-niches" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}"></div>
     </div>
-    <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
-    <label>Benchmark: gennemsnitlig tid pr. lead (sekunder) - fra kortet åbner til udfaldet er valgt. Farver "Snit pr. lead" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 180)}">
-    <label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}">
-    <label>Leads på hver SDR's ringeliste (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
-    <label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}">
-    <label>Stop med at hente nye leads når puljen har så mange klar <b>med navngiven person</b> (0 = hent altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.pool_target_ready ?? 350)}">
-    <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}">
-    <label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}">
+    <div class="setgrid">
+    <div><label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}"></div>
+    <div><label>Benchmark: gennemsnitlig tid pr. lead (sekunder) - fra kortet åbner til udfaldet er valgt. Farver "Snit pr. lead" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 180)}"></div>
+    <div><label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}"></div>
+    <div><label>Leads på hver SDR's ringeliste (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}"></div>
+    <div><label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}"></div>
+    <div><label>Stop med at hente nye leads når puljen har så mange klar <b>med navngiven person</b> (0 = hent altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.pool_target_ready ?? 350)}"></div>
+    <div><label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
+    <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
+    </div>
     <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
     <label>Holdets pitch ({fornavn} {firma} {annoncer} {sdr} {måned}) - det nye SDR'er starter med. Har en SDR lavet sin egen, beholder de deres.</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
