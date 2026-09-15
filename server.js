@@ -13972,7 +13972,11 @@ function buildSdrState(userId, d) {
   // "0 opkald pr. demo" would be a lie, and dividing by nothing is worse.
   const perDemo = (calls, demos) => (demos > 0 ? Math.round(calls / demos) : null);
   for (const p of perUser) p.callsPerDemo30 = perDemo(p.calls30 || 0, p.demos30 || 0);
-  const commission = { month: mKey, rate, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
+  // Casper: an SDR should see the money the moment they book, not a 0 that
+  // waits on a founder. Booked counts until it is rejected, so `expected`
+  // includes pending; `confirmed_kr` stays what the founders have approved.
+  const expected_kr = (mine.demosQualMonth + mine.demosPendingMonth) * rate;
+  const commission = { month: mKey, rate, expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
 
   const stats = {

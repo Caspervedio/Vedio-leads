@@ -554,17 +554,17 @@ function renderResults() {
         <div><b style="color:#c4b5fd">${sum('demosPendingMonth')}</b><span>afventer din godkendelse</span></div>
         <div><b>${e(fmtKr(sum('commissionLastMonth')))}</b><span>${e(lName)}</span></div>
       </div>
-      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde. Godkend eller afvis under <b>Bookede demoer</b> herunder - SDR'en ser kun godkendte kroner.</div>`;
+      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde - tallet her er kun de godkendte. SDR'en ser sine bookede møder talt med fra start, så et afslag under <b>Bookede demoer</b> trækker beløbet ned igen hos dem.</div>`;
     pay.hidden = false; return;
   }
   pay.innerHTML = `
-    <div><div class="big">${e(fmtKr(c.confirmed_kr))}</div><div class="lbl">Provision · ${e(mName)}</div></div>
+    <div><div class="big">${e(fmtKr(c.expected_kr ?? c.confirmed_kr))}</div><div class="lbl">Provision · ${e(mName)}</div></div>
     <div class="side">
-      <div><b>${c.confirmed_n}</b><span>kvalificerede møder</span></div>
+      <div><b>${c.confirmed_n + c.pending_n}</b><span>bookede møder</span></div>
       <div><b style="color:#c4b5fd">${c.pending_n}</b><span>afventer godkendelse</span></div>
       <div><b>${e(fmtKr(c.last_kr))}</b><span>${e(lName)} · ${c.last_n} møder</span></div>
     </div>
-    <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde - tæller når founders har holdt mødet og bekræftet, at det var ICP og interesseret.${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
+    <div class="rule">${e(fmtKr(c.rate))} pr. møde, talt med fra du booker det. Founders bekræfter bagefter at mødet var ICP og interesseret - bliver et møde afvist, falder beløbet igen.${c.confirmed_n ? ` ${e(fmtKr(c.confirmed_kr))} er allerede godkendt.` : ''}${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
   pay.hidden = false;
 }
 let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';
