@@ -13330,6 +13330,18 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════════
 const POOL_ID = "pool";
 const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant", "wrong-number", "email-sent"]);
+// A dial is not a conversation, and the difference is the whole job. These
+// four outcomes can only happen after someone picked up and talked; "ingen
+// svar" and "forkert nummer" never are. "Ikke relevant" goes both ways - it
+// can be said on the phone or decided from the card - so a recorded duration
+// decides it, and a lead archived without dialling stays a dial.
+const SDR_TALK_ACTIONS = new Set(["demo-booked", "follow-up", "not-now", "email-sent"]);
+function sdrIsTalk(c) {
+  if (!c) return false;
+  if (SDR_TALK_ACTIONS.has(c.action)) return true;
+  if (c.action === "not-relevant") return Number(c.duration_s) >= 20;
+  return false;
+}
 // Spoken Danish, the way an SDR actually talks on the phone. Short lines,
 // contractions, and the three objections they will meet in week one -
 // including "send mig en mail", which now has its own outcome button.
@@ -13420,7 +13432,10 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
     ].join("\n"),
   },
 ];
-const SDR_DEFAULT_SETTINGS = { daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
+// Benchmarks the admin table colours against. Starting points, not gospel -
+// Casper tunes them under ⚙ once the team has a few weeks of its own numbers.
+const SDR_DEFAULT_BENCH = { talk_avg_s: 90, calls_per_demo: 40 };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
 // Every new lead costs money downstream - a description, a people search, a
 // Meta page check, sometimes a paid phone reveal - whether or not anyone ever
 // rings it. Two SDRs burn roughly 50 leads a weekday, so once the pool holds
@@ -13445,6 +13460,7 @@ function sdrIntakeStatus() {
 function sdrSettings(d) {
   const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
   s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) };
+  s.bench = { ...SDR_DEFAULT_BENCH, ...((d.sdr_settings || {}).bench || {}) };
   if (!Array.isArray(s.email_templates) || !s.email_templates.length) s.email_templates = SDR_DEFAULT_EMAIL_TEMPLATES;
   return s;
 }
@@ -13903,7 +13919,7 @@ function buildSdrState(userId, d) {
   // Talk time comes from duration_s on each call (tel: tap → outcome). Only
   // calls that were actually dialled from the tool carry it, so `talkCalls`
   // says how many the average rests on.
-  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0, researchToday: 0, calls30: 0, demos30: 0 };
+  const zeroTalk = { talkTodaySec: 0, talkWeekSec: 0, talkCallsToday: 0, talkCallsWeek: 0, researchToday: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0 };
   for (const u of users) per[u.id] = { id: u.id, name: u.name, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk, onList: (((d.sdr_lists || {})[u.id] || {}).cvrs || []).length };
   const todayCalls = [];
   for (const l of leads) {
@@ -13912,13 +13928,14 @@ function buildSdrState(userId, d) {
       const p = per[c.by] || (per[c.by] = { id: c.by, name: nameById[c.by] || c.by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, ...zeroTalk });
       const isDemo = c.action === "demo-booked";
       const secs = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0;
-      p.calls30++; if (isDemo) p.demos30++;
+      const talked = sdrIsTalk(c);
+      p.calls30++; if (isDemo) p.demos30++; if (talked) p.talks30++;
       if (at >= w0.getTime()) {
-        p.callsWeek++; if (isDemo) p.demosWeek++;
+        p.callsWeek++; if (isDemo) p.demosWeek++; if (talked) p.talksWeek++;
         if (secs) { p.talkWeekSec += secs; p.talkCallsWeek++; }
       }
       if (at >= t0.getTime()) {
-        p.callsToday++; if (isDemo) p.demosToday++;
+        p.callsToday++; if (isDemo) p.demosToday++; if (talked) p.talksToday++;
         if (secs) { p.talkTodaySec += secs; p.talkCallsToday++; }
         todayCalls.push({
           at: c.at, by: c.by, by_name: nameById[c.by] || c.by, action: c.action, note: c.note || "", callback_at: c.callback_at || null, duration_s: c.duration_s || null,
@@ -13942,12 +13959,12 @@ function buildSdrState(userId, d) {
   for (const p of Object.values(per)) { p.demosQualMonth = 0; p.demosPendingMonth = 0; p.demosUnqualMonth = 0; p.commissionMonth = 0; p.commissionLastMonth = 0; p.demosQualLastMonth = 0; }
   for (const l of demos) {
     const by = l.demo_booked_by; if (!by) continue;
-    const p = per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
+    const p = per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
     const k = sdrMonthKey(l.demo_booked_at || now); const st = l.demo_status || "pending";
     if (k === mKey) { if (st === "qualified") { p.demosQualMonth++; p.commissionMonth += rate; } else if (st === "unqualified") p.demosUnqualMonth++; else p.demosPendingMonth++; }
     else if (k === lmKey && st === "qualified") { p.demosQualLastMonth++; p.commissionLastMonth += rate; }
   }
-  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
+  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
   const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || p.demosPendingMonth > 0 || p.demosQualMonth > 0 || users.some((u) => u.id === p.id && !u.role)));
   // How many dials it takes to book one meeting. Null until a demo exists -
   // "0 opkald pr. demo" would be a lie, and dividing by nothing is worse.
@@ -13959,6 +13976,7 @@ function buildSdrState(userId, d) {
   const stats = {
     callsToday: mine.callsToday, demosToday: mine.demosToday, callsWeek: mine.callsWeek, demosWeek: mine.demosWeek,
     calls30: mine.calls30 || 0, demos30: mine.demos30 || 0, callsPerDemo30: perDemo(mine.calls30 || 0, mine.demos30 || 0),
+    talksToday: mine.talksToday || 0, talksWeek: mine.talksWeek || 0, talks30: mine.talks30 || 0,
     listRemaining: items.length, listDone: (L.done || []).length,
     followupsDue: items.filter((l) => sdrIsDue(l, now)).length, followupsOpen: followups.length,
     poolAvailable: available.length,
@@ -14517,11 +14535,11 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const days = sdrDayKeys(14, now);
     // newCallable = added that day AND callable today. That is the real
     // intake number: raw leads are cheap, callable ones are the bottleneck.
-    const byDay = Object.fromEntries(days.map((k) => [k, { calls: 0, demos: 0, newLeads: 0, newCallable: 0, talkSec: 0, talkCalls: 0 }]));
+    const byDay = Object.fromEntries(days.map((k) => [k, { calls: 0, demos: 0, talks: 0, newLeads: 0, newCallable: 0, talkSec: 0, talkCalls: 0 }]));
     const intakeBySource = {};
     for (const l of leads) {
       if (l.addedAt) { const k = sdrDayKey(l.addedAt); if (byDay[k]) { byDay[k].newLeads++; if (sdrCallable(l)) byDay[k].newCallable++; const s = sdrSourceLabel(l) || "ukendt"; intakeBySource[s] = (intakeBySource[s] || 0) + 1; } }
-      for (const c of (l.calls || [])) { const k = sdrDayKey(c.at); if (byDay[k]) { byDay[k].calls++; if (c.action === "demo-booked") byDay[k].demos++; const s = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0; if (s) { byDay[k].talkSec += s; byDay[k].talkCalls++; } } }
+      for (const c of (l.calls || [])) { const k = sdrDayKey(c.at); if (byDay[k]) { byDay[k].calls++; if (c.action === "demo-booked") byDay[k].demos++; if (sdrIsTalk(c)) byDay[k].talks++; const s = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0; if (s) { byDay[k].talkSec += s; byDay[k].talkCalls++; } } }
     }
     const active = leads.filter(sdrIsActive);
     const ready = active.filter((l) => l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, settings));
@@ -14534,6 +14552,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const callsWeek = perUser.reduce((a, u) => a + (u.callsWeek || 0), 0), demosWeek = perUser.reduce((a, u) => a + (u.demosWeek || 0), 0);
     const callsToday = perUser.reduce((a, u) => a + (u.callsToday || 0), 0), demosToday = perUser.reduce((a, u) => a + (u.demosToday || 0), 0);
     const calls30 = perUser.reduce((a, u) => a + (u.calls30 || 0), 0), demos30 = perUser.reduce((a, u) => a + (u.demos30 || 0), 0);
+    const talksToday = perUser.reduce((a, u) => a + (u.talksToday || 0), 0), talksWeek = perUser.reduce((a, u) => a + (u.talksWeek || 0), 0);
     res.json({
       ok: true, me: base.me, settings: base.settings, commission: base.commission, perUser, demos: base.demos, followups: base.followups,
       days: days.map((k) => ({ day: k, ...byDay[k] })), intakeBySource,
@@ -14549,6 +14568,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
       totals: {
         callsToday, demosToday, callsWeek, demosWeek, convWeekPct: callsWeek ? Math.round(100 * demosWeek / callsWeek) : 0,
         calls30, demos30, callsPerDemo30: demos30 > 0 ? Math.round(calls30 / demos30) : null,
+        talksToday, talksWeek, connectTodayPct: callsToday ? Math.round(100 * talksToday / callsToday) : 0,
       },
     });
   } catch (e) { sdrFail(res, e, "admin/overview"); }
@@ -15290,6 +15310,12 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
           .filter((x) => x.name && x.subject && x.body)
           .slice(0, 10);
         if (t.length) d.sdr_settings.email_templates = t;
+      }
+      if (b.bench && typeof b.bench === "object") {
+        const cur = { ...SDR_DEFAULT_BENCH, ...(d.sdr_settings.bench || {}) };
+        if (Number.isFinite(Number(b.bench.talk_avg_s)) && Number(b.bench.talk_avg_s) > 0) cur.talk_avg_s = Math.min(3600, Math.round(Number(b.bench.talk_avg_s)));
+        if (Number.isFinite(Number(b.bench.calls_per_demo)) && Number(b.bench.calls_per_demo) > 0) cur.calls_per_demo = Math.min(1000, Math.round(Number(b.bench.calls_per_demo)));
+        d.sdr_settings.bench = cur;
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);
