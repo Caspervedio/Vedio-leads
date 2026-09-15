@@ -13434,7 +13434,7 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
 ];
 // Benchmarks the admin table colours against. Starting points, not gospel -
 // Casper tunes them under ⚙ once the team has a few weeks of its own numbers.
-const SDR_DEFAULT_BENCH = { talk_avg_s: 90, calls_per_demo: 40 };
+const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40 };
 const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
 // Every new lead costs money downstream - a description, a people search, a
 // Meta page check, sometimes a paid phone reveal - whether or not anyone ever
@@ -13517,7 +13517,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13538,6 +13538,7 @@ function sdrMergeBeforeSave(d) {
     // Only follow disk here once disk actually knows about per-SDR pitches -
     // a copy written before the feature must not erase one written after.
     if (disk.sdr_pitch !== undefined) d.sdr_pitch = disk.sdr_pitch;
+    if (disk.sdr_mail !== undefined) d.sdr_mail = disk.sdr_mail;
   }
   if (merged) console.log(`[pool-merge] kept ${merged} newer SDR-side change(s) from disk`);
 }
@@ -13988,7 +13989,7 @@ function buildSdrState(userId, d) {
   // How many dials it takes to book one meeting. Null until a demo exists -
   // "0 opkald pr. demo" would be a lie, and dividing by nothing is worse.
   const perDemo = (calls, demos) => (demos > 0 ? Math.round(calls / demos) : null);
-  for (const p of perUser) p.callsPerDemo30 = perDemo(p.calls30 || 0, p.demos30 || 0);
+  for (const p of perUser) { p.callsPerDemo30 = perDemo(p.calls30 || 0, p.demos30 || 0); p.demoPerTalk30Pct = (p.talks30 || 0) > 0 ? Math.round(100 * (p.demos30 || 0) / p.talks30) : null; }
   // Casper: an SDR should see the money the moment they book, not a 0 that
   // waits on a founder. Booked counts until it is rejected, so `expected`
   // includes pending; `confirmed_kr` stays what the founders have approved.
@@ -14017,7 +14018,13 @@ function buildSdrState(userId, d) {
   // write one they see the team's, which is also what admin edits - so a new
   // SDR starts from the house script rather than a blank card.
   const myPitch = String(((d.sdr_pitch || {})[userId]) || "").trim();
-  const settingsOut = { ...base, pitch_text: myPitch || settings.pitch_text, pitch_is_mine: !!myPitch, pitch_team: settings.pitch_text };
+  const myMail = (d.sdr_mail || {})[userId];
+  const mineMail = Array.isArray(myMail) && myMail.length ? myMail : null;
+  const settingsOut = {
+    ...base,
+    pitch_text: myPitch || settings.pitch_text, pitch_is_mine: !!myPitch, pitch_team: settings.pitch_text,
+    email_templates: mineMail || settings.email_templates, mail_is_mine: !!mineMail, mail_team: settings.email_templates,
+  };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
     settings: settingsOut, stats, commission,
@@ -14089,6 +14096,19 @@ app.post("/api/sdr/call-started", authMiddleware, (req, res) => {
     res.json({ ok: true });
   } catch (e) { sdrFail(res, e, "call-started"); }
 });
+// The card was opened. Casper: "instead of taletid, we could have a trigger
+// called time spend on lead" - because the dial timer only ran when they
+// pressed Ring op, which almost nobody does, so 3 of 98 calls had a duration.
+// This stamp costs them nothing: it starts when the lead appears on screen and
+// stops when they pick an outcome. Only the first open counts, so a re-render
+// can't reset the clock.
+app.post("/api/sdr/opened", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
+    if (lead && !lead.opened_at) { lead.opened_at = new Date().toISOString(); lead.opened_by = req.userId; savePool(d); }
+    res.json({ ok: true });
+  } catch (e) { sdrFail(res, e, "opened"); }
+});
 app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
   try {
     const { cvr, action, note, callback_at } = req.body || {};
@@ -14102,8 +14122,13 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     const UNDO_FIELDS = ["lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to"];
     lead._undo = { at: nowIso, by: req.userId, prev: Object.fromEntries(UNDO_FIELDS.map((k) => [k, k === "contacts" ? JSON.parse(JSON.stringify(lead.contacts || [])) : (lead[k] === undefined ? null : lead[k])])) };
     // Call duration ≈ tel: tap → outcome (ignore if the tap was >2h ago).
+    // Time on the lead: from the card opening to this outcome. Falls back to
+    // the Ring op stamp for anyone who dialled before the card was stamped.
+    // Two hours is the cap - past that they went to lunch with it open.
     let duration_s = null;
-    if (lead.last_call_started_at) { const s = now - new Date(lead.last_call_started_at).getTime(); if (s > 0 && s < 2 * 3600000) duration_s = Math.round(s / 1000); lead.last_call_started_at = null; }
+    const startedAt = lead.opened_at || lead.last_call_started_at;
+    if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 2 * 3600000) duration_s = Math.round(s / 1000); }
+    lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
@@ -14578,6 +14603,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const callsToday = perUser.reduce((a, u) => a + (u.callsToday || 0), 0), demosToday = perUser.reduce((a, u) => a + (u.demosToday || 0), 0);
     const calls30 = perUser.reduce((a, u) => a + (u.calls30 || 0), 0), demos30 = perUser.reduce((a, u) => a + (u.demos30 || 0), 0);
     const talksToday = perUser.reduce((a, u) => a + (u.talksToday || 0), 0), talksWeek = perUser.reduce((a, u) => a + (u.talksWeek || 0), 0);
+    const talks30 = perUser.reduce((a, u) => a + (u.talks30 || 0), 0);
     res.json({
       ok: true, me: base.me, settings: base.settings, commission: base.commission, perUser, demos: base.demos, followups: base.followups,
       days: days.map((k) => ({ day: k, ...byDay[k] })), intakeBySource,
@@ -14594,6 +14620,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
         callsToday, demosToday, callsWeek, demosWeek, convWeekPct: callsWeek ? Math.round(100 * demosWeek / callsWeek) : 0,
         calls30, demos30, callsPerDemo30: demos30 > 0 ? Math.round(calls30 / demos30) : null,
         talksToday, talksWeek, connectTodayPct: callsToday ? Math.round(100 * talksToday / callsToday) : 0,
+        talks30, demoPerTalk30Pct: talks30 ? Math.round(100 * demos30 / talks30) : null, connect30Pct: calls30 ? Math.round(100 * talks30 / calls30) : 0,
       },
     });
   } catch (e) { sdrFail(res, e, "admin/overview"); }
@@ -15316,6 +15343,24 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     // Admin edits the team script; an SDR's edit lands on their own copy and
     // leaves everyone else's alone. pitch_reset drops theirs so they fall back
     // to the team's again.
+    // Mail templates work like the pitch: admin keeps the house versions,
+    // an SDR's edit lands on their own copy. Same reset escape hatch.
+    if (b.mail_reset === true && d.sdr_mail && !sdrIsAdmin(req.userId)) delete d.sdr_mail[req.userId];
+    else if (Array.isArray(b.email_templates)) {
+      const t = b.email_templates
+        .map((x, i) => ({
+          id: String((x && x.id) || `mail-${i + 1}`).replace(/[^a-z0-9-]/gi, "").slice(0, 40) || `mail-${i + 1}`,
+          name: String((x && x.name) || "").trim().slice(0, 60),
+          subject: String((x && x.subject) || "").trim().slice(0, 200),
+          body: String((x && x.body) || "").slice(0, 4000),
+        }))
+        .filter((x) => x.name && x.subject && x.body)
+        .slice(0, 10);
+      if (t.length) {
+        if (sdrIsAdmin(req.userId)) d.sdr_settings.email_templates = t;
+        else { d.sdr_mail = d.sdr_mail && typeof d.sdr_mail === "object" ? d.sdr_mail : {}; d.sdr_mail[req.userId] = t; }
+      }
+    }
     if (b.pitch_reset === true && d.sdr_pitch && !sdrIsAdmin(req.userId)) delete d.sdr_pitch[req.userId];
     else if (typeof b.pitch_text === "string") {
       if (sdrIsAdmin(req.userId)) d.sdr_settings.pitch_text = b.pitch_text.slice(0, 4000);
@@ -15324,18 +15369,6 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     if (sdrIsAdmin(req.userId)) {
       if (Number.isFinite(Number(b.email_followup_days)) && Number(b.email_followup_days) > 0) d.sdr_settings.email_followup_days = Math.min(30, Math.round(Number(b.email_followup_days)));
       if (Number.isFinite(Number(b.pool_target_ready)) && Number(b.pool_target_ready) >= 0) d.sdr_settings.pool_target_ready = Math.min(10000, Math.round(Number(b.pool_target_ready)));
-      if (Array.isArray(b.email_templates)) {
-        const t = b.email_templates
-          .map((x, i) => ({
-            id: String((x && x.id) || `mail-${i + 1}`).replace(/[^a-z0-9-]/gi, "").slice(0, 40) || `mail-${i + 1}`,
-            name: String((x && x.name) || "").trim().slice(0, 60),
-            subject: String((x && x.subject) || "").trim().slice(0, 200),
-            body: String((x && x.body) || "").slice(0, 4000),
-          }))
-          .filter((x) => x.name && x.subject && x.body)
-          .slice(0, 10);
-        if (t.length) d.sdr_settings.email_templates = t;
-      }
       if (b.bench && typeof b.bench === "object") {
         const cur = { ...SDR_DEFAULT_BENCH, ...(d.sdr_settings.bench || {}) };
         if (Number.isFinite(Number(b.bench.talk_avg_s)) && Number(b.bench.talk_avg_s) > 0) cur.talk_avg_s = Math.min(3600, Math.round(Number(b.bench.talk_avg_s)));
@@ -15358,7 +15391,9 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     // Answer with the caller's own view, so pitch_text is theirs and not the
     // team's when an SDR just saved a personal one.
     const mine = String(((d.sdr_pitch || {})[req.userId]) || "").trim();
-    res.json({ ok: true, settings: { ...d.sdr_settings, pitch_text: mine || d.sdr_settings.pitch_text, pitch_is_mine: !!mine, pitch_team: d.sdr_settings.pitch_text } });
+    const mineMail = ((d.sdr_mail || {})[req.userId]);
+    const mm = Array.isArray(mineMail) && mineMail.length ? mineMail : null;
+    res.json({ ok: true, settings: { ...d.sdr_settings, pitch_text: mine || d.sdr_settings.pitch_text, pitch_is_mine: !!mine, pitch_team: d.sdr_settings.pitch_text, email_templates: mm || d.sdr_settings.email_templates, mail_is_mine: !!mm, mail_team: d.sdr_settings.email_templates } });
   } catch (e) { sdrFail(res, e, "settings"); }
 });
 

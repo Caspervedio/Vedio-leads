@@ -174,14 +174,14 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <!-- OVERBLIK -->
   <section id="view-overview" class="view active">
     <div class="alerts" id="alerts"></div>
-    <div class="tiles" id="tiles" style="grid-template-columns:repeat(7,1fr)"></div>
+    <div class="tiles" id="tiles" style="grid-template-columns:repeat(4,1fr)"></div>
     <div class="tablewrap" id="digest-card">
       <div class="thead"><div><h3>Ugens læring</h3><p id="digest-sub">Hvad virkede, hvad skal ændres - skrevet ud fra SDR'ernes debriefs og udfald.</p></div><button class="pill sm violet" id="digest-btn" onclick="genDigest()">Generér for denne uge</button></div>
       <div id="digest-body" style="padding:18px 24px;font-size:14px;color:var(--txt-soft)">Ingen opsummering endnu.</div>
     </div>
     <div class="tablewrap" id="sdr-table">
       <div class="thead"><div><h3>Per SDR</h3><p>Hver SDR har sin egen liste, der altid fyldes op fra den fælles pulje. I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder. Kolonner med ◦ er farvet mod benchmark: <b style="color:var(--approve)">grøn</b> er i mål, <b style="color:#A9761E">gul</b> er på vej, <b style="color:#B3352B">rød</b> er langt fra. Sæt benchmarks under ⚙.</p></div></div>
-      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num bench" title="Udfald registreret i dag. Farven måler mod det daglige mål, fordelt over arbejdsdagen 08-16 - så kl. 10 forventes en fjerdedel.">Opkald</th><th class="num" title="Samlet tid fra der trykkes Ring op til der vælges et udfald, i dag. Uret starter KUN når de trykker Ring op på kortet - ringer de fra mobil eller bordtelefon, er der ingen tid at måle.">Taletid</th><th class="num bench" title="Taletid delt med antal opkald, der har en varighed - tallet under viser hvor mange af dagens opkald det er. Farves først ved mindst 5 målte opkald. Benchmark sættes under ⚙.">Snit</th><th class="num" title="Leads SDR'en har beriget manuelt i Research-fanen i dag.">Beriget</th><th class="num" title="Demoer booket i dag.">Demoer</th><th class="num bench" title="Udfald fra mandag til nu. Farven måler mod det daglige mål gange de hverdage, der er gået.">Opkald uge</th><th class="num">Demoer uge</th><th class="num bench" title="Opkald pr. bookede demo, målt på de sidste 30 dage. Står der - er der ingen demo i perioden at regne på.">Opk./demo</th><th class="num" title="Godkendte møder denne måned. Tallet i parentes afventer din godkendelse.">Kval. møder</th><th class="num" title="Provision for godkendte møder denne måned.">Provision</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num bench" title="Udfald registreret i dag. Farven måler mod det daglige mål, fordelt over arbejdsdagen 08-16 - så kl. 10 forventes en fjerdedel.">Opkald</th><th class="num" title="Samlet tid brugt på leads i dag: fra kortet åbner til der vælges et udfald. Måler research, opkald og notat under ét - ikke ren taletid.">Tid på leads</th><th class="num bench" title="Gennemsnitlig tid pr. lead - tallet under viser hvor mange af dagens opkald der er målt. Farves først ved mindst 5 målte. Benchmark sættes under ⚙.">Snit pr. lead</th><th class="num" title="Leads SDR'en har beriget manuelt i Research-fanen i dag.">Beriget</th><th class="num" title="Demoer booket i dag.">Demoer</th><th class="num bench" title="Udfald fra mandag til nu. Farven måler mod det daglige mål gange de hverdage, der er gået.">Opkald uge</th><th class="num">Demoer uge</th><th class="num bench" title="Opkald pr. bookede demo, målt på de sidste 30 dage. Står der - er der ingen demo i perioden at regne på.">Opk./demo</th><th class="num" title="Godkendte møder denne måned. Tallet i parentes afventer din godkendelse.">Kval. møder</th><th class="num" title="Provision for godkendte møder denne måned.">Provision</th></tr></thead><tbody id="tb-sdr"></tbody></table>
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
@@ -325,7 +325,7 @@ function renderOverview() {
   const sumC = (O.perUser || []).reduce((a, u) => a + (u.commissionMonth || 0), 0);
   const sumQ = (O.perUser || []).reduce((a, u) => a + (u.demosQualMonth || 0), 0);
   $('tiles').innerHTML = [
-    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Samtaler i dag', `${t.talksToday ?? 0}`], ['Opkald denne uge', t.callsWeek], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
+    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Samtaler i dag', `${t.talksToday ?? 0}`], ['Opkald denne uge', t.callsWeek], ['Demo pr. samtale · 30 dage', t.demoPerTalk30Pct == null ? '-' : t.demoPerTalk30Pct + '%'], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
   ].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
   const goal = Number(s.daily_target || 60);
   const bench = s.bench || {};
@@ -345,7 +345,7 @@ function renderOverview() {
       + cell(u.demosToday || 0, u.demosToday > 0 ? 'ok' : '')
       + cell(`${u.callsWeek || 0}${u.callsWeek ? `<i>${u.talksWeek || 0} samtaler · ${Math.round(100 * (u.talksWeek || 0) / u.callsWeek)}%</i>` : ''}`, weekGoal >= 1 ? benchTone(u.callsWeek || 0, weekGoal) : '')
       + cell(u.demosWeek || 0, u.demosWeek > 0 ? 'ok' : '')
-      + cell(u.callsPerDemo30 == null ? '-' : u.callsPerDemo30, benchTone(u.callsPerDemo30, bench.calls_per_demo, true))
+      + cell(`${u.callsPerDemo30 == null ? '-' : u.callsPerDemo30}${(u.demoPerTalk30Pct == null || u.callsPerDemo30 == null) ? '' : `<i title=\"Andel af samtalerne der endte med en booket demo, sidste 30 dage.\">${u.demoPerTalk30Pct}% af samtaler</i>`}`, benchTone(u.callsPerDemo30, bench.calls_per_demo, true))
       + cell(`${u.demosQualMonth || 0}${u.demosPendingMonth ? ` <span class="sub">(${u.demosPendingMonth})</span>` : ''}`, u.demosQualMonth > 0 ? 'ok' : '')
       + cell(fmtKr(u.commissionMonth), u.commissionMonth > 0 ? 'ok' : '')
       + `</tr>`;
@@ -569,7 +569,7 @@ function openSettings() {
       <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk nicher (kommasepareret, matcher på del af ordet)</div><input id="r-niches" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}"></div>
     </div>
     <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
-    <label>Benchmark: gennemsnitlig samtaletid pr. opkald (sekunder) - farver "Snit" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 90)}">
+    <label>Benchmark: gennemsnitlig tid pr. lead (sekunder) - fra kortet åbner til udfaldet er valgt. Farver "Snit pr. lead" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 180)}">
     <label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}">
     <label>Leads på hver SDR's ringeliste (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
     <label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}">
@@ -605,7 +605,7 @@ async function saveSettings() {
   const body = {
     email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
     pool_target_ready: Number($('st-cap').value) || 0,
-    bench: { talk_avg_s: Number($('st-btalk').value) || 90, calls_per_demo: Number($('st-bdemo').value) || 40 },
+    bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40 },
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
