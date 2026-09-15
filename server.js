@@ -13482,7 +13482,9 @@ function sdrMonthKey(dt) { const d = dt ? new Date(dt) : new Date(); return `${d
 async function sdrNotifyDemo(url, lead, sdrName, note) {
   if (!url || !/^https?:\/\//.test(url)) return;
   const c = sdrPrimaryContact(lead) || {};
-  const ads = Number(lead.adsMatched || 0);
+  // The count lives on meta_ads_active_now; adsMatched is the card's field
+  // name and never exists here, so Slack never got the number.
+  const ads = Number(lead.meta_ads_active_now || 0);
   const text = [
     `🎯 Demo booket af ${sdrName}: *${lead.name || "?"}*${lead.city ? " · " + lead.city : ""}`,
     `👤 ${c.name || "-"}${c.title ? " · " + c.title : ""} · 📞 ${sdrPhone(lead).phone || "-"}${c.email ? " · ✉ " + c.email : ""}`,
