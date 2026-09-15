@@ -180,6 +180,9 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .pay .big{font-family:var(--display);font-size:56px;line-height:.9;letter-spacing:.005em;color:var(--white)}
 .pay .big em{font-style:normal;color:var(--white)}
 .pay .lbl{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.72);margin-top:8px}
+/* Base + commission, so the month reads as a pay packet and not a bonus. */
+.pay .salary{margin-top:10px;font-size:14px;color:rgba(255,255,255,.82);font-weight:600}
+.pay .salary b{color:var(--white);font-weight:800}
 .pay .side{margin-left:auto;display:flex;gap:26px}
 .pay .side div{display:flex;flex-direction:column;gap:2px}
 .pay .side b{font-size:20px;font-weight:800;color:var(--white)}

@@ -575,6 +575,7 @@ function openSettings() {
     <label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}">
     <label>Stop med at hente nye leads når puljen har så mange klar <b>med navngiven person</b> (0 = hent altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.pool_target_ready ?? 350)}">
     <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}">
+    <label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}">
     <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
     <label>Holdets pitch ({fornavn} {firma} {annoncer} {sdr} {måned}) - det nye SDR'er starter med. Har en SDR lavet sin egen, beholder de deres.</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
@@ -605,7 +606,7 @@ async function saveSettings() {
     email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
     pool_target_ready: Number($('st-cap').value) || 0,
     bench: { talk_avg_s: Number($('st-btalk').value) || 90, calls_per_demo: Number($('st-bdemo').value) || 40 },
-    daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
+    daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }

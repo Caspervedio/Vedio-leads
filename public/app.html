@@ -558,7 +558,8 @@ function renderResults() {
     pay.hidden = false; return;
   }
   pay.innerHTML = `
-    <div><div class="big">${e(fmtKr(c.expected_kr ?? c.confirmed_kr))}</div><div class="lbl">Provision · ${e(mName)}</div></div>
+    <div><div class="big">${e(fmtKr(c.expected_kr ?? c.confirmed_kr))}</div><div class="lbl">Provision · ${e(mName)}</div>
+      ${c.base_kr ? `<div class="salary">${e(fmtKr(c.base_kr))} i grundløn + ${e(fmtKr(c.expected_kr ?? 0))} i provision = <b>${e(fmtKr(c.salary_kr ?? c.base_kr))}</b> i ${e(mName)}</div>` : ''}</div>
     <div class="side">
       <div><b>${c.confirmed_n + c.pending_n}</b><span>bookede møder</span></div>
       <div><b style="color:#c4b5fd">${c.pending_n}</b><span>afventer godkendelse</span></div>

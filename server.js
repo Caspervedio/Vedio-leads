@@ -13435,7 +13435,7 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
 // Benchmarks the admin table colours against. Starting points, not gospel -
 // Casper tunes them under ⚙ once the team has a few weeks of its own numbers.
 const SDR_DEFAULT_BENCH = { talk_avg_s: 90, calls_per_demo: 40 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
 // Every new lead costs money downstream - a description, a people search, a
 // Meta page check, sometimes a paid phone reveal - whether or not anyone ever
 // rings it. Two SDRs burn roughly 50 leads a weekday, so once the pool holds
@@ -13976,7 +13976,9 @@ function buildSdrState(userId, d) {
   // waits on a founder. Booked counts until it is rejected, so `expected`
   // includes pending; `confirmed_kr` stays what the founders have approved.
   const expected_kr = (mine.demosQualMonth + mine.demosPendingMonth) * rate;
-  const commission = { month: mKey, rate, expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
+  // What they actually take home this month: base + what the meetings earned.
+  const base_kr = Math.max(0, Number(settings.base_salary_dkk) || 0);
+  const commission = { month: mKey, rate, expected_kr, base_kr, salary_kr: base_kr + expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
 
   const stats = {
@@ -15324,6 +15326,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         d.sdr_settings.bench = cur;
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
+      if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
       if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);
       if (b.rules && typeof b.rules === "object") {
         const r = { ...SDR_DEFAULT_RULES, ...(d.sdr_settings.rules || {}) };
