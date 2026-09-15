@@ -13809,10 +13809,27 @@ function sdrSlim(l, nameById) {
 }
 // Pool order for pulling leads into a list: due follow-ups first, then fresh
 // leads by Meta-advertiser → ad count → never-called → newest.
+// A promised call-back belongs to whoever promised it. Claims expire after
+// five days and a follow-up is usually further out than that, so claim-based
+// scoping let each SDR see - and ring - the other's agreed call-backs.
+// Whoever registered the last outcome is the one who set the date.
+function sdrFollowupOwner(l) {
+  const cs = Array.isArray(l.calls) ? l.calls : [];
+  for (let i = cs.length - 1; i >= 0; i--) if (cs[i] && cs[i].by) return cs[i].by;
+  return l.claimed_by || null;
+}
+// True for anything that isn't a follow-up (the claim rules cover those) and
+// for follow-ups that are mine or that nobody owns - an orphan is better seen
+// by both than lost by both.
+function sdrFollowupMine(l, userId) {
+  if (!l || !l.callback_at) return true;
+  const owner = sdrFollowupOwner(l);
+  return !owner || owner === userId;
+}
 function sdrQueue(d, userId, now, exclude, settings) {
   const ex = exclude || new Set();
   const s = settings || sdrSettings(d);
-  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && !ex.has(l.cvr));
+  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !ex.has(l.cvr));
   const due = eligible.filter((l) => sdrIsDue(l, now)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
     // A named decision-maker outranks everything else: you can have the
@@ -13861,13 +13878,13 @@ function sdrEnsureList(d, userId, now, settings) {
     const l = byCvr.get(cvr);
     // A promised callback stays on the list even if a rule change would now
     // exclude the lead - we told them we'd ring back.
-    const keep = !!l && sdrEligible(l, now) && (sdrPassesRules(l, settings) || sdrIsDue(l, now)) && !sdrClaimedByOther(l, userId, now);
+    const keep = !!l && sdrEligible(l, now) && (sdrPassesRules(l, settings) || sdrIsDue(l, now)) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId);
     if (!keep && l && l.claimed_by === userId) sdrUnclaim(l);
     return keep;
   });
   if (L.cvrs.length !== before) dirty = true;
   const inList = new Set(L.cvrs);
-  const due = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !inList.has(l.cvr) && !sdrClaimedByOther(l, userId, now) && !(L.done || []).includes(l.cvr))
+  const due = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !inList.has(l.cvr) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !(L.done || []).includes(l.cvr))
     .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   if (due.length) {
     L.cvrs = [...due.map((l) => l.cvr), ...L.cvrs];
@@ -13907,7 +13924,7 @@ function buildSdrState(userId, d) {
   // callbacks, including the other's - "Ring nu" then jumped to a lead that
   // wasn't on their list. Admins see everything (oversight, no list).
   const followups = leads.filter((l) => l.callback_at && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l)
-    && (sdrIsAdmin(userId) || !sdrClaimedByOther(l, userId, now)))
+    && (sdrIsAdmin(userId) || sdrFollowupMine(l, userId)))
     .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const demos = leads.filter((l) => l.lastAction === "demo-booked").sort((a, b) => new Date(b.demo_booked_at || 0) - new Date(a.demo_booked_at || 0));
 
