@@ -415,7 +415,7 @@ function renderCard() {
     </div>
     ${refsHtml(L)}
     <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
-    ${noteThreadHtml(L)}
+    ${noteThreadHtml(L && L.note_thread)}
     <div class="composer" id="composer">
       <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
       <div class="cfoot">
@@ -831,8 +831,10 @@ function refsHtml(L) {
   const label = r[0].cat_label ? `Vores kunder i ${r[0].cat_label.toLowerCase()}` : 'Nævn en af vores kunder';
   return `<div class="refs"><span class="k">${e(label)}</span>${r.map(chip).join('')}</div>`;
 }
-function noteThreadHtml(L) {
-  const t = (L && L.note_thread) || [];
+/* Takes the thread itself, so the call card and the Research tab can render
+   the same history from their own payloads. */
+function noteThreadHtml(thread, id) {
+  const t = thread || [];
   if (!t.length) return '';
   const rows = t.map((n) => {
     const who = n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || '');
@@ -843,7 +845,7 @@ function noteThreadHtml(L) {
       <div class="t">${e(n.text)}</div>
     </div>`;
   }).join('');
-  return `<div class="notethread" id="notethread"><div class="k">Noter (${t.length})</div>${rows}</div>`;
+  return `<div class="notethread" id="${id || 'notethread'}"><div class="k">Noter (${t.length})</div>${rows}</div>`;
 }
 /* A note used to exist only until you picked an outcome - close the tab
    mid-call and it was gone. Now it saves on its own button and is stamped. */
@@ -1054,6 +1056,14 @@ function renderResearch() {
       ${L.needs_phone ? `<div class="full"><label>Hovednummer (firmaets)</label><input id="r-main" placeholder="+45 …" autocomplete="off"></div>` : ''}
       <div class="full"><label>LinkedIn-profil (valgfri)</label><input id="r-li" placeholder="https://www.linkedin.com/in/…" autocomplete="off"></div>
     </div>
+    ${noteThreadHtml(L.notes, 'rshthread')}
+    <div class="composer" style="margin-top:14px">
+      <textarea id="r-note" class="note" rows="3" placeholder="Note til leadet - hvad du fandt, hvem der tager telefonen, hvornår de er der…"></textarea>
+      <div class="cfoot">
+        <span class="sub">Noten lander i samme tråd som opkaldsnoterne - og følger med "Gem og næste".</span>
+        <button class="pill sm tertiary" onclick="rshNote()">Gem note</button>
+      </div>
+    </div>
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:14px">
       <button class="pill primary" onclick="rshSave()">Gem og næste</button>
       <button class="pill sm tertiary" onclick="rshSkip()">Kunne ikke findes</button>
@@ -1065,13 +1075,33 @@ function renderResearch() {
 async function rshSave() {
   const L = RSH.lead; if (!L || RSH.busy) return;
   const v = (id) => ($(id) ? $(id).value.trim() : '');
-  if (!v('r-name') && !v('r-main') && !v('r-phone')) { toast('Udfyld et navn eller et nummer'); return; }
+  if (!v('r-name') && !v('r-main') && !v('r-phone') && !v('r-note')) { toast('Udfyld et navn, et nummer eller en note'); return; }
   RSH.busy = true; $('r-msg').textContent = 'Gemmer…';
   try {
-    const d = await post('/api/sdr/research/save', { cvr: L.cvr, name: v('r-name'), title: v('r-title'), phone: v('r-phone'), email: v('r-email'), linkedin: v('r-li'), main_phone: v('r-main') });
-    toast(d.callable ? '✓ Gemt - leadet kan nu ringes op' : '✓ Gemt', 3000);
+    const d = await post('/api/sdr/research/save', { cvr: L.cvr, name: v('r-name'), title: v('r-title'), phone: v('r-phone'), email: v('r-email'), linkedin: v('r-li'), main_phone: v('r-main'), note: v('r-note') });
+    toast(d.note_only ? '✓ Note gemt' : (d.callable ? '✓ Gemt - leadet kan nu ringes op' : '✓ Gemt'), 3000);
     RSH.busy = false; await rshLoad();
   } catch (ex) { RSH.busy = false; $('r-msg').textContent = ''; toast('Fejl: ' + ex.message, 4000); }
+}
+/* A note on its own: saved, thread redrawn, card stays put so they can keep
+   digging on the same lead. */
+async function rshNote() {
+  const L = RSH.lead; if (!L || RSH.busy) return;
+  const ta = $('r-note'); const note = ta ? ta.value.trim() : '';
+  if (!note) { toast('Skriv en note først'); if (ta) ta.focus(); return; }
+  RSH.busy = true;
+  try {
+    const d = await post('/api/sdr/research/note', { cvr: L.cvr, note });
+    L.notes = d.notes || L.notes;
+    if (ta) ta.value = '';
+    const old = $('rshthread');
+    const html = noteThreadHtml(L.notes, 'rshthread');
+    if (old) old.outerHTML = html;
+    else { const form = document.querySelector('#rshwrap .rshform'); if (form) form.insertAdjacentHTML('afterend', html); }
+    const th = $('rshthread'); if (th) th.scrollTop = th.scrollHeight;
+    toast('✓ Note gemt');
+  } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
+  RSH.busy = false;
 }
 async function rshSkip() {
   const L = RSH.lead; if (!L || RSH.busy) return;
@@ -1083,14 +1113,15 @@ function openSettings() {
   const s = (S && S.settings) || {};
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'settings';
   bg.innerHTML = `<div class="modal">
-    <h3>Indstillinger</h3><p>Din Gmail er personlig. Resten er fælles for alle SDR'er.</p>
+    <h3>Indstillinger</h3><p>Din Gmail og din pitch er dine egne. Resten er fælles for alle SDR'er.</p>
     <label>Din Gmail - mails til leads sendes herfra</label>
     <div class="gmailbox" id="gmail-box">Tjekker…</div>
     <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
     <label>Leads på ringelisten (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
-    <label>Pitch på kortet - brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
+    <label>Din pitch på kortet - kun din. ${s.pitch_is_mine ? 'Du har din egen version.' : 'Du kører på holdets version - retter du her, bliver den din.'} Brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
     <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
+    ${s.pitch_is_mine && !(me && me.is_admin) ? `<div class="row" style="margin-top:6px"><button class="pill sm tertiary" onclick="resetPitch()">Hent holdets pitch tilbage</button></div>` : ''}
     ${me && me.is_admin ? `
     <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
     <label>Webhook når en demo bookes (Slack incoming webhook URL - valgfrit)</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">` : ''}
@@ -1099,6 +1130,17 @@ function openSettings() {
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
   renderGmailBox();
+}
+/* Drop my own pitch and go back to the team's. Only removes mine - the team
+   version and everyone else's are untouched. */
+async function resetPitch() {
+  if (!confirm('Kassér din egen pitch og hent holdets tilbage?')) return;
+  try {
+    const d = await post('/api/sdr/settings', { pitch_reset: true });
+    if ($('st-pitch') && d.settings) $('st-pitch').value = d.settings.pitch_text || '';
+    toast('Holdets pitch er hentet tilbage');
+    loadState({ keepCurrent: true });
+  } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
 }
 /* Gmail lives in the SDR's own profile: they sign in with their account once,
    and mails go out from it so replies land in their inbox. */

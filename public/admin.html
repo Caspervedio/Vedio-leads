@@ -484,7 +484,7 @@ function openSettings() {
     <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}">
     <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
-    <label>Pitch på kortet ({fornavn} {firma} {annoncer} {sdr} {måned})</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
+    <label>Holdets pitch ({fornavn} {firma} {annoncer} {sdr} {måned}) - det nye SDR'er starter med. Har en SDR lavet sin egen, beholder de deres.</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
     <label>Mailskabeloner - SDR'en vælger én når et lead beder om en mail ({fornavn} {firma} {sdr} {calendly} {note} {om}). Links skrives som [tekst](https://…)</label>
     <div id="st-mails"></div>
     <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button>

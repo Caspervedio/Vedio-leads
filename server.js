@@ -13515,7 +13515,12 @@ function sdrMergeBeforeSave(d) {
     if ((D.sdr_touched_at || "") > (L.sdr_touched_at || "")) { for (const k of SDR_STATE_FIELDS) { if (D[k] === undefined) delete L[k]; else L[k] = D[k]; } merged++; }
     if ((D.sdr_contact_touched_at || "") > (L.sdr_contact_touched_at || "")) { for (const k of SDR_CONTACT_FIELDS) { if (D[k] === undefined) delete L[k]; else L[k] = D[k]; } merged++; }
   }
-  if ((disk.sdr_meta_at || "") > (d.sdr_meta_at || "")) { d.sdr_lists = disk.sdr_lists; d.sdr_settings = disk.sdr_settings; d.sdr_meta_at = disk.sdr_meta_at; merged++; }
+  if ((disk.sdr_meta_at || "") > (d.sdr_meta_at || "")) {
+    d.sdr_lists = disk.sdr_lists; d.sdr_settings = disk.sdr_settings; d.sdr_meta_at = disk.sdr_meta_at; merged++;
+    // Only follow disk here once disk actually knows about per-SDR pitches -
+    // a copy written before the feature must not erase one written after.
+    if (disk.sdr_pitch !== undefined) d.sdr_pitch = disk.sdr_pitch;
+  }
   if (merged) console.log(`[pool-merge] kept ${merged} newer SDR-side change(s) from disk`);
 }
 function isDkPhone(p) {
@@ -13964,7 +13969,12 @@ function buildSdrState(userId, d) {
   };
   // Webhook URL is admin-only knowledge; SDRs get the rest of settings.
   const isAdmin = sdrIsAdmin(userId);
-  const settingsOut = isAdmin ? settings : { ...settings, demo_webhook_url: settings.demo_webhook_url ? "(sat)" : "" };
+  const base = isAdmin ? settings : { ...settings, demo_webhook_url: settings.demo_webhook_url ? "(sat)" : "" };
+  // The pitch is personal: what an SDR writes is theirs alone. Until they
+  // write one they see the team's, which is also what admin edits - so a new
+  // SDR starts from the house script rather than a blank card.
+  const myPitch = String(((d.sdr_pitch || {})[userId]) || "").trim();
+  const settingsOut = { ...base, pitch_text: myPitch || settings.pitch_text, pitch_is_mine: !!myPitch, pitch_team: settings.pitch_text };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
     settings: settingsOut, stats, commission,
@@ -14144,10 +14154,13 @@ function sdrResearchQueue(d, userId, now) {
     return true;
   }).sort((a, b) => sdrResearchScore(b) - sdrResearchScore(a) || new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
 }
-function sdrResearchSlim(l) {
+function sdrResearchSlim(l, nameById) {
   const needs = sdrResearchNeeds(l);
   const web = String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   return {
+    // Same note thread as the call card: what someone found while researching
+    // is the first thing the next person wants when the lead is dialled.
+    notes: sdrNoteThread(l, nameById || {}),
     cvr: l.cvr, name: l.name || "", city: l.city || "", web, about: l.about || "",
     niche: l.ind || l.industry || l.niche || "", source_label: sdrSourceLabel(l),
     phone: sdrPhone(l).phone, phone_label: sdrPhone(l).label,
@@ -14172,7 +14185,8 @@ app.get("/api/sdr/research", authMiddleware, (req, res) => {
     const q = sdrResearchQueue(d, req.userId, now);
     const lead = q[0] || null;
     if (lead) { lead.research_hold_by = req.userId; lead.research_hold_at = new Date(now).toISOString(); sdrTouch(lead); savePool(d); }
-    res.json({ ok: true, lead: lead ? sdrResearchSlim(lead) : null, ...sdrResearchStats(d, req.userId, now) });
+    const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
+    res.json({ ok: true, lead: lead ? sdrResearchSlim(lead, nameById) : null, ...sdrResearchStats(d, req.userId, now) });
   } catch (e) { sdrFail(res, e, "research"); }
 });
 app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
@@ -14204,7 +14218,16 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
       if (phone) { const np = normDkPhone(phone); x.phone = np; x.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; x.source_phone = "sdr-research"; }
       lead.preferred_contact_name = name;
     }
+    // A note typed next to the fields rides along with "Gem og næste" so it
+    // isn't lost when the card moves on. On its own it is not enrichment, so
+    // it doesn't stamp research_at or count towards "beriget i dag".
+    const note = str(b.note, 2000);
+    if (note) { sdrAppendNote(lead, req.userId, note); changed.push("note"); }
     if (!changed.length) return res.status(400).json({ error: "Udfyld mindst et navn eller et nummer" });
+    if (changed.length === 1 && changed[0] === "note") {
+      sdrTouch(lead); savePool(d);
+      return res.json({ ok: true, changed, note_only: true, callable: sdrCallable(lead), ...sdrResearchStats(d, req.userId, Date.now()) });
+    }
     if (sdrCallable(lead)) lead.needs_enrichment = false;
     lead.research_at = nowIso; lead.research_by = req.userId;
     lead.research_hold_by = null; lead.research_hold_at = null;
@@ -14214,6 +14237,22 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
     logActivity("sdr-research", `${meUser ? meUser.name : req.userId} berigede ${lead.name}: ${changed.join(", ")}`, { cvr: lead.cvr, userId: req.userId });
     res.json({ ok: true, changed, callable: sdrCallable(lead), ...sdrResearchStats(d, req.userId, Date.now()) });
   } catch (e) { sdrFail(res, e, "research/save"); }
+});
+// A note from the Research tab. Same thread as everywhere else, but the reply
+// is just the thread - the research card has no use for the whole state.
+app.post("/api/sdr/research/note", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const b = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === b.cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const note = String(b.note || "").trim();
+    if (!note) return res.status(400).json({ error: "Tom note" });
+    const saved_at = sdrAppendNote(lead, req.userId, note);
+    sdrTouch(lead);
+    savePool(d);
+    const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
+    res.json({ ok: true, saved_at, notes: sdrNoteThread(lead, nameById) });
+  } catch (e) { sdrFail(res, e, "research/note"); }
 });
 app.post("/api/sdr/research/skip", authMiddleware, (req, res) => {
   try {
@@ -14228,6 +14267,19 @@ app.post("/api/sdr/research/skip", authMiddleware, (req, res) => {
     res.json({ ok: true, ...sdrResearchStats(d, req.userId, Date.now()) });
   } catch (e) { sdrFail(res, e, "research/skip"); }
 });
+// One note, appended to the lead's thread. Shared by the call card and the
+// Research tab so a note written in either place shows up in the other.
+function sdrAppendNote(lead, userId, text) {
+  const note = String(text || "").trim().slice(0, 2000);
+  const nowIso = new Date().toISOString();
+  lead.last_note = note;
+  lead.note_saved_at = nowIso;
+  lead.note_saved_by = userId;
+  lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+  lead.note_log.push({ at: nowIso, by: userId, text: note });
+  if (lead.note_log.length > 200) lead.note_log = lead.note_log.slice(-200);
+  return nowIso;
+}
 // Save a note without ending the call. The note used to live only in the
 // browser until an outcome was picked, so a reload lost it.
 app.post("/api/sdr/note", authMiddleware, (req, res) => {
@@ -14237,16 +14289,7 @@ app.post("/api/sdr/note", authMiddleware, (req, res) => {
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
     const note = String((req.body || {}).note || "").trim().slice(0, 2000);
     if (!note) return res.status(400).json({ error: "Tom note" });
-    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
-    const nowIso = new Date().toISOString();
-    const stamp = new Date().toLocaleString("da-DK", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-    lead.last_note = note;
-    lead.note_saved_at = nowIso;
-    lead.note_saved_by = req.userId;
-    lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
-    lead.note_log.push({ at: nowIso, by: req.userId, text: note });
-    if (lead.note_log.length > 200) lead.note_log = lead.note_log.slice(-200);
-    void stamp;
+    const nowIso = sdrAppendNote(lead, req.userId, note);
     sdrTouch(lead);
     savePool(d);
     sdrRespond(res, req.userId, d, { saved_at: nowIso });
@@ -15225,7 +15268,14 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     if (typeof b.calendly_url === "string") d.sdr_settings.calendly_url = b.calendly_url.trim().slice(0, 300);
     if (Number.isFinite(Number(b.daily_target)) && Number(b.daily_target) > 0) d.sdr_settings.daily_target = Math.min(500, Math.round(Number(b.daily_target)));
     if (Number.isFinite(Number(b.list_size)) && Number(b.list_size) > 0) d.sdr_settings.list_size = Math.min(200, Math.round(Number(b.list_size)));
-    if (typeof b.pitch_text === "string") d.sdr_settings.pitch_text = b.pitch_text.slice(0, 4000);
+    // Admin edits the team script; an SDR's edit lands on their own copy and
+    // leaves everyone else's alone. pitch_reset drops theirs so they fall back
+    // to the team's again.
+    if (b.pitch_reset === true && d.sdr_pitch && !sdrIsAdmin(req.userId)) delete d.sdr_pitch[req.userId];
+    else if (typeof b.pitch_text === "string") {
+      if (sdrIsAdmin(req.userId)) d.sdr_settings.pitch_text = b.pitch_text.slice(0, 4000);
+      else { d.sdr_pitch = d.sdr_pitch && typeof d.sdr_pitch === "object" ? d.sdr_pitch : {}; d.sdr_pitch[req.userId] = b.pitch_text.slice(0, 4000); }
+    }
     if (sdrIsAdmin(req.userId)) {
       if (Number.isFinite(Number(b.email_followup_days)) && Number(b.email_followup_days) > 0) d.sdr_settings.email_followup_days = Math.min(30, Math.round(Number(b.email_followup_days)));
       if (Number.isFinite(Number(b.pool_target_ready)) && Number(b.pool_target_ready) >= 0) d.sdr_settings.pool_target_ready = Math.min(10000, Math.round(Number(b.pool_target_ready)));
@@ -15253,7 +15303,10 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       }
     }
     savePool(d);
-    res.json({ ok: true, settings: d.sdr_settings });
+    // Answer with the caller's own view, so pitch_text is theirs and not the
+    // team's when an SDR just saved a personal one.
+    const mine = String(((d.sdr_pitch || {})[req.userId]) || "").trim();
+    res.json({ ok: true, settings: { ...d.sdr_settings, pitch_text: mine || d.sdr_settings.pitch_text, pitch_is_mine: !!mine, pitch_team: d.sdr_settings.pitch_text } });
   } catch (e) { sdrFail(res, e, "settings"); }
 });
 
