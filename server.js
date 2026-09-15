@@ -13919,6 +13919,18 @@ function buildSdrState(userId, d) {
   const items = L.cvrs.map((cvr) => byCvr.get(cvr)).filter(Boolean);
   const current = items[0] || null;
   const upNext = items.slice(1, 6);
+  // Stamp the clock server-side as well as from the browser. A tab that has
+  // been open since before this shipped runs the old script and never posts
+  // /opened - which is why one SDR had eight measured leads and the other
+  // none. At most one lead is open per SDR at a time, so a sticky card being
+  // worked on keeps the stamp and the next lead doesn't start early.
+  if (current && !sdrIsAdmin(userId)) {
+    const alreadyOpen = leads.some((l) => l.opened_at && l.opened_by === userId);
+    if (!alreadyOpen && !current.opened_at) {
+      current.opened_at = new Date(now).toISOString(); current.opened_by = userId;
+      sdrTouch(current); savePool(d);
+    }
+  }
 
   // Opfølgning shows what THIS SDR can act on: their own follow-ups plus the
   // unclaimed ones. Without the claim filter both SDRs saw all 12 open
@@ -14125,9 +14137,12 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     // Time on the lead: from the card opening to this outcome. Falls back to
     // the Ring op stamp for anyone who dialled before the card was stamped.
     // Two hours is the cap - past that they went to lunch with it open.
+    // 20 minutes is the ceiling: past that the card was open while they did
+    // something else, and counting it would say more about their lunch than
+    // about the lead.
     let duration_s = null;
     const startedAt = lead.opened_at || lead.last_call_started_at;
-    if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 2 * 3600000) duration_s = Math.round(s / 1000); }
+    if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 20 * 60000) duration_s = Math.round(s / 1000); }
     lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
