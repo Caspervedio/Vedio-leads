@@ -13925,7 +13925,9 @@ function buildSdrState(userId, d) {
   // none. At most one lead is open per SDR at a time, so a sticky card being
   // worked on keeps the stamp and the next lead doesn't start early.
   if (current && !sdrIsAdmin(userId)) {
-    const alreadyOpen = leads.some((l) => l.opened_at && l.opened_by === userId);
+    // A stamp older than the 20-minute ceiling is dead anyway (closed tab,
+    // went to lunch) - it must not block the next measurement.
+    const alreadyOpen = leads.some((l) => l.opened_at && l.opened_by === userId && now - new Date(l.opened_at).getTime() < 20 * 60000);
     if (!alreadyOpen && !current.opened_at) {
       current.opened_at = new Date(now).toISOString(); current.opened_by = userId;
       sdrTouch(current); savePool(d);
@@ -14117,7 +14119,15 @@ app.post("/api/sdr/call-started", authMiddleware, (req, res) => {
 app.post("/api/sdr/opened", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
-    if (lead && !lead.opened_at) { lead.opened_at = new Date().toISOString(); lead.opened_by = req.userId; savePool(d); }
+    if (lead) {
+      // The browser knows what is actually on screen, so it moves the clock:
+      // any lead this SDR left without an outcome stops counting here. The
+      // open lead keeps the time it has already accrued.
+      let changed = false;
+      for (const l of d.leads || []) if (l !== lead && l.opened_by === req.userId) { l.opened_at = null; l.opened_by = null; changed = true; }
+      if (!lead.opened_at || lead.opened_by !== req.userId) { lead.opened_at = new Date().toISOString(); lead.opened_by = req.userId; changed = true; }
+      if (changed) { sdrTouch(lead); savePool(d); }
+    }
     res.json({ ok: true });
   } catch (e) { sdrFail(res, e, "opened"); }
 });
