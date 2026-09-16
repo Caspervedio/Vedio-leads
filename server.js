@@ -13517,7 +13517,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14222,6 +14222,7 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
 // confirmed Meta advertisers beat the rest.
 const SDR_RESEARCH_SKIP_MS = 90 * 86400e3;   // "kunne ikke findes" rests 90 days
 const SDR_RESEARCH_HOLD_MS = 20 * 60e3;      // soft lock so two SDRs don't collide
+const SDR_RESEARCH_PASS_MS = 8 * 3600e3;     // "Spring over": out of MY queue for the day
 function sdrResearchScore(l) {
   let s = 0;
   if (isDkPhone(sdrPhone(l).phone)) s += 100;                       // dialable already - only a name missing
@@ -14244,6 +14245,9 @@ function sdrResearchQueue(d, userId, now) {
     if (!(l.web || l.website)) return false;                         // nothing to look at
     if (l.research_skipped_at && now - new Date(l.research_skipped_at).getTime() < SDR_RESEARCH_SKIP_MS) return false;
     if (l.research_hold_by && l.research_hold_by !== userId && l.research_hold_at && now - new Date(l.research_hold_at).getTime() < SDR_RESEARCH_HOLD_MS) return false;
+    // "Spring over" = not this one, not now. Mine only, and only for today -
+    // unlike "Kunne ikke findes", which rests the lead for everyone.
+    if (l.research_pass_by === userId && l.research_pass_at && now - new Date(l.research_pass_at).getTime() < SDR_RESEARCH_PASS_MS) return false;
     return true;
   }).sort((a, b) => sdrResearchScore(b) - sdrResearchScore(a) || new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
 }
@@ -14333,6 +14337,20 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
 });
 // A note from the Research tab. Same thread as everywhere else, but the reply
 // is just the thread - the research card has no use for the whole state.
+// "Spring over": show me a different one. The old button just re-fetched, and
+// since the lead was held by me it came straight back - so it did nothing.
+app.post("/api/sdr/research/pass", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    lead.research_pass_at = new Date().toISOString();
+    lead.research_pass_by = req.userId;
+    if (lead.research_hold_by === req.userId) { lead.research_hold_by = null; lead.research_hold_at = null; }
+    sdrTouch(lead);
+    savePool(d);
+    res.json({ ok: true, ...sdrResearchStats(d, req.userId, Date.now()) });
+  } catch (e) { sdrFail(res, e, "research/pass"); }
+});
 app.post("/api/sdr/research/note", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const b = req.body || {};

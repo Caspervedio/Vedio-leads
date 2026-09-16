@@ -1172,7 +1172,7 @@ function renderResearch() {
     <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:14px">
       <button class="pill primary" onclick="rshSave()">Gem og næste</button>
       <button class="pill sm tertiary" onclick="rshSkip()">Kunne ikke findes</button>
-      <button class="pill sm tertiary" onclick="rshLoad()" style="margin-left:auto">Spring over</button>
+      <button class="pill sm tertiary" onclick="rshPass()" style="margin-left:auto" title="Vis et andet lead - dette kommer igen i morgen">Spring over</button>
     </div>
     <div class="sub" id="r-msg" style="margin-top:8px"></div>
   </div>`;
@@ -1207,6 +1207,14 @@ async function rshNote() {
     toast('✓ Note gemt');
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
   RSH.busy = false;
+}
+/* Not this one, not now - it comes back tomorrow. Different from
+   "Kunne ikke findes", which rests the lead for everyone for 90 days. */
+async function rshPass() {
+  const L = RSH.lead; if (!L || RSH.busy) return;
+  RSH.busy = true;
+  try { await post('/api/sdr/research/pass', { cvr: L.cvr }); RSH.busy = false; await rshLoad(); }
+  catch (ex) { RSH.busy = false; toast('Fejl: ' + ex.message, 4000); }
 }
 async function rshSkip() {
   const L = RSH.lead; if (!L || RSH.busy) return;
