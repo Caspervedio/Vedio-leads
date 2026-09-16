@@ -43,12 +43,14 @@
       <button data-tab="followups" onclick="showTab('followups')">Opfølgning<span class="n" id="n-fu">0</span></button>
       <button data-tab="results" onclick="showTab('results')">Resultater<span class="n" id="n-res">0</span></button>
       <button data-tab="research" onclick="showTab('research')">Research<span class="n" id="n-rsh">0</span></button>
-      <button data-tab="history" onclick="showTab('history')">Historik</button>
     </nav>
     <div class="hright">
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
       <a class="pill sm violet" id="imp-chip" href="/admin" title="Tilbage til admin" hidden></a>
       <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
+      <button class="iconbtn" title="Din aktivitet" onclick="openActivity()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+      </button>
       <button class="iconbtn" title="Indstillinger" onclick="openSettings()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
@@ -76,11 +78,29 @@
         <div><b id="s-avail">0</b><span>klar i puljen</span></div>
       </div>
     </div>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th style="width:36px"></th><th style="width:44px">#</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th></th></tr></thead>
-        <tbody id="tb-list"></tbody>
-      </table>
+    <div class="subnav">
+      <button data-sub="list" class="on" onclick="listSub('list')">Din liste<span class="n" id="sn-list">0</span></button>
+      <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
+    </div>
+    <div id="sub-list">
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:36px"></th><th style="width:44px">#</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th></th></tr></thead>
+          <tbody id="tb-list"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="sub-declined" hidden>
+      <div class="tablewrap">
+        <div class="thead"><div><h3>Leads du har sagt nej til</h3><p id="dec-sub">Dine egne udfald. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.</p></div>
+          <select id="dec-filter" onchange="renderDeclined()" style="border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px;font:inherit;font-size:13.5px;background:var(--white)">
+            <option value="all">Alle udfald</option><option value="not-relevant">Ikke relevant</option><option value="not-now">Ikke nu</option><option value="wrong-number">Forkert nummer</option>
+          </select></div>
+        <table>
+          <thead><tr><th>Hvornår</th><th>Virksomhed</th><th>Kontakt</th><th>Udfald</th><th>Note</th><th></th></tr></thead>
+          <tbody id="tb-declined"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -104,24 +124,6 @@
   </section>
 
   <!-- ─── RESULTATER ───────────────────────────────────────────────────── -->
-  <!-- ─── HISTORIK (mine handlinger + dem jeg har sagt nej til) ────────── -->
-  <section id="view-history" class="view">
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Leads du har sagt nej til</h3><p id="dec-sub">Dine egne udfald. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.</p></div>
-        <select id="dec-filter" onchange="renderHistory()" style="border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px;font:inherit;font-size:13.5px;background:var(--white)">
-          <option value="all">Alle udfald</option><option value="not-relevant">Ikke relevant</option><option value="not-now">Ikke nu</option><option value="wrong-number">Forkert nummer</option>
-        </select></div>
-      <table>
-        <thead><tr><th>Hvornår</th><th>Virksomhed</th><th>Kontakt</th><th>Udfald</th><th>Note</th><th></th></tr></thead>
-        <tbody id="tb-declined"></tbody>
-      </table>
-    </div>
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Dine seneste handlinger</h3><p>Opkald, noter, mails og research - nyeste først.</p></div></div>
-      <div id="actlog" class="actlog"></div>
-    </div>
-  </section>
-
   <!-- ─── RESEARCH (opgaven mellem opkaldene) ──────────────────────────── -->
   <section id="view-research" class="view">
     <div class="ring">
@@ -328,7 +330,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('s-remaining').textContent = st.listRemaining || 0; $('s-done').textContent = st.listDone || 0;
   $('s-demos').textContent = st.demosToday || 0; $('s-avail').textContent = st.poolAvailable || 0;
   $('s-perdemo').textContent = st.callsPerDemo30 == null ? '-' : st.callsPerDemo30;
-  $('n-list').textContent = st.listRemaining || 0; $('n-list').classList.toggle('due', (st.followupsDue || 0) > 0);
+  $('n-list').textContent = st.listRemaining || 0; if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0; $('n-list').classList.toggle('due', (st.followupsDue || 0) > 0);
   $('n-fu').textContent = (S.followups || []).length;
   $('n-res').textContent = (S.todayCalls || []).length;
   if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; const nr = $('n-rsh'); if (nr) nr.textContent = S.research.remaining || 0; }
@@ -1039,14 +1041,15 @@ async function histLoad() {
   if (HIST.busy) return; HIST.busy = true;
   try { const d = await get('/api/sdr/history'); HIST.activity = d.activity || []; HIST.declined = d.declined || []; HIST.total = d.declinedTotal || 0; HIST.loaded = true; }
   catch (ex) { toast('Kunne ikke hente historikken: ' + ex.message, 4000); }
-  HIST.busy = false; renderHistory();
+  HIST.busy = false; renderDeclined(); renderActivity();
 }
 /* Niche paths come as 'Home & Garden/Kitchen' - the leaf is the useful half. */
 function shortNiche(x) { const t = String(x || '').trim(); const parts = t.split('/').map((y) => y.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : t; }
 const ACT_ICON = { call: '📞', note: '📝', mail: '✉', research: '🔍' };
-function renderHistory() {
+function renderDeclined() {
   const f = $('dec-filter') ? $('dec-filter').value : 'all';
   const rows = HIST.declined.filter((x) => f === 'all' || x.action === f);
+  const cnt = $('sn-dec'); if (cnt) cnt.textContent = HIST.loaded ? HIST.total : 0;
   const sub = $('dec-sub');
   if (sub) sub.textContent = HIST.loaded
     ? `${HIST.total} lead${HIST.total === 1 ? '' : 's'} i alt. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.`
@@ -1060,6 +1063,10 @@ function renderHistory() {
     <td style="text-align:right">${l.reopenable ? `<button class="pill sm" onclick="histReopen('${e(l.cvr)}')">Tag tilbage</button>` : '<span class="sub">kommer selv</span>'}</td>
   </tr>`).join('') : `<tr class="empty-row"><td colspan="6">${HIST.loaded ? 'Du har ikke sagt nej til nogen endnu.' : 'Henter…'}</td></tr>`;
 
+}
+/* The activity log lives behind the clock icon in the header, not in a tab. */
+function renderActivity() {
+  if (!$('actlog')) return;
   $('actlog').innerHTML = HIST.activity.length ? HIST.activity.map((a) => {
     const what = a.kind === 'call' ? `<b>${e(ACTION_LABEL[a.action] || a.action)}</b>${a.duration_s ? ` <span class="sub">${e(fmtDur(a.duration_s))}</span>` : ''}`
       : a.kind === 'note' ? '<b>Note</b>'
@@ -1078,13 +1085,31 @@ async function histReopen(cvr) {
   try { apply(await post('/api/sdr/reopen', { cvr })); toast('✓ Taget tilbage'); await histLoad(); }
   catch (ex) { toast('Fejl: ' + ex.message, 4000); }
 }
+/* Ringeliste has two views: the list they call, and the ones they said no to. */
+let listSubView = 'list';
+function listSub(which) {
+  listSubView = which;
+  document.querySelectorAll('.subnav button').forEach((b) => b.classList.toggle('on', b.dataset.sub === which));
+  $('sub-list').hidden = which !== 'list';
+  $('sub-declined').hidden = which !== 'declined';
+  if (which === 'declined' && !HIST.loaded) histLoad();
+}
+/* Clock icon in the header: everything this SDR has done, newest first. */
+function openActivity() {
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'activity';
+  bg.innerHTML = `<div class="modal wide"><h3>Din aktivitet</h3><p>Opkald, noter, mails og research - nyeste først.</p>
+    <div id="actlog" class="actlog"></div>
+    <div class="row" style="margin-top:14px"><button class="pill tertiary" onclick="$('activity').remove()">Luk</button></div></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  if (HIST.loaded) renderActivity(); else histLoad();
+}
 /* ─── Tabs / settings ──────────────────────────────────────────────────── */
 function showTab(id) {
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id));
   try { localStorage.setItem('vl_tab', id); } catch {}
   if (id === 'research' && !RSH.lead) rshLoad();
-  if (id === 'history' && !HIST.loaded) histLoad();
 }
 
 /* ─── Research: fill the gaps the automated enrichment left ───────────────

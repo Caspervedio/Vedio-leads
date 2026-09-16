@@ -213,9 +213,16 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
-/* Historik: what I did, newest first. */
-.actlog{padding:6px 0}
-.act{display:flex;gap:12px;padding:12px 24px;border-bottom:1px solid var(--line)}
+/* Ringeliste's two views: the list, and the ones they turned down. */
+.subnav{display:flex;gap:6px;margin-bottom:14px}
+.subnav button{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-weight:700;font-size:13.5px;color:var(--txt-soft)}
+.subnav button:hover{color:var(--txt)}
+.subnav button.on{background:var(--black);border-color:var(--black);color:var(--white)}
+.subnav button .n{font-size:11.5px;font-weight:800;padding:1px 7px;border-radius:var(--pill);background:var(--paper);color:var(--txt-soft)}
+.subnav button.on .n{background:rgba(255,255,255,.18);color:var(--white)}
+/* Din aktivitet: what I did, newest first. */
+.actlog{padding:6px 0;max-height:60vh;overflow-y:auto;border:1px solid var(--line);border-radius:var(--radius);margin-top:6px}
+.act{display:flex;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
 .act:last-child{border-bottom:0}
 .act .i{width:22px;text-align:center;font-size:14px;line-height:1.5;flex:none}
 .act .h{font-size:13.5px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
