@@ -634,6 +634,19 @@ function renderToday() {
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">${all.length ? 'Ingen opkald med det udfald i dag.' : 'Ingen opkald endnu i dag. Kom i gang under <b>Ringeliste</b>.'}</td></tr>`;
 }
 
+/* Time on lead, measured honestly: a second only counts while the call card
+   is the view they are looking at and the tab is in front. The server-side
+   stamp counts from the moment the lead reaches the top of the list, which
+   also counts the time they spent in Research or reading Opfølgning - that is
+   how a cold call turned into an 18-minute lead. */
+let activeCvr = null, activeMs = 0, activeTab = 'list';
+setInterval(() => {
+  const L = S && S.current;
+  if (!L || document.hidden || activeTab !== 'ring') return;
+  if (activeCvr !== L.cvr) { activeCvr = L.cvr; activeMs = 0; }
+  activeMs += 1000;
+}, 1000);
+function activeSeconds(cvr) { return activeCvr === cvr ? Math.round(activeMs / 1000) : 0; }
 /* ─── Actions ──────────────────────────────────────────────────────────── */
 function onCall(ev) {
   const L = S.current; if (!L) return;
@@ -844,7 +857,7 @@ async function disp(action, callback_at, extra) {
   const note = ($('note') && $('note').value.trim()) || '';
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
-    apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, ...(extra || {}) }));
+    apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...(extra || {}) }));
     const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': (gmailReady ? '✓ Mail sendt fra din Gmail - opfølgning planlagt.' : '✓ Mail klar i dit mailprogram - opfølgning planlagt.') }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1106,6 +1119,7 @@ function openActivity() {
 }
 /* ─── Tabs / settings ──────────────────────────────────────────────────── */
 function showTab(id) {
+  activeTab = id;
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id));
   try { localStorage.setItem('vl_tab', id); } catch {}

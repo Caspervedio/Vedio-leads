@@ -14147,12 +14147,18 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     // Time on the lead: from the card opening to this outcome. Falls back to
     // the Ring op stamp for anyone who dialled before the card was stamped.
     // Two hours is the cap - past that they went to lunch with it open.
-    // 20 minutes is the ceiling: past that the card was open while they did
-    // something else, and counting it would say more about their lunch than
-    // about the lead.
+    // Time on lead. The browser counts only the seconds the call card was the
+    // view in front of them, which is the honest number; the open-to-outcome
+    // stamp is the fallback for a tab running an older script, and it also
+    // counts time spent in Research or Opfølgning with the lead queued up.
+    // Either way 20 minutes is the ceiling.
     let duration_s = null;
-    const startedAt = lead.opened_at || lead.last_call_started_at;
-    if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 20 * 60000) duration_s = Math.round(s / 1000); }
+    const active = Math.round(Number(req.body && req.body.active_s) || 0);
+    if (active > 0) duration_s = Math.min(active, 20 * 60);
+    else {
+      const startedAt = lead.opened_at || lead.last_call_started_at;
+      if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 20 * 60000) duration_s = Math.round(s / 1000); }
+    }
     lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
