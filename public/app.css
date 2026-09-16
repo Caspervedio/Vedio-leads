@@ -213,6 +213,14 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
+/* The call list has seven columns and a long "Ring igen · <dato>" chip; at
+   24px gutters the Ring/Fjern buttons fell off the right edge and .tablewrap
+   clipped them. Tighter gutters fit it, and it scrolls rather than clips if a
+   window is narrower still. */
+#view-list .tablewrap{overflow-x:auto}
+#view-list th,#view-list td{padding-left:14px;padding-right:14px}
+#view-list th:first-child,#view-list td:first-child{padding-left:20px}
+#view-list th:last-child,#view-list td:last-child{padding-right:20px}
 /* Ringeliste's two views: the list, and the ones they turned down. */
 .subnav{display:flex;gap:6px;margin-bottom:14px}
 .subnav button{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-weight:700;font-size:13.5px;color:var(--txt-soft)}
