@@ -43,6 +43,7 @@
       <button data-tab="followups" onclick="showTab('followups')">Opfølgning<span class="n" id="n-fu">0</span></button>
       <button data-tab="results" onclick="showTab('results')">Resultater<span class="n" id="n-res">0</span></button>
       <button data-tab="research" onclick="showTab('research')">Research<span class="n" id="n-rsh">0</span></button>
+      <button data-tab="history" onclick="showTab('history')">Historik</button>
     </nav>
     <div class="hright">
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
@@ -103,6 +104,24 @@
   </section>
 
   <!-- ─── RESULTATER ───────────────────────────────────────────────────── -->
+  <!-- ─── HISTORIK (mine handlinger + dem jeg har sagt nej til) ────────── -->
+  <section id="view-history" class="view">
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Leads du har sagt nej til</h3><p id="dec-sub">Dine egne udfald. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.</p></div>
+        <select id="dec-filter" onchange="renderHistory()" style="border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px;font:inherit;font-size:13.5px;background:var(--white)">
+          <option value="all">Alle udfald</option><option value="not-relevant">Ikke relevant</option><option value="not-now">Ikke nu</option><option value="wrong-number">Forkert nummer</option>
+        </select></div>
+      <table>
+        <thead><tr><th>Hvornår</th><th>Virksomhed</th><th>Kontakt</th><th>Udfald</th><th>Note</th><th></th></tr></thead>
+        <tbody id="tb-declined"></tbody>
+      </table>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Dine seneste handlinger</h3><p>Opkald, noter, mails og research - nyeste først.</p></div></div>
+      <div id="actlog" class="actlog"></div>
+    </div>
+  </section>
+
   <!-- ─── RESEARCH (opgaven mellem opkaldene) ──────────────────────────── -->
   <section id="view-research" class="view">
     <div class="ring">
@@ -1014,12 +1033,58 @@ async function selectContact(name) {
 function fmtDur(s) { if (!s && s !== 0) return ''; if (s < 60) return s + ' s'; return Math.round(s / 60) + ' min'; }
 function fmtKr(n) { return (Number(n) || 0).toLocaleString('da-DK') + ' kr'; }
 
+/* ─── Historik: hvad jeg har lavet, og hvem jeg har sagt nej til ───────── */
+let HIST = { activity: [], declined: [], total: 0, loaded: false, busy: false };
+async function histLoad() {
+  if (HIST.busy) return; HIST.busy = true;
+  try { const d = await get('/api/sdr/history'); HIST.activity = d.activity || []; HIST.declined = d.declined || []; HIST.total = d.declinedTotal || 0; HIST.loaded = true; }
+  catch (ex) { toast('Kunne ikke hente historikken: ' + ex.message, 4000); }
+  HIST.busy = false; renderHistory();
+}
+/* Niche paths come as 'Home & Garden/Kitchen' - the leaf is the useful half. */
+function shortNiche(x) { const t = String(x || '').trim(); const parts = t.split('/').map((y) => y.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : t; }
+const ACT_ICON = { call: '📞', note: '📝', mail: '✉', research: '🔍' };
+function renderHistory() {
+  const f = $('dec-filter') ? $('dec-filter').value : 'all';
+  const rows = HIST.declined.filter((x) => f === 'all' || x.action === f);
+  const sub = $('dec-sub');
+  if (sub) sub.textContent = HIST.loaded
+    ? `${HIST.total} lead${HIST.total === 1 ? '' : 's'} i alt. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.`
+    : 'Henter…';
+  $('tb-declined').innerHTML = rows.length ? rows.map((l) => `<tr>
+    <td><span class="sub">${e(fmtWhen(l.at))}</span></td>
+    <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(shortNiche(l.niche)) : ''}</span></td>
+    <td>${l.contact ? `<b>${e(l.contact)}</b>` : '<span class="sub">-</span>'}<span class="sub">${e(fmtPhone(l.phone))}</span></td>
+    <td><span class="chip ${l.action === 'not-now' ? 'retry' : ''} sm">${e(l.label)}</span>${l.returns_at ? `<span class="sub">tilbage ${e(fmtWhen(l.returns_at))}</span>` : ''}</td>
+    <td style="max-width:280px;color:var(--txt-soft)">${e(l.note || '')}</td>
+    <td style="text-align:right">${l.reopenable ? `<button class="pill sm" onclick="histReopen('${e(l.cvr)}')">Tag tilbage</button>` : '<span class="sub">kommer selv</span>'}</td>
+  </tr>`).join('') : `<tr class="empty-row"><td colspan="6">${HIST.loaded ? 'Du har ikke sagt nej til nogen endnu.' : 'Henter…'}</td></tr>`;
+
+  $('actlog').innerHTML = HIST.activity.length ? HIST.activity.map((a) => {
+    const what = a.kind === 'call' ? `<b>${e(ACTION_LABEL[a.action] || a.action)}</b>${a.duration_s ? ` <span class="sub">${e(fmtDur(a.duration_s))}</span>` : ''}`
+      : a.kind === 'note' ? '<b>Note</b>'
+      : a.kind === 'mail' ? `<b>Mail sendt</b>${a.to ? ` <span class="sub">${e(a.to)}</span>` : ''}`
+      : '<b>Beriget i Research</b>';
+    const txt = a.kind === 'note' ? a.text : (a.note || '');
+    return `<div class="act">
+      <span class="i">${ACT_ICON[a.kind] || '•'}</span>
+      <div><div class="h">${what} · <a href="#" onclick="event.preventDefault();jumpTo('${e(a.cvr)}')">${e(a.name)}</a><time>${e(fmtWhen(a.at))}</time></div>
+      ${txt ? `<div class="t">${e(txt)}</div>` : ''}</div>
+    </div>`;
+  }).join('') : `<p class="sub" style="padding:16px 24px">${HIST.loaded ? 'Ingen handlinger endnu.' : 'Henter…'}</p>`;
+}
+async function histReopen(cvr) {
+  if (!confirm('Tag leadet tilbage? Det ryger i puljen igen og kan komme på din liste.')) return;
+  try { apply(await post('/api/sdr/reopen', { cvr })); toast('✓ Taget tilbage'); await histLoad(); }
+  catch (ex) { toast('Fejl: ' + ex.message, 4000); }
+}
 /* ─── Tabs / settings ──────────────────────────────────────────────────── */
 function showTab(id) {
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id));
   try { localStorage.setItem('vl_tab', id); } catch {}
   if (id === 'research' && !RSH.lead) rshLoad();
+  if (id === 'history' && !HIST.loaded) histLoad();
 }
 
 /* ─── Research: fill the gaps the automated enrichment left ───────────────

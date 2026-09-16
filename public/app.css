@@ -213,6 +213,17 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.mail{background:var(--violet-soft);color:var(--violet)}
 .chip.sm{padding:2px 7px;font-size:11px}
 .chip.retry{background:var(--paper);color:var(--txt-soft);border:1px solid var(--line)}
+/* Historik: what I did, newest first. */
+.actlog{padding:6px 0}
+.act{display:flex;gap:12px;padding:12px 24px;border-bottom:1px solid var(--line)}
+.act:last-child{border-bottom:0}
+.act .i{width:22px;text-align:center;font-size:14px;line-height:1.5;flex:none}
+.act .h{font-size:13.5px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.act .h a{color:var(--violet);font-weight:700;text-decoration:none}
+.act .h a:hover{text-decoration:underline}
+.act .h time{margin-left:auto;font-size:12px;color:var(--txt-faint);white-space:nowrap}
+.act .t{margin-top:3px;font-size:13px;color:var(--txt-soft);line-height:1.5}
+.act .sub{font-weight:600}
 .gmailbox{border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px}
 .gmailbox .sub{color:var(--txt-soft);font-size:13px}
 /* Research tab - the between-calls task */

@@ -14347,6 +14347,69 @@ app.post("/api/sdr/research/note", authMiddleware, (req, res) => {
     res.json({ ok: true, saved_at, notes: sdrNoteThread(lead, nameById) });
   } catch (e) { sdrFail(res, e, "research/note"); }
 });
+// What this SDR has done, and what they have said no to. Both are read out of
+// the leads themselves - no new storage, so it also covers everything that
+// happened before this existed.
+const SDR_DECLINED = { "not-relevant": "Ikke relevant", "not-now": "Ikke nu", "wrong-number": "Forkert nummer" };
+app.get("/api/sdr/history", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now();
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const mine = (by) => by === req.userId;
+    const activity = []; const declined = [];
+    for (const l of d.leads || []) {
+      const lead = { cvr: l.cvr, name: l.name || "", city: l.city || "", niche: l.ind || l.industry || l.niche || "", phone: sdrPhone(l).phone, contact: (sdrPrimaryContact(l) || {}).name || "" };
+      const calls = Array.isArray(l.calls) ? l.calls : [];
+      for (const c of calls) {
+        if (!mine(c.by)) continue;
+        activity.push({ at: c.at, kind: "call", action: c.action, note: c.note || "", duration_s: c.duration_s || null, ...lead });
+      }
+      for (const n of (Array.isArray(l.note_log) ? l.note_log : [])) {
+        if (!mine(n.by)) continue;
+        activity.push({ at: n.at, kind: "note", text: n.text, ...lead });
+      }
+      if (mine(l.research_by) && l.research_at) activity.push({ at: l.research_at, kind: "research", ...lead });
+      if (mine(l.email_sent_by) && l.email_sent_at) activity.push({ at: l.email_sent_at, kind: "mail", to: l.email_to || "", template: l.email_template || "", ...lead });
+      // Turned down: the last outcome on the lead is mine and it was a no.
+      const last = calls.length ? calls[calls.length - 1] : null;
+      // lastAction still matching is what says the no is still in force -
+      // a lead taken back keeps the call in its history but leaves this list.
+      if (last && mine(last.by) && SDR_DECLINED[last.action] && l.lastAction === last.action) {
+        declined.push({
+          ...lead, action: last.action, label: SDR_DECLINED[last.action], at: last.at, note: last.note || "",
+          // "Ikke nu" comes back on its own; the other two need a hand.
+          returns_at: l.resurface_at || l.deferred_until || null,
+          reopenable: last.action !== "not-now",
+          archived_by_name: l.archived_by ? (nameById[l.archived_by] || l.archived_by) : "",
+        });
+      }
+      void now;
+    }
+    activity.sort((a, b) => new Date(b.at) - new Date(a.at));
+    declined.sort((a, b) => new Date(b.at) - new Date(a.at));
+    res.json({ ok: true, activity: activity.slice(0, 200), declined: declined.slice(0, 300), declinedTotal: declined.length });
+  } catch (e) { sdrFail(res, e, "history"); }
+});
+// Take back a lead I turned down. Scoped to my own calls: an SDR cannot undo
+// the other's decision, and admin keeps the wider reopen under Leads.
+app.post("/api/sdr/reopen", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const calls = Array.isArray(lead.calls) ? lead.calls : [];
+    const last = calls.length ? calls[calls.length - 1] : null;
+    if (!last || !SDR_DECLINED[last.action]) return res.status(400).json({ error: "Leadet er ikke sagt nej til" });
+    if (last.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Det var ikke dig, der sagde nej til det lead" });
+    lead.lastAction = null; lead.archived_at = null; lead.archived_by = null;
+    lead.resurface_at = null; lead.deferred_until = null; lead.callback_at = null; lead.needs_enrichment = false;
+    sdrAppendNote(lead, req.userId, "Taget tilbage fra \"" + SDR_DECLINED[last.action] + "\"");
+    sdrTouch(lead);
+    savePool(d);
+    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
+    logActivity("sdr-reopen", `${meUser ? meUser.name : req.userId} tog ${lead.name} tilbage`, { cvr: lead.cvr, userId: req.userId });
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "reopen"); }
+});
 app.post("/api/sdr/research/skip", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const { cvr } = req.body || {};
