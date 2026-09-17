@@ -13517,7 +13517,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13815,6 +13815,8 @@ function sdrSlim(l, nameById) {
 // scoping let each SDR see - and ring - the other's agreed call-backs.
 // Whoever registered the last outcome is the one who set the date.
 function sdrFollowupOwner(l) {
+  // An admin move says who owns it now, until the next call says otherwise.
+  if (l.owner_override) return l.owner_override;
   const cs = Array.isArray(l.calls) ? l.calls : [];
   for (let i = cs.length - 1; i >= 0; i--) if (cs[i] && cs[i].by) return cs[i].by;
   return l.claimed_by || null;
@@ -14162,6 +14164,7 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
+    lead.owner_override = null; lead.owner_override_at = null; // the call is the owner now
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
     lead.deferred_until = null;
     sdrTouch(lead, action === "wrong-number");
@@ -14822,6 +14825,54 @@ app.post("/api/sdr/admin/lead-status", authMiddleware, (req, res) => {
     res.json({ ok: true, n });
   } catch (e) { sdrFail(res, e, "admin/lead-status"); }
 });
+// Admin: move leads between SDRs, or back to the shared pool.
+// { cvrs: [...], to: "u2" | "pool" }. The lead leaves every other list, lands
+// at the top of the new owner's, and is claimed for them. owner_override makes
+// a follow-up follow the move - otherwise ownership would stay with whoever
+// made the last call, and the new owner would never see it.
+app.post("/api/sdr/admin/move-leads", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const b = req.body || {};
+    const cvrs = Array.isArray(b.cvrs) ? b.cvrs.map(String) : (b.cvr ? [String(b.cvr)] : []);
+    const to = String(b.to || "");
+    if (!cvrs.length) return res.status(400).json({ error: "Ingen leads valgt" });
+    const users = loadUsers();
+    const target = to === "pool" ? null : users.find((u) => u.id === to && u.id !== "admin");
+    if (to !== "pool" && !target) return res.status(400).json({ error: "Ukendt SDR" });
+    const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
+    d.sdr_lists = d.sdr_lists || {};
+    const set = new Set(cvrs);
+    const moved = [], skipped = [];
+    const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    for (const l of d.leads || []) {
+      if (!set.has(l.cvr)) continue;
+      if (l.lastAction === "demo-booked" || l.lastAction === "not-relevant") { skipped.push(`${l.name} (${l.lastAction === "demo-booked" ? "booket" : "arkiveret"})`); continue; }
+      const from = l.claimed_by || null;
+      // Off every list, including today's done-bookkeeping.
+      for (const [uid, Lst] of Object.entries(d.sdr_lists)) {
+        if (uid === to) continue;
+        Lst.cvrs = (Lst.cvrs || []).filter((x) => x !== l.cvr);
+      }
+      if (target) {
+        const Lt = d.sdr_lists[target.id] = d.sdr_lists[target.id] || { date: sdrDayKey(now), cvrs: [], done: [] };
+        Lt.cvrs = [l.cvr, ...(Lt.cvrs || []).filter((x) => x !== l.cvr)];
+        Lt.done = (Lt.done || []).filter((x) => x !== l.cvr);
+        sdrClaim(l, target.id, now);
+        l.owner_override = target.id; l.owner_override_at = nowIso;
+      } else {
+        sdrUnclaim(l);
+        l.owner_override = null; l.owner_override_at = null;
+      }
+      sdrAppendNote(l, req.userId, `Flyttet ${from ? "fra " + (nameById[from] || from) + " " : ""}til ${target ? target.name : "puljen"} af admin`);
+      sdrTouch(l);
+      moved.push(l.name);
+    }
+    savePool(d);
+    logActivity("sdr-admin", `Admin flyttede ${moved.length} lead(s) til ${target ? target.name : "puljen"}${moved.length ? ": " + moved.slice(0, 5).join(", ") : ""}`, { userId: req.userId, cvrs });
+    res.json({ ok: true, moved: moved.length, skipped, to: target ? target.name : "puljen" });
+  } catch (e) { sdrFail(res, e, "admin/move-leads"); }
+});
 // Admin: manual enrichment - lead-level fields + upsert a contact.
 app.post("/api/sdr/admin/lead-edit", authMiddleware, (req, res) => {
   try {
@@ -15278,6 +15329,56 @@ app.post("/api/sdr/gmail/send", authMiddleware, async (req, res) => {
     logActivity("sdr-mail", `${me.name} sendte mail til ${to}`, { userId: req.userId, cvr: b.cvr || null });
     res.json({ ok: true, id: j.id, from });
   } catch (e) { sdrFail(res, e, "gmail/send"); }
+});
+// ── Call scripts ───────────────────────────────────────────────────────────
+// Casper's manuscript library: numbered scripts with a ladder of questions,
+// the answer that moves the call on, and objection branches with coaching
+// notes. Kept in their own file - twelve of them run to ~100 KB, which would
+// otherwise ride along on every 20-second state poll and every pool write.
+// Stored as the text Casper wrote; the browser parses it for display.
+const SCRIPTS_FILE = path.join(DATA_DIR, "call_scripts.json");
+function loadScripts() { try { const j = JSON.parse(fs.readFileSync(SCRIPTS_FILE, "utf8")); return Array.isArray(j) ? j : []; } catch { return []; } }
+function saveScripts(list) { fs.writeFileSync(SCRIPTS_FILE, JSON.stringify(list, null, 2)); }
+const scriptSort = (a, b) => String(a.id).localeCompare(String(b.id), "da", { numeric: true });
+app.get("/api/sdr/scripts", authMiddleware, (req, res) => {
+  try { res.json({ ok: true, scripts: loadScripts().sort(scriptSort) }); }
+  catch (e) { sdrFail(res, e, "scripts"); }
+});
+// Upsert one or many ({ scripts: [{ id, raw }] }), or remove one ({ delete: id }).
+app.post("/api/sdr/admin/scripts", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const b = req.body || {};
+    let list = loadScripts();
+    const nowIso = new Date().toISOString();
+    if (b.delete) {
+      const before = list.length;
+      list = list.filter((s) => s.id !== String(b.delete));
+      saveScripts(list);
+      logActivity("sdr-admin", `Manuskript ${b.delete} slettet`, { userId: req.userId });
+      return res.json({ ok: true, removed: before - list.length, scripts: list.sort(scriptSort) });
+    }
+    const incoming = Array.isArray(b.scripts) ? b.scripts : [];
+    if (!incoming.length) return res.status(400).json({ error: "Ingen manuskripter i forespørgslen" });
+    const changed = [];
+    for (const x of incoming) {
+      const raw = String((x && x.raw) || "").replace(/\r/g, "").trim();
+      if (!raw) continue;
+      if (raw.length > 60000) return res.status(400).json({ error: "Et manuskript er for langt (maks 60.000 tegn)" });
+      // The number on the first line is the id unless one is given.
+      const id = String((x && x.id) || (raw.match(/^\s*(\d{1,3})\s*$/m) || [])[1] || "").trim().slice(0, 12);
+      if (!/^[\w-]+$/.test(id)) return res.status(400).json({ error: "Manuskriptet mangler et nummer på første linje" });
+      // "guide" = the rules page the scripts point to (sections, not a ladder).
+      const kind = (x && x.kind) === "guide" ? "guide" : "script";
+      const cur = list.find((s) => s.id === id);
+      if (cur) { cur.raw = raw; cur.kind = kind; cur.updated_at = nowIso; cur.updated_by = req.userId; }
+      else list.push({ id, kind, raw, created_at: nowIso, updated_at: nowIso, updated_by: req.userId });
+      changed.push(id);
+    }
+    saveScripts(list);
+    logActivity("sdr-admin", `Manuskripter gemt: ${changed.join(", ")}`, { userId: req.userId });
+    res.json({ ok: true, changed, scripts: list.sort(scriptSort) });
+  } catch (e) { sdrFail(res, e, "admin/scripts"); }
 });
 // ── Admin: reference-customer list ────────────────────────────────────────
 app.post("/api/sdr/admin/customers/import", authMiddleware, async (req, res) => {

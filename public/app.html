@@ -48,6 +48,9 @@
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
       <a class="pill sm violet" id="imp-chip" href="/admin" title="Tilbage til admin" hidden></a>
       <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
+      <button class="iconbtn" title="Træning og manuskripter" onclick="openTraining()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg>
+      </button>
       <button class="iconbtn" title="Din aktivitet" onclick="openActivity()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
       </button>
@@ -124,6 +127,11 @@
   </section>
 
   <!-- ─── RESULTATER ───────────────────────────────────────────────────── -->
+  <!-- ─── TRÆNING (manuskripter + spilleregler) ─────────────────────────── -->
+  <section id="view-training" class="view">
+    <div class="training" id="trainwrap"></div>
+  </section>
+
   <!-- ─── RESEARCH (opgaven mellem opkaldene) ──────────────────────────── -->
   <section id="view-research" class="view">
     <div class="ring">
@@ -449,7 +457,7 @@ function renderCard() {
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     ${refsHtml(L)}
-    <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body">${pitchFor(L)}</div></details>
+    <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body" id="pitchbody">${pitchPanelHtml(L)}</div></details>
     ${noteThreadHtml(L && L.note_thread)}
     <div class="composer" id="composer">
       <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
@@ -833,6 +841,11 @@ async function mailSend(forceClient) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse - spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
   const t = mailTemplates()[Number($('m-tpl').value) || 0] || {};
   const subject = $('m-sub').value, body = mailGetBody();
+  // "Det gule er det, du udfylder": a [placeholder] still in the mail means
+  // something wasn't filled in - "omkring [16-24.000] kr" is worse than no
+  // mail. A link, [tekst](url), is not a placeholder.
+  const holes = [...new Set(((subject + '\n' + body).match(/\[[^\]\n]{1,40}\](?!\()/g) || []))];
+  if (holes.length && !confirm(`Mailen har stadig noget, der skal udfyldes: ${holes.join(', ')}\n\nSend alligevel?`)) return;
   // Keep the address on the contact so it's there next time.
   if (L.contact && L.contact.name && to !== (L.contact.email || '')) {
     try { await post('/api/sdr/contact', { cvr: L.cvr, name: L.contact.name, title: L.contact.title || '', email: to }); } catch (_) {}
@@ -945,6 +958,249 @@ function pitchFor(L) {
     return `<span class="obj">Omstilling: "Hej, det er ${e((me && me.name) || 'os')} fra Vedio. Hvem står for jeres markedsføring - må jeg tale med dem?"</span>\n\n` + out;
   }
   return out;
+}
+
+/* Call-script parser. The scripts arrive as pasted text where the labels lost
+   their formatting, so the rule that tells the two kinds of line apart is
+   whether a label stands alone:
+
+     DU / KUNDEN alone on a line  -> the main ladder; the text is on the next line
+     DU… / KUNDEN… glued to text  -> an item inside an objection branch
+     ⚡ + title (+ a bare count)    -> a branch hanging off the previous DU step
+     → …                           -> coaching note on the branch item above
+     LYT EFTER                     -> the closing tip
+
+   Returns { number, title, intro, steps: [{ du, reply, branches:[{title, items:[{kunden, du, note}]}] }], listen } */
+function parseCallScript(raw) {
+  const lines = String(raw || '').replace(/\r/g, '').split('\n').map((s) => s.trim());
+  const out = { number: '', title: '', intro: '', steps: [], listen: '' };
+  let i = 0;
+  const next = () => { while (i < lines.length && lines[i] === '') i++; return i < lines.length ? lines[i] : null; };
+
+  // Header: number, title, then an optional description up to the first DU.
+  if (/^\d{1,3}$/.test(next() || '')) { out.number = lines[i]; i++; }
+  if (next() !== null && lines[i] !== 'DU') { out.title = lines[i]; i++; }
+  const intro = [];
+  while (next() !== null && lines[i] !== 'DU') { intro.push(lines[i]); i++; }
+  out.intro = intro.join(' ');
+
+  let step = null, branch = null, item = null;
+  while (next() !== null) {
+    const l = lines[i];
+    if (l === 'LYT EFTER') {
+      i++; const rest = [];
+      while (i < lines.length) { if (lines[i]) rest.push(lines[i]); i++; }
+      out.listen = rest.join(' ');
+      break;
+    }
+    if (l === 'DU') {
+      i++; step = { du: next() || '', reply: '', branches: [] }; i++;
+      out.steps.push(step); branch = null; item = null;
+      continue;
+    }
+    if (l === 'KUNDEN') {
+      i++; const reply = next() || ''; i++;
+      if (step) step.reply = reply;
+      branch = null; item = null;
+      continue;
+    }
+    if (l === '⚡') {
+      i++; const title = (next() || '').replace(/^"|"$/g, ''); i++;
+      if (/^\d+$/.test(next() || '')) i++;            // the pasted count - we count ourselves
+      branch = { title, items: [] }; item = null;
+      if (!step) { step = { du: '', reply: '', branches: [] }; out.steps.push(step); }
+      step.branches.push(branch);
+      continue;
+    }
+    let m;
+    if ((m = l.match(/^KUNDEN\s*(\S.*)$/))) {
+      item = { kunden: m[1], du: '', note: '' };
+      if (!branch) { branch = { title: 'Indvendinger', items: [] }; if (step) step.branches.push(branch); }
+      branch.items.push(item); i++; continue;
+    }
+    if ((m = l.match(/^DU(\S.*)$/)) && item) { item.du = m[1]; i++; continue; }
+    if ((m = l.match(/^→\s*(.*)$/)) && item) { item.note = m[1]; i++; continue; }
+    // Anything else continues the text it follows.
+    if (item) { if (item.note) item.note += ' ' + l; else if (item.du) item.du += ' ' + l; else item.kunden += ' ' + l; }
+    else if (step) { if (step.reply) step.reply += ' ' + l; else step.du += ' ' + l; }
+    i++;
+  }
+  return out;
+}
+
+/* ─── Opkaldsscripts og træning ───────────────────────────────────────── */
+/* Casper's twelve scripts and the training page they come from. They live in
+   their own file on the server and are fetched once - not on every poll. The
+   card shows one script as a ladder; the objection branches ("de gule
+   knapper") open only when the call needs them. */
+let SCRIPTS = [], SCRIPT_BY_ID = {}, GUIDE = null;
+async function scriptsLoad() {
+  try {
+    const d = await get('/api/sdr/scripts');
+    const all = d.scripts || [];
+    SCRIPTS = all.filter((s) => s.kind !== 'guide').map((s) => ({ ...s, parsed: parseCallScript(s.raw) }));
+    SCRIPT_BY_ID = Object.fromEntries(SCRIPTS.map((s) => [s.id, s]));
+    const g = all.find((s) => s.kind === 'guide');
+    GUIDE = null;
+    if (g) { try { GUIDE = JSON.parse(g.raw); } catch { GUIDE = null; } }
+  } catch (_) { /* no scripts yet - the card falls back to the pitch */ }
+  const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);
+  const tv = $('view-training'); if (tv && tv.classList.contains('active')) $('trainwrap').innerHTML = trainingHtml();
+}
+function scriptPickGet() {
+  let v = null; try { v = localStorage.getItem('vl_script'); } catch {}
+  if (v !== null && (v === '' || SCRIPT_BY_ID[v])) return v;
+  // Someone who wrote their own pitch keeps seeing it until they pick a script.
+  return (S && S.settings && S.settings.pitch_is_mine) ? '' : ((SCRIPTS[0] && SCRIPTS[0].id) || '');
+}
+function scriptPickSet(id) { try { localStorage.setItem('vl_script', id); } catch {} }
+const capFirst = (s) => { const t = String(s || '').toLocaleLowerCase('da-DK'); return t.charAt(0).toLocaleUpperCase('da-DK') + t.slice(1); };
+/* Script text → safe HTML. Escape first, then: [navn] is the SDR, [kunde] is
+   the contact's first name, anything else in brackets is yours to fill in
+   (yellow, like on the training page). **bold**, *italic*, and "script 12"
+   becomes a link to that script. */
+function scriptText(s, L) {
+  const sdr = (me && me.name) || 'dig';
+  const first = L && L.contact && L.contact.name ? L.contact.name.split(/\s+/)[0] : '';
+  let h = e(s);
+  h = h.replace(/\[navn\]/g, `<b class="sdrname">${e(sdr)}</b>`);
+  h = h.replace(/\[kunde\]/g, first ? `<b class="sdrname">${e(first)}</b>` : '<mark class="fill">[kundens navn]</mark>');
+  h = h.replace(/\[([^\]\n]{1,40})\]/g, '<mark class="fill">[$1]</mark>');
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  h = h.replace(/\b([Ss]cript) (\d{1,2})\b/g, (m, w, n) => SCRIPT_BY_ID[n.padStart(2, '0')] ? `<a class="scrlink" onclick="scriptJump('${n.padStart(2, '0')}')">${w} ${n}</a>` : m);
+  h = h.replace(/(afsnittet )(&quot;)?(Når de bare vil have en mail)(&quot;)?( nederst)?/g, (m, a, q1, t) => `${a}<a class="scrlink" onclick="openTraining('mail')">${t}</a>`);
+  return h;
+}
+function scriptLadderHtml(p, L, opts) {
+  const o = opts || {};
+  const steps = p.steps.map((st, i) => `
+    <li class="scr-st">
+      <div class="scr-du"><span class="who">Du</span>${scriptText(st.du, L)}</div>
+      ${st.branches.map((b) => `
+        <div class="scr-br">
+          <button type="button" class="scr-bt" onclick="scrToggle(this)">⚡ ${e(capFirst(b.title))} <em>${b.items.length}</em></button>
+          <div class="scr-items" hidden>${b.items.map((it) => `
+            <div class="scr-it">
+              <div class="k"><span class="who">Kunden</span>${scriptText(it.kunden, L)}</div>
+              <div class="d"><span class="who">Du</span>${scriptText(it.du, L)}</div>
+              ${it.note ? `<div class="n">→ ${scriptText(it.note, L)}</div>` : ''}
+            </div>`).join('')}
+          </div>
+        </div>`).join('')}
+      ${st.reply ? `<div class="scr-ok"><span class="who">Kunden</span>${scriptText(st.reply, L)}</div>` : ''}
+    </li>`).join('');
+  return `${o.intro !== false && p.intro ? `<p class="scr-intro">${scriptText(p.intro, L)}</p>` : ''}
+    <ol class="scr-steps">${steps}</ol>
+    ${p.listen ? `<div class="scr-listen"><b>Lyt efter</b>${scriptText(p.listen, L)}</div>` : ''}`;
+}
+function scrToggle(btn) {
+  const box = btn.nextElementSibling; if (!box) return;
+  box.hidden = !box.hidden; btn.classList.toggle('on', !box.hidden);
+}
+/* The "Sådan åbner du" panel on the card: pick a script, or keep your own pitch. */
+function pitchPanelHtml(L) {
+  const pick = scriptPickGet();
+  const opts = [`<option value="">Din egen pitch</option>`]
+    .concat(SCRIPTS.map((s) => `<option value="${e(s.id)}" ${s.id === pick ? 'selected' : ''}>${e(s.id)} · ${e(capFirst(s.parsed.title))}</option>`)).join('');
+  const bar = SCRIPTS.length ? `<div class="scr-bar">
+      <select onchange="pickScript(this.value)" aria-label="Vælg manuskript">${opts}</select>
+      <button type="button" class="pill sm tertiary" onclick="openTraining()">📖 Træning</button>
+      ${GUIDE ? `<button type="button" class="pill sm tertiary" onclick="openTraining('mail')">📩 Når de vil have en mail</button>` : ''}
+    </div>` : '';
+  const s = pick && SCRIPT_BY_ID[pick];
+  if (!s) return `${bar}<div class="pitchtext">${pitchFor(L)}</div>`;
+  // No named contact: the switchboard line comes first, whatever the script.
+  const sw = !(L.contact && L.contact.name) ? `<div class="scr-sw">Omstilling: "Hej, det er ${e((me && me.name) || 'os')} fra Vedio. Hvem står for jeres markedsføring - må jeg tale med dem?"</div>` : '';
+  return `${bar}${sw}<div class="scr">${scriptLadderHtml(s.parsed, L)}</div>`;
+}
+function pickScript(id) {
+  scriptPickSet(id);
+  const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);
+}
+/* "Se script 12": on the card it switches script, in training it scrolls. */
+function scriptJump(id) {
+  if ($('view-training') && $('view-training').classList.contains('active')) {
+    const el = $('tr-' + id); if (el) { el.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    return;
+  }
+  const det = document.querySelector('details.pitch'); if (det) det.open = true;
+  pickScript(id);
+  toast('Skiftet til script ' + id);
+}
+
+/* The mail section of the guide: headings, paragraphs, a numbered list,
+   dialogue, callouts and mail previews, written as light markup. */
+function guideSectionsHtml(raw, L) {
+  const lines = String(raw || '').split('\n');
+  const out = []; let para = [], list = [], dlg = [], mail = null;
+  const flushPara = () => { if (para.length) { out.push(`<p>${scriptText(para.join(' '), L)}</p>`); para = []; } };
+  const flushList = () => { if (list.length) { out.push(`<ol class="g-list">${list.map((x) => `<li>${scriptText(x, L)}</li>`).join('')}</ol>`); list = []; } };
+  const flushDlg = () => { if (dlg.length) { out.push(`<div class="g-dlg">${dlg.map((x) => `<div class="${x.who === 'DU' ? 'du' : 'k'}"><span class="who">${x.who === 'DU' ? 'Du' : 'Kunden'}</span>${scriptText(x.t, L)}</div>`).join('')}</div>`); dlg = []; } };
+  const flushAll = () => { flushPara(); flushList(); flushDlg(); };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (mail) {
+      if (l.trim() === '/MAIL') {
+        const subj = mail.shift() || '';
+        out.push(`<div class="g-mail"><div class="subj">${scriptText(subj, L)}</div><div class="body">${mail.map((x) => x.trim() ? scriptText(x, L) : '').join('<br>')}</div></div>`);
+        mail = null;
+      } else mail.push(l);
+      continue;
+    }
+    const t = l.trim();
+    if (!t) { flushAll(); continue; }
+    if (t === 'MAIL') { flushAll(); mail = []; continue; }
+    let m;
+    if ((m = t.match(/^##\s+(\d+)\s+(.*)$/))) { flushAll(); out.push(`<h3 class="g-h"><i>${e(m[1])}</i>${e(m[2])}</h3>`); continue; }
+    if ((m = t.match(/^RULE:\s*(.*)$/))) { flushAll(); out.push(`<div class="g-rule">${scriptText(m[1], L)}</div>`); continue; }
+    if ((m = t.match(/^>\s*(.*)$/))) { flushAll(); out.push(`<div class="g-note">${scriptText(m[1], L)}</div>`); continue; }
+    if ((m = t.match(/^\d+\.\s+(.*)$/))) { flushPara(); flushDlg(); list.push(m[1]); continue; }
+    if (t === 'DU' || t === 'KUNDEN') { flushPara(); flushList(); dlg.push({ who: t, t: (lines[++i] || '').trim() }); continue; }
+    flushList(); flushDlg(); para.push(t);
+  }
+  flushAll();
+  return out.join('');
+}
+/* The whole training page, as it stands on Casper's page - with the scripts
+   live from the library underneath. */
+function trainingHtml() {
+  const L = (S && S.current) || null;
+  if (!GUIDE && !SCRIPTS.length) return `<div class="card empty"><h3>Ingen træning endnu.</h3><div>Admin har ikke lagt manuskripterne ind.</div></div>`;
+  const g = GUIDE || {};
+  const head = GUIDE ? `
+    <div class="tr-kicker">${e(g.kicker || '')}</div>
+    <h1 class="tr-h1">${(g.title || []).map((t, i) => i ? `<span>${e(t)}</span>` : e(t)).join('<br>')}</h1>
+    <p class="tr-lede">${scriptText(g.lede || '', L)}</p>
+    <div class="tr-phases">${(g.phases || []).map((p) => `<div class="ph"><i>${e(p.n)}</i><b>${e(p.t)}</b><span>${scriptText(p.d, L)}</span></div>`).join('')}</div>
+    ${(g.tips || []).map((t) => `<div class="tr-tip ${t.tone === 'lilla' ? 'v' : ''}">${scriptText(t.text, L)}</div>`).join('')}` : '';
+  const cards = SCRIPTS.map((s) => `
+    <details class="tr-card" id="tr-${e(s.id)}">
+      <summary><span class="cn">${e(s.id)}</span><span class="ct">${e(capFirst(s.parsed.title))}</span><span class="when">${scriptText(s.parsed.intro || '', L)}</span></summary>
+      <div class="scr">${scriptLadderHtml(s.parsed, L, { intro: false })}</div>
+      <div class="tr-use"><button type="button" class="pill sm" onclick="useScript('${e(s.id)}')">Brug på kortet</button></div>
+    </details>`).join('');
+  const mailSec = GUIDE && g.mailRaw ? `
+    <section class="tr-mail" id="tr-mail">
+      <h2 class="tr-h2">${(g.mailTitle || ['Når de bare vil have en mail.']).map((t, i) => i ? `<span>${e(t)}</span>` : e(t)).join('<br>')}</h2>
+      <div class="g-body">${guideSectionsHtml(g.mailRaw, L)}</div>
+    </section>` : '';
+  return `${head}<div class="tr-grid">${cards}</div>${mailSec}`;
+}
+function openTraining(anchor) {
+  showTab('training');
+  const w = $('trainwrap'); if (w) w.innerHTML = trainingHtml();
+  setTimeout(() => {
+    const el = anchor === 'mail' ? $('tr-mail') : (anchor ? $('tr-' + anchor) : null);
+    if (el) { if (el.tagName === 'DETAILS') el.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    else window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, 30);
+}
+function useScript(id) {
+  scriptPickSet(id);
+  showTab('ring');
+  const det = document.querySelector('details.pitch'); if (det) det.open = true;
+  const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);
+  toast('Script ' + id + ' er på kortet');
 }
 
 /* ─── Undo ─────────────────────────────────────────────────────────────── */
@@ -1381,6 +1637,7 @@ async function boot() {
     }
   } catch {}
   await loadState();
+  scriptsLoad();
   // Safety net: a token without a cached user (cleared storage) only reveals
   // the role once the state comes back.
   if (goAdmin && isAdminUser(me)) { location.replace('/admin'); return; }

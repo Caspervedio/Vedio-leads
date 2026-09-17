@@ -44,6 +44,10 @@ tr.sel td{background:var(--violet-soft)}
 /* Per SDR runs to 13 columns. .tablewrap clips by default, which cut the
    right-hand headers off - let it scroll instead, and tighten the gutters so
    on a normal screen it doesn't have to. */
+/* Lead drawer: who has it, and where it can go. */
+.moverow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 4px;padding:10px 12px;border-radius:12px;background:var(--paper);font-size:13.5px}
+.moverow span{margin-right:4px;color:var(--txt-soft)}
+.moverow b{color:var(--txt)}
 #sdr-table{overflow-x:auto}
 #sdr-table th,#sdr-table td{padding-left:9px;padding-right:9px;white-space:nowrap}
 #sdr-table th:first-child,#sdr-table td:first-child{padding-left:20px}
@@ -210,6 +214,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
         <select id="lsrc" onchange="leadsReload()"><option value="">Alle kilder</option></select>
         <span id="lcount" style="font-size:13px;color:var(--txt-soft);font-variant-numeric:tabular-nums"></span>
         <span style="margin-left:auto;font-size:13px;color:var(--txt-soft)" id="lsel"></span>
+        <select id="bulk-move" onchange="bulkMove(this)" hidden style="border:1px solid var(--line);border-radius:var(--pill);padding:6px 12px;font:inherit;font-size:12.5px;font-weight:700;background:var(--white)"><option value="">↪ Flyt valgte til…</option></select>
         <button class="pill sm" id="bulk-arch" onclick="bulkArchive()" hidden>✕ Arkivér valgte</button>
         <button class="pill sm" id="bulk-del" onclick="bulkDelete()" style="color:#b42318" hidden>🗑 Slet permanent</button>
       </div>
@@ -495,7 +500,7 @@ function renderLeads(rows) {
 function renderPager(d) { const pages = Math.max(1, Math.ceil(d.total / d.per)); $('pager').innerHTML = `<span>${d.total} leads · side ${d.page} af ${pages}</span><span style="margin-left:auto"></span><button class="pill" ${d.page <= 1 ? 'disabled' : ''} onclick="LP--;leadsReload()">← Forrige</button><button class="pill" ${d.page >= pages ? 'disabled' : ''} onclick="LP++;leadsReload()">Næste →</button>`; }
 function selOne(cvr, on) { on ? SEL.add(cvr) : SEL.delete(cvr); updSel(); document.querySelectorAll('#tb-leads tr').forEach((tr) => { if (tr.innerHTML.includes(`'${cvr}'`)) tr.classList.toggle('sel', on); }); }
 function selAll(on) { document.querySelectorAll('#tb-leads input[type=checkbox]').forEach((cb) => { cb.checked = on; const m = cb.getAttribute('onchange').match(/'([^']+)'/); if (m) on ? SEL.add(m[1]) : SEL.delete(m[1]); }); updSel(); }
-function updSel() { $('lsel').textContent = SEL.size ? `${SEL.size} valgt` : ''; $('bulk-arch').hidden = SEL.size === 0; $('bulk-del').hidden = SEL.size === 0; }
+function updSel() { $('lsel').textContent = SEL.size ? `${SEL.size} valgt` : ''; $('bulk-arch').hidden = SEL.size === 0; $('bulk-del').hidden = SEL.size === 0; const bm = $('bulk-move'); if (bm) { bm.hidden = SEL.size === 0; bm.innerHTML = '<option value="">↪ Flyt valgte til…</option>' + moveTargets().map((t) => `<option value="${e(t.id)}">${e(t.name)}</option>`).join(''); } }
 async function delOne(cvr, name) {
   if (!confirm(`Slet "${name}" permanent fra puljen?\n\nLeadet fjernes helt og kan komme ind igen via intake. Vil du bare have det væk fra SDR'ernes lister, så brug Arkivér (✕) i stedet.`)) return;
   try { await post('/api/sdr/admin/lead-status', { cvr, status: 'delete' }); toast('Slettet permanent'); leadsReload(); loadOverview(); }
@@ -506,6 +511,26 @@ async function bulkDelete() {
   if (!confirm(`Slet ${SEL.size} leads permanent fra puljen?\n\nDe fjernes helt. Arkivér i stedet, hvis du vil kunne fortryde.`)) return;
   try { const d = await post('/api/sdr/admin/lead-status', { cvrs: [...SEL], status: 'delete' }); toast(`${d.n} slettet permanent`); SEL.clear(); leadsReload(); loadOverview(); }
   catch (ex) { toast(ex.message, 4000); }
+}
+/* Moving leads between SDRs. The SDRs come from the overview; "Puljen" hands
+   a lead back to the shared pool so either of them can get it. */
+function moveTargets() {
+  const sdrs = ((O && O.perUser) || []).filter((u) => u.id && u.id !== 'admin').map((u) => ({ id: u.id, name: u.name }));
+  return [...sdrs, { id: 'pool', name: 'Puljen (fælles)' }];
+}
+async function moveLeads(cvrs, to) {
+  const t = moveTargets().find((x) => x.id === to); if (!t || !cvrs.length) return false;
+  if (!confirm(`Flyt ${cvrs.length === 1 ? 'leadet' : cvrs.length + ' leads'} til ${t.name}?`)) return false;
+  try {
+    const d = await post('/api/sdr/admin/move-leads', { cvrs, to });
+    toast(`${d.moved} flyttet til ${d.to}${d.skipped && d.skipped.length ? ` · sprunget over: ${d.skipped.join(', ')}` : ''}`, d.skipped && d.skipped.length ? 6000 : 3000);
+    leadsReload(); loadOverview();
+    return true;
+  } catch (ex) { toast(ex.message, 4000); return false; }
+}
+async function bulkMove(sel) {
+  const to = sel.value; sel.value = '';
+  if (to && await moveLeads([...SEL], to)) { SEL.clear(); updSel(); }
 }
 async function bulkArchive() { if (!SEL.size || !confirm(`Arkivér ${SEL.size} leads som ikke relevante?`)) return; try { const d = await post('/api/sdr/admin/lead-status', { cvrs: [...SEL], status: 'archive' }); toast(`${d.n} leads arkiveret`); SEL.clear(); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
 async function saveLeadEdit(cvr) {
@@ -554,6 +579,7 @@ async function openLead(cvr) {
       <div><label>By</label><input id="le-city" value="${e(L.city || '')}"></div>
       <div class="full" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="pill sm primary" style="padding:9px 16px;font-size:13px" onclick="saveLeadEdit('${e(L.cvr)}')">Gem</button><button class="pill sm violet-outline" onclick="runEnrich('${e(L.cvr)}')" title="Kør Apollo → Full Enrich → Lusha på dette lead">🔁 Kør automatisk berigelse</button><span id="le-msg" style="font-size:12.5px;color:var(--txt-soft)"></span></div>
     </div>
+    ${L.lastAction !== 'not-relevant' && L.lastAction !== 'demo-booked' ? `<div class="moverow"><span>Ligger hos <b>${e(L.claimed_by_name || 'puljen')}</b></span>${moveTargets().filter((t) => t.name !== L.claimed_by_name).map((t) => `<button class="pill sm" onclick="moveLeads(['${e(L.cvr)}'], '${e(t.id)}').then((ok) => ok && closeDrawer())">↪ ${e(t.id === 'pool' ? 'Til puljen' : 'Flyt til ' + t.name)}</button>`).join('')}</div>` : ''}
     <div class="acts">${L.lastAction === 'not-relevant' ? `<button class="pill" onclick="leadStatus('${e(L.cvr)}','reopen')">↩ Genåbn</button>` : `<button class="pill" style="color:#b42318;border-color:#e6b4b0" onclick="leadStatus('${e(L.cvr)}','archive')">✕ Arkivér - ikke ICP</button>`}${L.lastAction === 'demo-booked' ? `<button class="pill" onclick="showTab('demos');closeDrawer()">Til demoer →</button>` : ''}</div>`;
   document.body.append(bg, dr);
 }
