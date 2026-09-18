@@ -10110,7 +10110,7 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
   // Supply cap: skip discovery while the pool already holds plenty. ?force=1
   // overrides for a manual run.
   {
-    const st = sdrIntakeStatus();
+    const st = sdrOtherIntakeStatus();
     if (st.paused && req.query.force !== "1") {
       console.log("[intake-cap] skipped: " + sdrIntakeMsg(st));
       return res.json({ ok: true, skipped: "pool-full", ...st });
@@ -10652,7 +10652,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   // Supply cap: skip discovery while the pool already holds plenty. ?force=1
   // overrides for a manual run.
   {
-    const st = sdrIntakeStatus();
+    const st = sdrOtherIntakeStatus();
     if (st.paused && req.query.force !== "1") {
       console.log("[intake-cap] skipped: " + sdrIntakeMsg(st));
       return res.json({ ok: true, skipped: "pool-full", ...st });
@@ -11351,7 +11351,7 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   // Supply cap: skip discovery while the pool already holds plenty. ?force=1
   // overrides for a manual run.
   {
-    const st = sdrIntakeStatus();
+    const st = sdrOtherIntakeStatus();
     if (st.paused && req.query.force !== "1") {
       console.log("[intake-cap] skipped: " + sdrIntakeMsg(st));
       return res.json({ ok: true, skipped: "pool-full", ...st });
@@ -13583,13 +13583,26 @@ function sdrIntakeStatus(d0) {
       if (sdrCallable(l) && sdrPassesRules(l, s)) { ready++; if (sdrHasPerson(l)) named++; }
       if ((l.calls || []).length || l.lastAction) continue;
       if (sdrEligible(l, now) && sdrHasPerson(l) && sdrPassesRules(l, s)) fresh++;
-      else if (!l.bulk_enriched_at && now - new Date(l.addedAt || 0).getTime() < 86400e3) pending++;
+      // Only what can still become callable - a CVR-walk row with no number
+      // and no website is not on its way to anyone's list.
+      else if (!l.bulk_enriched_at && now - new Date(l.addedAt || 0).getTime() < 86400e3 && (isDkPhone(l.phone || l.ph) || l.web || l.website)) pending++;
     }
     const expected = fresh + Math.round(pending * 0.6);
     return { ready, named, fresh, pending, target, paused: target > 0 && expected >= target, room: target > 0 ? Math.max(0, target - expected) : Infinity };
   } catch { return { ready: 0, named: 0, fresh: 0, pending: 0, target: 0, paused: false, room: Infinity }; }
 }
-function sdrIntakeMsg(st) { return `${st.fresh} friske klar (+${st.pending} på vej) >= mål ${st.target}`; }
+function sdrIntakeMsg(st) {
+  const full = st.target > 0 && st.fresh + Math.round(st.pending * 0.6) >= st.target;
+  return st.reserve > 0 && !full ? `StoreLeads-reserven har ${st.reserve} butikker - de bruges først` : `${st.fresh} friske klar (+${st.pending} på vej) >= mål ${st.target}`;
+}
+// The other sources - CVR walk, Google Maps, Meta Ad Library - cost money per
+// lead or bring leads without a person or a number, so they only run once the
+// StoreLeads reserve (already paid for) has nothing left to give.
+function sdrOtherIntakeStatus() {
+  const st = sdrIntakeStatus();
+  const reserve = Number(((loadStoreLeadsState().reserveCounts) || {}).total) || 0;
+  return { ...st, reserve, paused: st.paused || reserve > 0 };
+}
 function sdrSettings(d) {
   const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
   s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) };
