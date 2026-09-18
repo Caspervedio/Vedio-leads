@@ -424,7 +424,7 @@ function renderDemos() {
       <td style="max-width:300px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>
       <td onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>
-        <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">✓ Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">✕ Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
+        <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? 'endnu' : 'i den kategori'}.</td></tr>`;
 }
 async function demoReview(cvr, status) {

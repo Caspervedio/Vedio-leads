@@ -262,7 +262,7 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.st-qualified{background:#e6f6ec;color:var(--approve)}
 .chip.st-unqualified{background:#fdecec;color:#b42318}
 .review{display:inline-flex;gap:6px;flex-wrap:wrap}
-.review button{padding:6px 10px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-size:12px;font-weight:700;color:var(--txt-soft)}
+.review button{white-space:nowrap;padding:6px 10px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-size:12px;font-weight:700;color:var(--txt-soft)}
 .review button:hover{color:var(--txt);border-color:#cfcbc2}
 .review button.ok{color:var(--approve);border-color:var(--approve)}.review button.ok:hover{background:#e6f6ec}
 .review button.no{color:#b42318;border-color:#e6b4b0}.review button.no:hover{background:#fdecec}

@@ -536,7 +536,7 @@ function renderDemos() {
   const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending';
     const chip = `<span class="chip st-${e(st)}" title="${e(l.demo_review_reason || '')}">${ST[st] || st}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>`;
-    const ctl = admin ? `<div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">✓ Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">✕ Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div>` : '';
+    const ctl = admin ? `<div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div>` : '';
     return `<tr class="rowlink" onclick="openLeadPeek('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
