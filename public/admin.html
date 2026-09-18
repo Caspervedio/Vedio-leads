@@ -151,6 +151,14 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 #subs-table td.t-warn .st{color:#A9761E;font-weight:700}
 #subs-table td.t-bad .st{color:#B3352B;font-weight:700}
 #subs-table td:last-child{max-width:340px}
+/* Demoer: the status column holds a badge, the reason and two buttons - give it
+   room, and let the table scroll rather than clip if the window is narrow. */
+#view-demos .tablewrap{overflow-x:auto}
+#view-demos td,#view-demos th{padding-left:12px;padding-right:12px}
+#view-demos td:first-child,#view-demos th:first-child{padding-left:24px}
+#view-demos td.demost{min-width:230px}
+#view-demos td.demonote{min-width:150px;max-width:240px;color:var(--txt-soft)}
+#view-demos td.demost .why{display:block;margin-top:5px;font-size:12px;color:var(--txt-soft);white-space:normal;max-width:260px}
 .twl{display:inline-block;margin-top:6px;font-size:12.5px;font-weight:700;color:var(--violet);text-decoration:none}
 .twl:hover{text-decoration:underline}
 .twn{display:block;margin-top:5px;font-size:12px;color:var(--txt-faint)}
@@ -477,9 +485,9 @@ function renderDemos() {
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '-'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
-      <td style="max-width:300px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
+      <td class="demonote">${e(l.last_note || '')}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>
-      <td onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>
+      <td class="demost" onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}</span>${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
         ${twentyCell(l.twenty)}
         <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? 'endnu' : 'i den kategori'}.</td></tr>`;
