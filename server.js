@@ -14137,7 +14137,9 @@ app.post("/api/sdr/opened", authMiddleware, (req, res) => {
     res.json({ ok: true });
   } catch (e) { sdrFail(res, e, "opened"); }
 });
-app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
+// The outcome handler, named so admin can run the very same logic on an
+// SDR's behalf (/api/sdr/admin/set-stage) instead of a second copy of it.
+function sdrDispositionHandler(req, res) {
   try {
     const { cvr, action, note, callback_at } = req.body || {};
     if (!SDR_ACTIONS.has(action)) return res.status(400).json({ error: "Ukendt udfald: " + action });
@@ -14225,6 +14227,28 @@ app.post("/api/sdr/disposition", authMiddleware, (req, res) => {
     logActivity("sdr-call", `${meUser ? meUser.name : req.userId} · ${lead.name}: ${action}${cleanNote ? " - " + cleanNote.slice(0, 80) : ""}`, { cvr, userId: req.userId, action });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "disposition"); }
+}
+app.post("/api/sdr/disposition", authMiddleware, sdrDispositionHandler);
+// Admin changes a lead's stage, credited to an SDR. Casper: "make it possible
+// to change stages on leads from admin" - after booking two demos by hand that
+// the SDR had logged as "Følg op". It runs the SDR's own outcome handler as
+// that SDR, so commission, Slack, callback dates and parking all behave
+// exactly as if they had clicked it; the call note says admin set it.
+app.post("/api/sdr/admin/set-stage", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const b = req.body || {};
+    if (!SDR_ACTIONS.has(b.action)) return res.status(400).json({ error: "Ukendt stadie" });
+    const users = loadUsers();
+    const as = users.find((u) => u.id === String(b.as_user || "") && u.id !== "admin" && u.role !== "admin");
+    if (!as) return res.status(400).json({ error: "Vælg hvilken SDR stadiet tilhører" });
+    const adminName = (users.find((u) => u.id === req.userId) || {}).name || "admin";
+    const note = String(b.note || "").trim().slice(0, 1900);
+    logActivity("sdr-admin", `${adminName} satte ${b.cvr} til ${b.action} for ${as.name}`, { userId: req.userId, cvr: b.cvr, action: b.action, as_user: as.id });
+    req.userId = as.id;
+    req.body = { cvr: b.cvr, action: b.action, callback_at: b.callback_at || null, note: note ? `${note} (sat af admin)` : "Sat af admin" };
+    return sdrDispositionHandler(req, res);
+  } catch (e) { sdrFail(res, e, "admin/set-stage"); }
 });
 // Skip = move to the end of my list (not out of it).
 // ─── Research: the between-calls task ─────────────────────────────────────

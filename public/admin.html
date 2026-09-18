@@ -44,6 +44,13 @@ tr.sel td{background:var(--violet-soft)}
 /* Per SDR runs to 13 columns. .tablewrap clips by default, which cut the
    right-hand headers off - let it scroll instead, and tighten the gutters so
    on a normal screen it doesn't have to. */
+/* Lead drawer: change the stage, credited to an SDR. */
+.stagerow{margin:10px 0 4px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--white)}
+.stagerow .sr-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;font-size:13.5px}
+.stagerow .sr-head span{color:var(--txt-soft);font-size:12.5px}
+.stagerow .sr-ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.stagerow select,.stagerow input{border:1px solid var(--line);border-radius:10px;padding:7px 10px;font:inherit;font-size:13px;background:var(--paper)}
+.stagerow #sr-note{flex:1;min-width:140px}
 /* Lead drawer: who has it, and where it can go. */
 .moverow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0 4px;padding:10px 12px;border-radius:12px;background:var(--paper);font-size:13.5px}
 .moverow span{margin-right:4px;color:var(--txt-soft)}
@@ -528,6 +535,53 @@ async function moveLeads(cvrs, to) {
     return true;
   } catch (ex) { toast(ex.message, 4000); return false; }
 }
+/* Change a lead's stage, credited to an SDR. Runs the SDR's own outcome
+   logic on the server, so commission, Slack and callback dates follow. */
+const STAGES = [
+  ['demo-booked', 'Demo booket'], ['follow-up', 'Følg op'], ['email-sent', 'Mail sendt'], ['no-answer', 'Ingen svar'],
+  ['not-now', 'Ikke nu (90 dage)'], ['not-relevant', 'Ikke relevant'], ['wrong-number', 'Forkert nummer'], ['reopen', 'Åben igen (nulstil)'],
+];
+const STAGE_NOW = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'email-sent': 'Mail sendt', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer' };
+function stageRowHtml(L) {
+  const sdrs = moveTargets().filter((t) => t.id !== 'pool');
+  const last = (L.calls_all || []).slice(-1)[0];
+  const byClaim = sdrs.find((t) => t.name === L.claimed_by_name);
+  const def = (last && sdrs.some((t) => t.id === last.by) && last.by) || (byClaim && byClaim.id) || (sdrs[0] && sdrs[0].id) || '';
+  const t = new Date(); t.setDate(t.getDate() + 1); t.setHours(9, 0, 0, 0);
+  const local = new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return `<div class="stagerow" id="stagerow">
+    <div class="sr-head"><b>Skift stadie</b><span>Nu: ${e(STAGE_NOW[L.lastAction] || 'Åben')}${L.callback_at ? ' · ring ' + e(fmtWhen(L.callback_at)) : ''}</span></div>
+    <div class="sr-ctl">
+      <select id="sr-stage" onchange="$('sr-when').hidden = this.value !== 'follow-up'; $('sr-as').disabled = this.value === 'reopen'">${STAGES.map(([v, l]) => `<option value="${v}">${e(l)}</option>`).join('')}</select>
+      <select id="sr-as" title="Hvem stadiet tilhører - provision og opfølgning følger den SDR">${sdrs.map((x) => `<option value="${e(x.id)}" ${x.id === def ? 'selected' : ''}>for ${e(x.name)}</option>`).join('')}</select>
+      <input type="datetime-local" id="sr-when" value="${local}" hidden>
+      <input id="sr-note" placeholder="Note (valgfri)" autocomplete="off">
+      <button class="pill sm primary" onclick="setStage('${e(L.cvr)}')">Gem</button>
+    </div>
+  </div>`;
+}
+async function setStage(cvr) {
+  const action = $('sr-stage').value, as_user = $('sr-as').value, note = $('sr-note').value.trim();
+  const who = ($('sr-as').selectedOptions[0] || {}).textContent || '';
+  const label = (STAGES.find((x) => x[0] === action) || [])[1] || action;
+  if (action === 'reopen') {
+    if (!confirm('Nulstil leadet til åbent? Det kommer tilbage i puljen.')) return;
+    try { await post('/api/sdr/admin/lead-status', { cvr, status: 'reopen' }); toast('Åbnet igen'); openLead(cvr); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); }
+    return;
+  }
+  let callback_at = null;
+  if (action === 'follow-up') {
+    const w = $('sr-when').value; if (!w) { toast('Vælg et tidspunkt'); return; }
+    callback_at = new Date(w).toISOString();
+  }
+  const warn = action === 'demo-booked' ? '\n\nDet sender Slack-beskeden og tæller i SDR\'ens provision.' : '';
+  if (!confirm(`Sæt leadet til "${label}" ${who}?${warn}`)) return;
+  try {
+    await post('/api/sdr/admin/set-stage', { cvr, action, as_user, callback_at, note });
+    toast(`✓ ${label} ${who}`);
+    openLead(cvr); leadsReload(); loadOverview();
+  } catch (ex) { toast(ex.message, 5000); }
+}
 async function bulkMove(sel) {
   const to = sel.value; sel.value = '';
   if (to && await moveLeads([...SEL], to)) { SEL.clear(); updSel(); }
@@ -580,6 +634,7 @@ async function openLead(cvr) {
       <div class="full" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="pill sm primary" style="padding:9px 16px;font-size:13px" onclick="saveLeadEdit('${e(L.cvr)}')">Gem</button><button class="pill sm violet-outline" onclick="runEnrich('${e(L.cvr)}')" title="Kør Apollo → Full Enrich → Lusha på dette lead">🔁 Kør automatisk berigelse</button><span id="le-msg" style="font-size:12.5px;color:var(--txt-soft)"></span></div>
     </div>
     ${L.lastAction !== 'not-relevant' && L.lastAction !== 'demo-booked' ? `<div class="moverow"><span>Ligger hos <b>${e(L.claimed_by_name || 'puljen')}</b></span>${moveTargets().filter((t) => t.name !== L.claimed_by_name).map((t) => `<button class="pill sm" onclick="moveLeads(['${e(L.cvr)}'], '${e(t.id)}').then((ok) => ok && closeDrawer())">↪ ${e(t.id === 'pool' ? 'Til puljen' : 'Flyt til ' + t.name)}</button>`).join('')}</div>` : ''}
+    ${stageRowHtml(L)}
     <div class="acts">${L.lastAction === 'not-relevant' ? `<button class="pill" onclick="leadStatus('${e(L.cvr)}','reopen')">↩ Genåbn</button>` : `<button class="pill" style="color:#b42318;border-color:#e6b4b0" onclick="leadStatus('${e(L.cvr)}','archive')">✕ Arkivér - ikke ICP</button>`}${L.lastAction === 'demo-booked' ? `<button class="pill" onclick="showTab('demos');closeDrawer()">Til demoer →</button>` : ''}</div>`;
   document.body.append(bg, dr);
 }
