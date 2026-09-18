@@ -91,17 +91,19 @@ tr.sel td{background:var(--violet-soft)}
 #view-leads td .tag{white-space:nowrap}
 #view-leads td:nth-child(9){max-width:130px}
 #view-leads td.rowacts button{margin-left:3px}
-/* The actions reserve no column width - an empty 100px gutter looked like a
-   layout bug. The cell collapses and the buttons float over the row's right
-   edge on hover, fading the row out behind them. */
-td.rowacts{width:0;padding:0!important;position:relative}
-td.rowacts .acts{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;gap:4px;white-space:nowrap;padding-left:28px;opacity:0;transition:opacity .15s;background:linear-gradient(90deg,rgba(255,255,255,0),var(--white) 26%)}
-tr:hover td.rowacts .acts,td.rowacts .acts:focus-within{opacity:1}
-td.rowacts button{width:28px;height:28px;border-radius:8px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);font-size:13px}
-td.rowacts button:hover{border-color:var(--txt-soft);color:var(--txt)}
-td.rowacts button.del:hover{border-color:#b42318;color:#b42318;background:#fdecec}
-tr.sel td.rowacts .acts{background:linear-gradient(90deg,rgba(239,233,251,0),var(--violet-soft) 26%)}
-@media (max-width:900px){td.rowacts .acts{opacity:1}}
+/* Row actions live in one floating toolbar just outside the table's right
+   edge (#rowtools), shown for the hovered row - it never sits on top of the
+   status tags. The in-row buttons are only for touch screens, where there is
+   no hover. */
+td.rowacts{width:0;padding:0!important}
+td.rowacts .acts{display:none}
+@media (max-width:900px){td.rowacts{width:auto;padding:8px 12px!important}td.rowacts .acts{display:flex;gap:4px}}
+td.rowacts button,.rowtools button{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+td.rowacts button:hover,.rowtools button:hover{border-color:var(--txt-soft);color:var(--txt)}
+td.rowacts button.del:hover,.rowtools button.del:hover{border-color:#b42318;color:#b42318;background:#fdecec}
+.rowtools{position:absolute;z-index:40;display:flex;gap:5px;padding:5px;border-radius:12px;background:var(--white);border:1px solid var(--line);box-shadow:0 6px 18px rgba(14,14,12,.10)}
+.rowtools svg,td.rowacts svg{width:15px;height:15px}
+#tb-leads tr.tooled td{background:var(--paper)}
 td .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--paper);color:var(--txt-soft);margin-right:4px}
 td .tag.meta{background:var(--violet-soft);color:var(--violet)}
 td .tag.ok{background:#e6f6ec;color:var(--approve)}
@@ -484,7 +486,8 @@ function statusTag(l) {
   return t.join('');
 }
 function renderLeads(rows) {
-  $('tb-leads').innerHTML = rows.length ? rows.map((l) => `<tr class="rowlink ${SEL.has(l.cvr) ? 'sel' : ''}" onclick="openLead('${e(l.cvr)}')">
+  if (typeof rowToolsOff === 'function') rowToolsOff();
+  $('tb-leads').innerHTML = rows.length ? rows.map((l) => `<tr class="rowlink ${SEL.has(l.cvr) ? 'sel' : ''}" data-cvr="${e(l.cvr)}" data-name="${e(l.name)}" data-arch="${l.lastAction === 'not-relevant' ? 1 : 0}" onclick="openLead('${e(l.cvr)}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" ${SEL.has(l.cvr) ? 'checked' : ''} onchange="selOne('${e(l.cvr)}',this.checked)"></td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span></td>
       <td class="niche" title="${e(l.niche || '')}">${e(shortNiche(l.niche))}</td>
@@ -495,11 +498,11 @@ function renderLeads(rows) {
       <td style="font-size:12.5px;color:var(--txt-soft);white-space:nowrap">${e(fmtDate(l.addedAt))}</td>
       <td>${statusTag(l)}</td>
       <td class="rowacts" onclick="event.stopPropagation()"><div class="acts">
-        <button title="Ret lead / kontakt" onclick="openLead('${e(l.cvr)}')">✎</button>
+        <button title="Ret lead / kontakt" onclick="openLead('${e(l.cvr)}')">${ICON.edit}</button>
         ${l.lastAction === 'not-relevant'
-          ? `<button title="Genåbn" onclick="leadStatus('${e(l.cvr)}','reopen')">↩</button>`
-          : `<button title="Arkivér (kan genåbnes)" onclick="leadStatus('${e(l.cvr)}','archive')">✕</button>`}
-        <button class="del" title="Slet permanent" onclick="delOne('${e(l.cvr)}','${e(l.name)}')">🗑</button>
+          ? `<button title="Genåbn" onclick="leadStatus('${e(l.cvr)}','reopen')">${ICON.reopen}</button>`
+          : `<button title="Arkivér (kan genåbnes)" onclick="leadStatus('${e(l.cvr)}','archive')">${ICON.archive}</button>`}
+        <button class="del" title="Slet permanent" onclick="delOne('${e(l.cvr)}','${e(l.name)}')">${ICON.del}</button>
       </div></td>
     </tr>`).join('') : `<tr class="empty-row"><td colspan="10">Ingen leads matcher.</td></tr>`;
   updSel();
@@ -508,6 +511,62 @@ function renderPager(d) { const pages = Math.max(1, Math.ceil(d.total / d.per));
 function selOne(cvr, on) { on ? SEL.add(cvr) : SEL.delete(cvr); updSel(); document.querySelectorAll('#tb-leads tr').forEach((tr) => { if (tr.innerHTML.includes(`'${cvr}'`)) tr.classList.toggle('sel', on); }); }
 function selAll(on) { document.querySelectorAll('#tb-leads input[type=checkbox]').forEach((cb) => { cb.checked = on; const m = cb.getAttribute('onchange').match(/'([^']+)'/); if (m) on ? SEL.add(m[1]) : SEL.delete(m[1]); }); updSel(); }
 function updSel() { $('lsel').textContent = SEL.size ? `${SEL.size} valgt` : ''; $('bulk-arch').hidden = SEL.size === 0; $('bulk-del').hidden = SEL.size === 0; const bm = $('bulk-move'); if (bm) { bm.hidden = SEL.size === 0; bm.innerHTML = '<option value="">↪ Flyt valgte til…</option>' + moveTargets().map((t) => `<option value="${e(t.id)}">${e(t.name)}</option>`).join(''); } }
+/* Row actions: one toolbar just outside the table's right edge, shown for the
+   hovered row. It lives on <body> because the table card clips anything that
+   sticks out of it. Falls back to inside the card when the window is too
+   narrow for the gap. */
+const ICON = {
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>',
+  reopen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>',
+  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>',
+};
+let rowToolsHide = null;
+function rowTools() {
+  let t = $('rowtools');
+  if (!t) {
+    t = document.createElement('div'); t.id = 'rowtools'; t.className = 'rowtools'; t.hidden = true;
+    t.addEventListener('mouseenter', () => clearTimeout(rowToolsHide));
+    t.addEventListener('mouseleave', () => rowToolsLater());
+    document.body.appendChild(t);
+  }
+  return t;
+}
+function rowToolsOff() {
+  const t = $('rowtools'); if (t) t.hidden = true;
+  document.querySelectorAll('#tb-leads tr.tooled').forEach((r) => r.classList.remove('tooled'));
+}
+function rowToolsLater() { clearTimeout(rowToolsHide); rowToolsHide = setTimeout(rowToolsOff, 220); }
+function rowToolsFor(tr) {
+  if (!tr || !tr.dataset.cvr || window.innerWidth <= 900) return;
+  clearTimeout(rowToolsHide);
+  const t = rowTools();
+  const cvr = tr.dataset.cvr, name = tr.dataset.name || '', arch = tr.dataset.arch === '1';
+  t.innerHTML = `<button title="Åbn / ret lead" onclick="openLead('${e(cvr)}')">${ICON.edit}</button>`
+    + (arch ? `<button title="Genåbn" onclick="leadStatus('${e(cvr)}','reopen')">${ICON.reopen}</button>`
+            : `<button title="Arkivér som ikke relevant (kan genåbnes)" onclick="leadStatus('${e(cvr)}','archive')">${ICON.archive}</button>`)
+    + `<button class="del" title="Slet permanent" onclick="delOne('${e(cvr)}', this.closest('.rowtools').dataset.name)">${ICON.del}</button>`;
+  t.dataset.name = name;
+  t.hidden = false;
+  document.querySelectorAll('#tb-leads tr.tooled').forEach((r) => r.classList.remove('tooled'));
+  tr.classList.add('tooled');
+  const r = tr.getBoundingClientRect();
+  const card = tr.closest('.tablewrap').getBoundingClientRect();
+  const w = t.offsetWidth, h = t.offsetHeight;
+  let left = card.right + 10;
+  if (left + w > window.innerWidth - 8) left = card.right - w - 10;   // no room outside: sit inside the edge
+  t.style.left = (left + window.scrollX) + 'px';
+  t.style.top = (r.top + r.height / 2 - h / 2 + window.scrollY) + 'px';
+}
+document.addEventListener('mouseover', (ev) => {
+  const tr = ev.target.closest && ev.target.closest('#tb-leads tr[data-cvr]');
+  if (tr) rowToolsFor(tr);
+});
+document.addEventListener('mouseout', (ev) => {
+  const tr = ev.target.closest && ev.target.closest('#tb-leads tr[data-cvr]');
+  if (tr && !(ev.relatedTarget && (tr.contains(ev.relatedTarget) || (ev.relatedTarget.closest && ev.relatedTarget.closest('#rowtools'))))) rowToolsLater();
+});
+window.addEventListener('scroll', rowToolsOff, { passive: true });
 async function delOne(cvr, name) {
   if (!confirm(`Slet "${name}" permanent fra puljen?\n\nLeadet fjernes helt og kan komme ind igen via intake. Vil du bare have det væk fra SDR'ernes lister, så brug Arkivér (✕) i stedet.`)) return;
   try { await post('/api/sdr/admin/lead-status', { cvr, status: 'delete' }); toast('Slettet permanent'); leadsReload(); loadOverview(); }
