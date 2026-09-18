@@ -145,6 +145,11 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 #subs-table td.t-warn .st{color:#A9761E;font-weight:700}
 #subs-table td.t-bad .st{color:#B3352B;font-weight:700}
 #subs-table td:last-child{max-width:340px}
+.twl{display:inline-block;margin-top:6px;font-size:12.5px;font-weight:700;color:var(--violet);text-decoration:none}
+.twl:hover{text-decoration:underline}
+.twn{display:block;margin-top:5px;font-size:12px;color:var(--txt-faint)}
+.twn.bad{color:#B3352B}
+.twl + .twn{display:inline;margin-left:6px}
 .integ{display:flex;flex-direction:column}
 .integ .ic{background:var(--white);padding:13px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line)}
 .integ .ic:last-child{border-bottom:0}
@@ -444,8 +449,16 @@ function renderDemos() {
       <td style="max-width:300px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>
       <td onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>
+        ${twentyCell(l.twenty)}
         <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? 'endnu' : 'i den kategori'}.</td></tr>`;
+}
+// Where the demo stands in Victor's Twenty pipeline (pushed ~10 min after booking).
+function twentyCell(t) {
+  if (!t) return '';
+  if (t.url) return `<a class="twl" href="${e(t.url)}" target="_blank" rel="noopener">I Twenty ↗</a>${t.reused ? '<span class="twn">eksisterende opportunity</span>' : ''}`;
+  if (t.pending) return '<span class="twn">Sendes til Twenty om lidt</span>';
+  return `<span class="twn bad" title="${e(t.error || '')}">${t.gaveUp ? 'Twenty afviste den - se fejl' : 'Twenty: prøver igen'}</span>`;
 }
 async function demoReview(cvr, status) {
   let reason = ''; if (status === 'unqualified') { reason = prompt('Hvorfor ikke kvalificeret? (no-show, ikke ICP, ikke interesseret…)'); if (reason === null) return; }

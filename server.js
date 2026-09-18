@@ -13632,6 +13632,180 @@ async function sdrNotifyDemo(url, lead, sdrName, note) {
   try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); }
   catch (e) { console.warn("[sdr/demo-webhook]", e.message); }
 }
+// ─── Twenty: booked demos land in the Vedio CRM ─────────────────────────
+// Every demo an SDR books becomes an Opportunity in the Vedio Twenty
+// workspace at stage Demo Booked, owned by Victor (who takes the demos), with
+// the company, the contact and the SDR's context as a note. Twenty already
+// holds ~6,000 companies from the Pipedrive import, so a company is looked up
+// by domain, then CVR, then name before one is created, and an open
+// opportunity on it is moved to Demo Booked instead of duplicated.
+//
+// A cron pushes once the 10-minute undo window has closed, so a booking the
+// SDR takes back never reaches Twenty. What was pushed is kept in a ledger
+// file (cvr → ids), not only on the lead: a pool save racing the push could
+// drop fields from the lead, and the ledger is what stops a second
+// opportunity. Demos booked before TWENTY_DEMO_SINCE are left alone.
+const TWENTY_DEMO_LEDGER = path.join(DATA_DIR, "twenty_demos.json");
+const TWENTY_DEMO_SINCE = process.env.TWENTY_DEMO_SINCE || "2026-09-18T10:30:00Z"; // 12:30 in Copenhagen, when this was asked for
+const TWENTY_DEMO_OWNER = process.env.TWENTY_DEMO_OWNER || "victor@vedio.dk";
+const TWENTY_DEMO_MAX_TRIES = 6;
+function twentyReady() { return !!(process.env.TWENTY_API_TOKEN && process.env.TWENTY_WORKSPACE_URL); }
+function twentyBase() { return String(process.env.TWENTY_WORKSPACE_URL || "").replace(/\/+$/, ""); }
+function loadTwentyLedger() { try { return JSON.parse(fs.readFileSync(TWENTY_DEMO_LEDGER, "utf8")) || {}; } catch { return {}; } }
+function saveTwentyLedger(l) { fs.writeFileSync(TWENTY_DEMO_LEDGER, JSON.stringify(l, null, 1)); }
+async function twentyCall(method, p, body) {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(`${twentyBase()}/rest/${p}`, { method, signal: ctl.signal, headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}` }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`Twenty ${method} ${p.split("?")[0]} ${r.status}: ${String((j.messages && j.messages[0]) || j.error || JSON.stringify(j)).slice(0, 200)}`);
+    return j;
+  } finally { clearTimeout(timer); }
+}
+// Filter values go inside double quotes - drop any quote or backslash.
+function twentyFilter(expr) { return `filter=${encodeURIComponent(expr)}`; }
+function twentyVal(s) { return String(s || "").replace(/["\\]/g, "").trim(); }
+function twentyList(j, key) { const a = j && j.data && j.data[key]; return Array.isArray(a) ? a : []; }
+function twentyRecord(j) { const d = (j && j.data) || {}; const k = Object.keys(d).find((x) => /^(create|update)/.test(x)); return (k ? d[k] : d) || {}; }
+// Twenty keeps Danish numbers as 8 digits + calling code.
+function twentyPhone(p) { const n = normDkPhone(p); return isDkPhone(n) ? { primaryPhoneNumber: n.replace(/^\+45/, ""), primaryPhoneCountryCode: "DK", primaryPhoneCallingCode: "+45" } : null; }
+let _twentyOwner = null;
+async function twentyOwnerId() {
+  if (_twentyOwner && Date.now() - _twentyOwner.at < 6 * 3600e3) return _twentyOwner.id;
+  const m = twentyList(await twentyCall("GET", "workspaceMembers?limit=100"), "workspaceMembers").find((x) => String(x.userEmail || "").toLowerCase() === TWENTY_DEMO_OWNER.toLowerCase());
+  _twentyOwner = { id: m ? m.id : null, at: Date.now() };
+  return _twentyOwner.id;
+}
+async function twentyFindOrCreateCompany(lead) {
+  const domain = storeLeadsHost(lead.web || lead.website);
+  if (domain) {
+    const hit = twentyList(await twentyCall("GET", `companies?limit=10&${twentyFilter(`domainName.primaryLinkUrl[ilike]:"%${twentyVal(domain)}%"`)}`), "companies")
+      .find((c) => storeLeadsHost(c.domainName && c.domainName.primaryLinkUrl) === domain);
+    if (hit) return { id: hit.id, existed: true };
+  }
+  if (/^\d{8}$/.test(String(lead.cvr))) {
+    const hit = twentyList(await twentyCall("GET", `companies?limit=1&${twentyFilter(`taxId[eq]:"${lead.cvr}"`)}`), "companies")[0];
+    if (hit) return { id: hit.id, existed: true };
+  }
+  if (lead.name) {
+    const hit = twentyList(await twentyCall("GET", `companies?limit=1&${twentyFilter(`name[ilike]:"${twentyVal(lead.name)}"`)}`), "companies")[0];
+    if (hit) return { id: hit.id, existed: true };
+  }
+  const body = { name: lead.name || domain };
+  if (domain) body.domainName = { primaryLinkUrl: domain };
+  const ph = twentyPhone(lead.phone || lead.ph); if (ph) body.phones = ph;
+  if (lead.city) body.address = { addressCity: lead.city, addressCountry: "Denmark" };
+  if (/^\d{8}$/.test(String(lead.cvr))) body.taxId = lead.cvr;
+  return { id: twentyRecord(await twentyCall("POST", "companies", body)).id, existed: false };
+}
+async function twentyFindOrCreatePerson(lead, companyId) {
+  const c = sdrPrimaryContact(lead); if (!c || !c.name) return null;
+  const email = String(c.email || "").trim().toLowerCase();
+  if (email) {
+    const hit = twentyList(await twentyCall("GET", `people?limit=1&${twentyFilter(`emails.primaryEmail[ilike]:"${twentyVal(email)}"`)}`), "people")[0];
+    if (hit) return { id: hit.id, existed: true };
+  }
+  if (companyId) {
+    const want = c.name.trim().toLowerCase();
+    const hit = twentyList(await twentyCall("GET", `people?limit=60&${twentyFilter(`companyId[eq]:"${companyId}"`)}`), "people")
+      .find((p) => `${(p.name && p.name.firstName) || ""} ${(p.name && p.name.lastName) || ""}`.trim().toLowerCase() === want);
+    if (hit) return { id: hit.id, existed: true };
+  }
+  const parts = c.name.trim().split(/\s+/);
+  const body = { name: { firstName: parts[0] || "", lastName: parts.slice(1).join(" ") } };
+  if (c.title) body.jobTitle = c.title;
+  const ph = twentyPhone(c.phone || c.direct_phone || c.mobile); if (ph) body.phones = ph;
+  if (email) body.emails = { primaryEmail: email };
+  const li = c.linkedin || c.linkedinUrl || c.linkedin_url; if (li) body.linkedinLink = { primaryLinkUrl: li };
+  if (companyId) body.companyId = companyId;
+  return { id: twentyRecord(await twentyCall("POST", "people", body)).id, existed: false };
+}
+function twentyDemoNote(lead, sdrName) {
+  const c = sdrPrimaryContact(lead) || {};
+  const phone = sdrPhone(lead).phone;
+  const when = new Date(lead.demo_booked_at || Date.now()).toLocaleString("da-DK", { timeZone: "Europe/Copenhagen", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const ads = Number(lead.meta_ads_active_now || 0);
+  const lines = [
+    `**Demo booket af ${sdrName}** · ${when}`,
+    "",
+    `- Virksomhed: ${lead.name || "-"}${lead.city ? ", " + lead.city : ""}${lead.ind ? " · " + lead.ind : ""}`,
+    lead.web ? `- Website: ${lead.web}` : null,
+    phone ? `- Telefon: ${phone}` : null,
+    c.name ? `- Kontakt: ${c.name}${c.title ? " · " + c.title : ""}${c.email ? " · " + c.email : ""}` : null,
+    (lead.meta_advertiser || ads) ? `- Meta: kører ${ads ? ads + " " : ""}annoncer lige nu` : null,
+    lead.about ? `- Om dem: ${String(lead.about).replace(/\n/g, " / ")}` : null,
+    `- Kilde: Vedio Ring (${sdrSourceLabel(lead) || lead.source || "ukendt"})`,
+  ].filter((x) => x !== null);
+  const notes = String(lead.notes || "").trim();
+  if (notes) lines.push("", "**SDR-noter**", "", ...notes.split("\n").slice(-12).map((x) => `- ${x}`));
+  return lines.join("\n");
+}
+// One demo → Twenty. `save(ids)` is called as soon as the opportunity exists,
+// so a failure on the note afterwards can't lead to a second opportunity.
+async function twentyPushDemo(lead, sdrName, save) {
+  const company = await twentyFindOrCreateCompany(lead);
+  const person = await twentyFindOrCreatePerson(lead, company.id).catch((e) => { console.warn("[twenty-demo/person]", e.message); return null; });
+  const ownerId = await twentyOwnerId().catch(() => null);
+  const opps = twentyList(await twentyCall("GET", `opportunities?limit=30&${twentyFilter(`companyId[eq]:"${company.id}"`)}`), "opportunities");
+  const open = opps.filter((o) => !["WON", "LOST"].includes(o.stage)).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
+  let opp; let reused = false;
+  if (open) {
+    // Keep whoever owns it already; fill in only what's missing.
+    const patch = { stage: "DEMO_BOOKED" };
+    if (ownerId && !open.ownerId) patch.ownerId = ownerId;
+    if (person && !open.pointOfContactId) patch.pointOfContactId = person.id;
+    opp = { ...open, ...twentyRecord(await twentyCall("PATCH", `opportunities/${open.id}`, patch)) }; reused = true;
+  } else {
+    const body = { name: lead.name || "Demo", stage: "DEMO_BOOKED", amount: { amountMicros: 0, currencyCode: "DKK" }, source: "UNKNOWN", companyId: company.id };
+    if (ownerId) body.ownerId = ownerId;
+    if (person) body.pointOfContactId = person.id;
+    opp = twentyRecord(await twentyCall("POST", "opportunities", body));
+  }
+  if (!opp.id) throw new Error("Twenty svarede uden opportunity-id");
+  const ids = { opp_id: opp.id, url: `${twentyBase()}/object/opportunity/${opp.id}`, company_id: company.id, company_existed: company.existed, person_id: person ? person.id : null, reused_opportunity: reused, owner_set: !!ownerId && (!open || !open.ownerId) };
+  save(ids);
+  try {
+    const note = twentyRecord(await twentyCall("POST", "notes", { title: `Demo booket · ${lead.name || ""}`.trim(), bodyV2: { markdown: twentyDemoNote(lead, sdrName) } }));
+    if (note.id) { await twentyCall("POST", "noteTargets", { noteId: note.id, opportunityId: opp.id }); ids.note_id = note.id; }
+  } catch (e) { ids.note_error = e.message; console.warn("[twenty-demo/note]", e.message); }
+  return ids;
+}
+// Where a demo stands in Twenty - for the admin Demoer tab.
+function twentyDemoState(ledger, l) {
+  const e = ledger[l.cvr];
+  if (e && e.opp_id) return { url: e.url, reused: !!e.reused_opportunity };
+  if (!l.demo_booked_at || l.demo_booked_at < TWENTY_DEMO_SINCE) return null;
+  if (!twentyReady()) return { error: "Twenty er ikke sat op" };
+  if (e && e.error) return { error: e.error, tries: e.attempts || 0, gaveUp: (e.attempts || 0) >= TWENTY_DEMO_MAX_TRIES };
+  return { pending: true };
+}
+app.post("/api/cron/twenty-demo-sync", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  if (!twentyReady()) return res.json({ ok: true, skipped: "not-configured" });
+  const ledger = loadTwentyLedger(); const d = loadPool(); const now = Date.now();
+  const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
+  const due = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && l.demo_booked_at >= TWENTY_DEMO_SINCE
+    && now - new Date(l.demo_booked_at).getTime() >= SDR_UNDO_WINDOW_MS
+    && !(ledger[l.cvr] && ledger[l.cvr].opp_id) && ((ledger[l.cvr] || {}).attempts || 0) < TWENTY_DEMO_MAX_TRIES).slice(0, 5);
+  const stats = { due: due.length, pushed: 0, reused: 0, failed: 0 };
+  for (const l of due) {
+    const entry = ledger[l.cvr] = { ...(ledger[l.cvr] || {}), attempts: ((ledger[l.cvr] || {}).attempts || 0) + 1, last_try_at: new Date().toISOString(), name: l.name };
+    try {
+      const ids = await twentyPushDemo(l, nameById[l.demo_booked_by] || l.demo_booked_by || "SDR", (x) => { Object.assign(entry, x, { pushed_at: new Date().toISOString(), error: null }); saveTwentyLedger(ledger); });
+      Object.assign(entry, ids);
+      stats.pushed++; if (ids.reused_opportunity) stats.reused++;
+      logActivity("twenty-demo", `Demo ${l.name} sendt til Twenty${ids.reused_opportunity ? " (eksisterende opportunity flyttet til Demo Booked)" : ""}`, { cvr: l.cvr, opp: ids.opp_id });
+    } catch (e) {
+      entry.error = String(e.message || e).slice(0, 240); stats.failed++;
+      console.warn("[twenty-demo]", l.cvr, e.message);
+    }
+    saveTwentyLedger(ledger);
+  }
+  if (due.length) console.log("[twenty-demo-sync] done:", JSON.stringify(stats));
+  res.json({ ok: true, stats });
+});
 // Gemini (2.5 Flash) JSON call with optional inline audio - used by the
 // post-call voice debrief. Returns parsed JSON or throws.
 async function sdrGeminiJson(prompt, audio) {
@@ -14994,7 +15168,8 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const talksToday = perUser.reduce((a, u) => a + (u.talksToday || 0), 0), talksWeek = perUser.reduce((a, u) => a + (u.talksWeek || 0), 0);
     const talks30 = perUser.reduce((a, u) => a + (u.talks30 || 0), 0);
     res.json({
-      ok: true, me: base.me, settings: base.settings, commission: base.commission, perUser, demos: base.demos, followups: base.followups,
+      ok: true, me: base.me, settings: base.settings, commission: base.commission, perUser, followups: base.followups,
+      demos: (() => { const ledger = loadTwentyLedger(); const byCvr = new Map(leads.map((l) => [l.cvr, l])); return (base.demos || []).map((x) => ({ ...x, twenty: twentyDemoState(ledger, byCvr.get(x.cvr) || x) })); })(),
       days: days.map((k) => ({ day: k, ...byDay[k] })), intakeBySource,
       pool: {
         total: leads.length, active: active.length, ready: ready.length, blockedByRules: blocked.length, needs: needs.length,
