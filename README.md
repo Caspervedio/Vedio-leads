@@ -137,6 +137,7 @@ De vigtigste:
 | `describe-companies` | hvert 20. min | De to linjer på kortet |
 | `meta-pages-check` | hver 30. min | Annoncerer de lige nu? |
 | `intake-enrich`, `drain-enrichment` | hvert 5. min | Kontakter og numre |
+| `twenty-demo-sync` | hvert 5. min, 07-21 | Bookede demoer → Twenty |
 | `pool-backup` | 03:30 | Backup |
 
 **Deploy** sker af sig selv når `main` pushes (GitHub Actions →
@@ -156,6 +157,7 @@ De vigtigste:
 | Gemini | Firmabeskrivelser, kundekategorier, ugens opsummering |
 | Gmail | SDR'erne sender fra deres egen adresse |
 | Slack | Besked når en demo bookes |
+| Twenty (vedio.twenty.com) | Hver booket demo bliver en opportunity i *Demo Booked* med Victor som ejer — ca. 10 min efter booking, så en fortrudt booking aldrig kommer med. Findes firmaet allerede, genbruges det, og en åben opportunity flyttes i stedet for at blive dubleret. Log over hvad der er sendt: `twenty_demos.json` |
 
 Status for dem alle kan tjekkes live under **Tilgang → Integrationer**.
 **Tilgang → Abonnementer denne måned** viser forbrug, saldo og pris pr. booket
