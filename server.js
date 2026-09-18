@@ -13788,7 +13788,8 @@ async function twentyPushDemo(lead, sdrName, save) {
   save(ids);
   try {
     const note = twentyRecord(await twentyCall("POST", "notes", { title: `Demo booket · ${lead.name || ""}`.trim(), bodyV2: { markdown: twentyDemoNote(lead, sdrName) } }));
-    if (note.id) { await twentyCall("POST", "noteTargets", { noteId: note.id, opportunityId: opp.id }); ids.note_id = note.id; }
+    // noteTarget links are morph relations: targetOpportunityId, not opportunityId.
+    if (note.id) { ids.note_id = note.id; await twentyCall("POST", "noteTargets", { noteId: note.id, targetOpportunityId: opp.id }); }
   } catch (e) { ids.note_error = e.message; console.warn("[twenty-demo/note]", e.message); }
   return ids;
 }
