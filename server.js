@@ -6460,10 +6460,11 @@ async function lushaLookupContact(opts) {
     });
   } finally { clearTimeout(timer); }
   if (r.status === 401) throw new Error("Lusha auth failed - check LUSHA_API_KEY");
-  if (r.status === 429) {
-    // Daily quota exhausted - let the caller know explicitly so it can
-    // halt the rest of the batch instead of burning more 429s.
-    const e = new Error("Lusha rate-limited or out of credits");
+  if (r.status === 429 || r.status === 402) {
+    // Daily quota exhausted (429) or no credits left (402) - let the caller
+    // know explicitly so it can halt the rest of the batch instead of
+    // sending every lead into the same refusal.
+    const e = new Error(r.status === 402 ? "Lusha out of credits" : "Lusha rate-limited or out of credits");
     e.code = "LUSHA_RATE_LIMITED";
     throw e;
   }
@@ -6694,11 +6695,12 @@ async function storeLeadsSearchDomains(platform, opts = {}) {
   const body = {
     "f:cc": "DK",
     "f:p": platform,
-    "f:pcmin": STORELEADS_MIN_PRODUCTS,
-    "f:rankmin": STORELEADS_RANK_MIN,
-    "f:rankmax": STORELEADS_RANK_MAX,
     "page_size": Math.max(1, Math.min(100, opts.pageSize || 50)),
   };
+  // null = no filter on that field (the wider bands); undefined = the default.
+  if (opts.pcmin !== null) body["f:pcmin"] = opts.pcmin || STORELEADS_MIN_PRODUCTS;
+  if (opts.rankmin !== null) body["f:rankmin"] = opts.rankmin || STORELEADS_RANK_MIN;
+  if (opts.rankmax !== null) body["f:rankmax"] = opts.rankmax || STORELEADS_RANK_MAX;
   if (opts.cursor) body.cursor = opts.cursor;
   const r = await fetch(`${STORELEADS_API_BASE}/domain`, {
     method: "POST",
@@ -6730,36 +6732,90 @@ function _storeLeadsPhone(dom) {
   return null;
 }
 
-// The main discovery cron - paginates each platform, dedupes vs the
-// state file's scannedDomains, runs each through Datafordeler-verify,
-// saves as a lead. Same downstream pipeline as branche-walk.
+// ─── StoreLeads reserve ─────────────────────────────────────────────────
+// StoreLeads is a flat $250/month with no cap on records - its API only
+// limits requests per second. So every shop in the target band is pulled as
+// fast as the schedule allows and parked in a reserve file, outside the pool
+// (data_pool.json is rewritten on every SDR click and should stay small).
+// Shops move from the reserve into the pool only while the SDRs are short of
+// fresh leads (sdrIntakeStatus), because entering the pool is where per-lead
+// spending starts: website read, people search, Meta check, phone reveal.
+// Once the whole band is pulled the subscription can be paused - promotion
+// needs no StoreLeads call, so the reserve keeps feeding the pool.
+const STORELEADS_RESERVE_FILE = path.join(DATA_DIR, "discovery", "storeleads_reserve.json");
+const STORELEADS_PULL_DEFAULT = 1000;       // shops per platform per run (4 runs/weekday) - 10 API calls
+const STORELEADS_RESCAN_MS = 30 * 86400e3;  // a finished band is walked again after a month for new shops
+const STORELEADS_BAND_SINCE = "2026-09-08"; // first day of the v2 query - scans before it were the old band
+// Pulled in this order, each after the one before is finished, and promoted
+// in the same order - a lower tier only once the reserve has none of the
+// tier above left. 2026-09 DK counts (Shopify + WooCommerce):
+//   1. 10+ products, traffic rank 100k-3M - the target band, 13,114
+//   2. 10+ products, rank over 3M - low-traffic long tail, 13,355
+//   3. everything else - 13,400 with under 10 products (largely service
+//      businesses with a small shop: hotels, restaurants, clinics, escape
+//      rooms, B2B) plus ~6,500 with no product count. The query overlaps
+//      tiers 1-2; scannedDomains skips what they already fetched.
+const STORELEADS_BANDS = [
+  { id: STORELEADS_QUERY_VERSION, tier: 1, rankmin: STORELEADS_RANK_MIN, rankmax: STORELEADS_RANK_MAX, label: "10+ varer, trafik-rang 100k-3M" },
+  { id: "long-tail", tier: 2, rankmin: STORELEADS_RANK_MAX, rankmax: null, label: "10+ varer, lav trafik" },
+  { id: "all-dk", tier: 3, pcmin: null, rankmin: null, rankmax: null, label: "alle øvrige DK-butikker" },
+];
+function loadStoreLeadsReserve() {
+  try {
+    if (fs.existsSync(STORELEADS_RESERVE_FILE)) {
+      const r = JSON.parse(fs.readFileSync(STORELEADS_RESERVE_FILE, "utf8"));
+      if (r && r.items && typeof r.items === "object") return r;
+    }
+  } catch (_) {}
+  return { items: {} };
+}
+function saveStoreLeadsReserve(r) {
+  fs.mkdirSync(path.dirname(STORELEADS_RESERVE_FILE), { recursive: true });
+  fs.writeFileSync(STORELEADS_RESERVE_FILE, JSON.stringify(r));
+}
+// Counts per tier, stored in the (small) state file so the admin panel never
+// has to read the reserve itself - with all tiers pulled it runs to ~40k shops.
+function storeLeadsReserveCounts(r) { const byTier = {}; for (const x of Object.values(r.items || {})) byTier[x.tier || 1] = (byTier[x.tier || 1] || 0) + 1; return { total: Object.keys(r.items || {}).length, byTier }; }
+function storeLeadsHost(u) { return String(u || "").toLowerCase().trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, ""); }
+// Best shops leave the reserve first: a Danish number means callable without
+// a paid reveal, the pixel and a Facebook page mean it probably advertises.
+function storeLeadsReserveScore(r) { return (isDkPhone(r.phone) ? 4 : 0) + (r.meta_pixel ? 3 : 0) + (r.facebook_url ? 2 : 0) + (r.email ? 1 : 0); }
+function storeLeadsReserveOrder(a, b) { return (a.tier || 1) - (b.tier || 1) || storeLeadsReserveScore(b) - storeLeadsReserveScore(a) || (a.rank || 9e9) - (b.rank || 9e9); }
+// Shops fetched per band. The v2 band ran before this counter existed, so it
+// starts from the scans stamped since that query went live.
+function storeLeadsBandPulled(state, key) {
+  state.bandPulled = state.bandPulled || {};
+  if (state.bandPulled[key] === undefined) {
+    state.bandPulled[key] = key.endsWith(`@${STORELEADS_QUERY_VERSION}`)
+      ? Math.round(Object.values(state.scannedDomains || {}).filter((t) => String(t) >= STORELEADS_BAND_SINCE).length / STORELEADS_PLATFORMS.length)
+      : 0;
+  }
+  return state.bandPulled[key];
+}
+
+// Two steps per run. PULL (always): the next pages of each platform into the
+// reserve - `pull` shops per platform, default 400. PROMOTE (gated): up to
+// per_platform × 2 of the best reserve shops through Datafordeler into the
+// pool, never more than the fresh-lead buffer is short. ?force=1 promotes the
+// full amount regardless; ?pull=0 skips pulling.
 app.post("/api/cron/storeleads-discover", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
     return res.status(401).json({ error: "Invalid cron secret" });
   }
-  // Supply cap: skip discovery while the pool already holds plenty. ?force=1
-  // overrides for a manual run.
-  {
-    const st = sdrIntakeStatus();
-    if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
-      return res.json({ ok: true, skipped: "pool-full", ...st });
-    }
-  }
-  if (!isStoreLeadsConfigured()) {
-    return res.status(503).json({ error: "STORELEADS_API_KEY not configured" });
-  }
   const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
-  // Per-run: pull N fresh domains per platform. Default 30, now scheduled
-  // at 60 → 60 × 2 = 120 candidates per run, expect 30-60 saved leads
-  // after DF-verify + dedup drops. Cloud Run timeout is 1200s, so plenty
-  // of headroom for the inline Datafordeler verify loop.
-  const PER_PLATFORM = Math.max(5, Math.min(100, Number(req.query.per_platform) || 30));
+  const PER_PLATFORM = Math.max(1, Math.min(100, Number(req.query.per_platform) || 30));
+  const PULL = Math.max(0, Math.min(2000, req.query.pull !== undefined ? Number(req.query.pull) || 0 : STORELEADS_PULL_DEFAULT));
+  const FORCE = req.query.force === "1";
   const stats = {
     perPlatform: {},
     candidatesScanned: 0,
     alreadyKnown: 0,
     nonDkBrand: 0,
+    inPool: 0,
+    reserveAdded: 0,
+    reserveSize: 0,
+    promoteRoom: 0,
+    promoted: 0,
     dfMatched: 0,
     dfNoMatch: 0,
     saved: 0,
@@ -6767,154 +6823,189 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
     errors: 0,
   };
   const state = loadStoreLeadsState();
+  state.exhausted = state.exhausted || {};
+  state.bandTotals = state.bandTotals || {};
+  state.bandPulled = state.bandPulled || {};
+  const reserve = loadStoreLeadsReserve();
   const checkedAt = new Date().toISOString();
 
-  // Load user data ONCE at the top of the run instead of per-candidate.
-  // The old loop did loadUserData + saveUserData on every iteration -
-  // 60+ full disk-read+write cycles per run, which was the actual
-  // bottleneck (not Datafordeler). Now: read once, mutate in memory,
-  // save once at the end. This lets per_platform scale to ~100 without
-  // hitting Cloud Run's timeout.
-  const ud = loadUserData(TARGET_USER);
-  if (!ud.leads) ud.leads = [];
-
-  for (const platform of STORELEADS_PLATFORMS) {
-    const pStats = { fetched: 0, saved: 0, dfMatched: 0 };
-    // Cursors belong to a query; the key carries the query version so a
-    // filter change restarts paging instead of resuming an old cursor.
-    const cursorKey = `${platform}@${STORELEADS_QUERY_VERSION}`;
-    let cursor = state.platformCursors[cursorKey] || null;
-    let pageSize = Math.min(100, PER_PLATFORM);
-    try {
-      const page = await storeLeadsSearchDomains(platform, { pageSize, cursor });
-      const domains = page.domains || [];
-      pStats.fetched = domains.length;
-      pStats.total = page.total ?? null;
-      stats.candidatesScanned += domains.length;
-      state.platformCursors[cursorKey] = page.has_next_page ? page.next_cursor : null;
-
-      for (const dom of domains) {
-        const domain = String(dom.name || dom.tld1 || "").toLowerCase().trim();
-        if (!domain) continue;
-        if (state.scannedDomains[domain]) { stats.alreadyKnown++; continue; }
-        state.scannedDomains[domain] = checkedAt;
-        const merchantName = (dom.merchant_name || dom.title || domain).trim();
-        if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
-        // Size / storefront / Danish-signal checks on the record itself.
-        const q = storeLeadsQualify(dom, domain);
-        if (!q.ok) { stats[q.reason] = (stats[q.reason] || 0) + 1; continue; }
-
-        // Datafordeler verify by merchant_name - gives us real CVR + phone.
-        // Wrapped in a 3s timeout race: when DF is slow/down (their
-        // GraphQL service has a 60s internal timeout that we'd hit every
-        // candidate), we drop through with df=null and save the lead
-        // using StoreLeads-native fields. The "DF verify unknowns" admin
-        // bulk-op (or the daily backfill-cvr cron) can backfill CVRs
-        // later when DF is healthy. Keeps storeleads producing during
-        // DF outages.
-        let df = null;
-        try {
-          // Phone / e-mail exact match first, then name variants (see
-          // tryDfVerifyDkCompany). 8s budget: the old 3s race expired
-          // before the name variants had even run.
-          df = await Promise.race([
-            tryDfVerifyDkCompany(merchantName, { phone: q.dkPhone, email: q.email }),
-            new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
-          ]);
-        } catch (_) {}
-
-        try {
-          // Dedupe by domain, by real CVR (if DF found one), and by name.
-          // ud.leads grows in-memory as we append within this run, so dupes
-          // landing across platforms within the same run also get caught.
-          const dupByDomain = ud.leads.some((l) => String(l.web || l.website || "").toLowerCase().includes(domain));
-          const dupByCvr = df && df.cvr && ud.leads.some((l) => l.cvr === df.cvr);
-          const dupByName = ud.leads.some((l) => (l.name || "").toLowerCase().trim() === merchantName.toLowerCase());
-          if (dupByDomain || dupByCvr || dupByName) {
-            stats.skippedDuplicates++;
-            continue;
+  // ── 1. Pull into the reserve ──
+  const d0 = loadUserData(TARGET_USER);
+  const poolHosts = new Set((d0.leads || []).map((l) => storeLeadsHost(l.web || l.website)).filter(Boolean));
+  const poolNames = new Set((d0.leads || []).map((l) => String(l.name || "").toLowerCase().trim()).filter(Boolean));
+  if (PULL > 0 && isStoreLeadsConfigured()) {
+    for (const platform of STORELEADS_PLATFORMS) {
+      const pStats = { fetched: 0, added: 0, bands: [] };
+      try {
+       for (const band of STORELEADS_BANDS) {
+        if (pStats.fetched >= PULL) break;
+        // Cursors belong to a query; the key carries the band id so a filter
+        // change restarts paging instead of resuming an old cursor.
+        const cursorKey = `${platform}@${band.id}`;
+        const doneAt = state.exhausted[cursorKey];
+        if (doneAt && Date.now() - new Date(doneAt).getTime() < STORELEADS_RESCAN_MS) continue;
+        if (doneAt) { delete state.exhausted[cursorKey]; state.platformCursors[cursorKey] = null; state.bandPulled[cursorKey] = 0; } // a month on: walk it again for new shops
+        pStats.bands.push(band.id);
+        while (pStats.fetched < PULL) {
+          const page = await storeLeadsSearchDomains(platform, { pageSize: Math.min(100, PULL - pStats.fetched), cursor: state.platformCursors[cursorKey] || null, pcmin: band.pcmin, rankmin: band.rankmin, rankmax: band.rankmax });
+          const domains = page.domains || [];
+          pStats.fetched += domains.length;
+          stats.candidatesScanned += domains.length;
+          state.bandPulled[cursorKey] = storeLeadsBandPulled(state, cursorKey) + domains.length;
+          if (page.total != null) state.bandTotals[cursorKey] = page.total;
+          for (const dom of domains) {
+            const domain = String(dom.name || dom.tld1 || "").toLowerCase().trim();
+            if (!domain) continue;
+            if (state.scannedDomains[domain]) { stats.alreadyKnown++; continue; }
+            state.scannedDomains[domain] = checkedAt;
+            const merchantName = (dom.merchant_name || dom.title || domain).trim();
+            if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
+            // Size / storefront / Danish-signal checks on the record itself.
+            const q = storeLeadsQualify(dom, domain);
+            if (!q.ok) { stats[q.reason] = (stats[q.reason] || 0) + 1; continue; }
+            if (poolHosts.has(storeLeadsHost(domain)) || poolNames.has(merchantName.toLowerCase())) { stats.inPool++; continue; }
+            reserve.items[domain] = {
+              domain, platform, name: merchantName,
+              phone: q.dkPhone || _storeLeadsPhone(dom) || "", email: q.email, facebook_url: q.facebookUrl, meta_pixel: q.metaPixel,
+              tech: (q.techNames || []).slice(0, 25), city: dom.city || "", category: (dom.categories || [])[0] || "",
+              employees: dom.employee_count || "", rank: dom.rank || null, products: dom.product_count || null,
+              sales: dom.estimated_sales_yearly || null, visits: dom.estimated_visits || null, pulled_at: checkedAt,
+              tier: band.tier, band: band.id,
+            };
+            stats.reserveAdded++; pStats.added++;
           }
-
-          const slPhone = q.dkPhone || _storeLeadsPhone(dom);
-          const phone = (df && (df.phone || df.ph)) || slPhone || "";
-          const employees = (df && (df.emp || df.emps)) || dom.employee_count || "";
-          const techNames = (dom.technologies || []).map((t) => t.name).filter(Boolean);
-
-          // Build a lead record. Prefer DF data when matched (real CVR,
-          // address, etc.); fall back to StoreLeads fields otherwise.
-          const lead = df && df.cvr ? { ...df } : {
-            cvr: `storeleads-${domain.replace(/[^a-z0-9]/g, "")}`,
-            name: merchantName,
-            addr: "", zip: "", city: dom.city || "",
-            ind: (dom.categories || [])[0] || "",
-            ic: "",
-            emp: String(employees || ""),
-            emps: null,
-            st: "aktiv",
-            yr: "", form: "",
-            eq: 0, res: 0, omsaetning: 0,
-          };
-          lead.listId = "ungrouped";
-          lead.addedAt = checkedAt;
-          lead.source = "storeleads";
-          lead.source_label = `${platform[0].toUpperCase()}${platform.slice(1)}`;
-          lead.source_category = "ecom";
-          lead.icpFit = true;
-          lead.web = "https://" + domain;
-          lead.website = "https://" + domain;
-          lead.phone = phone;
-          lead.ph = phone;
-          lead.phone_missing = !phone;
-          if (phone) {
-            lead.phone_recovered_source = df && (df.phone || df.ph) ? "df-cvr-lookup" : "storeleads";
-          }
-          lead.tech_stack = techNames;
-          // Meta is information, not a gate: the Facebook page feeds the
-          // meta-pages-check cron (page id + "currently running ads"), the
-          // pixel is a cheap advertiser proxy, and check-advertisers adds
-          // Apollo's org signal. All three only rank/badge the lead.
-          lead.facebook_url = q.facebookUrl || "";
-          lead.meta_pixel = q.metaPixel;
-          lead.meta_advertiser = null;
-          lead.ads_check_pending = true;
-          lead.storeleads_platform = platform;
-          lead.storeleads_rank = dom.rank || null;
-          lead.storeleads_product_count = dom.product_count || null;
-          lead.storeleads_estimated_sales_yearly = dom.estimated_sales_yearly || null;
-          lead.storeleads_estimated_visits = dom.estimated_visits || null;
-          lead.discovered_at = checkedAt;
-          lead.apollo_company = null;
-          lead.apollo_enrichment_pending = false; // we'll lazy-enrich on cockpit-open
-          lead.df_verified_at = df && df.cvr ? checkedAt : null;
-
-          ud.leads.push(lead);
-          stats.saved++;
-          pStats.saved++;
-          if (df && df.cvr) { stats.dfMatched++; pStats.dfMatched++; }
-          else { stats.dfNoMatch++; }
-        } catch (e) {
-          stats.errors++;
-          console.warn("[storeleads-discover] append failed:", merchantName, e.message);
+          state.platformCursors[cursorKey] = page.has_next_page ? page.next_cursor : null;
+          if (!page.has_next_page) { state.exhausted[cursorKey] = checkedAt; break; }
+          if (!domains.length) break;
+          await new Promise((r) => setTimeout(r, 300)); // StoreLeads allows 5 requests a second
         }
+       }
+        // Size of the bands not reached yet, for the admin panel - one
+        // single-record request each, once.
+        for (const band of STORELEADS_BANDS) {
+          const k = `${platform}@${band.id}`;
+          if (state.bandTotals[k] != null) continue;
+          const page = await storeLeadsSearchDomains(platform, { pageSize: 1, pcmin: band.pcmin, rankmin: band.rankmin, rankmax: band.rankmax });
+          if (page.total != null) state.bandTotals[k] = page.total;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        delete state.lastPullError;
+      } catch (e) {
+        stats.errors++;
+        state.lastPullError = { at: checkedAt, message: String(e.message || e).slice(0, 200) };
+        console.warn(`[storeleads-discover] pull platform=${platform} failed:`, e.message);
       }
-    } catch (e) {
-      stats.errors++;
-      console.warn(`[storeleads-discover] platform=${platform} failed:`, e.message);
+      stats.perPlatform[platform] = pStats;
     }
-    stats.perPlatform[platform] = pStats;
+    state.lastRunAt = checkedAt;
+    state.reserveCounts = storeLeadsReserveCounts(reserve);
+    saveStoreLeadsState(state);
+    saveStoreLeadsReserve(reserve);
   }
 
-  // Single save at the end - flushes all appended leads in one disk write.
-  if (stats.saved > 0) saveUserData(TARGET_USER, ud);
-  state.lastRunAt = checkedAt;
-  saveStoreLeadsState(state);
+  // ── 2. Promote the best reserve shops into the pool ──
+  const st = sdrIntakeStatus(d0);
+  const cap = PER_PLATFORM * 2;
+  const n = FORCE ? cap : Math.min(cap, st.room);
+  stats.promoteRoom = FORCE ? cap : (Number.isFinite(st.room) ? st.room : cap);
+  const picks = Object.values(reserve.items).sort(storeLeadsReserveOrder).slice(0, Math.max(0, n));
+  if (!picks.length && !FORCE) console.log("[intake-cap] storeleads promote skipped: " + sdrIntakeMsg(st));
+  // Datafordeler first, with no pool in hand: the lookups take minutes, and a
+  // pool copy loaded before them would be stale by the time it is saved.
+  const built = [];
+  for (const rec of picks) {
+    let df = null;
+    try {
+      // Phone / e-mail exact match first, then name variants (see
+      // tryDfVerifyDkCompany). 8s budget: when DF is slow the lead is saved
+      // on StoreLeads fields and backfill-cvr fills the CVR in later.
+      df = await Promise.race([
+        tryDfVerifyDkCompany(rec.name, { phone: rec.phone, email: rec.email }),
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+    } catch (_) {}
+    built.push({ rec, df });
+  }
+  if (built.length) {
+    const ud = loadUserData(TARGET_USER);
+    if (!ud.leads) ud.leads = [];
+    const hosts = new Set(ud.leads.map((l) => storeLeadsHost(l.web || l.website)).filter(Boolean));
+    const names = new Set(ud.leads.map((l) => String(l.name || "").toLowerCase().trim()).filter(Boolean));
+    const cvrs = new Set(ud.leads.map((l) => l.cvr));
+    for (const { rec, df } of built) {
+      delete reserve.items[rec.domain];
+      try {
+        // Dedupe by domain, by real CVR (if DF found one), and by name. The
+        // sets grow as we append, so two shops of one company land once.
+        if (hosts.has(storeLeadsHost(rec.domain)) || (df && df.cvr && cvrs.has(df.cvr)) || names.has(rec.name.toLowerCase())) { stats.skippedDuplicates++; continue; }
+        const phone = (df && (df.phone || df.ph)) || rec.phone || "";
+        // Prefer DF data when matched (real CVR, address, etc.); fall back
+        // to StoreLeads fields otherwise.
+        const lead = df && df.cvr ? { ...df } : {
+          cvr: `storeleads-${rec.domain.replace(/[^a-z0-9]/g, "")}`,
+          name: rec.name,
+          addr: "", zip: "", city: rec.city || "",
+          ind: rec.category || "",
+          ic: "",
+          emp: String((df && (df.emp || df.emps)) || rec.employees || ""),
+          emps: null,
+          st: "aktiv",
+          yr: "", form: "",
+          eq: 0, res: 0, omsaetning: 0,
+        };
+        lead.listId = "ungrouped";
+        lead.addedAt = checkedAt;
+        lead.source = "storeleads";
+        lead.source_label = `${rec.platform[0].toUpperCase()}${rec.platform.slice(1)}`;
+        lead.source_category = "ecom";
+        lead.icpFit = true;
+        lead.web = "https://" + rec.domain;
+        lead.website = "https://" + rec.domain;
+        lead.phone = phone;
+        lead.ph = phone;
+        lead.phone_missing = !phone;
+        if (phone) lead.phone_recovered_source = df && (df.phone || df.ph) ? "df-cvr-lookup" : "storeleads";
+        lead.tech_stack = rec.tech || [];
+        // Meta is information, not a gate: the Facebook page feeds the
+        // meta-pages-check cron (page id + "currently running ads"), the
+        // pixel is a cheap advertiser proxy, and check-advertisers adds
+        // Apollo's org signal. All three only rank/badge the lead.
+        lead.facebook_url = rec.facebook_url || "";
+        lead.meta_pixel = !!rec.meta_pixel;
+        lead.meta_advertiser = null;
+        lead.ads_check_pending = true;
+        lead.storeleads_platform = rec.platform;
+        lead.storeleads_rank = rec.rank || null;
+        lead.storeleads_product_count = rec.products || null;
+        lead.storeleads_estimated_sales_yearly = rec.sales || null;
+        lead.storeleads_estimated_visits = rec.visits || null;
+        lead.storeleads_pulled_at = rec.pulled_at || null;
+        lead.storeleads_tier = rec.tier || 1;
+        lead.discovered_at = checkedAt;
+        lead.apollo_company = null;
+        lead.apollo_enrichment_pending = false; // we'll lazy-enrich on cockpit-open
+        lead.df_verified_at = df && df.cvr ? checkedAt : null;
+        ud.leads.push(lead);
+        hosts.add(storeLeadsHost(rec.domain)); names.add(rec.name.toLowerCase()); cvrs.add(lead.cvr);
+        stats.saved++; stats.promoted++;
+        if (df && df.cvr) stats.dfMatched++; else stats.dfNoMatch++;
+      } catch (e) {
+        stats.errors++;
+        console.warn("[storeleads-discover] append failed:", rec.name, e.message);
+      }
+    }
+    if (stats.saved > 0) saveUserData(TARGET_USER, ud);
+    saveStoreLeadsReserve(reserve);
+    const st2 = loadStoreLeadsState(); st2.reserveCounts = storeLeadsReserveCounts(reserve); saveStoreLeadsState(st2);
+  }
+  stats.reserveSize = Object.keys(reserve.items).length;
   logActivity(
     "discovery",
-    `StoreLeads: ${stats.candidatesScanned} scanned · ${stats.saved} saved (${stats.dfMatched} DF-matched) · ${stats.alreadyKnown} dup · ${stats.nonDkBrand} non-DK brand`,
+    `StoreLeads: ${stats.candidatesScanned} hentet · ${stats.reserveAdded} til reserven · ${stats.promoted} ind i puljen · ${stats.reserveSize} i reserven`,
     { stats, userId: TARGET_USER },
   );
   console.log("[storeleads-discover] done:", JSON.stringify(stats));
-  res.json({ ok: true, stats });
+  res.json({ ok: true, stats, intake: st });
 });
 
 // Auto-enrich one lead with FREE signals: website social links + Ad Library
@@ -8132,6 +8223,9 @@ app.post("/api/cron/meta-pages-check", async (req, res) => {
   const todo = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && usable(l)
     && !(l.meta_pages_checked_at && now - new Date(l.meta_pages_checked_at).getTime() < RECHECK_MS));
   stats.candidates = todo.length;
+  // Leads on an SDR list first, then the newest - the ones about to be called.
+  const onList = new Set(Object.values(d0.sdr_lists || {}).flatMap((L) => L.cvrs || []));
+  todo.sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
   const batch = todo.slice(0, BATCH);
   if (!batch.length) return res.json({ ok: true, stats });
   const urlByCvr = new Map(batch.map((l) => [l.cvr, pageUrl(l)]));
@@ -10018,7 +10112,7 @@ app.post("/api/cron/gmaps-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
+      console.log("[intake-cap] skipped: " + sdrIntakeMsg(st));
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -10560,7 +10654,7 @@ app.post("/api/cron/branche-walk-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
+      console.log("[intake-cap] skipped: " + sdrIntakeMsg(st));
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -11259,7 +11353,7 @@ app.post("/api/cron/meta-ads-discover", async (req, res) => {
   {
     const st = sdrIntakeStatus();
     if (st.paused && req.query.force !== "1") {
-      console.log("[intake-cap] skipped: %s med navn >= mål %s (%s klar i alt)", st.named, st.target, st.ready);
+      console.log("[intake-cap] skipped: " + sdrIntakeMsg(st));
       return res.json({ ok: true, skipped: "pool-full", ...st });
     }
   }
@@ -12055,7 +12149,10 @@ app.post("/api/cron/archive-by-cvrs", (req, res) => {
 // so it doesn't need explicit TTL.
 let _lushaRateLimitedUntil = 0;
 
-async function processLeadForBulkEnrich(ud, cvr, stats) {
+// opts.paid === false: only the flat/free stages (Apollo, FE People Search)
+// run; the pay-per-use phone reveals wait, and reveal_deferred_at tells
+// runBackfillContacts to come back once the lead is actually needed.
+async function processLeadForBulkEnrich(ud, cvr, stats, opts = {}) {
   const l = (ud.leads || []).find((x) => x.cvr === cvr);
   if (!l || l.lastAction === "not-relevant") return;
   const csNow = Array.isArray(l.contacts) ? l.contacts : [];
@@ -12063,7 +12160,10 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
   stats.processed++;
 
   // ─── STAGE 1: Apollo people-match ─────────────────────────────────
-  if (csNow.length === 0) {
+  // Not again within 30 days of a try - a deferred lead comes back here for
+  // its phone reveal and shouldn't cost a second Apollo lookup on the way.
+  const apolloRecent = l.apollo_tried_at && Date.now() - new Date(l.apollo_tried_at).getTime() < 30 * 86400e3;
+  if (csNow.length === 0 && !apolloRecent) {
     try {
       const { contacts: aContacts, company } = await enrichWithApollo({
         name: l.name,
@@ -12077,6 +12177,7 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
       } else {
         stats.apolloMisses++;
       }
+      l.apollo_tried_at = new Date().toISOString();
     } catch (e) {
       if (e && e.code === "APOLLO_CAP_REACHED") throw e;
       console.warn("[bulk-enrich/apollo]", cvr, e.message);
@@ -12108,6 +12209,15 @@ async function processLeadForBulkEnrich(ud, cvr, stats) {
       }
     }
   }
+
+  // Everything below costs money per lead (Lusha, Full Enrich, Apify SERP).
+  if (opts.paid === false) {
+    l.reveal_deferred_at = new Date().toISOString();
+    l.bulk_enriched_at = l.reveal_deferred_at;
+    stats.revealDeferred = (stats.revealDeferred || 0) + 1;
+    return;
+  }
+  delete l.reveal_deferred_at;
 
   // Pick top contact for phone reveal - if we have one. Stage 5
   // (SERP → LinkedIn → Lusha) can still run on company-name search
@@ -12378,15 +12488,23 @@ async function runBackfillContacts(req, res) {
   // finish in ~2× single-lead time instead of 10×. Apollo + FE + Lusha
   // all handle concurrent calls fine.
   const CONCURRENCY = Math.max(1, Math.min(10, Number(req.query.concurrency) || 5));
+  // Paid phone reveals only for leads that are about to be called: anything
+  // on an SDR list, or everything while the pool is short of fresh leads.
+  // Apollo (flat subscription) and FE People Search (free) run regardless.
+  const onList = new Set(Object.values(ud.sdr_lists || {}).flatMap((L) => L.cvrs || []));
+  const gate = TARGET_USER === POOL_ID ? sdrIntakeStatus(ud) : { paused: false };
+  const paidOk = (l) => !gate.paused || onList.has(l.cvr);
+  stats.paidGate = gate.paused ? "kun leads på lister" : "åben";
   // Candidates: active, has callable identity (domain OR real CVR), AND
   // either no contacts yet OR contacts without phone. Skip recently-
-  // enriched leads to make the bulk-op cheap to re-run.
+  // enriched leads to make the bulk-op cheap to re-run - except a lead whose
+  // reveal was deferred and is now wanted.
   const allCandidates = (ud.leads || []).filter((l) => {
     if (l.lastAction === "not-relevant") return false;
     if (l.twenty_opportunity_id) return false;
     if (!FORCE) {
       const t = l.bulk_enriched_at ? new Date(l.bulk_enriched_at).getTime() : 0;
-      if (t && t > cutoff) return false;
+      if (t && t > cutoff && !(l.reveal_deferred_at && paidOk(l))) return false;
     }
     const domain = String(l.web || l.website || "").toLowerCase();
     const hasDomain = !!(domain && domain.includes(".") && domain.length > 4);
@@ -12398,6 +12516,8 @@ async function runBackfillContacts(req, res) {
     if (hasContactPhone) return false;
     return true;
   });
+  // Next-called first: on a list, then the newest (fresh from the reserve).
+  allCandidates.sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
   const totalCandidates = allCandidates.length;
   const candidates = allCandidates.slice(OFFSET, OFFSET + LIMIT);
   const nextOffset = (OFFSET + LIMIT < totalCandidates) ? OFFSET + LIMIT : null;
@@ -12421,7 +12541,7 @@ async function runBackfillContacts(req, res) {
     const chunk = candidates.slice(i, i + CONCURRENCY);
     // Re-load shared user data once for this chunk
     const udNow = loadUserData(TARGET_USER);
-    const results = await Promise.allSettled(chunk.map((c) => processLeadForBulkEnrich(udNow, c.cvr, stats)));
+    const results = await Promise.allSettled(chunk.map((c) => processLeadForBulkEnrich(udNow, c.cvr, stats, { paid: paidOk(c) })));
     // Check for Apollo cap from any lead in the chunk
     if (results.some((r) => r.status === "rejected" && r.reason && r.reason.code === "APOLLO_CAP_REACHED")) {
       stats.capReached = true;
@@ -13435,32 +13555,46 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
 // Benchmarks the admin table colours against. Starting points, not gospel -
 // Casper tunes them under ⚙ once the team has a few weeks of its own numbers.
 const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, pool_target_ready: 350, rules: SDR_DEFAULT_RULES };
-// Every new lead costs money downstream - a description, a people search, a
-// Meta page check, sometimes a paid phone reveal - whether or not anyone ever
-// rings it. Two SDRs burn roughly 50 leads a weekday, so once the pool holds
-// weeks of supply, discovery pauses itself until it is drawn down.
+// What the paid tools cost - only used to price the month on Tilgang. Casper
+// corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
+const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533 };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+// Every lead that enters the pool starts costing money - a website read, a
+// people search, a Meta page check, sometimes a paid phone reveal - whether
+// or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
+// leads and no further: never called, a named person, a Danish number, passes
+// the rules, not parked and not waiting on a callback. Below the buffer, new
+// shops come in from the StoreLeads reserve and phone reveals run; at or
+// above it, paid steps wait (a lead already on an SDR list is always served).
 //
-// It counts leads with a NAMED PERSON, not every callable lead. Those are what
-// sdrQueue serves first, so they are what actually runs out. Measured on the
-// live pool: 945 callable, but only 472 with a person and 333 that also
-// advertise. Capping on the raw number would let intake stay paused while the
-// SDRs worked their way down to nothing but switchboard leads.
-function sdrIntakeStatus() {
+// The old cap (until 2026-09-18) counted every named ready lead, including
+// ones already called and parked for later. Only finished outcomes lowered
+// it, so intake refilled ~30 a day while the SDRs opened 60-120 new ones.
+// `pending` = leads added in the last day that are still being enriched -
+// counted at ~60% yield so one run doesn't overshoot while they finish.
+function sdrIntakeStatus(d0) {
   try {
-    const d = loadUserData(POOL_ID);
-    const s = sdrSettings(d);
-    const target = Math.max(0, Number(s.pool_target_ready) || 0);
-    const usable = (d.leads || []).filter((l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, s));
-    const ready = usable.length;
-    const named = usable.filter((l) => sdrHasPerson(l)).length;
-    return { ready, named, target, paused: target > 0 && named >= target };
-  } catch { return { ready: 0, named: 0, target: 0, paused: false }; }
+    const d = d0 || loadUserData(POOL_ID);
+    const s = sdrSettings(d); const now = Date.now();
+    const target = Math.max(0, Number(s.fresh_target) || 0);
+    let ready = 0, named = 0, fresh = 0, pending = 0;
+    for (const l of d.leads || []) {
+      if (!sdrIsActive(l) || l.lastAction === "demo-booked") continue;
+      if (sdrCallable(l) && sdrPassesRules(l, s)) { ready++; if (sdrHasPerson(l)) named++; }
+      if ((l.calls || []).length || l.lastAction) continue;
+      if (sdrEligible(l, now) && sdrHasPerson(l) && sdrPassesRules(l, s)) fresh++;
+      else if (!l.bulk_enriched_at && now - new Date(l.addedAt || 0).getTime() < 86400e3) pending++;
+    }
+    const expected = fresh + Math.round(pending * 0.6);
+    return { ready, named, fresh, pending, target, paused: target > 0 && expected >= target, room: target > 0 ? Math.max(0, target - expected) : Infinity };
+  } catch { return { ready: 0, named: 0, fresh: 0, pending: 0, target: 0, paused: false, room: Infinity }; }
 }
+function sdrIntakeMsg(st) { return `${st.fresh} friske klar (+${st.pending} på vej) >= mål ${st.target}`; }
 function sdrSettings(d) {
   const s = { ...SDR_DEFAULT_SETTINGS, ...(d.sdr_settings || {}) };
   s.rules = { ...SDR_DEFAULT_RULES, ...((d.sdr_settings || {}).rules || {}) };
   s.bench = { ...SDR_DEFAULT_BENCH, ...((d.sdr_settings || {}).bench || {}) };
+  s.tools = { ...SDR_DEFAULT_TOOLS, ...((d.sdr_settings || {}).tools || {}) };
   if (!Array.isArray(s.email_templates) || !s.email_templates.length) s.email_templates = SDR_DEFAULT_EMAIL_TEMPLATES;
   return s;
 }
@@ -14033,7 +14167,7 @@ function buildSdrState(userId, d) {
   };
   // Webhook URL is admin-only knowledge; SDRs get the rest of settings.
   const isAdmin = sdrIsAdmin(userId);
-  const base = isAdmin ? settings : { ...settings, demo_webhook_url: settings.demo_webhook_url ? "(sat)" : "" };
+  const base = isAdmin ? settings : { ...settings, demo_webhook_url: settings.demo_webhook_url ? "(sat)" : "", tools: undefined };
   // The pitch is personal: what an SDR writes is theirs alone. Until they
   // write one they see the team's, which is also what admin edits - so a new
   // SDR starts from the house script rather than a blank card.
@@ -15121,6 +15255,124 @@ app.get("/api/sdr/admin/integrations", authMiddleware, async (req, res) => {
     res.json({ ok: true, checks, checkedAt: new Date().toISOString() });
   } catch (e) { sdrFail(res, e, "admin/integrations"); }
 });
+// Admin → Tilgang: what each paid tool costs and how much of it we used this
+// month. A flat subscription is spent either way - the question is whether we
+// got its value; a pay-per-use tool should be only as high as the calling
+// needs. Balances come from the vendors' own free account calls.
+app.get("/api/sdr/admin/subscriptions", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const s = sdrSettings(d); const tools = s.tools; const leads = d.leads || [];
+    const today = _cphDateStr(); const month = today.slice(0, 7);
+    const [yy, mm] = month.split("-").map(Number);
+    const daysInMonth = new Date(yy, mm, 0).getDate(); const dayOfMonth = Number(today.slice(8, 10));
+    const monthPct = dayOfMonth / daysInMonth;
+    const monthSum = (sp) => { const h = { ...(sp.history || {}) }; if (sp.date) h[sp.date] = sp.spent || 0; return Object.entries(h).filter(([k]) => k.startsWith(month)).reduce((a, [, v]) => a + (Number(v) || 0), 0); };
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+    const safe = (p) => withTimeout(p, 10000).catch((e) => ({ error: e.message }));
+    const [fe, apify, lusha] = await Promise.all([
+      process.env.FULLENRICH_API_KEY ? safe(fetch(`${FULLENRICH_API_BASE}/api/v2/account/credits`, { headers: { "Authorization": `Bearer ${process.env.FULLENRICH_API_KEY}` } }).then((r) => r.json())) : { error: "Ingen nøgle" },
+      process.env.APIFY_API_TOKEN ? safe(Promise.all([
+        fetch(`https://api.apify.com/v2/users/me/limits?token=${encodeURIComponent(process.env.APIFY_API_TOKEN)}`).then((r) => r.json()),
+        fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(process.env.APIFY_API_TOKEN)}`).then((r) => r.json()),
+      ]).then(([lim, me]) => ({ usage: Number(lim?.data?.current?.monthlyUsageUsd) || 0, cycleEnd: lim?.data?.monthlyUsageCycle?.endAt || null, base: Number(me?.data?.plan?.monthlyBasePriceUsd) || 0, included: Number(me?.data?.plan?.monthlyUsageCreditsUsd) || 0, plan: me?.data?.plan?.id || "" }))) : { error: "Ingen nøgle" },
+      process.env.LUSHA_API_KEY ? safe(fetch("https://api.lusha.com/account/usage", { headers: { "api_key": process.env.LUSHA_API_KEY } }).then((r) => r.json())) : { error: "Ingen nøgle" },
+    ]);
+    const money = (n) => `$${n < 10 && n % 1 ? n.toLocaleString("da-DK", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : Math.round(n).toLocaleString("da-DK")}`;
+    const mName = ["januar", "februar", "marts", "april", "maj", "juni", "juli", "august", "september", "oktober", "november", "december"][mm - 1];
+    const num = (n) => Math.round(n).toLocaleString("da-DK");
+    const rows = [];
+
+    // StoreLeads - flat, so the more of the list we hold the better.
+    const st = loadStoreLeadsState(); const rc = st.reserveCounts || { total: 0, byTier: {} };
+    const pulledMonth = Object.values(st.scannedDomains || {}).filter((t) => String(t).startsWith(month)).length;
+    const bands = STORELEADS_BANDS.map((b) => {
+      const keys = STORELEADS_PLATFORMS.map((p) => `${p}@${b.id}`);
+      const total = keys.reduce((a, k) => a + (Number((st.bandTotals || {})[k]) || 0), 0);
+      const done = keys.every((k) => (st.exhausted || {})[k]);
+      const pulled = keys.reduce((a, k) => a + (Number((st.bandPulled || {})[k]) || 0), 0);
+      return { tier: b.tier, label: b.label, total, done, pulled, left: done ? 0 : Math.max(0, total - pulled), reserve: Number(rc.byTier[b.tier]) || 0 };
+    });
+    // Tier 3's query is every DK shop, so its total includes tiers 1-2.
+    const bandText = (b) => {
+      const own = b.tier === 3 ? Math.max(0, b.total - bands.filter((x) => x.tier < 3).reduce((a, x) => a + x.total, 0)) : b.total;
+      if (b.done) return "alt hentet";
+      if (!b.total) return "størrelse ukendt endnu";
+      if (!b.pulled) return `venter · ~${num(own)} butikker`;
+      return `${num(b.left)} tilbage af ${num(b.total)}`;
+    };
+    const firstCalled14 = leads.filter((l) => { const c = (l.calls || [])[0]; return c && Date.now() - new Date(c.at).getTime() < 14 * 86400e3; }).length;
+    const perWeek = Math.max(1, Math.round(firstCalled14 / 2));
+    const reserveWeeks = Math.floor(rc.total * 0.6 / perWeek); // ~60% of promoted shops end up named + callable
+    const leftAll = bands.reduce((a, b) => a + b.left, 0);
+    const pullDays = Math.ceil(leftAll / (STORELEADS_PULL_DEFAULT * STORELEADS_PLATFORMS.length * 4));
+    const intake = sdrIntakeStatus(d);
+    const slErr = st.lastPullError && Date.now() - new Date(st.lastPullError.at).getTime() < 86400e3 ? st.lastPullError.message : "";
+    rows.push({
+      key: "storeleads", name: "StoreLeads", billing: `Fast · ${money(tools.storeleads_usd)}/md`, cost: tools.storeleads_usd,
+      used: `${num(pulledMonth)} butikker hentet i ${mName} · ${num(rc.total)} i reserven`,
+      detail: bands.map((b) => `Tier ${b.tier} (${b.label}): ${bandText(b)} · ${num(b.reserve)} i reserven`).join("\n")
+        + `\nPuljen: ${intake.fresh} friske leads klar (+${intake.pending} på vej), mål ${intake.target || "slået fra"} → ${intake.paused ? "henter ikke fra reserven lige nu" : "henter fra reserven"}`,
+      tone: slErr ? "bad" : (leftAll === 0 ? "good" : "warn"),
+      status: slErr ? `API fejlede: ${slErr}` : leftAll === 0
+        ? `Alt hentet. Reserven rækker ~${reserveWeeks} uger ved ${perWeek} nye leads/uge - StoreLeads kan sættes på pause.`
+        : `Henter resten på ~${pullDays} hverdag${pullDays === 1 ? "" : "e"}. Betal så længe der er noget at hente.`,
+    });
+
+    // Apollo - flat with a monthly allowance that doesn't roll over.
+    const apolloUsed = monthSum(loadApolloSpend());
+    const credits = Number(tools.apollo_credits) || 0;
+    const apolloPct = credits ? apolloUsed / credits : null;
+    rows.push({
+      key: "apollo", name: "Apollo", billing: `Fast · ${money(tools.apollo_usd)}/md`, cost: tools.apollo_usd,
+      used: `${num(apolloUsed)} opslag i ${mName}${credits ? ` af ${num(credits)} (${Math.round(100 * apolloPct)}%)` : ""}`,
+      detail: `Tæller alle Apollo-kald (person-match, firma-søgning, firma-data). Loft ${APOLLO_DAILY_CAP}/dag.`,
+      tone: !credits ? "" : apolloPct > 0.9 ? "warn" : apolloPct < monthPct * 0.5 ? "warn" : "good",
+      status: !credits ? "Skriv jeres månedlige credits under ⚙ for at se, om noget går tabt ved månedsskiftet."
+        : apolloPct > 0.9 ? "Tæt på loftet - opslag stopper, når credits er brugt."
+        : apolloPct < monthPct * 0.5 ? `Kun ${Math.round(100 * apolloPct)}% brugt, ${Math.round(100 * monthPct)}% af måneden er gået - ubrugte credits udløber.`
+        : "Følger måneden.",
+    });
+
+    // Full Enrich - prepaid credits, pay per number found.
+    const feUsed = monthSum(loadFullEnrichSpend());
+    const feBal = fe && !fe.error && Number.isFinite(Number(fe.balance)) ? Number(fe.balance) : null;
+    const feCost = feUsed * (Number(tools.fe_usd_per_credit) || 0);
+    rows.push({
+      key: "fullenrich", name: "Full Enrich", billing: `Pr. brug · ~${money(10 * (Number(tools.fe_usd_per_credit) || 0))} pr. fundet nummer`, cost: feCost,
+      used: `${num(feUsed)} credits i ${mName} (≈ ${money(feCost)})`,
+      detail: feBal == null ? `Saldo ukendt: ${fe && fe.error || "intet svar"}` : `Saldo: ${num(feBal)} credits ≈ ${num(Math.floor(feBal / 10))} numre`,
+      tone: feBal == null ? "bad" : feBal < 100 ? "bad" : feBal < 500 ? "warn" : "good",
+      status: feBal == null ? "Kunne ikke læse saldoen." : feBal < 100 ? "Tom - ingen direkte numre før der købes credits." : feBal < 500 ? "Ved at løbe tør." : "Nok til et stykke tid.",
+    });
+
+    // Apify - plan includes some usage; beyond that it's pay per use.
+    const apOk = apify && !apify.error;
+    const apExtra = apOk ? Math.max(0, apify.usage - apify.included) : 0;
+    rows.push({
+      key: "apify", name: "Apify", billing: apOk ? `Fast ${money(apify.base)}/md inkl. ${money(apify.included)} forbrug, derefter pr. brug` : "Pr. brug", cost: apOk ? apify.base + apExtra : 0,
+      used: apOk ? `${money(apify.usage)} brugt i perioden` : "-",
+      detail: apOk ? `Meta-tjek af Facebook-sider (~$0,007/lead) og Google-søgninger.${apify.cycleEnd ? ` Perioden slutter ${String(apify.cycleEnd).slice(0, 10)}.` : ""}` : `Ukendt: ${apify && apify.error}`,
+      tone: !apOk ? "bad" : apExtra > 0 ? "warn" : "good",
+      status: !apOk ? "Kunne ikke læse forbruget." : apExtra > 0 ? `${money(apExtra)} over det inkluderede.` : "Inden for det inkluderede.",
+    });
+
+    // Lusha - free credits used as a last-resort fallback.
+    const lu = lusha && lusha.usage && lusha.usage.credits;
+    rows.push({
+      key: "lusha", name: "Lusha", billing: "Pr. brug (reserve bag Full Enrich)", cost: 0,
+      used: lu ? `${num(lu.used)} af ${num(lu.total)} credits brugt` : "-",
+      detail: "Prøves kun, når Full Enrich ikke finder et nummer.",
+      tone: !lu ? "bad" : lu.remaining > 0 ? "good" : "warn",
+      status: !lu ? `Ukendt: ${(lusha && lusha.error) || "intet svar"}` : lu.remaining > 0 ? `${num(lu.remaining)} credits tilbage.` : "Ingen credits tilbage - springes over.",
+    });
+
+    // Demos booked this month (one disqualified in review doesn't count).
+    const demos = leads.filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && _cphDateStr(new Date(l.demo_booked_at)).slice(0, 7) === month && l.demo_status !== "unqualified").length;
+    const total = rows.reduce((a, r) => a + (Number(r.cost) || 0), 0);
+    res.json({ ok: true, month, rows, total, demos, perDemo: demos ? total / demos : null, note: "Gemini og Google Cloud er ikke med (få dollars om måneden)." });
+  } catch (e) { sdrFail(res, e, "admin/subscriptions"); }
+});
 // Admin: weekly learning digest - what worked, what to change - generated
 // by Gemini from the week's debriefs + outcomes. Cached per ISO week.
 function sdrWeekKey(dt) { const d = new Date(dt || Date.now()); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return sdrDayKey(d); }
@@ -15721,7 +15973,12 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
     }
     if (sdrIsAdmin(req.userId)) {
       if (Number.isFinite(Number(b.email_followup_days)) && Number(b.email_followup_days) > 0) d.sdr_settings.email_followup_days = Math.min(30, Math.round(Number(b.email_followup_days)));
-      if (Number.isFinite(Number(b.pool_target_ready)) && Number(b.pool_target_ready) >= 0) d.sdr_settings.pool_target_ready = Math.min(10000, Math.round(Number(b.pool_target_ready)));
+      if (Number.isFinite(Number(b.fresh_target)) && Number(b.fresh_target) >= 0) d.sdr_settings.fresh_target = Math.min(10000, Math.round(Number(b.fresh_target)));
+      if (b.tools && typeof b.tools === "object") {
+        const cur = { ...SDR_DEFAULT_TOOLS, ...(d.sdr_settings.tools || {}) };
+        for (const k of Object.keys(SDR_DEFAULT_TOOLS)) { const v = Number(b.tools[k]); if (Number.isFinite(v) && v >= 0) cur[k] = Math.min(1e6, v); }
+        d.sdr_settings.tools = cur;
+      }
       if (b.bench && typeof b.bench === "object") {
         const cur = { ...SDR_DEFAULT_BENCH, ...(d.sdr_settings.bench || {}) };
         if (Number.isFinite(Number(b.bench.talk_avg_s)) && Number(b.bench.talk_avg_s) > 0) cur.talk_avg_s = Math.min(3600, Math.round(Number(b.bench.talk_avg_s)));

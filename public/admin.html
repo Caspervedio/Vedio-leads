@@ -139,6 +139,12 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 @media (max-width:760px){.setgrid{grid-template-columns:1fr}}
 .kv{display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:13.5px}
 .kv span{color:var(--txt-soft)}.kv b{text-align:right;font-variant-numeric:tabular-nums}
+#subs-table td{vertical-align:top}
+#subs-table td .sub{display:block;margin-top:3px;font-size:12px;color:var(--txt-faint);white-space:pre-line;font-weight:500}
+#subs-table td.t-ok .st{color:var(--approve);font-weight:700}
+#subs-table td.t-warn .st{color:#A9761E;font-weight:700}
+#subs-table td.t-bad .st{color:#B3352B;font-weight:700}
+#subs-table td:last-child{max-width:340px}
 .integ{display:flex;flex-direction:column}
 .integ .ic{background:var(--white);padding:13px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line)}
 .integ .ic:last-child{border-bottom:0}
@@ -238,6 +244,11 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <!-- TILGANG -->
   <section id="view-intake" class="view">
     <div class="tiles" id="intake-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
+    <div class="tablewrap" id="subs-table">
+      <div class="thead"><div><h3>Abonnementer denne måned</h3><p>Faste abonnementer er betalt uanset hvad - her ser du, om vi får værdien ud af dem. Værktøjer der koster pr. brug skal kun bruges på leads, der snart bliver ringet til. Priserne rettes under ⚙.</p></div><button class="pill sm" onclick="loadSubs(true)">Opdatér</button></div>
+      <table><thead><tr><th>Værktøj</th><th>Brugt</th><th>Status</th></tr></thead><tbody id="tb-subs"><tr class="empty-row"><td colspan="3">Henter…</td></tr></tbody></table>
+      <div id="subs-foot" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft);border-top:1px solid var(--line)"></div>
+    </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Integrationer</h3><p>Om nøglerne accepteres lige nu - tjek her når du har gen-abonneret, før vi tænder cron-jobs.</p></div><button class="pill sm" onclick="loadIntegrations(true)">Test igen</button></div>
       <div class="integ" id="integ">Tester…</div>
@@ -719,9 +730,14 @@ function openSettings() {
     <div><label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}"></div>
     <div><label>Leads på hver SDR's ringeliste (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}"></div>
     <div><label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}"></div>
-    <div><label>Stop med at hente nye leads når puljen har så mange klar <b>med navngiven person</b> (0 = hent altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.pool_target_ready ?? 350)}"></div>
+    <div><label>Friske leads der skal ligge klar (aldrig ringet, med navn + nummer). Under tallet flyttes nye butikker ind fra StoreLeads-reserven og der købes telefonnumre - over det venter de betalte opslag (0 = altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.fresh_target ?? 450)}"></div>
     <div><label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
     <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
+    <div style="grid-column:1/-1"><div class="kicker" style="margin:10px 0 0">Abonnementer - bruges til "pris pr. demo" under Tilgang</div></div>
+    <div><label>StoreLeads pr. måned ($)</label><input id="tl-sl" type="number" min="0" value="${e((s.tools || {}).storeleads_usd ?? 250)}"></div>
+    <div><label>Apollo pr. måned ($)</label><input id="tl-ap" type="number" min="0" value="${e((s.tools || {}).apollo_usd ?? 65)}"></div>
+    <div><label>Apollo credits pr. måned (se Apollo → Settings → Usage; 0 = ukendt)</label><input id="tl-apc" type="number" min="0" value="${e((s.tools || {}).apollo_credits ?? 0)}"></div>
+    <div><label>Full Enrich pris pr. credit ($) - et fundet nummer koster 10 credits</label><input id="tl-fe" type="number" min="0" step="0.0001" value="${e((s.tools || {}).fe_usd_per_credit ?? 0.0533)}"></div>
     </div>
     <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
     <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
@@ -751,7 +767,8 @@ function mailTplAdd() { mailTpls.push({ id: 'mail-' + (mailTpls.length + 1), nam
 async function saveSettings() {
   const body = {
     email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
-    pool_target_ready: Number($('st-cap').value) || 0,
+    fresh_target: Number($('st-cap').value) || 0,
+    tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0 },
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40 },
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
@@ -759,6 +776,19 @@ async function saveSettings() {
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
 }
 
+/* subscriptions - what each tool costs and how much of it we used */
+let subsLoaded = false;
+async function loadSubs(force) {
+  if (subsLoaded && !force) return; subsLoaded = true;
+  $('tb-subs').innerHTML = `<tr class="empty-row"><td colspan="3">Henter saldi…</td></tr>`; $('subs-foot').textContent = '';
+  try {
+    const d = await get('/api/sdr/admin/subscriptions');
+    const tone = { good: 't-ok', warn: 't-warn', bad: 't-bad' };
+    $('tb-subs').innerHTML = d.rows.map((r) => `<tr><td><b>${e(r.name)}</b><span class="sub">${e(r.billing)}</span></td><td>${e(r.used)}<span class="sub">${e(r.detail || '')}</span></td><td class="${tone[r.tone] || ''}"><span class="st">${e(r.status)}</span></td></tr>`).join('');
+    const usd = (n) => '$' + Math.round(n).toLocaleString('da-DK');
+    $('subs-foot').innerHTML = `Værktøjer i alt denne måned ≈ <b style="color:var(--txt)">${usd(d.total)}</b> · ${d.demos} demo${d.demos === 1 ? '' : 'er'} booket · ${d.perDemo != null ? `<b style="color:var(--txt)">≈ ${usd(d.perDemo)} pr. demo</b>` : 'ingen demoer endnu'}<div style="margin-top:4px;color:var(--txt-faint);font-size:12px">Faste abonnementer tæller med fuld månedspris. ${e(d.note || '')}</div>`;
+  } catch (ex) { subsLoaded = false; $('tb-subs').innerHTML = `<tr class="empty-row"><td colspan="3" style="color:#b42318">${e(ex.message)}</td></tr>`; }
+}
 /* integrations */
 let integLoaded = false;
 async function loadIntegrations(force) {
@@ -866,7 +896,7 @@ async function csvImport() {
 }
 
 /* tabs / boot */
-function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') { loadIntegrations(false); custLoad(); } }
+function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') { loadSubs(false); loadIntegrations(false); custLoad(); } }
 // "Se som Christian / Marcus": opens the SDR app as that user in a new tab.
 async function loadImpersonateLinks() {
   try {

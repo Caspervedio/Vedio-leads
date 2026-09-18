@@ -78,8 +78,8 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 
 ## Sådan bliver et lead ringbart
 
-1. **Findes** — StoreLeads (danske Shopify/WooCommerce-shops i et rank-bånd),
-   CVR-walk på udvalgte brancher, Google Maps, Meta Ad Library.
+1. **Findes** — StoreLeads (danske Shopify/WooCommerce-shops), CVR-walk på
+   udvalgte brancher, Google Maps, Meta Ad Library.
 2. **Verificeres** — dansk firma, rigtig shop, ikke en dublet.
 3. **Beriges** — Full Enrich finder en person (gratis søgning, ca. 58% træffer),
    Apollo og Datafordeler finder numre, Gemini læser websitet og skriver de to
@@ -88,6 +88,24 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 5. **Lander på en liste** — bedste først.
 
 Hvad automatikken ikke kan, havner i Research-fanen til SDR'erne.
+
+**Hvor meget der kommer ind.** Puljen fyldes op til et antal *friske* leads
+(aldrig ringet, med navn + nummer, ikke parkeret) — 450 som udgangspunkt, sat
+under ⚙. Under tallet flyttes nye butikker ind og der købes telefonnumre; over
+det venter alt der koster pr. lead. Et lead på en SDR-liste får altid sit
+nummer.
+
+**StoreLeads-reserven.** StoreLeads koster det samme uanset hvor meget vi
+henter, så alle danske butikker hentes 4× om dagen ind i en reserve
+(`discovery/storeleads_reserve.json`, uden for puljen). Derfra flyttes de
+bedste ind, når der mangler friske leads — i tre tiers:
+
+1. 10+ varer, trafik-rang 100k–3M (~13.100)
+2. 10+ varer, lav trafik (~13.400)
+3. alle øvrige (~20.000 — mange er hoteller, restauranter, klinikker o.l. med en lille shop)
+
+En tier flyttes først ind, når reserven ikke har flere fra tier'en over. Når
+alt er hentet, kan StoreLeads sættes på pause — reserven fodrer videre.
 
 ---
 
@@ -101,6 +119,7 @@ tændt. Data ligger i GCS-bucket'en `vedio-leads-data`, monteret på `/data`.
 | Fil | Indhold |
 |---|---|
 | `data_pool.json` | Puljen: alle leads, begge SDR-lister, indstillinger |
+| `discovery/storeleads_reserve.json` | Hentede butikker, der endnu ikke er i puljen |
 | `users.json` | Brugere og adgangskoder |
 | `customers.json` | Referencekunder til navnedrop |
 | `gmail_tokens.json` | SDR'ernes Gmail-forbindelser |
@@ -112,7 +131,7 @@ De vigtigste:
 
 | Job | Hvornår | Hvad |
 |---|---|---|
-| `storeleads-discover-*` | 4× dagligt | Nye danske webshops |
+| `storeleads-discover-*` | 4× dagligt | Henter butikker til reserven, flytter de bedste ind i puljen |
 | `branche-walk-discover-*` | 6× dagligt | CVR-registret |
 | `find-people` | hvert 15. min | Finder en navngiven person |
 | `describe-companies` | hvert 20. min | De to linjer på kortet |
@@ -139,6 +158,8 @@ De vigtigste:
 | Slack | Besked når en demo bookes |
 
 Status for dem alle kan tjekkes live under **Tilgang → Integrationer**.
+**Tilgang → Abonnementer denne måned** viser forbrug, saldo og pris pr. booket
+demo — og om vi får værdien ud af de faste abonnementer.
 
 ---
 
