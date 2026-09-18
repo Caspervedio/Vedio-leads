@@ -268,8 +268,8 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
         <span id="retry-give" class="row" style="gap:6px"></span>
       </div>
       <table>
-        <thead><tr><th style="width:36px"><input type="checkbox" id="rsel-all" onchange="retrySelAll(this.checked)"></th><th>Virksomhed</th><th>Historik</th><th>Sidst</th><th>Kontakt</th><th>Telefon</th></tr></thead>
-        <tbody id="tb-retry"><tr class="empty-row"><td colspan="6">Henter…</td></tr></tbody>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="rsel-all" onchange="retrySelAll(this.checked)"></th><th>Virksomhed</th><th>Historik</th><th>Sidst</th><th>Kontakt</th><th>Telefon</th><th style="width:0;padding:0"></th></tr></thead>
+        <tbody id="tb-retry"><tr class="empty-row"><td colspan="7">Henter…</td></tr></tbody>
       </table>
       <div class="pager" id="retry-pager"></div>
     </div>
@@ -589,7 +589,7 @@ function rowTools() {
 }
 function rowToolsOff() {
   const t = $('rowtools'); if (t) t.hidden = true;
-  document.querySelectorAll('#tb-leads tr.tooled').forEach((r) => r.classList.remove('tooled'));
+  document.querySelectorAll('#tb-leads tr.tooled, #tb-retry tr.tooled').forEach((r) => r.classList.remove('tooled'));
 }
 function rowToolsLater() { clearTimeout(rowToolsHide); rowToolsHide = setTimeout(rowToolsOff, 220); }
 function rowToolsFor(tr) {
@@ -603,7 +603,7 @@ function rowToolsFor(tr) {
     + `<button class="del" title="Slet permanent" onclick="delOne('${e(cvr)}', this.closest('.rowtools').dataset.name)">${ICON.del}</button>`;
   t.dataset.name = name;
   t.hidden = false;
-  document.querySelectorAll('#tb-leads tr.tooled').forEach((r) => r.classList.remove('tooled'));
+  document.querySelectorAll('#tb-leads tr.tooled, #tb-retry tr.tooled').forEach((r) => r.classList.remove('tooled'));
   tr.classList.add('tooled');
   const r = tr.getBoundingClientRect();
   const card = tr.closest('.tablewrap').getBoundingClientRect();
@@ -614,17 +614,21 @@ function rowToolsFor(tr) {
   t.style.top = (r.top + r.height / 2 - h / 2 + window.scrollY) + 'px';
 }
 document.addEventListener('mouseover', (ev) => {
-  const tr = ev.target.closest && ev.target.closest('#tb-leads tr[data-cvr]');
+  const tr = ev.target.closest && ev.target.closest('#tb-leads tr[data-cvr], #tb-retry tr[data-cvr]');
   if (tr) rowToolsFor(tr);
 });
 document.addEventListener('mouseout', (ev) => {
-  const tr = ev.target.closest && ev.target.closest('#tb-leads tr[data-cvr]');
+  const tr = ev.target.closest && ev.target.closest('#tb-leads tr[data-cvr], #tb-retry tr[data-cvr]');
   if (tr && !(ev.relatedTarget && (tr.contains(ev.relatedTarget) || (ev.relatedTarget.closest && ev.relatedTarget.closest('#rowtools'))))) rowToolsLater();
 });
 window.addEventListener('scroll', rowToolsOff, { passive: true });
+function leadsListReload() { if (LSUB === 'retry') retryReload(); else leadsReload(); }
 async function delOne(cvr, name) {
-  if (!confirm(`Slet "${name}" permanent fra puljen?\n\nLeadet fjernes helt og kan komme ind igen via intake. Vil du bare have det væk fra SDR'ernes lister, så brug Arkivér (✕) i stedet.`)) return;
-  try { await post('/api/sdr/admin/lead-status', { cvr, status: 'delete' }); toast('Slettet permanent'); leadsReload(); loadOverview(); }
+  const msg = LSUB === 'retry'
+    ? `Slet "${name}" permanent?\n\nDet fjernes fra Genopring og hentes ikke ind fra Twenty igen. Vil du bare have det ud af listen, så brug Arkivér i stedet.`
+    : `Slet "${name}" permanent fra puljen?\n\nLeadet fjernes helt og kan komme ind igen via intake. Vil du bare have det væk fra SDR'ernes lister, så brug Arkivér (✕) i stedet.`;
+  if (!confirm(msg)) return;
+  try { await post('/api/sdr/admin/lead-status', { cvr, status: 'delete' }); toast('Slettet permanent'); leadsListReload(); loadOverview(); }
   catch (ex) { toast(ex.message, 4000); }
 }
 async function bulkDelete() {
@@ -713,7 +717,7 @@ async function runEnrich(cvr) {
   try { const d = await post('/api/sdr/admin/enrich', { cvr }); toast(d.message, 7000); if (d.after && d.after.callable && !(d.before && d.before.callable)) toast('✓ Leadet er nu klar at ringe', 4000); openLead(cvr); leadsReload(); loadOverview(); }
   catch (ex) { if (m) m.textContent = ''; toast(ex.message, 5000); }
 }
-async function leadStatus(cvr, status) { try { await post('/api/sdr/admin/lead-status', { cvr, status }); toast(status === 'archive' ? 'Arkiveret' : 'Genåbnet'); closeDrawer(); leadsReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
+async function leadStatus(cvr, status) { try { await post('/api/sdr/admin/lead-status', { cvr, status }); toast(status === 'archive' ? 'Arkiveret' : 'Genåbnet'); closeDrawer(); leadsListReload(); loadOverview(); } catch (ex) { toast(ex.message, 4000); } }
 
 /* drawer */
 async function openLead(cvr) {
@@ -830,7 +834,7 @@ function histHtml(badges) {
 function retrySearch() { clearTimeout(rqTimer); rqTimer = setTimeout(() => { RQ = $('rq').value.trim(); RP = 1; retryReload(); }, 250); }
 function retrySetFilter(f) { RF = f; RP = 1; RSEL.clear(); retryReload(); }
 async function retryReload() {
-  $('tb-retry').innerHTML = `<tr class="empty-row"><td colspan="6">Henter…</td></tr>`;
+  $('tb-retry').innerHTML = `<tr class="empty-row"><td colspan="7">Henter…</td></tr>`;
   try {
     const d = RD = await get(`/api/sdr/admin/retry?filter=${RF}&q=${encodeURIComponent(RQ)}&page=${RP}`);
     const c = d.counts || {}; const fs = d.fedStats || {};
@@ -839,18 +843,24 @@ async function retryReload() {
     $('retry-filters').innerHTML = RFILTERS.map(([k, l]) => `<button class="${RF === k ? 'on' : ''}" onclick="retrySetFilter('${k}')">${l}<span class="n">${c[k] ?? 0}</span></button>`).join('');
     $('retry-synced').textContent = d.lastSync ? `Sidst hentet ${fmtWhen(d.lastSync)}${d.blocked ? ` · ${d.blocked} skjult (blevet kunde / aktiv deal)` : ''}` : 'Ikke hentet endnu';
     $('rcount').textContent = `${d.total} firmaer`;
-    $('tb-retry').innerHTML = d.rows.length ? d.rows.map((r) => `<tr class="${RSEL.has(r.cvr) ? 'sel' : ''}">
+    rowToolsOff();
+    $('tb-retry').innerHTML = d.rows.length ? d.rows.map((r) => `<tr class="${RSEL.has(r.cvr) ? 'sel' : ''}" data-cvr="${e(r.cvr)}" data-name="${e(r.name)}" data-arch="0">
       <td><input type="checkbox" ${r.callable ? '' : 'disabled title="Mangler nummer - kan ikke gives videre endnu"'} ${RSEL.has(r.cvr) ? 'checked' : ''} onchange="retrySel('${e(r.cvr)}', this.checked)"></td>
       <td class="rowlink" onclick="openLead('${e(r.cvr)}')"><b>${e(r.name)}</b><span class="sub">${e(r.city || '')}${r.web ? ' · ' + e(String(r.web).replace(/^https?:\/\//, '')) : ''}${r.meta ? ' · Meta-annoncør' : ''}</span></td>
       <td>${histHtml(r.badges)}</td>
       <td style="white-space:nowrap;color:var(--txt-soft)">${r.last_touch ? e(new Date(r.last_touch).toLocaleDateString('da-DK', { month: 'short', year: 'numeric' })) : '-'}</td>
       <td>${r.contact ? `<b>${e(r.contact.name)}</b><span class="sub">${e(r.contact.title || '')}</span>` : '<span style="color:var(--txt-faint)">Omstilling</span>'}</td>
       <td class="num" style="white-space:nowrap">${r.callable ? `${e(fmtPhone(r.phone))}<span class="sub">${e(r.phone_label || '')}</span>` : '<span style="color:var(--txt-faint)">Findes…</span>'}</td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="6">${RF === 'ready' ? 'Ingen klar lige nu.' : 'Ingen i den kategori.'}</td></tr>`;
+      <td class="rowacts" onclick="event.stopPropagation()"><div class="acts">
+        <button title="Åbn / ret lead" onclick="openLead('${e(r.cvr)}')">${ICON.edit}</button>
+        <button title="Arkivér (kan genåbnes)" onclick="leadStatus('${e(r.cvr)}','archive')">${ICON.archive}</button>
+        <button class="del" title="Slet permanent" onclick="delOne('${e(r.cvr)}','${e(r.name)}')">${ICON.del}</button>
+      </div></td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="7">${RF === 'ready' ? 'Ingen klar lige nu.' : 'Ingen i den kategori.'}</td></tr>`;
     const pages = Math.max(1, Math.ceil(d.total / d.per));
     $('retry-pager').innerHTML = `<span>Side ${d.page} af ${pages}</span><span style="margin-left:auto"></span><button class="pill" ${d.page <= 1 ? 'disabled' : ''} onclick="RP--;retryReload()">← Forrige</button><button class="pill" ${d.page >= pages ? 'disabled' : ''} onclick="RP++;retryReload()">Næste →</button>`;
     retrySelUi();
-  } catch (ex) { $('tb-retry').innerHTML = `<tr class="empty-row"><td colspan="6" style="color:#b42318">${e(ex.message)}</td></tr>`; }
+  } catch (ex) { $('tb-retry').innerHTML = `<tr class="empty-row"><td colspan="7" style="color:#b42318">${e(ex.message)}</td></tr>`; }
 }
 function retrySel(cvr, on) { if (on) RSEL.add(cvr); else RSEL.delete(cvr); retrySelUi(); }
 function retrySelAll(on) { for (const r of (RD && RD.rows) || []) { if (!r.callable) continue; if (on) RSEL.add(r.cvr); else RSEL.delete(r.cvr); } retryReloadRowsOnly(); }

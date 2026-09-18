@@ -13845,6 +13845,11 @@ app.post("/api/cron/twenty-demo-sync", async (req, res) => {
 // called in 90 days, not turned down by an SDR). An automatic archive (never
 // called) is reopened for it.
 const TWENTY_RETRY_ACTIVE_MS = 45 * 86400e3;
+// Twenty companies admin deleted from the pool - never imported again. Its own
+// file: a top-level pool field could be overwritten by a background job's save.
+const TWENTY_RETRY_SKIP_FILE = path.join(DATA_DIR, "twenty_retry_skip.json");
+function loadTwentyRetrySkip() { try { return new Set(JSON.parse(fs.readFileSync(TWENTY_RETRY_SKIP_FILE, "utf8")) || []); } catch { return new Set(); } }
+function addTwentyRetrySkip(ids) { if (!ids.length) return; const s = loadTwentyRetrySkip(); for (const id of ids) s.add(id); fs.writeFileSync(TWENTY_RETRY_SKIP_FILE, JSON.stringify([...s])); }
 const TWENTY_LOST_DA = { NOT_A_PRIORITY: "ikke prioritet", NO_RESPONSE: "svarede ikke", USES_COMPETITOR: "bruger konkurrent", TOO_EXPENSIVE: "for dyrt", NO_TIME: "ingen tid", NOT_ICP: "ikke ICP" };
 const TWENTY_STAGE_DA = { NEW: "Ny", QUALIFIED: "Kvalificeret", DEMO_BOOKED: "Demo booket", DEMO_FOLLOW_UP: "Demo-opfølgning", VIDEO_PRESENTATION_DONE: "Video præsenteret", FREE_VIDEO_OFFERED: "Gratis video tilbudt", FREE_VIDEO_MATERIAL_RECEIVED: "Gratis video modtaget", ONBOARDING_BOOKED: "Onboarding booket", WON: "Vundet", LOST: "Tabt", KOLD: "Kold" };
 const TWENTY_DEMO_STAGES = new Set(["DEMO_BOOKED", "DEMO_FOLLOW_UP", "VIDEO_PRESENTATION_DONE", "FREE_VIDEO_OFFERED", "FREE_VIDEO_MATERIAL_RECEIVED", "ONBOARDING_BOOKED"]);
@@ -13928,6 +13933,7 @@ async function twentyRetrySync() {
     if (info.skip) { stats.skipped[info.skip] = (stats.skipped[info.skip] || 0) + 1; skipByTw.set(c.id, info.skip); continue; }
     infos.push({ c, ...info });
   }
+  const deleted = loadTwentyRetrySkip();
   stats.candidates = infos.length;
   // All the awaiting is done - from here it's load, change, save in one go.
   const d = loadPool(); const leads = d.leads || (d.leads = []);
@@ -13944,6 +13950,7 @@ async function twentyRetrySync() {
     if (l && l.retry_pool) { l.retry = { ...l.retry, blocked: why === "kunde" ? "Er kunde nu" : why === "aktiv-deal" ? "Aktiv deal i Twenty" : "Tabt for godt i Twenty", synced_at: nowIso }; sdrTouch(l); stats.blocked++; }
   }
   for (const x of infos) {
+    if (deleted.has(x.c.id)) { stats.skipped.slettet = (stats.skipped.slettet || 0) + 1; continue; }
     const retry = { ...x.retry, synced_at: nowIso };
     const l = byTw.get(x.c.id) || (x.host && byHost.get(x.host)) || (x.cvr && byCvr.get(x.cvr)) || byName.get(String(x.c.name || "").toLowerCase().trim());
     if (l) {
@@ -15503,6 +15510,7 @@ app.post("/api/sdr/admin/lead-status", authMiddleware, (req, res) => {
       const set = new Set(cvrs);
       const before = (d.leads || []).length;
       const gone = (d.leads || []).filter((l) => set.has(l.cvr)).map((l) => l.name);
+      addTwentyRetrySkip((d.leads || []).filter((l) => set.has(l.cvr) && l.retry && l.retry.tw_id).map((l) => l.retry.tw_id));
       d.leads = (d.leads || []).filter((l) => !set.has(l.cvr));
       for (const L of Object.values(d.sdr_lists || {})) { L.cvrs = (L.cvrs || []).filter((x) => !set.has(x)); L.done = (L.done || []).filter((x) => !set.has(x)); }
       savePool(d);
