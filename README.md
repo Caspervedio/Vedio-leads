@@ -112,7 +112,7 @@ CVR-walk, Google Maps og Meta Ad Library kører først, når reserven er tom.
 outreach, Facebook-leads, gamle demoer, folk der har prøvet Vedio. Kunder nu,
 aktive deals (rørt inden for 45 dage), "ikke ICP" og "bruger konkurrent" er
 udeladt. De ligger i puljen men uden for SDR'ernes lister, til admin giver dem
-videre fra fanen **Genopring**; SDR'en ser historikken som små mærker på
+videre fra **Leads → Genopring**; SDR'en ser historikken som små mærker på
 kortet ("Tidligere kunde", "Har haft demo · jun 2026", "Tabt: ikke prioritet",
 "Kom via Facebook-annonce"). De gratis opslag kører på dem, så dem med kun et
 website kan få et navn og et nummer; betalte opslag venter, til de er givet
