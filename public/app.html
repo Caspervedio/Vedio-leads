@@ -444,6 +444,7 @@ function renderCard() {
       ${proof}
     </div>
     ${L.about ? `<p class="about">${e(L.about)}</p>` : ''}
+    ${historyHtml(L)}
     <div class="person ${c ? '' : 'none'}">
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
@@ -881,6 +882,15 @@ async function disp(action, callback_at, extra) {
 /* Notes as a thread: everything ever written on the lead, oldest first, with
    who wrote it and when. Outcome notes sit in the same stream as free notes,
    so a follow-up call reads like a conversation. */
+/* What Vedio already knows about this company (from Twenty, for leads admin
+   handed out from Genopring): former customer, earlier demo, how they came in.
+   Something to open with instead of a cold introduction. */
+function historyHtml(L) {
+  const h = (L && L.history) || [];
+  if (!h.length) return '';
+  const tone = (b) => /^(Tidligere kunde|Har prøvet|Har haft demo)/.test(b) ? 'h1' : /Facebook/.test(b) ? 'h2' : /^Tabt/.test(b) ? 'h3' : '';
+  return `<div class="history"><span class="k">Historik med Vedio</span>${h.map((b) => `<span class="hb ${tone(b)}">${e(b)}</span>`).join('')}</div>`;
+}
 /* Reference customers in the same line of business - something concrete to
    name on the call. Only real customers appear here (see sdrRefCustomers). */
 function refsHtml(L) {

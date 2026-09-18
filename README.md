@@ -106,6 +106,17 @@ bedste ind, når der mangler friske leads — i tre tiers:
 
 En tier flyttes først ind, når reserven ikke har flere fra tier'en over. Når
 alt er hentet, kan StoreLeads sættes på pause — reserven fodrer videre.
+CVR-walk, Google Maps og Meta Ad Library kører først, når reserven er tom.
+
+**Genopring (admin).** Firmaer Vedio har mødt før — fra Twenty: LinkedIn-
+outreach, Facebook-leads, gamle demoer, folk der har prøvet Vedio. Kunder nu,
+aktive deals (rørt inden for 45 dage), "ikke ICP" og "bruger konkurrent" er
+udeladt. De ligger i puljen men uden for SDR'ernes lister, til admin giver dem
+videre fra fanen **Genopring**; SDR'en ser historikken som små mærker på
+kortet ("Tidligere kunde", "Har haft demo · jun 2026", "Tabt: ikke prioritet",
+"Kom via Facebook-annonce"). De gratis opslag kører på dem, så dem med kun et
+website kan få et navn og et nummer; betalte opslag venter, til de er givet
+videre. Hentes igen hver mandag.
 
 ---
 
@@ -138,7 +149,11 @@ De vigtigste:
 | `meta-pages-check` | hver 30. min | Annoncerer de lige nu? |
 | `intake-enrich`, `drain-enrichment` | hvert 5. min | Kontakter og numre |
 | `twenty-demo-sync` | hvert 5. min, 07-21 | Bookede demoer → Twenty |
+| `twenty-retry-sync` | mandag 06:15 | Genopring-listen hentes fra Twenty |
 | `pool-backup` | 03:30 | Backup |
+
+**Puljen gemmes** kompakt. Baggrundsjob gemmer deres egen kopi; et lead, som
+et andet job tilføjede imens, bevares (et lead admin sletter, forbliver væk).
 
 **Deploy** sker af sig selv når `main` pushes (GitHub Actions →
 `.github/workflows/deploy.yml`). Nøgler hentes fra Secret Manager.

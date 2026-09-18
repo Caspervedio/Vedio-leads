@@ -268,9 +268,13 @@ function getUserDataFile(userId) {
   return path.join(DATA_DIR, `data_${userId}.json`);
 }
 
+// Which leads each loaded copy of the pool started with - see the end of
+// sdrMergeBeforeSave. Keyed by the object, so it goes when the copy does.
+const _poolLoadedCvrs = new WeakMap();
 function loadUserData(userId) {
   const file = getUserDataFile(userId);
   const d = loadJsonFile(file, null);
+  if (d && userId === "pool" && Array.isArray(d.leads)) _poolLoadedCvrs.set(d, new Set(d.leads.map((l) => l && l.cvr)));
   if (d) {
     // Migrate old flat pipeline to dual pipelines if needed
     if (!d.pipelines && d.pipeline) {
@@ -310,7 +314,8 @@ function saveUserData(userId, d) {
   // clobber outcomes the SDRs registered meanwhile, so pool saves merge
   // SDR-owned fields from disk first (see sdrMergeBeforeSave).
   if (userId === "pool" && typeof sdrMergeBeforeSave === "function") { try { sdrMergeBeforeSave(d); } catch (e) { console.warn("[pool-merge]", e.message); } }
-  fs.writeFileSync(getUserDataFile(userId), JSON.stringify(d, null, 2));
+  // The pool is rewritten on every SDR click; indentation made it ~30% bigger.
+  fs.writeFileSync(getUserDataFile(userId), userId === "pool" ? JSON.stringify(d) : JSON.stringify(d, null, 2));
 }
 
 function authMiddleware(req, res, next) {
@@ -8220,7 +8225,7 @@ app.post("/api/cron/meta-pages-check", async (req, res) => {
   };
   const usable = (l) => !!pageUrl(l);
   const d0 = loadUserData(TARGET_USER);
-  const todo = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && usable(l)
+  const todo = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && !l.retry_pool && usable(l)
     && !(l.meta_pages_checked_at && now - new Date(l.meta_pages_checked_at).getTime() < RECHECK_MS));
   stats.candidates = todo.length;
   // Leads on an SDR list first, then the newest - the ones about to be called.
@@ -12493,7 +12498,8 @@ async function runBackfillContacts(req, res) {
   // Apollo (flat subscription) and FE People Search (free) run regardless.
   const onList = new Set(Object.values(ud.sdr_lists || {}).flatMap((L) => L.cvrs || []));
   const gate = TARGET_USER === POOL_ID ? sdrIntakeStatus(ud) : { paused: false };
-  const paidOk = (l) => !gate.paused || onList.has(l.cvr);
+  // A Genopring lead waits for admin - no paid lookups until it's handed out.
+  const paidOk = (l) => onList.has(l.cvr) || (!gate.paused && !l.retry_pool);
   stats.paidGate = gate.paused ? "kun leads på lister" : "åben";
   // Candidates: active, has callable identity (domain OR real CVR), AND
   // either no contacts yet OR contacts without phone. Skip recently-
@@ -13666,14 +13672,17 @@ function twentyReady() { return !!(process.env.TWENTY_API_TOKEN && process.env.T
 function twentyBase() { return String(process.env.TWENTY_WORKSPACE_URL || "").replace(/\/+$/, ""); }
 function loadTwentyLedger() { try { return JSON.parse(fs.readFileSync(TWENTY_DEMO_LEDGER, "utf8")) || {}; } catch { return {}; } }
 function saveTwentyLedger(l) { fs.writeFileSync(TWENTY_DEMO_LEDGER, JSON.stringify(l, null, 1)); }
-async function twentyCall(method, p, body) {
+// Twenty allows 100 calls a minute per workspace; a 429 waits and tries again.
+async function twentyCall(method, p, body, tries = 0) {
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 15000);
+  let r, j;
   try {
-    const r = await fetch(`${twentyBase()}/rest/${p}`, { method, signal: ctl.signal, headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}` }, body: body ? JSON.stringify(body) : undefined });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(`Twenty ${method} ${p.split("?")[0]} ${r.status}: ${String((j.messages && j.messages[0]) || j.error || JSON.stringify(j)).slice(0, 200)}`);
-    return j;
+    r = await fetch(`${twentyBase()}/rest/${p}`, { method, signal: ctl.signal, headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.TWENTY_API_TOKEN}` }, body: body ? JSON.stringify(body) : undefined });
+    j = await r.json().catch(() => ({}));
   } finally { clearTimeout(timer); }
+  if (r.status === 429 && tries < 4) { await new Promise((ok) => setTimeout(ok, 20000)); return twentyCall(method, p, body, tries + 1); }
+  if (!r.ok) throw new Error(`Twenty ${method} ${p.split("?")[0]} ${r.status}: ${String((j.messages && j.messages[0]) || j.error || JSON.stringify(j)).slice(0, 200)}`);
+  return j;
 }
 // Filter values go inside double quotes - drop any quote or backslash.
 function twentyFilter(expr) { return `filter=${encodeURIComponent(expr)}`; }
@@ -13819,6 +13828,215 @@ app.post("/api/cron/twenty-demo-sync", async (req, res) => {
   if (due.length) console.log("[twenty-demo-sync] done:", JSON.stringify(stats));
   res.json({ ok: true, stats });
 });
+// ─── Genopring: companies Vedio has met before, from Twenty ────────────────
+// Twenty holds everyone Vedio has been in touch with - LinkedIn outreach,
+// Facebook lead ads, Pipedrive-era demos. The ones that aren't customers now
+// and have a number or a website come into the pool as retry leads with a
+// short history (badges) the SDR sees on the card. They sit OUTSIDE the SDRs'
+// flow (retry_pool = true → sdrEligible says no) until admin hands them to
+// someone from the Genopring tab; the free lookups still run on them so the
+// website-only ones can get a person and a number first.
+//
+// Left out: current customers (subscription, CS stage, won deal, or subscribed
+// in customers.json), lost as not-ICP / uses a competitor, and anything with
+// an open opportunity touched in the last 45 days - that deal is being worked.
+// A company already in the pool keeps its lead: badges are added, and it only
+// moves to Genopring if nobody is working it (not on a list, no callback, not
+// called in 90 days, not turned down by an SDR). An automatic archive (never
+// called) is reopened for it.
+const TWENTY_RETRY_ACTIVE_MS = 45 * 86400e3;
+const TWENTY_LOST_DA = { NOT_A_PRIORITY: "ikke prioritet", NO_RESPONSE: "svarede ikke", USES_COMPETITOR: "bruger konkurrent", TOO_EXPENSIVE: "for dyrt", NO_TIME: "ingen tid", NOT_ICP: "ikke ICP" };
+const TWENTY_STAGE_DA = { NEW: "Ny", QUALIFIED: "Kvalificeret", DEMO_BOOKED: "Demo booket", DEMO_FOLLOW_UP: "Demo-opfølgning", VIDEO_PRESENTATION_DONE: "Video præsenteret", FREE_VIDEO_OFFERED: "Gratis video tilbudt", FREE_VIDEO_MATERIAL_RECEIVED: "Gratis video modtaget", ONBOARDING_BOOKED: "Onboarding booket", WON: "Vundet", LOST: "Tabt", KOLD: "Kold" };
+const TWENTY_DEMO_STAGES = new Set(["DEMO_BOOKED", "DEMO_FOLLOW_UP", "VIDEO_PRESENTATION_DONE", "FREE_VIDEO_OFFERED", "FREE_VIDEO_MATERIAL_RECEIVED", "ONBOARDING_BOOKED"]);
+async function twentyFetchAll(obj) {
+  const out = []; let after = null;
+  for (let i = 0; i < 300; i++) {
+    const j = await twentyCall("GET", `${obj}?limit=200${after ? `&starting_after=${encodeURIComponent(after)}` : ""}`);
+    out.push(...twentyList(j, obj));
+    if (!(j.pageInfo && j.pageInfo.hasNextPage && j.pageInfo.endCursor)) break;
+    after = j.pageInfo.endCursor;
+    await new Promise((r) => setTimeout(r, 700)); // stays under Twenty's 100 calls a minute
+  }
+  return out;
+}
+function twentyDkPhone(ph) {
+  const n = String((ph && ph.primaryPhoneNumber) || "").replace(/\D/g, "");
+  const cc = String((ph && ph.primaryPhoneCallingCode) || "+45").replace(/\D/g, "");
+  if (cc === "45" && /^\d{8}$/.test(n)) return "+45" + n;
+  return isDkPhone(n) ? normDkPhone(n) : "";
+}
+function twentyMonth(iso) { return iso ? new Date(iso).toLocaleDateString("da-DK", { month: "short", year: "numeric", timeZone: "Europe/Copenhagen" }).replace(".", "") : ""; }
+// What Vedio knows about one Twenty company, or { skip } with why not.
+function twentyRetryInfo(c, opps, people, cust, now) {
+  const host = storeLeadsHost(c.domainName && c.domainName.primaryLinkUrl);
+  const byTouch = [...opps].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  const latest = byTouch[0] || null;
+  const subActive = !!c.subscriptionStartedAt && !(c.subscriptionEndsAt && new Date(c.subscriptionEndsAt).getTime() < now);
+  const nm = String(c.name || "").toLowerCase().replace(/\s+(aps|a\/s|ivs|i\/s)$/i, "").trim();
+  if (subActive || c.csStage || opps.some((o) => o.stage === "WON") || (host && cust.current.has(host)) || (nm && cust.currentNames.has(nm))) return { skip: "kunde" };
+  if (latest && latest.stage === "LOST" && ["NOT_ICP", "USES_COMPETITOR"].includes(latest.lostReason)) return { skip: "tabt-endeligt" };
+  if (opps.some((o) => !["LOST", "WON", "KOLD"].includes(o.stage) && now - new Date(o.updatedAt || 0).getTime() < TWENTY_RETRY_ACTIVE_MS)) return { skip: "aktiv-deal" };
+  // Sent a video recently = trying Vedio right now, not someone to cold-call.
+  const lastVideo = c.lastVideoProjectSubmittedAt || null;
+  if (lastVideo && now - new Date(lastVideo).getTime() < TWENTY_RETRY_ACTIVE_MS) return { skip: "aktiv-deal" };
+  const poc = latest && latest.pointOfContactId ? people.find((p) => p.id === latest.pointOfContactId) : null;
+  const ranked = [...people].sort((a, b) => (twentyDkPhone(b.phones) ? 2 : 0) + (b.emails && b.emails.primaryEmail ? 1 : 0) - (twentyDkPhone(a.phones) ? 2 : 0) - (a.emails && a.emails.primaryEmail ? 1 : 0));
+  const person = poc || ranked[0] || null;
+  const phone = twentyDkPhone(c.phones);
+  const personPhone = person ? twentyDkPhone(person.phones) : "";
+  if (!phone && !personPhone && !host) return { skip: "intet-nummer-eller-website" };
+  const badges = []; let priority = 3;
+  const former = host && cust.former.has(host);
+  if (former) { badges.push("Tidligere kunde"); priority = 1; }
+  else if (Number(c.videoProjectSubmittedAllTime) > 0) { badges.push(`Har prøvet Vedio${lastVideo ? " · " + twentyMonth(lastVideo) : ""}`); priority = 1; }
+  const demo = byTouch.find((o) => TWENTY_DEMO_STAGES.has(o.stage));
+  if (demo) { badges.push(`Har haft demo · ${twentyMonth(demo.updatedAt)}`); priority = 1; }
+  if (latest && latest.stage === "LOST") { badges.push(`Tabt${latest.lostReason ? ": " + (TWENTY_LOST_DA[latest.lostReason] || latest.lostReason.toLowerCase()) : ""}`); if (["NOT_A_PRIORITY", "NO_RESPONSE", "NO_TIME"].includes(latest.lostReason)) priority = Math.min(priority, 1); }
+  if (opps.some((o) => o.source === "FACEBOOK")) { badges.push("Kom via Facebook-annonce"); priority = 1; }
+  else if (opps.some((o) => o.source === "LINKEDIN")) { badges.push("Kontaktet via LinkedIn"); priority = Math.min(priority, 2); }
+  else if (opps.length && !demo) { badges.push(`I pipelinen · ${TWENTY_STAGE_DA[latest.stage] || latest.stage}`); priority = Math.min(priority, 2); }
+  if (!badges.length) badges.push("Kendt i Twenty");
+  const contact = person && person.name ? {
+    name: `${person.name.firstName || ""} ${person.name.lastName || ""}`.trim(), title: person.jobTitle || "",
+    phone: personPhone, email: String((person.emails && person.emails.primaryEmail) || "").toLowerCase(),
+    linkedin: (person.linkedinLink && person.linkedinLink.primaryLinkUrl) || "",
+  } : null;
+  return {
+    host, phone, contact: contact && contact.name ? contact : null,
+    cvr: /^\d{8}$/.test(String(c.taxId || "").replace(/\D/g, "")) ? String(c.taxId).replace(/\D/g, "") : "",
+    retry: {
+      tw_id: c.id, badges, priority, stage: latest ? latest.stage : null, lost_reason: latest ? latest.lostReason || null : null,
+      last_touch: [latest && latest.updatedAt, lastVideo].filter(Boolean).sort().pop() || c.createdAt || null, opps: opps.length, former: !!former,
+    },
+  };
+}
+async function twentyRetrySync() {
+  const now = Date.now(); const nowIso = new Date(now).toISOString();
+  const [companies, opportunities, people] = [await twentyFetchAll("companies"), await twentyFetchAll("opportunities"), await twentyFetchAll("people")];
+  const oppsBy = new Map(); for (const o of opportunities) if (o.companyId) (oppsBy.get(o.companyId) || oppsBy.set(o.companyId, []).get(o.companyId)).push(o);
+  const peopleBy = new Map(); for (const p of people) if (p.companyId) (peopleBy.get(p.companyId) || peopleBy.set(p.companyId, []).get(p.companyId)).push(p);
+  const cust = { current: new Set(), former: new Set(), currentNames: new Set() };
+  for (const x of (loadCustomers().items || [])) {
+    const h = storeLeadsHost(x.domain); if (h) (x.subscribed ? cust.current : cust.former).add(h);
+    const nm = String(x.name || "").toLowerCase().replace(/\s+(aps|a\/s|ivs|i\/s)$/i, "").trim(); if (x.subscribed && nm) cust.currentNames.add(nm);
+  }
+  const infos = [];
+  const stats = { companies: companies.length, opportunities: opportunities.length, people: people.length, skipped: {}, candidates: 0, added: 0, moved: 0, reopened: 0, badgesOnly: 0, refreshed: 0, blocked: 0, leftAlone: 0 };
+  const skipByTw = new Map();
+  for (const c of companies) {
+    const info = twentyRetryInfo(c, oppsBy.get(c.id) || [], peopleBy.get(c.id) || [], cust, now);
+    if (info.skip) { stats.skipped[info.skip] = (stats.skipped[info.skip] || 0) + 1; skipByTw.set(c.id, info.skip); continue; }
+    infos.push({ c, ...info });
+  }
+  stats.candidates = infos.length;
+  // All the awaiting is done - from here it's load, change, save in one go.
+  const d = loadPool(); const leads = d.leads || (d.leads = []);
+  const byHost = new Map(), byCvr = new Map(), byName = new Map(), byTw = new Map();
+  for (const l of leads) {
+    const h = storeLeadsHost(l.web || l.website); if (h && !byHost.has(h)) byHost.set(h, l);
+    if (/^\d{8}$/.test(String(l.cvr))) byCvr.set(String(l.cvr), l);
+    const n = String(l.name || "").toLowerCase().trim(); if (n && !byName.has(n)) byName.set(n, l);
+    if (l.retry && l.retry.tw_id) byTw.set(l.retry.tw_id, l);
+  }
+  // A company that's now a customer or an active deal leaves Genopring.
+  for (const [tw, why] of skipByTw) {
+    const l = byTw.get(tw);
+    if (l && l.retry_pool) { l.retry = { ...l.retry, blocked: why === "kunde" ? "Er kunde nu" : why === "aktiv-deal" ? "Aktiv deal i Twenty" : "Tabt for godt i Twenty", synced_at: nowIso }; sdrTouch(l); stats.blocked++; }
+  }
+  for (const x of infos) {
+    const retry = { ...x.retry, synced_at: nowIso };
+    const l = byTw.get(x.c.id) || (x.host && byHost.get(x.host)) || (x.cvr && byCvr.get(x.cvr)) || byName.get(String(x.c.name || "").toLowerCase().trim());
+    if (l) {
+      const calls = Array.isArray(l.calls) ? l.calls : [];
+      if (calls.length) retry.badges = [...retry.badges.filter((b) => !/^Ringet /.test(b)), `Ringet ${calls.length}× før`];
+      if (l.retry_pool) { l.retry = retry; sdrTouch(l); stats.refreshed++; continue; }
+      const last = calls[calls.length - 1];
+      const humanNo = (l.lastAction === "not-relevant" && ((last && last.action === "not-relevant") || l.archived_by)) || cust.current.has(storeLeadsHost(l.web || l.website));
+      const recent = last && now - new Date(last.at).getTime() < 90 * 86400e3;
+      const working = l.lastAction === "demo-booked" || sdrClaimActive(l, now) || (l.callback_at && new Date(l.callback_at).getTime() > now) || recent || l.retry_fed_at || l.twenty_opportunity_id;
+      if (humanNo) { stats.leftAlone++; continue; }
+      l.retry = retry;
+      if (working) { stats.badgesOnly++; sdrTouch(l); continue; }
+      if (l.lastAction === "not-relevant") {
+        l.lastAction = null; l.archived_at = null; l.archived_by = null; l.resurface_at = null;
+        sdrAppendNote(l, "admin", "Genåbnet til genopring - firmaet kendes fra Twenty");
+        stats.reopened++;
+      }
+      l.retry_pool = true; l.retry_imported_at = nowIso; sdrTouch(l); stats.moved++;
+      continue;
+    }
+    const lead = {
+      cvr: x.cvr || `twenty-${x.c.id}`, name: String(x.c.name || x.host || "").trim(),
+      addr: "", zip: "", city: (x.c.address && x.c.address.addressCity) || "", ind: "", st: "aktiv", listId: "ungrouped",
+      web: x.host ? "https://" + x.host : "", website: x.host ? "https://" + x.host : "",
+      phone: x.phone, ph: x.phone, phone_missing: !x.phone, phone_recovered_source: x.phone ? "twenty" : undefined,
+      contacts: x.contact ? [{ ...x.contact, source_discovery: "twenty", source_phone: x.contact.phone ? "twenty" : "" }] : [],
+      source: "twenty-retry", source_category: "retry", addedAt: x.c.createdAt || nowIso, pool_added_at: nowIso,
+      retry, retry_pool: true, retry_imported_at: nowIso,
+      // No Apollo advertiser check: 3,000 of them would eat the daily Apollo
+      // budget the fresh StoreLeads leads need. Meta is checked once handed out.
+      apollo_enrichment_pending: false, ads_check_pending: false, meta_advertiser: null,
+    };
+    if (!lead.name || byCvr.has(lead.cvr)) continue;
+    leads.push(lead); byCvr.set(lead.cvr, lead); if (x.host) byHost.set(x.host, lead);
+    stats.added++;
+  }
+  saveUserData(POOL_ID, d);
+  logActivity("twenty-retry", `Genopring fra Twenty: ${stats.added} nye, ${stats.moved} fra puljen (${stats.reopened} genåbnet), ${stats.badgesOnly} fik kun historik`, { stats });
+  console.log("[twenty-retry-sync] done:", JSON.stringify(stats));
+  return stats;
+}
+// Admin → Genopring: the retry leads waiting to be handed out, best first.
+app.get("/api/sdr/admin/retry", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const leads = d.leads || [];
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const f = String(req.query.filter || "ready"); const q = String(req.query.q || "").trim().toLowerCase();
+    const page = Math.max(1, Number(req.query.page) || 1); const per = 50;
+    const waiting = leads.filter((l) => l.retry_pool && sdrIsActive(l) && l.lastAction !== "demo-booked");
+    const open = waiting.filter((l) => !(l.retry && l.retry.blocked));
+    const has = (l, re) => ((l.retry && l.retry.badges) || []).some((b) => re.test(b));
+    const preds = {
+      ready: (l) => sdrCallable(l), needs: (l) => !sdrCallable(l), all: () => true,
+      former: (l) => has(l, /^(Tidligere kunde|Har prøvet)/), demo: (l) => has(l, /^Har haft demo/), lost: (l) => has(l, /^Tabt/),
+      facebook: (l) => has(l, /Facebook/), linkedin: (l) => has(l, /LinkedIn/), called: (l) => has(l, /^Ringet /),
+    };
+    const counts = Object.fromEntries(Object.entries(preds).map(([k, p]) => [k, open.filter(p).length]));
+    let rows = open.filter(preds[f] || preds.ready);
+    if (q) rows = rows.filter((l) => [l.name, l.cvr, l.city, l.web, ...(l.contacts || []).map((c) => c && c.name)].filter(Boolean).join(" ").toLowerCase().includes(q));
+    rows.sort((a, b) => (sdrCallable(b) - sdrCallable(a)) || (((a.retry || {}).priority || 3) - ((b.retry || {}).priority || 3))
+      || (sdrHasPerson(b) - sdrHasPerson(a)) || ((b.meta_advertiser === true) - (a.meta_advertiser === true))
+      || String((b.retry || {}).last_touch || "").localeCompare(String((a.retry || {}).last_touch || "")));
+    // What happened to the ones already handed out.
+    const fed = leads.filter((l) => l.retry_fed_at);
+    const fedCalled = fed.filter((l) => (l.calls || []).some((c) => c.at >= l.retry_fed_at));
+    const fedStats = { fed: fed.length, called: fedCalled.length, demos: fed.filter((l) => l.lastAction === "demo-booked").length, bySdr: {} };
+    for (const l of fed) { const n = nameById[l.retry_fed_to] || l.retry_fed_to || "?"; fedStats.bySdr[n] = (fedStats.bySdr[n] || 0) + 1; }
+    const lastSync = waiting.reduce((m, l) => { const t = (l.retry || {}).synced_at || ""; return t > m ? t : m; }, "");
+    const total = rows.length;
+    const out = rows.slice((page - 1) * per, page * per).map((l) => {
+      const c = sdrPrimaryContact(l); const ph = sdrPhone(l);
+      return { cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "", phone: ph.phone, phone_label: ph.label, callable: sdrCallable(l),
+        contact: c ? { name: c.name, title: c.title || "" } : null, badges: (l.retry && l.retry.badges) || [], priority: (l.retry || {}).priority || 3,
+        last_touch: (l.retry || {}).last_touch || null, meta: l.meta_advertiser === true || l.meta_verified_active === true, source: sdrSourceLabel(l) || "" };
+    });
+    res.json({ ok: true, total, page, per, rows: out, counts, blocked: waiting.length - open.length, fedStats, lastSync: lastSync || null });
+  } catch (e) { sdrFail(res, e, "admin/retry"); }
+});
+app.post("/api/sdr/admin/retry-sync", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    if (!twentyReady()) return res.status(400).json({ error: "Twenty er ikke sat op" });
+    res.json({ ok: true, stats: await twentyRetrySync() });
+  } catch (e) { sdrFail(res, e, "admin/retry-sync"); }
+});
+app.post("/api/cron/twenty-retry-sync", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  if (!twentyReady()) return res.json({ ok: true, skipped: "not-configured" });
+  try { res.json({ ok: true, stats: await twentyRetrySync() }); }
+  catch (e) { console.warn("[twenty-retry-sync]", e.message); res.status(502).json({ ok: false, error: e.message }); }
+});
 // Gemini (2.5 Flash) JSON call with optional inline audio - used by the
 // post-call voice debrief. Returns parsed JSON or throws.
 async function sdrGeminiJson(prompt, audio) {
@@ -13841,7 +14059,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13863,6 +14081,17 @@ function sdrMergeBeforeSave(d) {
     // a copy written before the feature must not erase one written after.
     if (disk.sdr_pitch !== undefined) d.sdr_pitch = disk.sdr_pitch;
     if (disk.sdr_mail !== undefined) d.sdr_mail = disk.sdr_mail;
+  }
+  // Leads another job appended after this copy was loaded. A background job
+  // loads, awaits outside APIs for minutes and saves its whole copy - which
+  // silently dropped whatever StoreLeads, an import or an SDR had added in
+  // between. A lead on disk that this copy never saw is kept; one it did see
+  // and no longer holds was deleted on purpose and stays deleted.
+  const seen = _poolLoadedCvrs.get(d);
+  if (seen && Array.isArray(d.leads)) {
+    const mem = new Set(d.leads.map((l) => l && l.cvr));
+    const added = (disk.leads || []).filter((l) => l && !mem.has(l.cvr) && !seen.has(l.cvr));
+    if (added.length) { d.leads.push(...added); for (const l of added) seen.add(l.cvr); console.log(`[pool-merge] kept ${added.length} lead(s) another job added meanwhile`); }
   }
   if (merged) console.log(`[pool-merge] kept ${merged} newer SDR-side change(s) from disk`);
 }
@@ -13918,6 +14147,7 @@ function sdrHasPerson(l) { return !!sdrPrimaryContact(l); }
 function sdrEligible(l, now) {
   if (!l || l.lastAction === "not-relevant" || l.lastAction === "demo-booked") return false;
   if (l.twenty_opportunity_id || l.apollo_enrichment_pending === true) return false;
+  if (l.retry_pool) return false; // Genopring: waits for admin to hand it out
   if (l.resurface_at && new Date(l.resurface_at).getTime() > now) return false;
   if (l.deferred_until && new Date(l.deferred_until).getTime() > now) return false;
   if (l.callback_at && new Date(l.callback_at).getTime() > now) return false;
@@ -13935,6 +14165,7 @@ function sdrSourceLabel(l) {
   const s = String(l.source || "");
   if (/^branche-walk/.test(s)) return "CVR-register";
   if (/^storeleads/.test(s)) return "Webshop";
+  if (/^twenty/.test(s)) return "Twenty (genopring)";
   if (/^gmaps/.test(s)) return "Google Maps";
   if (/^meta/.test(s)) return "Meta-annoncør";
   if (/^csv/.test(s)) return "CSV-import";
@@ -14124,6 +14355,7 @@ function sdrSlim(l, nameById) {
     last_note: l.last_note || "", note_saved_at: l.note_saved_at || null,
     note_thread: sdrNoteThread(l, nameById),
     refs: sdrRefCustomers(l),
+    history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
@@ -14349,7 +14581,7 @@ function buildSdrState(userId, d) {
     poolAvailable: available.length,
     poolTotal: leads.length,
     poolArchived: leads.filter((l) => l.lastAction === "not-relevant").length,
-    poolNeedsEnrich: leads.filter((l) => l.lastAction !== "not-relevant" && !l.twenty_opportunity_id && !sdrCallable(l)).length,
+    poolNeedsEnrich: leads.filter((l) => l.lastAction !== "not-relevant" && !l.twenty_opportunity_id && !l.retry_pool && !sdrCallable(l)).length,
     perUser,
   };
   // Webhook URL is admin-only knowledge; SDRs get the rest of settings.
@@ -14492,6 +14724,7 @@ function sdrDispositionHandler(req, res) {
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
     lead.owner_override = null; lead.owner_override_at = null; // the call is the owner now
+    lead.retry_pool = false; // an outcome takes it out of Genopring, or a callback would never surface
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
     lead.deferred_until = null;
     sdrTouch(lead, action === "wrong-number");
@@ -15167,7 +15400,8 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
       if (l.addedAt) { const k = sdrDayKey(l.addedAt); if (byDay[k]) { byDay[k].newLeads++; if (sdrCallable(l)) byDay[k].newCallable++; const s = sdrSourceLabel(l) || "ukendt"; intakeBySource[s] = (intakeBySource[s] || 0) + 1; } }
       for (const c of (l.calls || [])) { const k = sdrDayKey(c.at); if (byDay[k]) { byDay[k].calls++; if (c.action === "demo-booked") byDay[k].demos++; if (sdrIsTalk(c)) byDay[k].talks++; const s = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0; if (s) { byDay[k].talkSec += s; byDay[k].talkCalls++; } } }
     }
-    const active = leads.filter(sdrIsActive);
+    // Genopring leads wait on the Genopring tab, not in the SDRs' pool.
+    const active = leads.filter((l) => sdrIsActive(l) && !l.retry_pool);
     const ready = active.filter((l) => l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, settings));
     const blocked = active.filter((l) => l.lastAction !== "demo-booked" && sdrCallable(l) && !sdrPassesRules(l, settings));
     const needs = active.filter((l) => !sdrCallable(l));
@@ -15191,6 +15425,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
         newLast7: days.slice(-7).reduce((a, k) => a + byDay[k].newLeads, 0), newLast14: days.reduce((a, k) => a + byDay[k].newLeads, 0),
         followupsOpen: base.stats.followupsOpen, pendingDemos: (base.demos || []).filter((x) => (x.demo_status || "pending") === "pending").length,
         onLists: leads.filter((l) => sdrClaimActive(l, now)).length,
+        retry: leads.filter((l) => l.retry_pool && sdrIsActive(l) && !(l.retry && l.retry.blocked)).length,
       },
       sources, topNiches: Object.entries(niches).sort((a, b) => b[1] - a[1]).slice(0, 12),
       totals: {
@@ -15210,10 +15445,10 @@ app.get("/api/sdr/admin/leads", authMiddleware, (req, res) => {
     const f = String(req.query.filter || "ready"); const q = String(req.query.q || "").trim().toLowerCase(); const src = String(req.query.source || "");
     const page = Math.max(1, Number(req.query.page) || 1); const per = 50;
     const preds = {
-      ready: (l) => sdrIsActive(l) && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, settings),
-      needs: (l) => sdrIsActive(l) && !sdrCallable(l),
-      noperson: (l) => sdrIsActive(l) && sdrCallable(l) && !sdrHasPerson(l),
-      blocked: (l) => sdrIsActive(l) && sdrCallable(l) && !sdrPassesRules(l, settings),
+      ready: (l) => sdrIsActive(l) && !l.retry_pool && l.lastAction !== "demo-booked" && sdrCallable(l) && sdrPassesRules(l, settings),
+      needs: (l) => sdrIsActive(l) && !l.retry_pool && !sdrCallable(l),
+      noperson: (l) => sdrIsActive(l) && !l.retry_pool && sdrCallable(l) && !sdrHasPerson(l),
+      blocked: (l) => sdrIsActive(l) && !l.retry_pool && sdrCallable(l) && !sdrPassesRules(l, settings),
       meta: (l) => sdrIsActive(l) && (l.meta_advertiser === true || l.meta_verified_active === true),
       onlists: (l) => sdrClaimActive(l, now),
       followups: (l) => sdrIsActive(l) && !!l.callback_at,
@@ -15310,6 +15545,10 @@ app.post("/api/sdr/admin/move-leads", authMiddleware, (req, res) => {
     for (const l of d.leads || []) {
       if (!set.has(l.cvr)) continue;
       if (l.lastAction === "demo-booked" || l.lastAction === "not-relevant") { skipped.push(`${l.name} (${l.lastAction === "demo-booked" ? "booket" : "arkiveret"})`); continue; }
+      // A Genopring lead needs a number before it's worth a place on a list.
+      if (l.retry_pool && target && !sdrCallable(l)) { skipped.push(`${l.name} (mangler nummer)`); continue; }
+      const fromRetry = !!l.retry_pool;
+      if (fromRetry && target) { l.retry_pool = false; l.retry_fed_at = nowIso; l.retry_fed_by = req.userId; l.retry_fed_to = target.id; }
       const from = l.claimed_by || null;
       // Off every list, including today's done-bookkeeping.
       for (const [uid, Lst] of Object.entries(d.sdr_lists)) {
@@ -15326,7 +15565,7 @@ app.post("/api/sdr/admin/move-leads", authMiddleware, (req, res) => {
         sdrUnclaim(l);
         l.owner_override = null; l.owner_override_at = null;
       }
-      sdrAppendNote(l, req.userId, `Flyttet ${from ? "fra " + (nameById[from] || from) + " " : ""}til ${target ? target.name : "puljen"} af admin`);
+      sdrAppendNote(l, req.userId, fromRetry && target ? `Genopring: givet til ${target.name} af admin` : `Flyttet ${from ? "fra " + (nameById[from] || from) + " " : ""}til ${target ? target.name : "puljen"} af admin`);
       sdrTouch(l);
       moved.push(l.name);
     }

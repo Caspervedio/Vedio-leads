@@ -139,6 +139,13 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 @media (max-width:760px){.setgrid{grid-template-columns:1fr}}
 .kv{display:grid;grid-template-columns:1fr auto;gap:6px 16px;font-size:13.5px}
 .kv span{color:var(--txt-soft)}.kv b{text-align:right;font-variant-numeric:tabular-nums}
+#view-retry .tablewrap{overflow-x:auto}
+#view-retry td{vertical-align:top}
+.hist{display:flex;flex-wrap:wrap;gap:5px;max-width:340px}
+.hist span{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:999px;background:var(--paper);border:1px solid var(--line);color:var(--txt-soft);white-space:nowrap}
+.hist span.h1{background:var(--violet-soft);border-color:#d9ccf6;color:var(--violet-deep)}
+.hist span.h2{background:#e6f6ec;border-color:#c9ead5;color:var(--approve)}
+.hist span.h3{background:#fdf0ec;border-color:#f3d6cc;color:#B3352B}
 #subs-table td{vertical-align:top}
 #subs-table td .sub{display:block;margin-top:3px;font-size:12px;color:var(--txt-faint);white-space:pre-line;font-weight:500}
 #subs-table td.t-ok .st{color:var(--approve);font-weight:700}
@@ -188,6 +195,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <button data-tab="overview" class="active" onclick="showTab('overview')">Overblik</button>
       <button data-tab="leads" onclick="showTab('leads')">Leads</button>
       <button data-tab="intake" onclick="showTab('intake')">Tilgang</button>
+      <button data-tab="retry" onclick="showTab('retry')">Genopring<span class="n" id="n-retry">0</span></button>
       <button data-tab="demos" onclick="showTab('demos')">Demoer<span class="n" id="n-demos">0</span></button>
     </nav>
     <div class="hright">
@@ -281,6 +289,29 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     <div class="tablewrap">
       <div class="thead"><div><h3>Nicher blandt klar-leads</h3><p>Hvad SDR'erne ringer til lige nu - brug det til at justere reglerne under ⚙.</p></div></div>
       <table><thead><tr><th>Niche</th><th class="num">Klar leads</th></tr></thead><tbody id="tb-niches"></tbody></table>
+    </div>
+  </section>
+
+  <!-- GENOPRING -->
+  <section id="view-retry" class="view">
+    <div class="tiles" id="retry-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
+    <div class="tablewrap">
+      <div class="thead">
+        <div><h3>Genopring</h3><p>Firmaer Vedio har mødt før - fra Twenty (LinkedIn, Facebook-annoncer, gamle demoer). Kunder nu og aktive deals er udeladt. De ligger uden for SDR'ernes lister, til du giver dem videre; SDR'en ser historikken som små mærker på kortet.</p></div>
+        <div style="text-align:right"><button class="pill sm" id="retry-sync-btn" onclick="retrySync()">Hent fra Twenty igen</button><div id="retry-synced" style="font-size:12px;color:var(--txt-faint);margin-top:6px"></div></div>
+      </div>
+      <div class="filters left" id="retry-filters" style="padding:0 24px 10px"></div>
+      <div class="toolbar">
+        <div class="search"><input id="rq" placeholder="Søg navn, by, kontakt…" oninput="retrySearch()"></div>
+        <span id="rcount" style="font-size:13px;color:var(--txt-soft);font-variant-numeric:tabular-nums"></span>
+        <span style="margin-left:auto;font-size:13px;color:var(--txt-soft)" id="rsel"></span>
+        <span id="retry-give" class="row" style="gap:6px"></span>
+      </div>
+      <table>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="rsel-all" onchange="retrySelAll(this.checked)"></th><th>Virksomhed</th><th>Historik</th><th>Sidst</th><th>Kontakt</th><th>Telefon</th></tr></thead>
+        <tbody id="tb-retry"><tr class="empty-row"><td colspan="6">Henter…</td></tr></tbody>
+      </table>
+      <div class="pager" id="retry-pager"></div>
     </div>
   </section>
 
@@ -405,7 +436,8 @@ function renderOverview() {
     ['archived', 'arkiveret', '', ''],
     ['total', 'i alt', '', ''],
   ].map(([k, l, t, sub]) => `<div class="subtile${t ? ' t-' + t : ''}"><b>${p[k] ?? 0}</b><span>${l}</span>${sub ? `<i>${e(sub)}</i>` : ''}</div>`).join('');
-  $('n-demos').textContent = p.pendingDemos || 0; $('n-demos').classList.toggle('due', (p.pendingDemos || 0) > 0);
+  $('n-demos').textContent = p.pendingDemos || 0;
+  if ($('n-retry')) $('n-retry').textContent = p.retry || 0; $('n-demos').classList.toggle('due', (p.pendingDemos || 0) > 0);
 }
 function renderIntake() {
   const p = O.pool, src = O.sources || {}, ib = O.intakeBySource || {};
@@ -789,6 +821,60 @@ async function saveSettings() {
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
 }
 
+/* Genopring - retry leads from Twenty, handed out by admin */
+let RF = 'ready', RQ = '', RP = 1, RD = null; const RSEL = new Set(); let rqTimer = null;
+const RFILTERS = [['ready', 'Klar at give ud'], ['needs', 'Mangler nummer'], ['demo', 'Har haft demo'], ['former', 'Tidligere kunde / prøvet'], ['facebook', 'Facebook-leads'], ['lost', 'Tabt'], ['linkedin', 'LinkedIn'], ['called', 'Ringet før'], ['all', 'Alle']];
+function histHtml(badges) {
+  const tone = (b) => /^(Tidligere kunde|Har prøvet|Har haft demo)/.test(b) ? 'h1' : /Facebook/.test(b) ? 'h2' : /^Tabt/.test(b) ? 'h3' : '';
+  return `<div class="hist">${(badges || []).map((b) => `<span class="${tone(b)}">${e(b)}</span>`).join('')}</div>`;
+}
+function retrySearch() { clearTimeout(rqTimer); rqTimer = setTimeout(() => { RQ = $('rq').value.trim(); RP = 1; retryReload(); }, 250); }
+function retrySetFilter(f) { RF = f; RP = 1; RSEL.clear(); retryReload(); }
+async function retryReload() {
+  $('tb-retry').innerHTML = `<tr class="empty-row"><td colspan="6">Henter…</td></tr>`;
+  try {
+    const d = RD = await get(`/api/sdr/admin/retry?filter=${RF}&q=${encodeURIComponent(RQ)}&page=${RP}`);
+    const c = d.counts || {}; const fs = d.fedStats || {};
+    $('n-retry').textContent = c.all || 0;
+    $('retry-tiles').innerHTML = [['Klar at give ud', c.ready, true], ['Mangler nummer', c.needs], ['Givet videre', fs.fed || 0], ['Heraf ringet · demoer', `${fs.called || 0} · ${fs.demos || 0}`]].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v ?? 0)}</b><span>${l}</span></div>`).join('');
+    $('retry-filters').innerHTML = RFILTERS.map(([k, l]) => `<button class="${RF === k ? 'on' : ''}" onclick="retrySetFilter('${k}')">${l}<span class="n">${c[k] ?? 0}</span></button>`).join('');
+    $('retry-synced').textContent = d.lastSync ? `Sidst hentet ${fmtWhen(d.lastSync)}${d.blocked ? ` · ${d.blocked} skjult (blevet kunde / aktiv deal)` : ''}` : 'Ikke hentet endnu';
+    $('rcount').textContent = `${d.total} firmaer`;
+    $('tb-retry').innerHTML = d.rows.length ? d.rows.map((r) => `<tr class="${RSEL.has(r.cvr) ? 'sel' : ''}">
+      <td><input type="checkbox" ${r.callable ? '' : 'disabled title="Mangler nummer - kan ikke gives videre endnu"'} ${RSEL.has(r.cvr) ? 'checked' : ''} onchange="retrySel('${e(r.cvr)}', this.checked)"></td>
+      <td class="rowlink" onclick="openLead('${e(r.cvr)}')"><b>${e(r.name)}</b><span class="sub">${e(r.city || '')}${r.web ? ' · ' + e(String(r.web).replace(/^https?:\/\//, '')) : ''}${r.meta ? ' · Meta-annoncør' : ''}</span></td>
+      <td>${histHtml(r.badges)}</td>
+      <td style="white-space:nowrap;color:var(--txt-soft)">${r.last_touch ? e(new Date(r.last_touch).toLocaleDateString('da-DK', { month: 'short', year: 'numeric' })) : '-'}</td>
+      <td>${r.contact ? `<b>${e(r.contact.name)}</b><span class="sub">${e(r.contact.title || '')}</span>` : '<span style="color:var(--txt-faint)">Omstilling</span>'}</td>
+      <td class="num" style="white-space:nowrap">${r.callable ? `${e(fmtPhone(r.phone))}<span class="sub">${e(r.phone_label || '')}</span>` : '<span style="color:var(--txt-faint)">Findes…</span>'}</td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="6">${RF === 'ready' ? 'Ingen klar lige nu.' : 'Ingen i den kategori.'}</td></tr>`;
+    const pages = Math.max(1, Math.ceil(d.total / d.per));
+    $('retry-pager').innerHTML = `<span>Side ${d.page} af ${pages}</span><span style="margin-left:auto"></span><button class="pill" ${d.page <= 1 ? 'disabled' : ''} onclick="RP--;retryReload()">← Forrige</button><button class="pill" ${d.page >= pages ? 'disabled' : ''} onclick="RP++;retryReload()">Næste →</button>`;
+    retrySelUi();
+  } catch (ex) { $('tb-retry').innerHTML = `<tr class="empty-row"><td colspan="6" style="color:#b42318">${e(ex.message)}</td></tr>`; }
+}
+function retrySel(cvr, on) { if (on) RSEL.add(cvr); else RSEL.delete(cvr); retrySelUi(); }
+function retrySelAll(on) { for (const r of (RD && RD.rows) || []) { if (!r.callable) continue; if (on) RSEL.add(r.cvr); else RSEL.delete(r.cvr); } retryReloadRowsOnly(); }
+function retryReloadRowsOnly() { document.querySelectorAll('#tb-retry input[type=checkbox]').forEach((x) => { const m = x.getAttribute('onchange').match(/'([^']+)'/); if (m) { x.checked = RSEL.has(m[1]); x.closest('tr').classList.toggle('sel', x.checked); } }); retrySelUi(); }
+function retrySelUi() {
+  const n = RSEL.size; $('rsel').textContent = n ? `${n} valgt` : '';
+  const sdrs = moveTargets().filter((t) => t.id !== 'pool');
+  $('retry-give').innerHTML = n ? sdrs.map((t) => `<button class="pill sm violet" onclick="retryGive('${e(t.id)}')">Giv til ${e(t.name)}</button>`).join('') : '';
+}
+async function retryGive(to) {
+  const cvrs = [...RSEL]; const t = moveTargets().find((x) => x.id === to); if (!t || !cvrs.length) return;
+  if (!confirm(`Giv ${cvrs.length === 1 ? 'firmaet' : cvrs.length + ' firmaer'} til ${t.name}? De lægges øverst på deres liste.`)) return;
+  try {
+    const d = await post('/api/sdr/admin/move-leads', { cvrs, to });
+    toast(`${d.moved} givet til ${d.to}${d.skipped && d.skipped.length ? ` · sprunget over: ${d.skipped.join(', ')}` : ''}`, d.skipped && d.skipped.length ? 6000 : 3000);
+    RSEL.clear(); retryReload(); loadOverview();
+  } catch (ex) { toast(ex.message, 4000); }
+}
+async function retrySync() {
+  const b = $('retry-sync-btn'); b.disabled = true; b.textContent = 'Henter fra Twenty…';
+  try { const d = await post('/api/sdr/admin/retry-sync'); const s = d.stats || {}; toast(`${s.added || 0} nye · ${s.moved || 0} fra puljen · ${s.refreshed || 0} opdateret`, 5000); retryReload(); }
+  catch (ex) { toast(ex.message, 5000); } finally { b.disabled = false; b.textContent = 'Hent fra Twenty igen'; }
+}
 /* subscriptions - what each tool costs and how much of it we used */
 let subsLoaded = false;
 async function loadSubs(force) {
@@ -909,7 +995,7 @@ async function csvImport() {
 }
 
 /* tabs / boot */
-function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') { loadSubs(false); loadIntegrations(false); custLoad(); } }
+function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads' && !$('tb-leads').children.length) leadsReload(); if (id === 'intake') { loadSubs(false); loadIntegrations(false); custLoad(); } if (id === 'retry') retryReload(); }
 // "Se som Christian / Marcus": opens the SDR app as that user in a new tab.
 async function loadImpersonateLinks() {
   try {
