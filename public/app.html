@@ -84,6 +84,7 @@
     <div class="subnav">
       <button data-sub="list" class="on" onclick="listSub('list')">Din liste<span class="n" id="sn-list">0</span></button>
       <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
+      <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve">+ Tilføj lead</button>
     </div>
     <div id="sub-list">
       <div class="tablewrap">
@@ -1362,6 +1363,51 @@ function listSub(which) {
   $('sub-list').hidden = which !== 'list';
   $('sub-declined').hidden = which !== 'declined';
   if (which === 'declined' && !HIST.loaded) histLoad();
+}
+/* A company the SDR found themselves. It lands on top of their own list; if
+   it is already in the pool the server hands it over or says where it is. */
+function openAddLead() {
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'addlead';
+  bg.innerHTML = `<div class="modal wide">
+    <h3>Tilføj et lead</h3><p>Et firma du selv har fundet og vil give et forsøg. Det lander øverst på din liste. Findes det allerede, får du det, der er - eller besked om, hvem der har det.</p>
+    <div class="al-grid">
+      <div class="full"><label>Firma *</label><input id="al-name" placeholder="fx Nordisk Kaffe ApS" autocomplete="off"></div>
+      <div><label>Hovednummer</label><input id="al-phone" placeholder="+45 …" autocomplete="off"></div>
+      <div><label>Hjemmeside</label><input id="al-web" placeholder="nordiskkaffe.dk" autocomplete="off"></div>
+      <div><label>By</label><input id="al-city" autocomplete="off"></div>
+      <div><label>CVR (valgfri)</label><input id="al-cvr" inputmode="numeric" maxlength="8" autocomplete="off"></div>
+      <div class="sep full">Kontaktperson (valgfri)</div>
+      <div><label>Navn</label><input id="al-cname" placeholder="fx Mette Jensen" autocomplete="off"></div>
+      <div><label>Titel</label><input id="al-ctitle" placeholder="Ejer, marketingchef…" autocomplete="off"></div>
+      <div><label>Direkte nummer</label><input id="al-cphone" placeholder="+45 …" autocomplete="off"></div>
+      <div><label>Email</label><input id="al-cemail" type="email" autocomplete="off"></div>
+      <div class="full"><label>Hvorfor dette firma? (lander som note)</label><textarea id="al-note" rows="2" placeholder="fx Så deres annoncer på Instagram - kører samme video i flere måneder"></textarea></div>
+    </div>
+    <div class="sub" style="margin-top:8px">Der skal være mindst ét dansk nummer - hovednummer eller kontaktens.</div>
+    <div class="row"><button class="pill tertiary" onclick="$('addlead').remove()">Annuller</button><button class="pill primary" id="al-save" style="padding:11px 20px;font-size:14px" onclick="saveAddLead()">Tilføj til min liste</button></div>
+  </div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  setTimeout(() => { const n = $('al-name'); if (n) n.focus(); }, 30);
+}
+async function saveAddLead() {
+  const v = (id) => ($(id) ? $(id).value.trim() : '');
+  if (!v('al-name')) { toast('Skriv firmaets navn'); $('al-name').focus(); return; }
+  if (!v('al-phone') && !v('al-cphone')) { toast('Der skal være et dansk nummer'); $('al-phone').focus(); return; }
+  const btn = $('al-save'); if (btn) { btn.disabled = true; btn.textContent = 'Tilføjer…'; }
+  try {
+    const d = await post('/api/sdr/lead', {
+      name: v('al-name'), phone: v('al-phone'), web: v('al-web'), city: v('al-city'), cvr: v('al-cvr'),
+      contact_name: v('al-cname'), contact_title: v('al-ctitle'), contact_phone: v('al-cphone'), contact_email: v('al-cemail'), note: v('al-note'),
+    });
+    $('addlead').remove();
+    apply(d, { keepCurrent: true });
+    const a = d.added || {};
+    toastAction(a.created ? `✓ ${a.name} er øverst på din liste` : `${a.name} fandtes allerede - nu er det på din liste`, 'Ring nu', () => jumpTo(a.cvr), 7000);
+  } catch (ex) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Tilføj til min liste'; }
+    toast(ex.message, 7000);
+  }
 }
 /* Clock icon in the header: everything this SDR has done, newest first. */
 function openActivity() {

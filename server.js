@@ -13466,6 +13466,9 @@ function sdrSettings(d) {
 }
 // Admin fine-tune rules - what the pool is allowed to serve to SDRs.
 function sdrPassesRules(l, settings) {
+  // An SDR picked this one by hand. The rules filter what the pool serves;
+  // they shouldn't quietly pull a lead someone chose on purpose.
+  if (l.manual_by) return true;
   const r = (settings && settings.rules) || SDR_DEFAULT_RULES;
   if (r.exclude_sources && r.exclude_sources.length) { const s = sdrSourceLabel(l); if (r.exclude_sources.includes(s)) return false; }
   if (r.exclude_niches && r.exclude_niches.length) { const n = String(l.ind || l.industry || l.niche || "").toLowerCase(); if (n && r.exclude_niches.some((x) => x && n.includes(String(x).toLowerCase()))) return false; }
@@ -13517,7 +13520,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -13614,6 +13617,7 @@ function sdrSourceLabel(l) {
   if (/^gmaps/.test(s)) return "Google Maps";
   if (/^meta/.test(s)) return "Meta-annoncør";
   if (/^csv/.test(s)) return "CSV-import";
+  if (/^manual-sdr/.test(s)) return "Tilføjet af SDR";
   if (/^manual/.test(s)) return "Manuel";
   return s || "";
 }
@@ -14346,6 +14350,118 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
 });
 // A note from the Research tab. Same thread as everywhere else, but the reply
 // is just the thread - the research card has no use for the whole state.
+// An SDR adds a company they found themselves. Casper: "if they have found a
+// company on their own, that they want to give a try". It goes to the top of
+// their own list. If the company is already in the pool it is not duplicated:
+// a free one is handed to them, one that is taken is explained instead.
+app.post("/api/sdr/lead", authMiddleware, (req, res) => {
+  try {
+    const b = req.body || {};
+    const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    const name = str(b.name, 120);
+    const mainPhone = str(b.phone, 30), contactPhone = str(b.contact_phone, 30);
+    const contactName = str(b.contact_name, 120);
+    const realCvr = str(b.cvr, 12).replace(/\s/g, "");
+    const webIn = str(b.web, 200);
+    const dom = webIn.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+    if (name.length < 2) return res.status(400).json({ error: "Skriv firmaets navn" });
+    // Only Danish numbers are ever called - same rule as everywhere else.
+    if (!mainPhone && !contactPhone) return res.status(400).json({ error: "Der skal være et dansk telefonnummer - hovednummer eller kontaktens" });
+    if (mainPhone && !isDkPhone(mainPhone)) return res.status(400).json({ error: "Hovednummeret skal være dansk (+45)" });
+    if (contactPhone && !isDkPhone(contactPhone)) return res.status(400).json({ error: "Kontaktens nummer skal være dansk (+45)" });
+    if (contactPhone && !contactName) return res.status(400).json({ error: "Skriv kontaktens navn til det direkte nummer" });
+    if (realCvr && !/^\d{8}$/.test(realCvr)) return res.status(400).json({ error: "CVR skal være 8 cifre" });
+    if (dom && !/^[a-z0-9æøå.-]+\.[a-z]{2,}$/.test(dom)) return res.status(400).json({ error: "Hjemmesiden ser ikke rigtig ud" });
+
+    const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const me = req.userId;
+    const digits = (p) => String(p || "").replace(/\D/g, "").replace(/^45(?=\d{8}$)/, "");
+    const phonesIn = [mainPhone, contactPhone].filter(Boolean).map(digits);
+    const domOf = (l) => String(l.web || l.website || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+    const phonesOf = (l) => [l.phone, l.ph, ...(l.contacts || []).flatMap((c) => c ? [c.phone, c.direct_phone, c.mobile] : [])].filter(Boolean).map(digits);
+    const existing = (d.leads || []).find((l) =>
+      (realCvr && l.cvr === realCvr) || (dom && domOf(l) === dom) || phonesOf(l).some((p) => p && phonesIn.includes(p)));
+
+    let lead, created = false;
+    if (existing) {
+      const who = (id) => nameById[id] || id;
+      if (existing.lastAction === "demo-booked") return res.status(409).json({ error: `${existing.name} findes allerede - der er booket en demo${existing.demo_booked_by ? " af " + who(existing.demo_booked_by) : ""}.` });
+      if (existing.lastAction === "not-relevant") {
+        // Most archived leads were binned by the pipeline's own filters, not
+        // by a person - an SDR with a reason to try one may. A "no" said by
+        // another SDR on the phone, or by admin, stands.
+        const last = (existing.calls || []).slice(-1)[0];
+        const humanNo = (last && last.action === "not-relevant" && last.by) || existing.archived_by || null;
+        if (humanNo && humanNo !== me) return res.status(409).json({ error: `${existing.name} findes allerede og er arkiveret som ikke relevant af ${who(humanNo)}. Admin kan genåbne det.` });
+        existing.lastAction = null; existing.archived_at = null; existing.archived_by = null; existing.resurface_at = null; existing.deferred_until = null;
+      }
+      if (sdrClaimedByOther(existing, me, now)) return res.status(409).json({ error: `${existing.name} findes allerede og ligger hos ${who(existing.claimed_by)}.` });
+      if (existing.callback_at && !sdrFollowupMine(existing, me)) return res.status(409).json({ error: `${existing.name} findes allerede som opfølgning hos ${who(sdrFollowupOwner(existing))}.` });
+      if (existing.twenty_opportunity_id) return res.status(409).json({ error: `${existing.name} findes allerede i det gamle CRM (Twenty).` });
+      // Parked with "Ikke nu": the customer told someone not now. If that was
+      // me, I may pull it forward; if it was the other SDR, it stays parked -
+      // otherwise one SDR rings a customer who just told the other "not now".
+      const parkedUntil = [existing.resurface_at, existing.deferred_until].filter((x) => x && new Date(x).getTime() > now).sort().pop();
+      if (parkedUntil) {
+        const last = (existing.calls || []).slice(-1)[0];
+        if (last && last.by && last.by !== me) {
+          const dt = new Date(parkedUntil).toLocaleDateString("da-DK", { day: "numeric", month: "long" });
+          return res.status(409).json({ error: `${existing.name} findes allerede - de sagde "ikke nu" til ${who(last.by)}, og det kommer selv tilbage ${dt}.` });
+        }
+        existing.resurface_at = null; existing.deferred_until = null;
+      }
+      // My own callback in the future: I'm choosing to ring now instead.
+      if (existing.callback_at && new Date(existing.callback_at).getTime() > now) existing.callback_at = null;
+      if (existing.apollo_enrichment_pending === true) existing.apollo_enrichment_pending = false;
+      lead = existing;
+    } else {
+      const slug = (dom || name).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "lead";
+      lead = {
+        cvr: realCvr || `manual-${slug}-${crypto.randomBytes(2).toString("hex")}`,
+        name, city: str(b.city, 80), ind: "",
+        web: dom ? `https://${dom}` : "", website: dom ? `https://${dom}` : "",
+        phone: mainPhone ? normDkPhone(mainPhone) : "", ph: mainPhone ? normDkPhone(mainPhone) : "",
+        phone_source: mainPhone ? "sdr-manual-main" : undefined,
+        contacts: [],
+        source: "manual-sdr", source_label: "Tilføjet af SDR",
+        addedAt: nowIso, discovered_at: nowIso,
+      };
+      d.leads.push(lead); created = true;
+    }
+    // What the SDR knows goes onto the lead, new or existing - without
+    // overwriting a contact that is already there under the same name.
+    if (contactName) {
+      lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+      let c = lead.contacts.find((x) => x && x.name && x.name.trim().toLowerCase() === contactName.toLowerCase());
+      if (!c) { c = { name: contactName, source_discovery: "sdr-manual", addedAt: nowIso, added_by: me }; lead.contacts.unshift(c); }
+      if (str(b.contact_title, 120)) c.title = str(b.contact_title, 120);
+      if (str(b.contact_email, 160)) c.email = str(b.contact_email, 160);
+      if (contactPhone) { const np = normDkPhone(contactPhone); c.phone = np; c.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; c.source_phone = "sdr-manual"; }
+      lead.preferred_contact_name = contactName;
+    }
+    if (!created && mainPhone && !isDkPhone(lead.phone || lead.ph)) { lead.phone = normDkPhone(mainPhone); lead.ph = lead.phone; lead.phone_source = "sdr-manual-main"; }
+    lead.manual_by = me; lead.manual_at = nowIso;
+    lead.needs_enrichment = false;
+    // Never say "it's on your list" unless the list will actually keep it -
+    // nothing has been saved yet, so refusing here changes nothing.
+    if (!sdrEligible(lead, now)) return res.status(409).json({ error: `${lead.name} kan ikke komme på listen lige nu${!sdrCallable(lead) ? " - der mangler et dansk nummer" : ""}.` });
+    // Top of my list, claimed, off everyone else's.
+    d.sdr_lists = d.sdr_lists || {};
+    for (const [uid, Lst] of Object.entries(d.sdr_lists)) if (uid !== me) Lst.cvrs = (Lst.cvrs || []).filter((x) => x !== lead.cvr);
+    const L = d.sdr_lists[me] = d.sdr_lists[me] || { date: sdrDayKey(now), cvrs: [], done: [] };
+    L.cvrs = [lead.cvr, ...(L.cvrs || []).filter((x) => x !== lead.cvr)];
+    L.done = (L.done || []).filter((x) => x !== lead.cvr);
+    sdrClaim(lead, me, now);
+    lead.owner_override = me; lead.owner_override_at = nowIso;
+    const note = str(b.note, 2000);
+    sdrAppendNote(lead, me, created ? `Tilføjet manuelt af ${nameById[me] || me}${note ? ": " + note : ""}` : `Hentet ind manuelt af ${nameById[me] || me}${note ? ": " + note : ""}`);
+    sdrTouch(lead, true);
+    savePool(d);
+    logActivity("sdr-manual-lead", `${nameById[me] || me} ${created ? "tilføjede" : "hentede"} ${lead.name}`, { cvr: lead.cvr, userId: me });
+    sdrRespond(res, me, d, { added: { cvr: lead.cvr, name: lead.name, created } });
+  } catch (e) { sdrFail(res, e, "lead"); }
+});
 // "Spring over": show me a different one. The old button just re-fetched, and
 // since the lead was held by me it came straight back - so it did nothing.
 app.post("/api/sdr/research/pass", authMiddleware, (req, res) => {
