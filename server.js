@@ -6706,6 +6706,7 @@ async function storeLeadsSearchDomains(platform, opts = {}) {
   if (opts.pcmin !== null) body["f:pcmin"] = opts.pcmin || STORELEADS_MIN_PRODUCTS;
   if (opts.rankmin !== null) body["f:rankmin"] = opts.rankmin || STORELEADS_RANK_MIN;
   if (opts.rankmax !== null) body["f:rankmax"] = opts.rankmax || STORELEADS_RANK_MAX;
+  if (opts.cat) body["f:cat"] = opts.cat; // exact category path, e.g. "/Travel/Hotels & Accommodations"
   if (opts.cursor) body.cursor = opts.cursor;
   const r = await fetch(`${STORELEADS_API_BASE}/domain`, {
     method: "POST",
@@ -6760,7 +6761,29 @@ const STORELEADS_BAND_SINCE = "2026-09-08"; // first day of the v2 query - scans
 //      businesses with a small shop: hotels, restaurants, clinics, escape
 //      rooms, B2B) plus ~6,500 with no product count. The query overlaps
 //      tiers 1-2; scannedDomains skips what they already fetched.
+// Service businesses that happen to run a small shop - hotels, clinics,
+// fitness, B2B - found by StoreLeads' own category (`f:cat`, exact path).
+// ~4,700 DK companies, about half with the Meta pixel. Pulled first because
+// they are few; promoted as tier 3, after the webshop bands.
+const STORELEADS_NICHES = [
+  ["sport", "/Sports/Individual Sports", "Sport og klubber"],
+  ["uddannelse", "/Jobs & Education/Education", "Undervisning og kurser"],
+  ["b2b", "/Business & Industrial/Business Services", "B2B-services"],
+  ["fitness", "/Beauty & Fitness/Fitness", "Fitness"],
+  ["have", "/Home & Garden/Gardening & Landscaping", "Have og anlæg"],
+  ["autodele", "/Autos & Vehicles/Parts & Services", "Autodele og service"],
+  ["haandvaerk", "/Home & Garden/Home Improvement", "Håndværk og bolig"],
+  ["frisoer", "/Beauty & Fitness/Hair Care", "Frisører"],
+  ["sundhed", "/Health/Health Conditions", "Sundhed"],
+  ["hotel", "/Travel/Hotels & Accommodations", "Hoteller og overnatning"],
+  ["autovaerksted", "/Autos & Vehicles/Repair & Maintenance", "Autoværksteder"],
+  ["kosmetik", "/Beauty & Fitness/Cosmetic Procedures", "Kosmetiske klinikker"],
+  ["spa", "/Beauty & Fitness/Spas & Beauty Services", "Spa og skønhed"],
+  ["laege", "/Health/Medical Services", "Lægeklinikker"],
+  ["tandlaege", "/Health/Oral & Dental Care", "Tandlæger"],
+];
 const STORELEADS_BANDS = [
+  ...STORELEADS_NICHES.map(([id, cat, label]) => ({ id: `cat:${id}`, tier: 3, niche: label, cat, pcmin: null, rankmin: null, rankmax: null, label })),
   { id: STORELEADS_QUERY_VERSION, tier: 1, rankmin: STORELEADS_RANK_MIN, rankmax: STORELEADS_RANK_MAX, label: "10+ varer, trafik-rang 100k-3M" },
   { id: "long-tail", tier: 2, rankmin: STORELEADS_RANK_MAX, rankmax: null, label: "10+ varer, lav trafik" },
   { id: "all-dk", tier: 3, pcmin: null, rankmin: null, rankmax: null, label: "alle øvrige DK-butikker" },
@@ -6780,7 +6803,11 @@ function saveStoreLeadsReserve(r) {
 }
 // Counts per tier, stored in the (small) state file so the admin panel never
 // has to read the reserve itself - with all tiers pulled it runs to ~40k shops.
-function storeLeadsReserveCounts(r) { const byTier = {}; for (const x of Object.values(r.items || {})) byTier[x.tier || 1] = (byTier[x.tier || 1] || 0) + 1; return { total: Object.keys(r.items || {}).length, byTier }; }
+function storeLeadsReserveCounts(r) {
+  const byTier = {}, byBand = {};
+  for (const x of Object.values(r.items || {})) { byTier[x.tier || 1] = (byTier[x.tier || 1] || 0) + 1; byBand[x.band || "?"] = (byBand[x.band || "?"] || 0) + 1; }
+  return { total: Object.keys(r.items || {}).length, byTier, byBand };
+}
 function storeLeadsHost(u) { return String(u || "").toLowerCase().trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, ""); }
 // Best shops leave the reserve first: a Danish number means callable without
 // a paid reveal, the pixel and a Facebook page mean it probably advertises.
@@ -6798,123 +6825,10 @@ function storeLeadsBandPulled(state, key) {
   return state.bandPulled[key];
 }
 
-// Two steps per run. PULL (always): the next pages of each platform into the
-// reserve - `pull` shops per platform, default 400. PROMOTE (gated): up to
-// per_platform × 2 of the best reserve shops through Datafordeler into the
-// pool, never more than the fresh-lead buffer is short. ?force=1 promotes the
-// full amount regardless; ?pull=0 skips pulling.
-app.post("/api/cron/storeleads-discover", async (req, res) => {
-  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
-    return res.status(401).json({ error: "Invalid cron secret" });
-  }
-  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
-  const PER_PLATFORM = Math.max(1, Math.min(100, Number(req.query.per_platform) || 30));
-  const PULL = Math.max(0, Math.min(2000, req.query.pull !== undefined ? Number(req.query.pull) || 0 : STORELEADS_PULL_DEFAULT));
-  const FORCE = req.query.force === "1";
-  const stats = {
-    perPlatform: {},
-    candidatesScanned: 0,
-    alreadyKnown: 0,
-    nonDkBrand: 0,
-    inPool: 0,
-    reserveAdded: 0,
-    reserveSize: 0,
-    promoteRoom: 0,
-    promoted: 0,
-    dfMatched: 0,
-    dfNoMatch: 0,
-    saved: 0,
-    skippedDuplicates: 0,
-    errors: 0,
-  };
-  const state = loadStoreLeadsState();
-  state.exhausted = state.exhausted || {};
-  state.bandTotals = state.bandTotals || {};
-  state.bandPulled = state.bandPulled || {};
-  const reserve = loadStoreLeadsReserve();
-  const checkedAt = new Date().toISOString();
-
-  // ── 1. Pull into the reserve ──
-  const d0 = loadUserData(TARGET_USER);
-  const poolHosts = new Set((d0.leads || []).map((l) => storeLeadsHost(l.web || l.website)).filter(Boolean));
-  const poolNames = new Set((d0.leads || []).map((l) => String(l.name || "").toLowerCase().trim()).filter(Boolean));
-  if (PULL > 0 && isStoreLeadsConfigured()) {
-    for (const platform of STORELEADS_PLATFORMS) {
-      const pStats = { fetched: 0, added: 0, bands: [] };
-      try {
-       for (const band of STORELEADS_BANDS) {
-        if (pStats.fetched >= PULL) break;
-        // Cursors belong to a query; the key carries the band id so a filter
-        // change restarts paging instead of resuming an old cursor.
-        const cursorKey = `${platform}@${band.id}`;
-        const doneAt = state.exhausted[cursorKey];
-        if (doneAt && Date.now() - new Date(doneAt).getTime() < STORELEADS_RESCAN_MS) continue;
-        if (doneAt) { delete state.exhausted[cursorKey]; state.platformCursors[cursorKey] = null; state.bandPulled[cursorKey] = 0; } // a month on: walk it again for new shops
-        pStats.bands.push(band.id);
-        while (pStats.fetched < PULL) {
-          const page = await storeLeadsSearchDomains(platform, { pageSize: Math.min(100, PULL - pStats.fetched), cursor: state.platformCursors[cursorKey] || null, pcmin: band.pcmin, rankmin: band.rankmin, rankmax: band.rankmax });
-          const domains = page.domains || [];
-          pStats.fetched += domains.length;
-          stats.candidatesScanned += domains.length;
-          state.bandPulled[cursorKey] = storeLeadsBandPulled(state, cursorKey) + domains.length;
-          if (page.total != null) state.bandTotals[cursorKey] = page.total;
-          for (const dom of domains) {
-            const domain = String(dom.name || dom.tld1 || "").toLowerCase().trim();
-            if (!domain) continue;
-            if (state.scannedDomains[domain]) { stats.alreadyKnown++; continue; }
-            state.scannedDomains[domain] = checkedAt;
-            const merchantName = (dom.merchant_name || dom.title || domain).trim();
-            if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
-            // Size / storefront / Danish-signal checks on the record itself.
-            const q = storeLeadsQualify(dom, domain);
-            if (!q.ok) { stats[q.reason] = (stats[q.reason] || 0) + 1; continue; }
-            if (poolHosts.has(storeLeadsHost(domain)) || poolNames.has(merchantName.toLowerCase())) { stats.inPool++; continue; }
-            reserve.items[domain] = {
-              domain, platform, name: merchantName,
-              phone: q.dkPhone || _storeLeadsPhone(dom) || "", email: q.email, facebook_url: q.facebookUrl, meta_pixel: q.metaPixel,
-              tech: (q.techNames || []).slice(0, 25), city: dom.city || "", category: (dom.categories || [])[0] || "",
-              employees: dom.employee_count || "", rank: dom.rank || null, products: dom.product_count || null,
-              sales: dom.estimated_sales_yearly || null, visits: dom.estimated_visits || null, pulled_at: checkedAt,
-              tier: band.tier, band: band.id,
-            };
-            stats.reserveAdded++; pStats.added++;
-          }
-          state.platformCursors[cursorKey] = page.has_next_page ? page.next_cursor : null;
-          if (!page.has_next_page) { state.exhausted[cursorKey] = checkedAt; break; }
-          if (!domains.length) break;
-          await new Promise((r) => setTimeout(r, 300)); // StoreLeads allows 5 requests a second
-        }
-       }
-        // Size of the bands not reached yet, for the admin panel - one
-        // single-record request each, once.
-        for (const band of STORELEADS_BANDS) {
-          const k = `${platform}@${band.id}`;
-          if (state.bandTotals[k] != null) continue;
-          const page = await storeLeadsSearchDomains(platform, { pageSize: 1, pcmin: band.pcmin, rankmin: band.rankmin, rankmax: band.rankmax });
-          if (page.total != null) state.bandTotals[k] = page.total;
-          await new Promise((r) => setTimeout(r, 300));
-        }
-        delete state.lastPullError;
-      } catch (e) {
-        stats.errors++;
-        state.lastPullError = { at: checkedAt, message: String(e.message || e).slice(0, 200) };
-        console.warn(`[storeleads-discover] pull platform=${platform} failed:`, e.message);
-      }
-      stats.perPlatform[platform] = pStats;
-    }
-    state.lastRunAt = checkedAt;
-    state.reserveCounts = storeLeadsReserveCounts(reserve);
-    saveStoreLeadsState(state);
-    saveStoreLeadsReserve(reserve);
-  }
-
-  // ── 2. Promote the best reserve shops into the pool ──
-  const st = sdrIntakeStatus(d0);
-  const cap = PER_PLATFORM * 2;
-  const n = FORCE ? cap : Math.min(cap, st.room);
-  stats.promoteRoom = FORCE ? cap : (Number.isFinite(st.room) ? st.room : cap);
-  const picks = Object.values(reserve.items).sort(storeLeadsReserveOrder).slice(0, Math.max(0, n));
-  if (!picks.length && !FORCE) console.log("[intake-cap] storeleads promote skipped: " + sdrIntakeMsg(st));
+// Reserve shops → pool leads: Datafordeler first (it takes minutes and a pool
+// copy held across it would be stale), then load, append and save in one go.
+// Used by the cron and by the admin "hent ind i puljen nu" button.
+async function storeLeadsPromote(picks, TARGET_USER, reserve, stats, checkedAt) {
   // Datafordeler first, with no pool in hand: the lookups take minutes, and a
   // pool copy loaded before them would be stale by the time it is saved.
   const built = [];
@@ -6986,6 +6900,7 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
         lead.storeleads_estimated_visits = rec.visits || null;
         lead.storeleads_pulled_at = rec.pulled_at || null;
         lead.storeleads_tier = rec.tier || 1;
+        if (rec.niche) lead.storeleads_niche = rec.niche;
         lead.discovered_at = checkedAt;
         lead.apollo_company = null;
         lead.apollo_enrichment_pending = false; // we'll lazy-enrich on cockpit-open
@@ -7003,6 +6918,125 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
     saveStoreLeadsReserve(reserve);
     const st2 = loadStoreLeadsState(); st2.reserveCounts = storeLeadsReserveCounts(reserve); saveStoreLeadsState(st2);
   }
+}
+// Two steps per run. PULL (always): the next pages of each platform into the
+// reserve - `pull` shops per platform, default 400. PROMOTE (gated): up to
+// per_platform × 2 of the best reserve shops through Datafordeler into the
+// pool, never more than the fresh-lead buffer is short. ?force=1 promotes the
+// full amount regardless; ?pull=0 skips pulling.
+app.post("/api/cron/storeleads-discover", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: "Invalid cron secret" });
+  }
+  const TARGET_USER = (req.query.userId || "pool").toString(); // 2026-08 reboot: intake lands in the shared pool
+  const PER_PLATFORM = Math.max(1, Math.min(100, Number(req.query.per_platform) || 30));
+  const PULL = Math.max(0, Math.min(2000, req.query.pull !== undefined ? Number(req.query.pull) || 0 : STORELEADS_PULL_DEFAULT));
+  const FORCE = req.query.force === "1";
+  const stats = {
+    perPlatform: {},
+    candidatesScanned: 0,
+    alreadyKnown: 0,
+    nonDkBrand: 0,
+    inPool: 0,
+    reserveAdded: 0,
+    reserveSize: 0,
+    promoteRoom: 0,
+    promoted: 0,
+    dfMatched: 0,
+    dfNoMatch: 0,
+    saved: 0,
+    skippedDuplicates: 0,
+    errors: 0,
+  };
+  const state = loadStoreLeadsState();
+  state.exhausted = state.exhausted || {};
+  state.bandTotals = state.bandTotals || {};
+  state.bandPulled = state.bandPulled || {};
+  const reserve = loadStoreLeadsReserve();
+  const checkedAt = new Date().toISOString();
+
+  // ── 1. Pull into the reserve ──
+  const d0 = loadUserData(TARGET_USER);
+  const poolHosts = new Set((d0.leads || []).map((l) => storeLeadsHost(l.web || l.website)).filter(Boolean));
+  const poolNames = new Set((d0.leads || []).map((l) => String(l.name || "").toLowerCase().trim()).filter(Boolean));
+  if (PULL > 0 && isStoreLeadsConfigured()) {
+    for (const platform of STORELEADS_PLATFORMS) {
+      const pStats = { fetched: 0, added: 0, bands: [] };
+      try {
+       for (const band of STORELEADS_BANDS) {
+        if (pStats.fetched >= PULL) break;
+        // Cursors belong to a query; the key carries the band id so a filter
+        // change restarts paging instead of resuming an old cursor.
+        const cursorKey = `${platform}@${band.id}`;
+        const doneAt = state.exhausted[cursorKey];
+        if (doneAt && Date.now() - new Date(doneAt).getTime() < STORELEADS_RESCAN_MS) continue;
+        if (doneAt) { delete state.exhausted[cursorKey]; state.platformCursors[cursorKey] = null; state.bandPulled[cursorKey] = 0; } // a month on: walk it again for new shops
+        pStats.bands.push(band.id);
+        while (pStats.fetched < PULL) {
+          const page = await storeLeadsSearchDomains(platform, { pageSize: Math.min(100, PULL - pStats.fetched), cursor: state.platformCursors[cursorKey] || null, pcmin: band.pcmin, rankmin: band.rankmin, rankmax: band.rankmax, cat: band.cat });
+          const domains = page.domains || [];
+          pStats.fetched += domains.length;
+          stats.candidatesScanned += domains.length;
+          state.bandPulled[cursorKey] = storeLeadsBandPulled(state, cursorKey) + domains.length;
+          if (page.total != null) state.bandTotals[cursorKey] = page.total;
+          for (const dom of domains) {
+            const domain = String(dom.name || dom.tld1 || "").toLowerCase().trim();
+            if (!domain) continue;
+            if (state.scannedDomains[domain]) { stats.alreadyKnown++; continue; }
+            state.scannedDomains[domain] = checkedAt;
+            const merchantName = (dom.merchant_name || dom.title || domain).trim();
+            if (looksLikeNonDkBrand(merchantName)) { stats.nonDkBrand++; continue; }
+            // Size / storefront / Danish-signal checks on the record itself.
+            const q = storeLeadsQualify(dom, domain);
+            if (!q.ok) { stats[q.reason] = (stats[q.reason] || 0) + 1; continue; }
+            if (poolHosts.has(storeLeadsHost(domain)) || poolNames.has(merchantName.toLowerCase())) { stats.inPool++; continue; }
+            reserve.items[domain] = {
+              domain, platform, name: merchantName,
+              phone: q.dkPhone || _storeLeadsPhone(dom) || "", email: q.email, facebook_url: q.facebookUrl, meta_pixel: q.metaPixel,
+              tech: (q.techNames || []).slice(0, 25), city: dom.city || "", category: (dom.categories || [])[0] || "",
+              employees: dom.employee_count || "", rank: dom.rank || null, products: dom.product_count || null,
+              sales: dom.estimated_sales_yearly || null, visits: dom.estimated_visits || null, pulled_at: checkedAt,
+              tier: band.tier, band: band.id, niche: band.niche || "",
+            };
+            stats.reserveAdded++; pStats.added++;
+          }
+          state.platformCursors[cursorKey] = page.has_next_page ? page.next_cursor : null;
+          if (!page.has_next_page) { state.exhausted[cursorKey] = checkedAt; break; }
+          if (!domains.length) break;
+          await new Promise((r) => setTimeout(r, 300)); // StoreLeads allows 5 requests a second
+        }
+       }
+        // Size of the bands not reached yet, for the admin panel - one
+        // single-record request each, once.
+        for (const band of STORELEADS_BANDS) {
+          const k = `${platform}@${band.id}`;
+          if (state.bandTotals[k] != null) continue;
+          const page = await storeLeadsSearchDomains(platform, { pageSize: 1, pcmin: band.pcmin, rankmin: band.rankmin, rankmax: band.rankmax, cat: band.cat });
+          if (page.total != null) state.bandTotals[k] = page.total;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        delete state.lastPullError;
+      } catch (e) {
+        stats.errors++;
+        state.lastPullError = { at: checkedAt, message: String(e.message || e).slice(0, 200) };
+        console.warn(`[storeleads-discover] pull platform=${platform} failed:`, e.message);
+      }
+      stats.perPlatform[platform] = pStats;
+    }
+    state.lastRunAt = checkedAt;
+    state.reserveCounts = storeLeadsReserveCounts(reserve);
+    saveStoreLeadsState(state);
+    saveStoreLeadsReserve(reserve);
+  }
+
+  // ── 2. Promote the best reserve shops into the pool ──
+  const st = sdrIntakeStatus(d0);
+  const cap = PER_PLATFORM * 2;
+  const n = FORCE ? cap : Math.min(cap, st.room);
+  stats.promoteRoom = FORCE ? cap : (Number.isFinite(st.room) ? st.room : cap);
+  const picks = Object.values(reserve.items).sort(storeLeadsReserveOrder).slice(0, Math.max(0, n));
+  if (!picks.length && !FORCE) console.log("[intake-cap] storeleads promote skipped: " + sdrIntakeMsg(st));
+  await storeLeadsPromote(picks, TARGET_USER, reserve, stats, checkedAt);
   stats.reserveSize = Object.keys(reserve.items).length;
   logActivity(
     "discovery",
@@ -13994,6 +14028,58 @@ async function twentyRetrySync() {
   console.log("[twenty-retry-sync] done:", JSON.stringify(stats));
   return stats;
 }
+// Admin → Leads → Reserve: the StoreLeads shops pulled but not yet in the
+// pool, in the order they will be promoted. Admin can pull chosen ones in now.
+const SDR_RESERVE_PROMOTE_MAX = 40;
+function sdrReserveRow(r) {
+  return {
+    domain: r.domain, name: r.name || r.domain, platform: r.platform || "", city: r.city || "",
+    tier: r.tier || 1, niche: r.niche || "", band: r.band || "", category: r.category || "",
+    phone: isDkPhone(r.phone) ? normDkPhone(r.phone) : "", email: r.email || "",
+    pixel: !!r.meta_pixel, facebook: !!r.facebook_url, rank: r.rank || null, products: r.products || null,
+    sales: r.sales || null, pulled_at: r.pulled_at || null,
+  };
+}
+app.get("/api/sdr/admin/reserve", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const reserve = loadStoreLeadsReserve(); const st = loadStoreLeadsState();
+    const items = Object.values(reserve.items || {});
+    const f = String(req.query.filter || "all"); const q = String(req.query.q || "").trim().toLowerCase();
+    const page = Math.max(1, Number(req.query.page) || 1); const per = 50;
+    const preds = {
+      all: () => true, tier1: (r) => (r.tier || 1) === 1, tier2: (r) => r.tier === 2,
+      tier3: (r) => r.tier === 3 && !r.niche, niche: (r) => !!r.niche,
+      phone: (r) => isDkPhone(r.phone), pixel: (r) => !!r.meta_pixel,
+    };
+    const counts = Object.fromEntries(Object.entries(preds).map(([k, p]) => [k, items.filter(p).length]));
+    let rows = items.filter(preds[f] || preds.all);
+    if (q) rows = rows.filter((r) => [r.name, r.domain, r.city, r.niche].filter(Boolean).join(" ").toLowerCase().includes(q));
+    rows.sort(storeLeadsReserveOrder);
+    const intake = sdrIntakeStatus();
+    res.json({
+      ok: true, total: rows.length, page, per, counts,
+      rows: rows.slice((page - 1) * per, page * per).map(sdrReserveRow),
+      niches: STORELEADS_NICHES.map(([id, , label]) => ({ id, label, n: Number(((st.reserveCounts || {}).byBand || {})[`cat:${id}`]) || 0 })).filter((x) => x.n),
+      lastRun: st.lastRunAt || null, max: SDR_RESERVE_PROMOTE_MAX,
+      intake: { fresh: intake.fresh, pending: intake.pending, target: intake.target, paused: intake.paused },
+    });
+  } catch (e) { sdrFail(res, e, "admin/reserve"); }
+});
+app.post("/api/sdr/admin/reserve/promote", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const want = (Array.isArray((req.body || {}).domains) ? req.body.domains : []).map(String).slice(0, SDR_RESERVE_PROMOTE_MAX);
+    if (!want.length) return res.status(400).json({ error: "Ingen butikker valgt" });
+    const reserve = loadStoreLeadsReserve();
+    const picks = want.map((d) => reserve.items[d]).filter(Boolean);
+    if (!picks.length) return res.status(400).json({ error: "De valgte butikker er ikke i reserven længere" });
+    const stats = { promoted: 0, saved: 0, dfMatched: 0, dfNoMatch: 0, skippedDuplicates: 0, errors: 0 };
+    await storeLeadsPromote(picks, POOL_ID, reserve, stats, new Date().toISOString());
+    logActivity("discovery", `Admin hentede ${stats.promoted} butik(ker) fra reserven ind i puljen`, { userId: req.userId, stats });
+    res.json({ ok: true, stats });
+  } catch (e) { sdrFail(res, e, "admin/reserve/promote"); }
+});
 // Admin → Genopring: the retry leads waiting to be handed out, best first.
 app.get("/api/sdr/admin/retry", authMiddleware, (req, res) => {
   try {
@@ -15722,16 +15808,23 @@ app.get("/api/sdr/admin/subscriptions", authMiddleware, async (req, res) => {
     // StoreLeads - flat, so the more of the list we hold the better.
     const st = loadStoreLeadsState(); const rc = st.reserveCounts || { total: 0, byTier: {} };
     const pulledMonth = Object.values(st.scannedDomains || {}).filter((t) => String(t).startsWith(month)).length;
-    const bands = STORELEADS_BANDS.map((b) => {
-      const keys = STORELEADS_PLATFORMS.map((p) => `${p}@${b.id}`);
+    const bandNums = (list) => {
+      const keys = list.flatMap((b) => STORELEADS_PLATFORMS.map((p) => `${p}@${b.id}`));
       const total = keys.reduce((a, k) => a + (Number((st.bandTotals || {})[k]) || 0), 0);
-      const done = keys.every((k) => (st.exhausted || {})[k]);
       const pulled = keys.reduce((a, k) => a + (Number((st.bandPulled || {})[k]) || 0), 0);
-      return { tier: b.tier, label: b.label, total, done, pulled, left: done ? 0 : Math.max(0, total - pulled), reserve: Number(rc.byTier[b.tier]) || 0 };
-    });
-    // Tier 3's query is every DK shop, so its total includes tiers 1-2.
+      const done = keys.every((k) => (st.exhausted || {})[k]);
+      const reserve = list.reduce((a, b) => a + (Number((rc.byBand || {})[b.id]) || 0), 0);
+      return { total, pulled, done, left: done ? 0 : Math.max(0, total - pulled), reserve };
+    };
+    const webshop = STORELEADS_BANDS.filter((b) => !b.cat);
+    const niches = STORELEADS_BANDS.filter((b) => b.cat);
+    const bands = [
+      ...webshop.map((b) => ({ tier: b.tier, label: b.label, ...bandNums([b]) })),
+      { tier: 3, label: "brancher: hoteller, klinikker, fitness m.fl.", niche: true, ...bandNums(niches) },
+    ];
+    // Tier 3's shop query is every DK shop, so its total includes tiers 1-2.
     const bandText = (b) => {
-      const own = b.tier === 3 ? Math.max(0, b.total - bands.filter((x) => x.tier < 3).reduce((a, x) => a + x.total, 0)) : b.total;
+      const own = b.tier === 3 && !b.niche ? Math.max(0, b.total - bands.filter((x) => x.tier < 3).reduce((a, x) => a + x.total, 0)) : b.total;
       if (b.done) return "alt hentet";
       if (!b.total) return "størrelse ukendt endnu";
       if (!b.pulled) return `venter · ~${num(own)} butikker`;
@@ -15747,7 +15840,7 @@ app.get("/api/sdr/admin/subscriptions", authMiddleware, async (req, res) => {
     rows.push({
       key: "storeleads", name: "StoreLeads", billing: `Fast · ${money(tools.storeleads_usd)}/md`, cost: tools.storeleads_usd,
       used: `${num(pulledMonth)} butikker hentet i ${mName} · ${num(rc.total)} i reserven`,
-      detail: bands.map((b) => `Tier ${b.tier} (${b.label}): ${bandText(b)} · ${num(b.reserve)} i reserven`).join("\n")
+      detail: bands.map((b) => `${b.niche ? "Tier 3" : "Tier " + b.tier} (${b.label}): ${bandText(b)} · ${num(b.reserve)} i reserven`).join("\n")
         + `\nPuljen: ${intake.fresh} friske leads klar (+${intake.pending} på vej), mål ${intake.target || "slået fra"} → ${intake.paused ? "henter ikke fra reserven lige nu" : "henter fra reserven"}`,
       tone: slErr ? "bad" : (leftAll === 0 ? "good" : "warn"),
       status: slErr ? `API fejlede: ${slErr}` : leftAll === 0

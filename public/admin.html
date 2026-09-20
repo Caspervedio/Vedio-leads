@@ -238,7 +238,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 
   <!-- LEADS -->
   <section id="view-leads" class="view">
-    <div class="subnav" id="leads-sub"><button data-sub="pool" class="on" onclick="leadsSub('pool')">Puljen</button><button data-sub="retry" onclick="leadsSub('retry')">Genopring<span class="n" id="n-retry">0</span></button></div>
+    <div class="subnav" id="leads-sub"><button data-sub="pool" class="on" onclick="leadsSub('pool')">Puljen</button><button data-sub="retry" onclick="leadsSub('retry')">Genopring<span class="n" id="n-retry">0</span></button><button data-sub="reserve" onclick="leadsSub('reserve')">Reserve<span class="n" id="n-reserve">0</span></button></div>
     <div id="leads-pool">
     <div class="tablewrap">
       <div class="thead">
@@ -260,6 +260,27 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       </table>
       <div class="pager" id="pager"></div>
     </div>
+    </div>
+    <div id="leads-reserve" hidden>
+      <div class="tiles" id="reserve-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
+      <div class="tablewrap">
+        <div class="thead" style="border-bottom:0">
+          <div><h3>Reserven</h3><p>Butikker hentet fra StoreLeads, som endnu ikke er i puljen. Puljen henter selv de bedste ind, når SDR'erne mangler friske leads - her kan du se hvad der venter, og hente bestemte ind med det samme.</p></div>
+          <div id="reserve-intake" style="text-align:right;font-size:12px;color:var(--txt-faint)"></div>
+        </div>
+        <div class="filters left" id="reserve-filters" style="padding:0 24px 10px"></div>
+        <div class="toolbar">
+          <div class="search"><input id="vq" placeholder="Søg butik, domæne, by…" oninput="reserveSearch()"></div>
+          <span id="vcount" style="font-size:13px;color:var(--txt-soft);font-variant-numeric:tabular-nums"></span>
+          <span style="margin-left:auto;font-size:13px;color:var(--txt-soft)" id="vsel"></span>
+          <span id="reserve-take" class="row" style="gap:6px"></span>
+        </div>
+        <table>
+          <thead><tr><th style="width:36px"><input type="checkbox" onchange="reserveSelAll(this.checked)"></th><th>Butik</th><th>Gruppe</th><th>Signaler</th><th class="num">Rang · varer</th><th>Hentet</th></tr></thead>
+          <tbody id="tb-reserve"><tr class="empty-row"><td colspan="6">Henter…</td></tr></tbody>
+        </table>
+        <div class="pager" id="reserve-pager"></div>
+      </div>
     </div>
     <div id="leads-retry" hidden>
     <div class="tiles" id="retry-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
@@ -832,6 +853,48 @@ async function saveSettings() {
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
 }
 
+/* Reserve - StoreLeads shops pulled but not yet in the pool */
+let VF = 'all', VQ = '', VP = 1, VD = null; const VSEL = new Set(); let vqTimer = null;
+const VFILTERS = [['all', 'Alle'], ['tier1', 'Tier 1'], ['tier2', 'Tier 2'], ['tier3', 'Tier 3'], ['niche', 'Brancher'], ['phone', 'Med nummer'], ['pixel', 'Med Meta-pixel']];
+function reserveSearch() { clearTimeout(vqTimer); vqTimer = setTimeout(() => { VQ = $('vq').value.trim(); VP = 1; reserveReload(); }, 250); }
+function reserveSetFilter(f) { VF = f; VP = 1; VSEL.clear(); reserveReload(); }
+async function reserveReload() {
+  $('tb-reserve').innerHTML = `<tr class="empty-row"><td colspan="6">Henter…</td></tr>`;
+  try {
+    const d = VD = await get(`/api/sdr/admin/reserve?filter=${VF}&q=${encodeURIComponent(VQ)}&page=${VP}`);
+    const c = d.counts || {}; const it = d.intake || {};
+    $('n-reserve').textContent = c.all || 0;
+    $('reserve-tiles').innerHTML = [['I reserven', c.all, true], ['Tier 1 · de bedste', c.tier1], ['Brancher', c.niche], ['Med dansk nummer', c.phone]].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v ?? 0)}</b><span>${l}</span></div>`).join('');
+    $('reserve-filters').innerHTML = VFILTERS.map(([k, l]) => `<button class="${VF === k ? 'on' : ''}" onclick="reserveSetFilter('${k}')">${l}<span class="n">${c[k] ?? 0}</span></button>`).join('');
+    $('reserve-intake').innerHTML = `${it.fresh ?? 0} friske leads klar${it.pending ? ` (+${it.pending} på vej)` : ''} · mål ${it.target || 'slået fra'}<div>${it.paused ? 'Puljen er fuld - henter ikke ind lige nu' : 'Henter selv ind fra reserven'}${d.lastRun ? ' · sidst hentet ' + e(fmtWhen(d.lastRun)) : ''}</div>`;
+    $('vcount').textContent = `${d.total} butikker`;
+    $('tb-reserve').innerHTML = d.rows.length ? d.rows.map((r) => `<tr class="${VSEL.has(r.domain) ? 'sel' : ''}">
+      <td><input type="checkbox" ${VSEL.has(r.domain) ? 'checked' : ''} onchange="reserveSel('${e(r.domain)}', this.checked)"></td>
+      <td><b>${e(r.name)}</b><span class="sub">${e(r.domain)}${r.city ? ' · ' + e(r.city) : ''}</span></td>
+      <td><span class="chip">${r.niche ? e(r.niche) : 'Tier ' + r.tier}</span><span class="sub">${e(r.platform)}${r.niche ? ' · tier 3' : ''}</span></td>
+      <td>${[r.phone ? `<span class="tag ok">${e(fmtPhone(r.phone))}</span>` : '', r.pixel ? '<span class="tag meta">Meta-pixel</span>' : '', r.facebook ? '<span class="tag">Facebook</span>' : ''].filter(Boolean).join(' ') || '<span class="sub">-</span>'}</td>
+      <td class="num" style="white-space:nowrap;color:var(--txt-soft)">${r.rank ? Number(r.rank).toLocaleString('da-DK') : '-'}${r.products ? ' · ' + r.products + ' varer' : ''}</td>
+      <td style="white-space:nowrap;color:var(--txt-soft)">${r.pulled_at ? e(fmtDate(r.pulled_at)) : '-'}</td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="6">Ingen butikker i den gruppe.</td></tr>`;
+    const pages = Math.max(1, Math.ceil(d.total / d.per));
+    $('reserve-pager').innerHTML = `<span>Side ${d.page} af ${pages}</span><span style="margin-left:auto"></span><button class="pill" ${d.page <= 1 ? 'disabled' : ''} onclick="VP--;reserveReload()">← Forrige</button><button class="pill" ${d.page >= pages ? 'disabled' : ''} onclick="VP++;reserveReload()">Næste →</button>`;
+    reserveSelUi();
+  } catch (ex) { $('tb-reserve').innerHTML = `<tr class="empty-row"><td colspan="6" style="color:#b42318">${e(ex.message)}</td></tr>`; }
+}
+function reserveSel(dom, on) { if (on) VSEL.add(dom); else VSEL.delete(dom); reserveSelUi(); }
+function reserveSelAll(on) { for (const r of (VD && VD.rows) || []) { if (on) VSEL.add(r.domain); else VSEL.delete(r.domain); } document.querySelectorAll('#tb-reserve input[type=checkbox]').forEach((x) => { const m = x.getAttribute('onchange') && x.getAttribute('onchange').match(/'([^']+)'/); if (m) { x.checked = VSEL.has(m[1]); x.closest('tr').classList.toggle('sel', x.checked); } }); reserveSelUi(); }
+function reserveSelUi() {
+  const n = VSEL.size, max = (VD && VD.max) || 40;
+  $('vsel').textContent = n ? `${n} valgt${n > max ? ` (max ${max} ad gangen)` : ''}` : '';
+  $('reserve-take').innerHTML = n ? `<button class="pill sm violet" onclick="reserveTake()">Hent ${Math.min(n, max)} ind i puljen</button>` : '';
+}
+async function reserveTake() {
+  const max = (VD && VD.max) || 40; const domains = [...VSEL].slice(0, max);
+  if (!domains.length || !confirm(`Hent ${domains.length} butik(ker) ind i puljen nu? De bliver til leads og beriges som alle andre.`)) return;
+  const b = $('reserve-take').querySelector('button'); if (b) { b.disabled = true; b.textContent = 'Henter ind…'; }
+  try { const d = await post('/api/sdr/admin/reserve/promote', { domains }); const s = d.stats || {}; toast(`${s.promoted || 0} hentet ind i puljen${s.skippedDuplicates ? ` · ${s.skippedDuplicates} var der allerede` : ''}`, 5000); VSEL.clear(); reserveReload(); loadOverview(); }
+  catch (ex) { toast(ex.message, 5000); reserveSelUi(); }
+}
 /* Genopring - retry leads from Twenty, handed out by admin */
 let RF = 'ready', RQ = '', RP = 1, RD = null; const RSEL = new Set(); let rqTimer = null;
 const RFILTERS = [['ready', 'Klar at give ud'], ['needs', 'Mangler nummer'], ['demo', 'Har haft demo'], ['former', 'Tidligere kunde / prøvet'], ['facebook', 'Facebook-leads'], ['lost', 'Tabt'], ['linkedin', 'LinkedIn'], ['called', 'Ringet før'], ['all', 'Alle']];
@@ -1014,12 +1077,12 @@ async function csvImport() {
 /* tabs / boot */
 function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads') leadsSub(LSUB); if (id === 'intake') { loadSubs(false); loadIntegrations(false); custLoad(); } }
 // Leads has two sub-tabs: the SDRs' pool and Genopring (retry leads admin hands out).
-let LSUB = 'pool'; try { LSUB = localStorage.getItem('vl_admin_leads_sub') === 'retry' ? 'retry' : 'pool'; } catch {}
+let LSUB = 'pool'; try { const v = localStorage.getItem('vl_admin_leads_sub'); if (['retry', 'reserve'].includes(v)) LSUB = v; } catch {}
 function leadsSub(sub) {
-  LSUB = sub === 'retry' ? 'retry' : 'pool'; try { localStorage.setItem('vl_admin_leads_sub', LSUB); } catch {}
+  LSUB = ['retry', 'reserve'].includes(sub) ? sub : 'pool'; try { localStorage.setItem('vl_admin_leads_sub', LSUB); } catch {}
   document.querySelectorAll('#leads-sub button').forEach((b) => b.classList.toggle('on', b.dataset.sub === LSUB));
-  $('leads-pool').hidden = LSUB !== 'pool'; $('leads-retry').hidden = LSUB !== 'retry';
-  if (LSUB === 'retry') retryReload(); else if (!$('tb-leads').children.length) leadsReload();
+  $('leads-pool').hidden = LSUB !== 'pool'; $('leads-retry').hidden = LSUB !== 'retry'; $('leads-reserve').hidden = LSUB !== 'reserve';
+  if (LSUB === 'retry') retryReload(); else if (LSUB === 'reserve') reserveReload(); else if (!$('tb-leads').children.length) leadsReload();
 }
 // "Se som Christian / Marcus": opens the SDR app as that user in a new tab.
 async function loadImpersonateLinks() {

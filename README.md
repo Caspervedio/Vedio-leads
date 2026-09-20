@@ -104,6 +104,12 @@ bedste ind, når der mangler friske leads — i tre tiers:
 2. 10+ varer, lav trafik (~13.400)
 3. alle øvrige (~20.000 — mange er hoteller, restauranter, klinikker o.l. med en lille shop)
 
+Derudover hentes ~5.600 danske **brancher** direkte på StoreLeads' kategori
+(hoteller, klinikker, fitness, B2B, håndværk, undervisning m.fl.) — de er
+servicevirksomheder med en lille webshop, og ligger som tier 3.
+Reserven kan ses under **Leads → Reserve**, hvor du også kan hente bestemte
+butikker ind i puljen med det samme.
+
 En tier flyttes først ind, når reserven ikke har flere fra tier'en over. Når
 alt er hentet, kan StoreLeads sættes på pause — reserven fodrer videre.
 CVR-walk, Google Maps og Meta Ad Library kører først, når reserven er tom.
