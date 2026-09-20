@@ -754,7 +754,7 @@ async function openLead(cvr) {
   closeDrawer();
   const bg = document.createElement('div'); bg.className = 'drawerbg'; bg.id = 'drawerbg'; bg.onclick = closeDrawer;
   const dr = document.createElement('div'); dr.className = 'drawer'; dr.id = 'drawer';
-  const adLib = L.meta && L.meta.pageId ? `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&view_all_page_id=${encodeURIComponent(L.meta.pageId)}` : `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${encodeURIComponent(L.name || '')}&search_type=keyword_unordered`;
+  const adLib = L.meta && L.meta.adlibId ? `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(L.meta.adlibId)}` : `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=DK&q=${encodeURIComponent(L.name || '')}&search_type=keyword_unordered`;
   dr.innerHTML = `<button class="pill sm tertiary x" onclick="closeDrawer()">Luk ✕</button>
     <div class="kicker">${e(L.source)}${L.addedAt ? ' · tilføjet ' + e(fmtDate(L.addedAt)) : ''}</div>
     <h2>${e(L.name)}</h2>

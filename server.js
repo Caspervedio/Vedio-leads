@@ -7083,8 +7083,10 @@ async function enrichLeadWithMetaAds(lead) {
         : `${lead.meta_ads_recent90d} ads sidste 90 dage`,
     ];
     if (v.facebook_page_id) {
+      // From matched ads, so this id is the Ad Library's own.
       lead.facebook_page_id = String(v.facebook_page_id);
-      lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
+      lead.facebook_adlib_id = String(v.facebook_page_id);
+      lead.ad_library_url = adLibraryPageUrl(lead.facebook_adlib_id);
     }
   } else {
     // Negative result - stamp so we don't keep retrying on every cockpit
@@ -7141,7 +7143,7 @@ async function intakeEnrichLead(lead) {
   // what hands it the facebook_url. Nothing to do here any more.
   try {
     if (lead.facebook_page_id) {
-      lead.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${lead.facebook_page_id}`;
+      lead.ad_library_url = adLibraryPageUrl(lead.facebook_page_id);
       stats.ad_library = true;
     }
   } catch (_) {}
@@ -8260,7 +8262,10 @@ app.post("/api/cron/meta-pages-check", async (req, res) => {
   const usable = (l) => !!pageUrl(l);
   const d0 = loadUserData(TARGET_USER);
   const todo = (d0.leads || []).filter((l) => l.lastAction !== "not-relevant" && !l.archived_at && !l.twenty_opportunity_id && !l.retry_pool && usable(l)
-    && !(l.meta_pages_checked_at && now - new Date(l.meta_pages_checked_at).getTime() < RECHECK_MS));
+    // Due for a check, or still without an Ad Library id - but a page that
+    // didn't give one is not retried for another month either.
+    && (!(l.meta_pages_checked_at && now - new Date(l.meta_pages_checked_at).getTime() < RECHECK_MS)
+      || (!l.facebook_adlib_id && !(l.adlib_missing_at && now - new Date(l.adlib_missing_at).getTime() < RECHECK_MS))));
   stats.candidates = todo.length;
   // Leads on an SDR list first, then the newest - the ones about to be called.
   const onList = new Set(Object.values(d0.sdr_lists || {}).flatMap((L) => L.cvrs || []));
@@ -8288,10 +8293,15 @@ app.post("/api/cron/meta-pages-check", async (req, res) => {
     if (!it) { stats.errors++; continue; }
     stats.checked++;
     const pid = String(it.pageId || it.facebookId || "").trim();
-    if (/^\d{5,}$/.test(pid)) {
-      l.facebook_page_id = pid;
-      l.ad_library_url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&view_all_page_id=${pid}`;
-      stats.pageIds++;
+    if (/^\d{5,}$/.test(pid)) { l.facebook_page_id = pid; stats.pageIds++; }
+    // The Ad Library has its own id for the page - the profile-style id most
+    // pages report ("1000…") opens an empty Ad Library, this one opens their
+    // ads. Only the scraper's pageAdLibrary.id works for the link.
+    const alid = String((it.pageAdLibrary && it.pageAdLibrary.id) || "").trim();
+    if (/^\d{5,}$/.test(alid)) { l.facebook_adlib_id = alid; l.ad_library_url = adLibraryPageUrl(alid); delete l.adlib_missing_at; stats.adLibIds = (stats.adLibIds || 0) + 1; }
+    else {
+      l.adlib_missing_at = nowIso;
+      if (/^\d{5,}$/.test(pid) && !/^1000\d{10,}$/.test(pid)) l.ad_library_url = adLibraryPageUrl(pid);
     }
     if (it.title && !l.facebook_page_name) l.facebook_page_name = String(it.title);
     const followers = Number(it.followers || it.likes || 0); if (followers) l.facebook_followers = followers;
@@ -8798,6 +8808,13 @@ function instagramFromFacebook(fbUrl) {
 // the creative infrastructure + decision-makers + budget intent.
 const META_RECENT_WINDOW_DAYS = 90;
 
+// A page's own ads. `search_type=page` is what makes the Ad Library open the
+// advertiser instead of its empty search page, and `all` rather than `active`
+// keeps it useful when our last check is a few days old - a paused ad is still
+// something to open a call with.
+function adLibraryPageUrl(pageId) {
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`;
+}
 function buildAdsLibraryUrl(brand) {
   const params = new URLSearchParams({
     // active_status: "all" - includes both currently-running AND recently-
@@ -14441,6 +14458,9 @@ function sdrSlim(l, nameById) {
       checked: !!(l.meta_pages_checked_at || l.meta_verified_at),
       adsMatched: Number(l.meta_ads_active_now || 0) > 0 ? Number(l.meta_ads_active_now) : 0,
       pageId: l.meta_page_id || l.facebook_page_id || "",
+      // The id the Ad Library link needs (see meta-pages-check). A page id of
+      // the form 1000… is a profile id and opens an empty Ad Library.
+      adlibId: l.facebook_adlib_id || (/^1000\d{10,}$/.test(String(l.facebook_page_id || "")) ? "" : (l.facebook_page_id || "")),
       pageName: l.facebook_page_name || "",
     },
     source_label: sdrSourceLabel(l),
