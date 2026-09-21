@@ -14008,6 +14008,9 @@ async function twentyRetrySync() {
     if (l) {
       const calls = Array.isArray(l.calls) ? l.calls : [];
       if (calls.length) retry.badges = [...retry.badges.filter((b) => !/^Ringet /.test(b)), `Ringet ${calls.length}× før`];
+      // A follow-up date that passed long ago (the old tool's) means nothing on
+      // a lead waiting in Genopring - handed out, it would jump the queue as "due".
+      if (l.retry_pool && l.callback_at && new Date(l.callback_at).getTime() <= now) l.callback_at = null;
       if (l.retry_pool) { l.retry = retry; sdrTouch(l); stats.refreshed++; continue; }
       const last = calls[calls.length - 1];
       const humanNo = (l.lastAction === "not-relevant" && ((last && last.action === "not-relevant") || l.archived_by)) || cust.current.has(storeLeadsHost(l.web || l.website));
@@ -14021,6 +14024,7 @@ async function twentyRetrySync() {
         sdrAppendNote(l, "admin", "Genåbnet til genopring - firmaet kendes fra Twenty");
         stats.reopened++;
       }
+      if (l.callback_at && new Date(l.callback_at).getTime() <= now) l.callback_at = null;
       l.retry_pool = true; l.retry_imported_at = nowIso; sdrTouch(l); stats.moved++;
       continue;
     }
@@ -14470,6 +14474,7 @@ function sdrSlim(l, nameById) {
     note_thread: sdrNoteThread(l, nameById),
     refs: sdrRefCustomers(l),
     history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
+    research_by: l.research_by || null,
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
@@ -14521,6 +14526,19 @@ function sdrQueue(d, userId, now, exclude, settings) {
   return [...due, ...fresh];
 }
 function sdrClaim(l, userId, now) { l.claimed_by = userId; l.claimed_at = new Date(now).toISOString(); sdrTouch(l); }
+// Put a lead at the top of an SDR's own list and make it theirs - for work they
+// did themselves (research). Only when it can be called now and nobody else
+// holds it; a lead the other SDR has on their list or a follow-up on stays put.
+function sdrGiveTo(d, lead, userId, now) {
+  if (sdrIsAdmin(userId) || !sdrEligible(lead, now) || sdrClaimedByOther(lead, userId, now) || !sdrFollowupMine(lead, userId)) return false;
+  d.sdr_lists = d.sdr_lists || {};
+  for (const [uid, L] of Object.entries(d.sdr_lists)) if (uid !== userId) L.cvrs = (L.cvrs || []).filter((x) => x !== lead.cvr);
+  const L = d.sdr_lists[userId] = d.sdr_lists[userId] || { date: sdrDayKey(now), cvrs: [], done: [] };
+  L.cvrs = [lead.cvr, ...(L.cvrs || []).filter((x) => x !== lead.cvr)];
+  sdrClaim(lead, userId, now);
+  lead.owner_override = userId; lead.owner_override_at = new Date(now).toISOString();
+  return true;
+}
 function sdrUnclaim(l) { l.claimed_by = null; l.claimed_at = null; sdrTouch(l); }
 // Today's list for a user - builds it on first touch each day, prunes leads
 // that stopped being eligible, and auto-inserts follow-ups that became due.
@@ -14611,7 +14629,9 @@ function buildSdrState(userId, d) {
   // unclaimed ones. Without the claim filter both SDRs saw all 12 open
   // callbacks, including the other's - "Ring nu" then jumped to a lead that
   // wasn't on their list. Admins see everything (oversight, no list).
-  const followups = leads.filter((l) => l.callback_at && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l)
+  // Not Genopring leads: they wait for admin, and the ones that came with a
+  // follow-up date from the old tool sat at the top of both SDRs' tabs.
+  const followups = leads.filter((l) => l.callback_at && !l.retry_pool && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l)
     && (sdrIsAdmin(userId) || sdrFollowupMine(l, userId)))
     .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const demos = leads.filter((l) => l.lastAction === "demo-booked").sort((a, b) => new Date(b.demo_booked_at || 0) - new Date(a.demo_booked_at || 0));
@@ -15034,10 +15054,15 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
     lead.research_at = nowIso; lead.research_by = req.userId;
     lead.research_hold_by = null; lead.research_hold_at = null;
     lead.research_skipped_at = null;
+    // Whoever did the research calls the lead. It used to drop into the shared
+    // pool, where the next top-up handed it to the OTHER SDR - with the
+    // researcher's notes on it ("mail sendt"), and gone from their own view.
+    // 30 of Marcus' 98 researched leads ended up on Christian's list that way.
+    const mine = sdrGiveTo(d, lead, req.userId, Date.now());
     sdrTouch(lead, true);
     savePool(d);
     logActivity("sdr-research", `${meUser ? meUser.name : req.userId} berigede ${lead.name}: ${changed.join(", ")}`, { cvr: lead.cvr, userId: req.userId });
-    res.json({ ok: true, changed, callable: sdrCallable(lead), ...sdrResearchStats(d, req.userId, Date.now()) });
+    res.json({ ok: true, changed, callable: sdrCallable(lead), mine, ...sdrResearchStats(d, req.userId, Date.now()) });
   } catch (e) { sdrFail(res, e, "research/save"); }
 });
 // A note from the Research tab. Same thread as everywhere else, but the reply

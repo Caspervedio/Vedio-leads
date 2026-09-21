@@ -84,6 +84,7 @@
     <div class="subnav">
       <button data-sub="list" class="on" onclick="listSub('list')">Din liste<span class="n" id="sn-list">0</span></button>
       <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
+      <div class="search listsearch"><input id="list-q" placeholder="Søg firma, person, nummer…" oninput="renderList()"></div>
       <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve">+ Tilføj lead</button>
     </div>
     <div id="sub-list">
@@ -122,7 +123,9 @@
   <!-- ─── OPFØLGNING ───────────────────────────────────────────────────── -->
   <section id="view-followups" class="view">
     <div class="tablewrap">
-      <div class="thead"><div><h3>Opfølgninger</h3><p>Aftalte opkald. Når tidspunktet er nået, ryger de automatisk øverst på din ringeliste. <b>Ring nu</b> henter dem frem med det samme.</p></div></div>
+      <div class="thead" style="border-bottom:0"><div><h3>Opfølgninger</h3><p>Alt du har aftalt at vende tilbage til ligger her, til du har ringet - også dem, der først forfalder om en måned. Når tidspunktet er nået, ryger de automatisk øverst på din ringeliste. <b>Ring nu</b> henter dem frem med det samme.</p></div>
+        <div class="search"><input id="fu-q" placeholder="Søg firma, person, nummer, note…" oninput="renderFollowups()"></div></div>
+      <div class="filters left" id="fu-filters" style="padding:0 24px 12px"></div>
       <table><thead><tr><th>Hvornår</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th></th></tr></thead><tbody id="tb-fu"></tbody></table>
     </div>
   </section>
@@ -366,18 +369,31 @@ function dueKind(l) {
   if (l.lastAction === 'no-answer') return { label: '↻ Ring igen', cls: 'retry' };
   return { label: '◆ Planlagt', cls: 'due' };
 }
+/* One search for the list and for Opfølgning: company, person, number, city
+   and the latest note - "the one who asked for a mail" is how they remember. */
+function leadMatches(l, q) {
+  if (!q) return true;
+  const hay = [l.name, l.city, l.niche, l.web, l.last_note, l.contact && l.contact.name, l.contact && l.contact.email, ...(l.contacts || []).map((c) => c.name)].filter(Boolean).join(' ').toLowerCase();
+  const digits = q.replace(/\D/g, '');
+  return hay.includes(q.toLowerCase()) || (digits.length >= 4 && String(l.phone || '').replace(/\D/g, '').includes(digits));
+}
 function renderList() {
-  const items = (S.list && S.list.items) || [];
-  $('tb-list').innerHTML = items.length ? items.map((l, i) => `
+  const all = (S.list && S.list.items) || [];
+  const q = ($('list-q') && $('list-q').value.trim()) || '';
+  // While searching, rows keep their real position; moving is off because the
+  // neighbours on screen aren't the neighbours on the list.
+  const items = all.map((l, i) => ({ l, i })).filter((x) => leadMatches(x.l, q));
+  if (q && all.length && !items.length) { $('tb-list').innerHTML = `<tr class="empty-row"><td colspan="7">Ingen på din liste matcher "${e(q)}". Er det en opfølgning, så kig under <b>Opfølgning</b> - dér kan du også søge.</td></tr>`; return; }
+  $('tb-list').innerHTML = all.length ? items.map(({ l, i }) => `
     <tr class="rowlink" draggable="true" data-cvr="${e(l.cvr)}" ondragstart="dragStart(event,'${e(l.cvr)}')" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="drop(event,'${e(l.cvr)}')" ondragend="dragEnd(event)" onclick="jumpTo('${e(l.cvr)}')">
       <td class="handle" onclick="event.stopPropagation()">⋮⋮</td>
       <td class="num" style="color:var(--txt-faint)">${i + 1}</td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(l.niche) : ''}</span></td>
+      <td><b>${e(l.name)}</b>${l.research_by && me && l.research_by === me.id ? ' <span class="chip sm mine" title="Du fandt selv kontakten eller nummeret i Research">Din research</span>' : ''}<span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(l.niche) : ''}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="chip sm">Omstilling</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>
       <td>${signalChip(l)}</td>
       <td class="acts" onclick="event.stopPropagation()">
-        <button title="Flyt op" onclick="moveItem('${e(l.cvr)}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button><button title="Flyt ned" onclick="moveItem('${e(l.cvr)}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
+        ${q ? '' : `<button title="Flyt op" onclick="moveItem('${e(l.cvr)}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button><button title="Flyt ned" onclick="moveItem('${e(l.cvr)}',1)" ${i === all.length - 1 ? 'disabled' : ''}>↓</button>`}
         <button class="go" onclick="jumpTo('${e(l.cvr)}')">Ring →</button>
         <button title="Tag ud af dagens liste (arkiverer ikke)" onclick="removeItem('${e(l.cvr)}')">Fjern</button>
       </td>
@@ -527,8 +543,17 @@ function renderHistory() {
   $('histbox').hidden = !L || h.length === 0; if (!L || !h.length) return;
   $('history').innerHTML = h.slice(-5).reverse().map((c) => `<div class="h"><time>${e(fmtAgo(c.at))}</time><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b>${c.by_name ? ` · ${e(c.by_name)}` : ''}${c.duration_s ? ` · ${e(fmtDur(c.duration_s))}` : ''}${c.note ? `<div>${e(c.note)}</div>` : ''}</div></div>`).join('');
 }
+/* "Ingen svar" plants a retry on its own, and with ~30 of those in the list
+   the calls they actually promised were hard to find. Agreed ones first. */
+let fuFilter = 'agreed';
 function renderFollowups() {
-  const rows = S.followups || [];
+  const all = S.followups || [];
+  const kinds = { agreed: (l) => l.lastAction !== 'no-answer', retry: (l) => l.lastAction === 'no-answer', all: () => true };
+  const q = ($('fu-q') && $('fu-q').value.trim()) || '';
+  $('fu-filters').innerHTML = [['agreed', 'Aftalt og mail sendt'], ['retry', 'Ingen svar - prøver igen'], ['all', 'Alle']].map(([k, l]) => `<button class="${fuFilter === k ? 'on' : ''}" onclick="fuFilter='${k}';renderFollowups()">${l}<span class="n">${all.filter(kinds[k]).length}</span></button>`).join('');
+  // A search looks through everything - the point is to find it, whatever kind it is.
+  const rows = all.filter((l) => (q ? true : kinds[fuFilter](l)) && leadMatches(l, q));
+  if (all.length && !rows.length) { $('tb-fu').innerHTML = `<tr class="empty-row"><td colspan="6">${q ? `Ingen opfølgninger matcher "${e(q)}".` : 'Ingen i den gruppe.'}</td></tr>`; return; }
   $('tb-fu').innerHTML = rows.length ? rows.map((l) => { const over = new Date(l.callback_at).getTime() <= Date.now();
     return `<tr class="rowlink" onclick="jumpTo('${e(l.cvr)}')">
       <td><span class="chip ${over ? 'over' : 'due'}">${e(fmtWhen(l.callback_at))}</span><span class="sub">${e(dueKind(l).label.replace(/^[◆✉↻]\s*/, ''))}</span></td>
@@ -1517,7 +1542,7 @@ async function rshSave() {
   RSH.busy = true; $('r-msg').textContent = 'Gemmer…';
   try {
     const d = await post('/api/sdr/research/save', { cvr: L.cvr, name: v('r-name'), title: v('r-title'), phone: v('r-phone'), email: v('r-email'), linkedin: v('r-li'), main_phone: v('r-main'), note: v('r-note') });
-    toast(d.note_only ? '✓ Note gemt' : (d.callable ? '✓ Gemt - leadet kan nu ringes op' : '✓ Gemt'), 3000);
+    toast(d.note_only ? '✓ Note gemt' : (d.mine ? '✓ Gemt - leadet ligger nu øverst på din ringeliste' : (d.callable ? '✓ Gemt - leadet kan nu ringes op' : '✓ Gemt')), 3500);
     RSH.busy = false; await rshLoad();
   } catch (ex) { RSH.busy = false; $('r-msg').textContent = ''; toast('Fejl: ' + ex.message, 4000); }
 }
