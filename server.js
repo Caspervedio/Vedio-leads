@@ -13823,7 +13823,10 @@ async function twentyFindCalendlyOpp(lead) {
   const digits = (p) => String(p || "").replace(/\D/g, "").replace(/^45(?=\d{8}$)/, "");
   const emails = (lead.contacts || []).map((c) => String((c && c.email) || "").toLowerCase()).filter(Boolean);
   const phones = [lead.phone, lead.ph, ...(lead.contacts || []).map((c) => c && (c.phone || c.direct_phone || c.mobile))].map(digits).filter(Boolean);
-  const web = storeLeadsHost(lead.web || lead.website);
+  // The company's domain: its website, or the domain of its people's mail
+  // (VICON had no website on file; rikke@vicon.dk booked as jakob@vicon.dk).
+  const FREEMAIL = /^(gmail|hotmail|outlook|live|yahoo|icloud|me|mail|protonmail)\./;
+  const domains = new Set([storeLeadsHost(lead.web || lead.website), ...emails.map((e) => e.split("@")[1] || "")].filter((x) => x && !FREEMAIL.test(x)));
   const scored = [];
   for (const o of opps) {
     const p = (await twentyCall("GET", `people/${o.pointOfContactId}`).catch(() => ({}))).data; const person = (p && p.person) || null;
@@ -13833,7 +13836,7 @@ async function twentyFindCalendlyOpp(lead) {
     let via = "";
     if (email && emails.includes(email)) via = "e-mail";
     else if (person.phones && phones.includes(digits(person.phones.primaryPhoneNumber))) via = "telefon";
-    else if (web && email.split("@")[1] === web) via = "domæne";
+    else if (email && domains.has(email.split("@")[1])) via = "domæne";
     else if (dt <= 30) via = "tid";
     if (via) scored.push({ o, person, via, dt });
   }
