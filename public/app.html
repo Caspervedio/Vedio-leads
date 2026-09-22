@@ -85,7 +85,7 @@
       <button data-sub="list" class="on" onclick="listSub('list')">Din liste<span class="n" id="sn-list">0</span></button>
       <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
       <div class="search listsearch"><input id="list-q" placeholder="Søg firma, person, nummer…" oninput="renderList()"></div>
-      <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve">+ Tilføj lead</button>
+      <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - oprettes som nyt lead">+ Nyt lead</button>
     </div>
     <div id="sub-list">
       <div class="tablewrap">
@@ -471,7 +471,7 @@ function renderCard() {
     <div class="person ${c ? '' : 'none'}">
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
-      <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret person / nummer</button></div>`
+      <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret lead</button></div>`
       : `<span><b>Omstillingsopkald.</b> Vi har ikke fundet et navn - ring på hovednummeret og spørg: <i>"Hvem står for jeres markedsføring - må jeg tale med dem?"</i> Skriv navnet ind, når du får det.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
       ${(L.contacts || []).length > 1 ? `<div class="others"><span class="k">Andre hos ${e(L.name || 'firmaet')}</span>${(L.contacts || []).filter((x) => !c || x.name !== c.name).map((x) => `<button class="oc" onclick="selectContact('${e(x.name).replace(/'/g, '&#39;')}')" title="${e(x.title || '')}${x.phone ? ' · ' + e(fmtPhone(x.phone)) : ''}">${x.has_phone ? '📞 ' : ''}${e(x.name)}${x.title ? `<span>${e(x.title)}</span>` : ''}</button>`).join('')}</div>` : ''}
       <div id="cedit" hidden></div>
@@ -592,7 +592,7 @@ const EXPLAIN = {
   listRemaining:{ t: 'Tilbage på listen', w: 'Leads på din ringeliste som endnu ikke har fået et udfald i dag.', s: 'Din liste er altid fyldt op fra den fælles pulje: forfaldne opfølgninger øverst, derefter de bedste leads (Meta-annoncører med flest annoncer først). Når du afslutter et lead, kommer et nyt ind nederst. Du kan flytte og fjerne under Ringeliste.' },
   poolAvailable:{ t: 'Klar i puljen', w: 'Leads der kan hentes ind på din liste lige nu: dansk nummer + navngivet kontakt, ikke arkiveret, ikke i Twenty, ikke på den anden SDR\'s liste i dag, og ingen fremtidig opfølgning.', s: 'Puljen fyldes af intake (webshops via StoreLeads, Meta-annoncører, CVR-registret, Google Maps) og beriges med kontakt + nummer (Apollo / Full Enrich) før leads kan ringes.' },
   followupsOpen:{ t: 'Opfølgninger åbne', w: 'Leads med en aftalt opfølgning - forfalden eller fremtidig - som stadig kan ringes.', s: 'Sat via udfaldet "Følg op", eller automatisk af "Ingen svar" (+3 timer hvis før 13, ellers næste hverdag 09:00; efter 4 forsøg parkeres leadet en uge).' },
-  poolNeedsEnrich:{ t: 'Mangler kontakt/nummer', w: 'Leads i puljen uden dansk nummer eller uden navngivet kontakt. De vises ikke for SDR\'er før de er beriget.', s: 'Berigelsen kører automatisk når den er tændt. Kender du selv personen, kan du rette den på kortet under Opkald ("✎ Ret person / nummer").' },
+  poolNeedsEnrich:{ t: 'Mangler kontakt/nummer', w: 'Leads i puljen uden dansk nummer eller uden navngivet kontakt. De vises ikke for SDR\'er før de er beriget.', s: 'Berigelsen kører automatisk når den er tændt. Kender du selv personen, kan du rette den på kortet under Opkald ("✎ Ret lead").' },
   poolArchived: { t: 'Arkiveret', w: 'Leads markeret "Ikke relevant". De kommer aldrig tilbage i køen.', s: 'Sat af en SDR via udfaldet Ikke relevant - inkl. historik fra det gamle værktøj.' },
   poolTotal:    { t: 'Leads i alt', w: 'Alle leads i puljen uanset status.', s: 'Én fælles pulje for alle SDR\'er. Den vokser når intake kører.' },
   udfald:       { t: 'Udfald', w: 'Demo booket = mødet er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Ikke nu = rigtig kunde, forkert timing - kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
@@ -692,7 +692,7 @@ function activeSeconds(cvr) { return activeCvr === cvr ? Math.round(activeMs / 1
 /* ─── Actions ──────────────────────────────────────────────────────────── */
 function onCall(ev) {
   const L = S.current; if (!L) return;
-  if (!isDk(L.phone)) { ev.preventDefault(); toast('Vi ringer kun til danske numre - ret nummeret via "✎ Ret person / nummer".', 3500); return; }
+  if (!isDk(L.phone)) { ev.preventDefault(); toast('Vi ringer kun til danske numre - ret nummeret via "✎ Ret lead".', 3500); return; }
   calling = true;
   const b = $('callbtn'); if (b) { b.classList.add('calling'); const lbl = $('calllbl'); if (lbl) lbl.innerHTML = '<span class="dot" style="margin-right:6px"></span>Ringer… vælg udfald'; }
   post('/api/sdr/call-started', { cvr: L.cvr }).catch(() => {});
@@ -921,7 +921,7 @@ function historyHtml(L) {
   const h = (L && L.history) || [];
   if (!h.length) return '';
   const tone = (b) => /^(Tidligere kunde|Har prøvet|Har haft demo)/.test(b) ? 'h1' : /Facebook/.test(b) ? 'h2' : /^Tabt/.test(b) ? 'h3' : '';
-  return `<div class="history"><span class="k">Historik med Vedio</span>${h.map((b) => `<span class="hb ${tone(b)}">${e(b)}</span>`).join('')}</div>`;
+  return `<div class="vhistory"><span class="k">Historik med Vedio</span>${h.map((b) => `<span class="hb ${tone(b)}">${e(b)}</span>`).join('')}</div>`;
 }
 /* Reference customers in the same line of business - something concrete to
    name on the call. Only real customers appear here (see sdrRefCustomers). */
@@ -1411,7 +1411,7 @@ function listSub(which) {
 function openAddLead() {
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'addlead';
   bg.innerHTML = `<div class="modal wide">
-    <h3>Tilføj et lead</h3><p>Et firma du selv har fundet og vil give et forsøg. Det lander øverst på din liste. Findes det allerede, får du det, der er - eller besked om, hvem der har det.</p>
+    <h3>Nyt lead</h3><p>Et firma du selv har fundet og vil give et forsøg. Det oprettes som et nyt lead øverst på din liste. Har vi allerede firmaet (samme hjemmeside eller CVR), får du det, der er. Vil du rette et lead, du allerede har åbent, så brug <b>✎ Ret lead</b> på kortet.</p>
     <div class="al-grid">
       <div class="full"><label>Firma *</label><input id="al-name" placeholder="fx Nordisk Kaffe ApS" autocomplete="off"></div>
       <div><label>Hovednummer</label><input id="al-phone" placeholder="+45 …" autocomplete="off"></div>
@@ -1426,28 +1426,43 @@ function openAddLead() {
       <div class="full"><label>Hvorfor dette firma? (lander som note)</label><textarea id="al-note" rows="2" placeholder="fx Så deres annoncer på Instagram - kører samme video i flere måneder"></textarea></div>
     </div>
     <div class="sub" style="margin-top:8px">Der skal være mindst ét dansk nummer - hovednummer eller kontaktens.</div>
-    <div class="row"><button class="pill tertiary" onclick="$('addlead').remove()">Annuller</button><button class="pill primary" id="al-save" style="padding:11px 20px;font-size:14px" onclick="saveAddLead()">Tilføj til min liste</button></div>
+    <div id="al-match" hidden></div>
+    <div class="row"><button class="pill tertiary" onclick="$('addlead').remove()">Annuller</button><button class="pill primary" id="al-save" style="padding:11px 20px;font-size:14px" onclick="saveAddLead()">Opret lead på min liste</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
   setTimeout(() => { const n = $('al-name'); if (n) n.focus(); }, 30);
 }
-async function saveAddLead() {
+/* `extra` carries the SDR's answer when the number is already on another
+   lead: { use_existing: cvr } to take that one, or { force_new: true } to
+   create the new company anyway. */
+async function saveAddLead(extra) {
   const v = (id) => ($(id) ? $(id).value.trim() : '');
   if (!v('al-name')) { toast('Skriv firmaets navn'); $('al-name').focus(); return; }
   if (!v('al-phone') && !v('al-cphone')) { toast('Der skal være et dansk nummer'); $('al-phone').focus(); return; }
-  const btn = $('al-save'); if (btn) { btn.disabled = true; btn.textContent = 'Tilføjer…'; }
+  const btn = $('al-save'); if (btn) { btn.disabled = true; btn.textContent = 'Opretter…'; }
+  const box = $('al-match'); if (box) { box.hidden = true; box.innerHTML = ''; }
   try {
-    const d = await post('/api/sdr/lead', {
+    const r = await fetch('/api/sdr/lead', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({
       name: v('al-name'), phone: v('al-phone'), web: v('al-web'), city: v('al-city'), cvr: v('al-cvr'),
-      contact_name: v('al-cname'), contact_title: v('al-ctitle'), contact_phone: v('al-cphone'), contact_email: v('al-cemail'), note: v('al-note'),
-    });
+      contact_name: v('al-cname'), contact_title: v('al-ctitle'), contact_phone: v('al-cphone'), contact_email: v('al-cemail'), note: v('al-note'), ...(extra || {}),
+    }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 409 && d.match && d.can_force) {
+      // Same number, another company. Their call - not the tool's.
+      if (btn) { btn.disabled = false; btn.textContent = 'Opret lead på min liste'; }
+      const m = d.match;
+      box.innerHTML = `<div class="al-choice"><b>${e(m.name)}</b> har allerede det nummer${m.city ? ' (' + e(m.city) + ')' : ''} · ${e(m.status)}. Er det samme firma, eller et nyt med samme ejer?
+        <div class="row" style="margin-top:10px;justify-content:flex-start"><button class="pill sm" onclick="saveAddLead({ use_existing: '${e(m.cvr)}' })">Brug ${e(m.name)}</button><button class="pill sm violet-outline" onclick="saveAddLead({ force_new: true })">Opret ${e(v('al-name'))} som nyt lead</button></div></div>`;
+      box.hidden = false; return;
+    }
+    if (!r.ok) throw new Error(d.error || ('Fejl ' + r.status));
     $('addlead').remove();
     apply(d, { keepCurrent: true });
     const a = d.added || {};
-    toastAction(a.created ? `✓ ${a.name} er øverst på din liste` : `${a.name} fandtes allerede - nu er det på din liste`, 'Ring nu', () => jumpTo(a.cvr), 7000);
+    toastAction(a.created ? `✓ ${a.name} er oprettet og ligger øverst på din liste` : `${a.name} fandtes allerede - nu er det på din liste`, 'Ring nu', () => jumpTo(a.cvr), 7000);
   } catch (ex) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Tilføj til min liste'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Opret lead på min liste'; }
     toast(ex.message, 7000);
   }
 }

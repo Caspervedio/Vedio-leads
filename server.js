@@ -13716,7 +13716,7 @@ async function sdrNotifyDemo(url, lead, sdrName, note) {
 // drop fields from the lead, and the ledger is what stops a second
 // opportunity. Demos booked before TWENTY_DEMO_SINCE are left alone.
 const TWENTY_DEMO_LEDGER = path.join(DATA_DIR, "twenty_demos.json");
-const TWENTY_DEMO_SINCE = process.env.TWENTY_DEMO_SINCE || "2026-09-18T10:30:00Z"; // 12:30 in Copenhagen, when this was asked for
+const TWENTY_DEMO_SINCE = process.env.TWENTY_DEMO_SINCE || "2026-09-15T00:00:00Z"; // the first SDR-booked demo
 const TWENTY_DEMO_OWNER = process.env.TWENTY_DEMO_OWNER || "victor@vedio.dk";
 const TWENTY_DEMO_MAX_TRIES = 6;
 function twentyReady() { return !!(process.env.TWENTY_API_TOKEN && process.env.TWENTY_WORKSPACE_URL); }
@@ -13771,27 +13771,77 @@ async function twentyFindOrCreateCompany(lead) {
   if (/^\d{8}$/.test(String(lead.cvr))) body.taxId = lead.cvr;
   return { id: twentyRecord(await twentyCall("POST", "companies", body)).id, existed: false };
 }
-async function twentyFindOrCreatePerson(lead, companyId) {
-  const c = sdrPrimaryContact(lead); if (!c || !c.name) return null;
-  const email = String(c.email || "").trim().toLowerCase();
-  if (email) {
-    const hit = twentyList(await twentyCall("GET", `people?limit=1&${twentyFilter(`emails.primaryEmail[ilike]:"${twentyVal(email)}"`)}`), "people")[0];
-    if (hit) return { id: hit.id, existed: true };
-  }
-  if (companyId) {
-    const want = c.name.trim().toLowerCase();
-    const hit = twentyList(await twentyCall("GET", `people?limit=60&${twentyFilter(`companyId[eq]:"${companyId}"`)}`), "people")
-      .find((p) => `${(p.name && p.name.firstName) || ""} ${(p.name && p.name.lastName) || ""}`.trim().toLowerCase() === want);
-    if (hit) return { id: hit.id, existed: true };
-  }
-  const parts = c.name.trim().split(/\s+/);
+// What we know about the contact, in Twenty's shape.
+function twentyPersonBody(c, companyId) {
+  const parts = String(c.name || "").trim().split(/\s+/);
   const body = { name: { firstName: parts[0] || "", lastName: parts.slice(1).join(" ") } };
   if (c.title) body.jobTitle = c.title;
   const ph = twentyPhone(c.phone || c.direct_phone || c.mobile); if (ph) body.phones = ph;
-  if (email) body.emails = { primaryEmail: email };
+  const email = String(c.email || "").trim().toLowerCase(); if (email) body.emails = { primaryEmail: email };
   const li = c.linkedin || c.linkedinUrl || c.linkedin_url; if (li) body.linkedinLink = { primaryLinkUrl: li };
   if (companyId) body.companyId = companyId;
-  return { id: twentyRecord(await twentyCall("POST", "people", body)).id, existed: false };
+  return body;
+}
+// Twenty's mail and calendar sync (and the Calendly flow) create people with
+// only an e-mail. When we reuse one, fill in what it lacks - never overwrite.
+async function twentyFillPerson(p, c, companyId) {
+  const want = twentyPersonBody(c, companyId); const patch = {};
+  const has = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+  if (!has(p.name && p.name.firstName) && !has(p.name && p.name.lastName) && has(want.name.firstName)) patch.name = want.name;
+  if (!has(p.jobTitle) && want.jobTitle) patch.jobTitle = want.jobTitle;
+  if (!has(p.phones && p.phones.primaryPhoneNumber) && want.phones) patch.phones = want.phones;
+  if (!has(p.emails && p.emails.primaryEmail) && want.emails) patch.emails = want.emails;
+  if (!has(p.linkedinLink && p.linkedinLink.primaryLinkUrl) && want.linkedinLink) patch.linkedinLink = want.linkedinLink;
+  if (!p.companyId && companyId) patch.companyId = companyId;
+  if (Object.keys(patch).length) await twentyCall("PATCH", `people/${p.id}`, patch);
+  return Object.keys(patch);
+}
+async function twentyFindOrCreatePerson(lead, companyId) {
+  const c = sdrPrimaryContact(lead); if (!c || !c.name) return null;
+  const email = String(c.email || "").trim().toLowerCase();
+  let hit = null;
+  if (email) hit = twentyList(await twentyCall("GET", `people?limit=1&${twentyFilter(`emails.primaryEmail[ilike]:"${twentyVal(email)}"`)}`), "people")[0] || null;
+  if (!hit && companyId) {
+    const want = c.name.trim().toLowerCase();
+    hit = twentyList(await twentyCall("GET", `people?limit=60&${twentyFilter(`companyId[eq]:"${companyId}"`)}`), "people")
+      .find((p) => `${(p.name && p.name.firstName) || ""} ${(p.name && p.name.lastName) || ""}`.trim().toLowerCase() === want) || null;
+  }
+  if (hit) { await twentyFillPerson(hit, c, companyId).catch((e) => console.warn("[twenty-demo/person-fill]", e.message)); return { id: hit.id, existed: true }; }
+  return { id: twentyRecord(await twentyCall("POST", "people", twentyPersonBody(c, companyId))).id, existed: false };
+}
+// Victor's n8n flow already turns every Calendly booking into a Demo Booked
+// opportunity - blank name, no company, no owner, just the invitee as contact.
+// Our push used to add a second one next to it. Find that one and complete it
+// instead: same contact e-mail or phone, or the invitee's mail domain is the
+// lead's website, or - failing those - the only one booked within half an
+// hour of the SDR pressing "demo booket".
+async function twentyFindCalendlyOpp(lead) {
+  const t = new Date(lead.demo_booked_at || Date.now()).getTime();
+  const opps = twentyList(await twentyCall("GET", `opportunities?limit=60&order_by=createdAt%5BDescNullsLast%5D&${twentyFilter(`stage[eq]:"DEMO_BOOKED"`)}`), "opportunities")
+    .filter((o) => o.createdBy && o.createdBy.source === "WEBHOOK" && !o.companyId && o.pointOfContactId && Math.abs(new Date(o.createdAt).getTime() - t) < 7 * 86400e3);
+  if (!opps.length) return null;
+  const digits = (p) => String(p || "").replace(/\D/g, "").replace(/^45(?=\d{8}$)/, "");
+  const emails = (lead.contacts || []).map((c) => String((c && c.email) || "").toLowerCase()).filter(Boolean);
+  const phones = [lead.phone, lead.ph, ...(lead.contacts || []).map((c) => c && (c.phone || c.direct_phone || c.mobile))].map(digits).filter(Boolean);
+  const web = storeLeadsHost(lead.web || lead.website);
+  const scored = [];
+  for (const o of opps) {
+    const p = (await twentyCall("GET", `people/${o.pointOfContactId}`).catch(() => ({}))).data; const person = (p && p.person) || null;
+    if (!person) continue;
+    const email = String((person.emails && person.emails.primaryEmail) || "").toLowerCase();
+    const dt = Math.abs(new Date(o.createdAt).getTime() - t) / 60000;
+    let via = "";
+    if (email && emails.includes(email)) via = "e-mail";
+    else if (person.phones && phones.includes(digits(person.phones.primaryPhoneNumber))) via = "telefon";
+    else if (web && email.split("@")[1] === web) via = "domæne";
+    else if (dt <= 30) via = "tid";
+    if (via) scored.push({ o, person, via, dt });
+  }
+  if (!scored.length) return null;
+  scored.sort((a, b) => (a.via === "tid") - (b.via === "tid") || a.dt - b.dt);
+  // A time-only match must be the only booking in that window.
+  if (scored[0].via === "tid" && scored.filter((x) => x.via === "tid").length > 1) return null;
+  return scored[0];
 }
 function twentyDemoNote(lead, sdrName) {
   const c = sdrPrimaryContact(lead) || {};
@@ -13817,16 +13867,27 @@ function twentyDemoNote(lead, sdrName) {
 // so a failure on the note afterwards can't lead to a second opportunity.
 async function twentyPushDemo(lead, sdrName, save) {
   const company = await twentyFindOrCreateCompany(lead);
-  const person = await twentyFindOrCreatePerson(lead, company.id).catch((e) => { console.warn("[twenty-demo/person]", e.message); return null; });
   const ownerId = await twentyOwnerId().catch(() => null);
+  const cal = await twentyFindCalendlyOpp(lead).catch((e) => { console.warn("[twenty-demo/calendly]", e.message); return null; });
+  let person = null;
+  if (cal) {
+    // The invitee IS the contact: complete that person rather than adding another.
+    const c = sdrPrimaryContact(lead);
+    if (c && c.name) await twentyFillPerson(cal.person, c, company.id).catch((e) => console.warn("[twenty-demo/person-fill]", e.message));
+    else if (!cal.person.companyId) await twentyCall("PATCH", `people/${cal.person.id}`, { companyId: company.id }).catch(() => {});
+    person = { id: cal.person.id, existed: true };
+  } else {
+    person = await twentyFindOrCreatePerson(lead, company.id).catch((e) => { console.warn("[twenty-demo/person]", e.message); return null; });
+  }
   const opps = twentyList(await twentyCall("GET", `opportunities?limit=30&${twentyFilter(`companyId[eq]:"${company.id}"`)}`), "opportunities");
-  const open = opps.filter((o) => !["WON", "LOST"].includes(o.stage)).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
+  const open = cal ? cal.o : opps.filter((o) => !["WON", "LOST"].includes(o.stage)).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
   let opp; let reused = false;
   if (open) {
     // Keep whoever owns it already; fill in only what's missing.
     const patch = { stage: "DEMO_BOOKED" };
     if (ownerId && !open.ownerId) patch.ownerId = ownerId;
     if (person && !open.pointOfContactId) patch.pointOfContactId = person.id;
+    if (cal) { patch.companyId = company.id; if (!String(open.name || "").trim()) patch.name = lead.name || "Demo"; }
     opp = { ...open, ...twentyRecord(await twentyCall("PATCH", `opportunities/${open.id}`, patch)) }; reused = true;
   } else {
     const body = { name: lead.name || "Demo", stage: "DEMO_BOOKED", amount: { amountMicros: 0, currencyCode: "DKK" }, source: "UNKNOWN", companyId: company.id };
@@ -13835,7 +13896,7 @@ async function twentyPushDemo(lead, sdrName, save) {
     opp = twentyRecord(await twentyCall("POST", "opportunities", body));
   }
   if (!opp.id) throw new Error("Twenty svarede uden opportunity-id");
-  const ids = { opp_id: opp.id, url: `${twentyBase()}/object/opportunity/${opp.id}`, company_id: company.id, company_existed: company.existed, person_id: person ? person.id : null, reused_opportunity: reused, owner_set: !!ownerId && (!open || !open.ownerId) };
+  const ids = { opp_id: opp.id, url: `${twentyBase()}/object/opportunity/${opp.id}`, company_id: company.id, company_existed: company.existed, person_id: person ? person.id : null, reused_opportunity: reused, calendly_match: cal ? cal.via : null, owner_set: !!ownerId && (!open || !open.ownerId) };
   save(ids);
   try {
     const note = twentyRecord(await twentyCall("POST", "notes", { title: `Demo booket · ${lead.name || ""}`.trim(), bodyV2: { markdown: twentyDemoNote(lead, sdrName) } }));
@@ -13860,7 +13921,7 @@ app.post("/api/cron/twenty-demo-sync", async (req, res) => {
   if (!twentyReady()) return res.json({ ok: true, skipped: "not-configured" });
   const ledger = loadTwentyLedger(); const d = loadPool(); const now = Date.now();
   const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
-  const due = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && l.demo_booked_at >= TWENTY_DEMO_SINCE
+  const due = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && l.demo_booked_at >= TWENTY_DEMO_SINCE && l.demo_status !== "unqualified"
     && now - new Date(l.demo_booked_at).getTime() >= SDR_UNDO_WINDOW_MS
     && !(ledger[l.cvr] && ledger[l.cvr].opp_id) && ((ledger[l.cvr] || {}).attempts || 0) < TWENTY_DEMO_MAX_TRIES).slice(0, 5);
   const stats = { due: due.length, pushed: 0, reused: 0, failed: 0 };
@@ -15097,12 +15158,26 @@ app.post("/api/sdr/lead", authMiddleware, (req, res) => {
     const phonesIn = [mainPhone, contactPhone].filter(Boolean).map(digits);
     const domOf = (l) => String(l.web || l.website || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
     const phonesOf = (l) => [l.phone, l.ph, ...(l.contacts || []).flatMap((c) => c ? [c.phone, c.direct_phone, c.mobile] : [])].filter(Boolean).map(digits);
-    const existing = (d.leads || []).find((l) =>
-      (realCvr && l.cvr === realCvr) || (dom && domOf(l) === dom) || phonesOf(l).some((p) => p && phonesIn.includes(p)));
+    // Same CVR or website = the same company, always. A shared phone number
+    // is not: one owner with two shops (Aya House rang on terrassevarmer.dk's
+    // number, and the tool quietly turned the new shop into the old lead). So a
+    // number-only match is put to the SDR - use the existing lead, or create the
+    // new one anyway (`force_new`) - unless they already answered.
+    const who = (id) => nameById[id] || id;
+    const useCvr = str(b.use_existing, 80);
+    const same = (d.leads || []).find((l) => (realCvr && l.cvr === realCvr) || (dom && domOf(l) === dom));
+    const sharesNumber = !same ? (d.leads || []).find((l) => phonesOf(l).some((p) => p && phonesIn.includes(p))) : null;
+    let existing = same || (useCvr ? (d.leads || []).find((l) => l.cvr === useCvr) : null);
+    if (!existing && sharesNumber && b.force_new !== true) {
+      return res.status(409).json({
+        error: `${sharesNumber.name} har allerede nummeret ${sharesNumber.phone || contactPhone || mainPhone}.`,
+        match: { cvr: sharesNumber.cvr, name: sharesNumber.name, city: sharesNumber.city || "", web: sharesNumber.web || "", status: sharesNumber.lastAction === "not-relevant" ? "arkiveret" : sharesNumber.lastAction === "demo-booked" ? "demo booket" : sdrClaimActive(sharesNumber, now) ? `hos ${who(sharesNumber.claimed_by)}` : "i puljen" },
+        can_force: true,
+      });
+    }
 
     let lead, created = false;
     if (existing) {
-      const who = (id) => nameById[id] || id;
       if (existing.lastAction === "demo-booked") return res.status(409).json({ error: `${existing.name} findes allerede - der er booket en demo${existing.demo_booked_by ? " af " + who(existing.demo_booked_by) : ""}.` });
       if (existing.lastAction === "not-relevant") {
         // Most archived leads were binned by the pipeline's own filters, not
@@ -15173,6 +15248,9 @@ app.post("/api/sdr/lead", authMiddleware, (req, res) => {
     lead.owner_override = me; lead.owner_override_at = nowIso;
     const note = str(b.note, 2000);
     sdrAppendNote(lead, me, created ? `Tilføjet manuelt af ${nameById[me] || me}${note ? ": " + note : ""}` : `Hentet ind manuelt af ${nameById[me] || me}${note ? ": " + note : ""}`);
+    // Two companies on one number: say so on both, so the next caller knows -
+    // and last, so it is the note the card shows.
+    if (created && sharesNumber) { sdrAppendNote(lead, me, `Samme nummer som ${sharesNumber.name}`); sdrAppendNote(sharesNumber, me, `Samme nummer som ${name} (tilføjet af ${who(me)})`); sdrTouch(sharesNumber); }
     sdrTouch(lead, true);
     savePool(d);
     logActivity("sdr-manual-lead", `${nameById[me] || me} ${created ? "tilføjede" : "hentede"} ${lead.name}`, { cvr: lead.cvr, userId: me });
