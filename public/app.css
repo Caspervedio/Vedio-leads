@@ -509,16 +509,11 @@ main{transition:margin-right .46s var(--ease)}
   transition:transform .32s var(--ease) .12s,opacity .22s ease .12s,box-shadow .2s var(--ease),background .2s var(--ease)}
 .ai-fab:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 14px 30px rgba(124,58,237,.45);background:var(--violet-deep)}
 .ai-fab.hide{transform:scale(.4) translateY(16px);opacity:0;pointer-events:none;transition-delay:0s}
-/* Title bar: traffic lights, centred title, actions. */
-.ai-bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;height:52px;padding:0 14px;background:var(--paper);border-bottom:1px solid var(--line)}
-.ai-lights{display:flex;gap:7px}
-.ai-lights button{width:13px;height:13px;border-radius:50%;border:1px solid rgba(0,0,0,.12);display:inline-flex;align-items:center;justify-content:center;padding:0}
-.ai-lights button span{font-size:9px;font-weight:800;line-height:1;color:rgba(0,0,0,.55);opacity:0;transform:translateY(-.5px)}
-.ai-lights:hover button span{opacity:1}
-.ai-lights .close{background:#ff5f57}.ai-lights .min{background:#febc2e}.ai-lights .max{background:#28c840}
-.ai-title{font-family:var(--display);font-size:19px;letter-spacing:.02em;display:flex;align-items:center;gap:7px;color:var(--txt)}
-.ai-title i{font-style:normal;color:var(--violet);font-size:15px;display:inline-flex}
-.ai-tools{display:flex;justify-content:flex-end;gap:6px}
+/* Title bar: a minimise button on the left, two small actions on the right. */
+.ai-bar{display:flex;align-items:center;justify-content:space-between;height:60px;padding:0 18px 0 14px;background:var(--paper);border-bottom:1px solid var(--line)}
+.ai-min{color:var(--txt-soft)}
+.ai-tools{display:flex;gap:10px}
+.pill.xs{padding:8px 14px;font-size:12.5px}
 .ai-sub{padding:8px 18px;font-size:12px;color:var(--txt-faint);border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--white)}
 .ai-sub::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--violet);margin-right:8px;vertical-align:1px}
 /* Saved conversations, folded out under the bar. */
