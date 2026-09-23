@@ -198,7 +198,7 @@
 <aside id="aipanel" class="aipanel">
   <div class="ai-bar">
     <button class="iconbtn ai-min" title="Minimér" onclick="aiToggle(false)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
-    <div class="ai-tools"><button class="pill xs primary" onclick="aiNew()">+ Ny samtale</button><button class="pill xs tertiary" onclick="aiList()" title="Dine gemte samtaler">Samtaler</button></div>
+    <div class="ai-tools"><button class="pill xs tertiary" id="ai-listbtn" onclick="aiList()" title="Dine gemte samtaler">Samtaler</button><button class="pill xs primary" onclick="aiNew()">+ Ny samtale</button></div>
   </div>
   <div class="ai-sub"><span id="ai-sub">Ny samtale</span></div>
   <div id="ai-chats" class="ai-chats" hidden></div>
@@ -1535,10 +1535,13 @@ function aiWide() { const w = $('aipanel').classList.toggle('wide'); try { local
 function gearToggle(ev) { ev.stopPropagation(); const m = $('gearmenu'); m.hidden = !m.hidden; }
 function gearPick(fn) { $('gearmenu').hidden = true; fn(); }
 document.addEventListener('click', (ev) => { const m = $('gearmenu'); if (m && !m.hidden && !(ev.target.closest && ev.target.closest('#gear'))) m.hidden = true; });
-function aiNew() { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} $('ai-chats').hidden = true; aiRender(); $('ai-q').focus(); }
+function aiNew() { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} aiListing(false); aiRender(); $('ai-q').focus(); }
+// The list takes the whole panel while it is open - messages and composer
+// step aside, the button reads "Tilbage".
+function aiListing(on) { $('aipanel').classList.toggle('listing', on); $('ai-chats').hidden = !on; $('ai-listbtn').textContent = on ? 'Tilbage' : 'Samtaler'; }
 async function aiList() {
-  const box = $('ai-chats'); if (!box.hidden) { box.hidden = true; return; }
-  box.hidden = false; box.innerHTML = '<div class="sub" style="padding:10px 14px">Henter…</div>';
+  const box = $('ai-chats'); if (!box.hidden) { aiListing(false); return; }
+  aiListing(true); box.innerHTML = '<div class="ai-chats-empty">Henter…</div>';
   try {
     const d = await get('/api/sdr/chat'); AI.list = d.chats || [];
     box.innerHTML = `<div class="ai-chats-k">Dine samtaler</div>` + (AI.list.length ? AI.list.map((c) => `<div class="ai-chat ${AI.chat && AI.chat.id === c.id ? 'on' : ''}" onclick="aiLoad('${e(c.id)}')">
@@ -1547,12 +1550,12 @@ async function aiList() {
   } catch (ex) { box.innerHTML = `<div class="sub" style="padding:10px 14px;color:#b42318">${e(ex.message)}</div>`; }
 }
 async function aiLoad(id) {
-  try { const d = await get('/api/sdr/chat/' + encodeURIComponent(id)); AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', id); } catch {} $('ai-chats').hidden = true; aiRender(); }
+  try { const d = await get('/api/sdr/chat/' + encodeURIComponent(id)); AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', id); } catch {} aiListing(false); aiRender(); }
   catch { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} aiRender(); }
 }
 async function aiDelete(id) {
   if (!confirm('Slet samtalen? Det kan ikke fortrydes.')) return;
-  try { await fetch('/api/sdr/chat/' + encodeURIComponent(id), { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } }); if (AI.chat && AI.chat.id === id) aiNew(); $('ai-chats').hidden = true; aiList(); toast('Samtalen er slettet'); }
+  try { await fetch('/api/sdr/chat/' + encodeURIComponent(id), { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } }); if (AI.chat && AI.chat.id === id) { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} aiRender(); } aiListing(false); aiList(); toast('Samtalen er slettet'); }
   catch (ex) { toast(ex.message, 4000); }
 }
 /* Just enough markdown for advice: paragraphs, bullets, numbered lists, bold, code. */
