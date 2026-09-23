@@ -91,7 +91,7 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 
 Hvad automatikken ikke kan, havner i Research-fanen til SDR'erne.
 
-**Sparring (✦ i toppen).** En chat med Gemini i et panel til højre. Den
+**Sparring (den lilla ✦ nederst til højre).** En chat med Gemini i et panel til højre. Den
 kender pitchen, de 12 scripts, træningsguiden, referencekunderne og det lead
 SDR'en har åbent (kan slås fra), og svarer på dansk i telefonsprog. Samtaler
 gemmes pr. SDR (`chats/chats_<id>.json`), kan genåbnes og slettes. Svar kan

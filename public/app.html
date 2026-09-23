@@ -48,9 +48,6 @@
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
       <a class="pill sm violet" id="imp-chip" href="/admin" title="Tilbage til admin" hidden></a>
       <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
-      <button class="iconbtn" id="ai-btn" title="Sparring - spørg om alt: scripts, indvendinger, det åbne lead" onclick="aiToggle()">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>
-      </button>
       <button class="iconbtn" title="Træning og manuskripter" onclick="openTraining()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg>
       </button>
@@ -194,6 +191,9 @@
 </main>
 
 <!-- ─── SPARRING (Gemini) - a colleague in a panel on the right ─────────── -->
+<button id="ai-fab" class="ai-fab" title="Sparring - spørg om alt: scripts, indvendinger, det åbne lead" onclick="aiToggle(true)">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>
+</button>
 <aside id="aipanel" class="aipanel" hidden>
   <div class="ai-head">
     <div><b>Sparring</b><span class="sub" id="ai-sub">Spørg om alt - scripts, indvendinger, det lead du har åbent.</span></div>
@@ -1507,7 +1507,8 @@ const AI = { chat: null, busy: false, list: [] };
 function aiOpen() { return !$('aipanel').hidden; }
 function aiToggle(on) {
   const want = on === undefined ? !aiOpen() : !!on;
-  $('aipanel').hidden = !want; document.body.classList.toggle('ai-open', want); $('ai-btn').classList.toggle('on', want);
+  // Open: the panel on the right. Minimised: a purple button bottom-right.
+  $('aipanel').hidden = !want; $('ai-fab').hidden = want; document.body.classList.toggle('ai-open', want);
   try { localStorage.setItem('vl_ai_open', want ? '1' : '0'); } catch {}
   if (want) { aiCtx(); if (!AI.chat) { const id = (() => { try { return localStorage.getItem('vl_ai_chat'); } catch { return ''; } })(); if (id) aiLoad(id); else aiRender(); } setTimeout(() => $('ai-q').focus(), 50); }
 }
