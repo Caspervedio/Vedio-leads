@@ -364,8 +364,36 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .noterow{display:flex;align-items:center;gap:12px;margin:-6px 0 14px}
 .noterow .sub{font-size:12.5px;color:var(--txt-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* admin: one editable mail template */
-.mailtpl{border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:10px;background:var(--paper);display:grid;gap:8px}
+/* Settings - a wide, calm window: account on the left, the words on the right. */
+.modal.settings{max-width:1040px;padding:0;overflow:hidden;display:flex;flex-direction:column;max-height:calc(100vh - 40px)}
+.set-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:24px 28px 18px;border-bottom:1px solid var(--line)}
+.set-head h3{font-size:22px;margin-bottom:2px}.set-head p{margin:0;font-size:13.5px}
+.set-body{display:grid;grid-template-columns:340px 1fr;gap:18px;padding:22px 28px;overflow-y:auto;background:var(--paper)}
+.set-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.set-card{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+.set-k{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:8px}
+.set-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}.set-row .set-k{margin:0}
+.set-row .linkbtn{padding:2px 6px}
+.chip.mine{background:var(--violet-soft);color:var(--violet-deep)}
+.set-card label{margin:8px 0 6px}.set-card label:first-of-type{margin-top:0}
+.set-card input{background:var(--paper)}
+.set-help{font-size:12px;color:var(--txt-faint);margin-top:8px;line-height:1.5}
+.set-help code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.set-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.set-pitch{width:100%;min-height:240px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font:inherit;font-size:13.5px;line-height:1.55;resize:vertical}
+.set-pitch:focus,.mailtpl textarea:focus,.set-card input:focus{outline:none;border-color:var(--violet);background:var(--white);box-shadow:0 0 0 3px var(--violet-soft)}
+.set-mails{display:flex;flex-direction:column;gap:8px}
+.mailtpl{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper)}
+.mailtpl summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:11px 14px;font-size:13.5px}
+.mailtpl summary::-webkit-details-marker{display:none}
+.mailtpl summary::before{content:"›";color:var(--txt-faint);font-weight:800;transition:transform .15s var(--ease);display:inline-block;width:10px}
+.mailtpl[open] summary::before{transform:rotate(90deg)}
+.mailtpl summary .sub{color:var(--txt-faint);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mailtpl-body{padding:4px 14px 14px;border-top:1px solid var(--line)}
 .mailtpl textarea{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--white);font:inherit;font-size:13px;line-height:1.5;resize:vertical}
+.mailtpl .linkbtn.del:hover{color:#b42318}
+.set-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 28px;border-top:1px solid var(--line);background:var(--white)}
+@media (max-width:900px){.set-body{grid-template-columns:1fr}.modal.settings{max-width:100%}}
 .chooser .pill{padding:8px 14px;font-size:13px}
 .chooser input[type=datetime-local]{border:1px solid var(--line);border-radius:var(--pill);padding:8px 12px;font-size:13px;background:var(--white)}
 .hint{font-size:12px;color:var(--txt-faint);display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}

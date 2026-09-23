@@ -1737,26 +1737,47 @@ async function rshSkip() {
 function openSettings() {
   const s = (S && S.settings) || {};
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'settings';
-  bg.innerHTML = `<div class="modal wide">
-    <h3>Indstillinger</h3><p>Din Gmail og din pitch er dine egne. Resten er fælles for alle SDR'er.</p>
-    <label>Din Gmail - mails til leads sendes herfra</label>
-    <div class="gmailbox" id="gmail-box">Tjekker…</div>
-    <label>Calendly-link til demo-booking</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
-    <label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}">
-    <label>Leads på ringelisten (fyldes automatisk op fra puljen)</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}">
-    <label>Din pitch på kortet - kun din. ${s.pitch_is_mine ? 'Du har din egen version.' : 'Du kører på holdets version - retter du her, bliver den din.'} Brug {fornavn} {firma} {annoncer} {sdr} {måned}. Linjer der starter med "Indvending" vises som indvendinger.</label>
-    <textarea id="st-pitch" style="width:100%;min-height:150px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5;resize:vertical">${e(s.pitch_text || '')}</textarea>
-    ${s.pitch_is_mine && !(me && me.is_admin) ? `<div class="row" style="margin-top:6px"><button class="pill sm tertiary" onclick="resetPitch()">Hent holdets pitch tilbage</button></div>` : ''}
-    <label>Dine mailskabeloner - kun dine. ${s.mail_is_mine ? 'Du har dine egne.' : 'Du kører på holdets - retter du her, bliver de dine.'} Brug {fornavn} {firma} {sdr} {calendly} {note} {om}. Links skrives som [tekst](https://…)</label>
-    <div id="st-mails"></div>
-    <div class="row" style="gap:8px;margin-top:8px">
-      <button class="pill sm tertiary" onclick="mailTplAdd()">+ Tilføj skabelon</button>
-      ${s.mail_is_mine && !(me && me.is_admin) ? `<button class="pill sm tertiary" onclick="resetMailTpls()">Hent holdets skabeloner tilbage</button>` : ''}
+  const isAdmin = !!(me && me.is_admin);
+  bg.innerHTML = `<div class="modal settings">
+    <div class="set-head"><div><h3>Indstillinger</h3><p>Gmail, pitch og mailskabeloner er dine egne. Mål og Calendly er fælles.</p></div><button class="iconbtn" title="Luk" onclick="$('settings').remove()">✕</button></div>
+    <div class="set-body">
+      <div class="set-col">
+        <section class="set-card">
+          <div class="set-k">Din Gmail</div>
+          <div class="gmailbox" id="gmail-box">Tjekker…</div>
+          <div class="set-help">Mails til leads sendes herfra, så svar lander i din egen indbakke.</div>
+        </section>
+        <section class="set-card">
+          <div class="set-k">Booking</div>
+          <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
+        </section>
+        <section class="set-card">
+          <div class="set-k">Dagen</div>
+          <div class="set-grid2">
+            <div><label>Dagligt mål</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}"><div class="set-help">opkald pr. SDR</div></div>
+            <div><label>Leads på listen</label><input id="st-size" type="number" min="5" max="200" value="${e(s.list_size || 60)}"><div class="set-help">fyldes op fra puljen</div></div>
+          </div>
+        </section>
+        ${isAdmin ? `<section class="set-card">
+          <div class="set-k">Admin</div>
+          <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
+          <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
+        </section>` : ''}
+      </div>
+      <div class="set-col wide">
+        <section class="set-card">
+          <div class="set-row"><div class="set-k">Din pitch</div><span class="chip sm ${s.pitch_is_mine ? 'mine' : ''}">${s.pitch_is_mine ? 'Din version' : 'Holdets version'}</span>${s.pitch_is_mine && !isAdmin ? `<button class="linkbtn" onclick="resetPitch()">Hent holdets tilbage</button>` : ''}</div>
+          <textarea id="st-pitch" class="set-pitch">${e(s.pitch_text || '')}</textarea>
+          <div class="set-help">Vises på kortet under "Sådan åbner du". Retter du her, bliver den din. Felter: <code>{fornavn}</code> <code>{firma}</code> <code>{annoncer}</code> <code>{sdr}</code> <code>{måned}</code>. Linjer der starter med "Indvending" vises som indvendinger.</div>
+        </section>
+        <section class="set-card">
+          <div class="set-row"><div class="set-k">Mailskabeloner</div><span class="chip sm ${s.mail_is_mine ? 'mine' : ''}">${s.mail_is_mine ? 'Dine' : 'Holdets'}</span>${s.mail_is_mine && !isAdmin ? `<button class="linkbtn" onclick="resetMailTpls()">Hent holdets tilbage</button>` : ''}<button class="pill xs tertiary" style="margin-left:auto" onclick="mailTplAdd()">+ Tilføj</button></div>
+          <div id="st-mails" class="set-mails"></div>
+          <div class="set-help">Det SDR'en vælger, når et lead beder om en mail. Felter: <code>{fornavn}</code> <code>{firma}</code> <code>{sdr}</code> <code>{calendly}</code> <code>{note}</code> <code>{om}</code>. Links skrives som [tekst](https://…)</div>
+        </section>
+      </div>
     </div>
-    ${me && me.is_admin ? `
-    <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
-    <label>Webhook når en demo bookes (Slack incoming webhook URL - valgfrit)</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">` : ''}
-    <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
+    <div class="set-foot"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:12px 24px;font-size:14px;min-height:0" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
@@ -1769,12 +1790,14 @@ function openSettings() {
 let mailTpls = [];
 function mailTplRender() {
   const box = $('st-mails'); if (!box) return;
-  box.innerHTML = mailTpls.map((t, i) => `<div class="mailtpl">
-    <div class="row" style="gap:8px"><input value="${e(t.name || '')}" placeholder="Navn - det du vælger i menuen" oninput="mailTpls[${i}].name=this.value" style="font-weight:700">
-    <button class="pill sm tertiary" onclick="mailTpls.splice(${i},1);mailTplRender()" title="Slet skabelon">Slet</button></div>
-    <input value="${e(t.subject || '')}" placeholder="Emne" oninput="mailTpls[${i}].subject=this.value">
-    <textarea rows="7" placeholder="Besked" oninput="mailTpls[${i}].body=this.value">${e(t.body || '')}</textarea>
-  </div>`).join('') || `<p class="sub">Ingen skabeloner - så kan du ikke sende mails fra kortet.</p>`;
+  box.innerHTML = mailTpls.map((t, i) => `<details class="mailtpl" ${mailTpls.length === 1 || !t.name ? 'open' : ''}>
+    <summary><b>${e(t.name || 'Ny skabelon')}</b><span class="sub">${e(t.subject || '')}</span></summary>
+    <div class="mailtpl-body">
+      <div class="set-grid2"><div><label>Navn i menuen</label><input value="${e(t.name || '')}" placeholder="fx Når de vil have en mail" oninput="mailTpls[${i}].name=this.value"></div><div><label>Emne</label><input value="${e(t.subject || '')}" placeholder="Emnelinje" oninput="mailTpls[${i}].subject=this.value"></div></div>
+      <label>Besked</label><textarea rows="8" placeholder="Hej {fornavn}…" oninput="mailTpls[${i}].body=this.value">${e(t.body || '')}</textarea>
+      <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="linkbtn del" onclick="mailTpls.splice(${i},1);mailTplRender()">Slet skabelon</button></div>
+    </div>
+  </details>`).join('') || `<p class="sub" style="padding:6px 0">Ingen skabeloner - så kan du ikke sende mails fra kortet.</p>`;
 }
 function mailTplAdd() { mailTpls.push({ id: 'mail-' + (mailTpls.length + 1), name: '', subject: '', body: '' }); mailTplRender(); }
 async function resetMailTpls() {
