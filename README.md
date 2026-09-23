@@ -47,8 +47,10 @@ op til tre Vedio-kunder i samme branche man kan nævne, og et link til deres
 egne annoncer i Meta Ad Library. Alt hvad kortet påstår, er tjekket — "kører
 annoncer lige nu" kommer fra deres Facebook-side, ikke fra et gæt.
 
-**Udfald** (1–7): Demo booket · Send mail · Følg op · Ingen svar · Ikke nu ·
-Ikke relevant · Forkert nummer. Alt kan fortrydes i 10 minutter.
+**Udfald** (1–8): Demo booket · Send mail · Følg op · Ingen svar · Ikke nu ·
+Ikke relevant · Forkert nummer · Telefonmenu ("tryk 1 for…" — leadet sendes
+til Research for et direkte nummer og prøves igen om tre hverdage). Alt kan
+fortrydes i 10 minutter.
 
 **Mails** sendes fra SDR'ens egen Gmail (forbindes under ⚙), så svar lander i
 deres indbakke. Er den ikke forbundet, åbnes udkastet i deres mailprogram.

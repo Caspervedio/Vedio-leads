@@ -302,7 +302,7 @@ function fmtWhen(iso) {
   return d.toLocaleDateString('da-DK', { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + hm;
 }
 function fmtAgo(iso) { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); if (m < 1) return 'lige nu'; if (m < 60) return m + ' min'; const h = Math.round(m / 60); if (h < 24) return h + ' t'; return Math.round(h / 24) + ' d'; }
-const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer', 'email-sent': 'Mail sendt', 'interested': 'Interesseret', 'sms': 'SMS', 'call-back': 'Ring tilbage' };
+const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer', 'email-sent': 'Mail sendt', 'ivr': 'Telefonmenu', 'interested': 'Interesseret', 'sms': 'SMS', 'call-back': 'Ring tilbage' };
 function signalChip(l) {
   // A due callback outranks the Meta signal - it's what the SDR must act on.
   // Which kind matters: agreed callback, our own retry, or a sent mail.
@@ -367,6 +367,7 @@ function dueKind(l) {
   if (l.lastAction === 'follow-up') return { label: '◆ Aftalt', cls: 'due' };
   if (l.lastAction === 'email-sent') return { label: '✉ Mail sendt', cls: 'mail' };
   if (l.lastAction === 'no-answer') return { label: '↻ Ring igen', cls: 'retry' };
+  if (l.lastAction === 'ivr') return { label: '☎ Telefonmenu', cls: 'retry' };
   return { label: '◆ Planlagt', cls: 'due' };
 }
 /* One search for the list and for Opfølgning: company, person, number, city
@@ -458,7 +459,7 @@ function renderCard() {
   const web = (L.web || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   w.innerHTML = `
   <div class="card" data-cvr="${e(L.cvr)}">
-    ${isDue ? `<div class="kicker violet" style="margin-bottom:10px">${L.lastAction === 'no-answer' ? `↻ Nyt forsøg - ingen svar ${e(fmtAgo(L.lastCallAt || L.callback_at))}` : L.lastAction === 'email-sent' ? `✉ Du sendte ${L.email_template ? '“' + e(L.email_template) + '”' : 'en mail'} ${e(fmtAgo(L.email_sent_at))} - følg op` : `◆ Aftalt opfølgning · ${e(fmtWhen(L.callback_at))}`}</div>` : ''}
+    ${isDue ? `<div class="kicker violet" style="margin-bottom:10px">${L.lastAction === 'no-answer' ? `↻ Nyt forsøg - ingen svar ${e(fmtAgo(L.lastCallAt || L.callback_at))}` : L.lastAction === 'ivr' ? `☎ Nyt forsøg - telefonmenu ${e(fmtAgo(L.lastCallAt || L.callback_at))}` : L.lastAction === 'email-sent' ? `✉ Du sendte ${L.email_template ? '“' + e(L.email_template) + '”' : 'en mail'} ${e(fmtAgo(L.email_sent_at))} - følg op` : `◆ Aftalt opfølgning · ${e(fmtWhen(L.callback_at))}`}</div>` : ''}
     <div class="co">
       <div>
         <h2>${e(L.name || '-')}</h2>
@@ -478,7 +479,7 @@ function renderCard() {
     </div>
     <div class="phone">
       ${dk ? `<a class="num" href="${telHref(L.phone)}" onclick="onCall(event)" title="Ring op">${e(fmtPhone(L.phone))}</a>` : `<span class="num warn">${e(fmtPhone(L.phone) || '-')}</span>`}
-      ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}
+      ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}${L.ivr_at && L.phone_label !== 'direkte' ? `<span class="tag warn" title="Sidst ramte dette nummer en telefonmenu (${L.ivr_count}×). Tryk dig igennem til salg eller marketing - eller find et direkte nummer i Research.">☎ Telefonmenu</span>` : ''}
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     ${refsHtml(L)}
@@ -509,6 +510,7 @@ function renderCard() {
         <button class="pill" onclick="disp('not-now')"><span class="key">5</span>Ikke nu</button>
         <button class="pill" onclick="disp('not-relevant')"><span class="key">6</span>Ikke relevant</button>
         <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke - leadet sendes til berigelse"><span class="key">7</span>Forkert nummer</button>
+        <button class="pill" onclick="disp('ivr')" title="Tryk 1 for salg, 2 for… - ingen person nået. Leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage"><span class="key">8</span>Telefonmenu</button>
       </div>
       <div id="chooser" hidden></div>
       <div id="mailbox" hidden></div>
@@ -548,7 +550,7 @@ function renderHistory() {
 let fuFilter = 'agreed';
 function renderFollowups() {
   const all = S.followups || [];
-  const kinds = { agreed: (l) => l.lastAction !== 'no-answer', retry: (l) => l.lastAction === 'no-answer', all: () => true };
+  const kinds = { agreed: (l) => !['no-answer', 'ivr'].includes(l.lastAction), retry: (l) => ['no-answer', 'ivr'].includes(l.lastAction), all: () => true };
   const q = ($('fu-q') && $('fu-q').value.trim()) || '';
   $('fu-filters').innerHTML = [['agreed', 'Aftalt og mail sendt'], ['retry', 'Ingen svar - prøver igen'], ['all', 'Alle']].map(([k, l]) => `<button class="${fuFilter === k ? 'on' : ''}" onclick="fuFilter='${k}';renderFollowups()">${l}<span class="n">${all.filter(kinds[k]).length}</span></button>`).join('');
   // A search looks through everything - the point is to find it, whatever kind it is.
@@ -595,7 +597,7 @@ const EXPLAIN = {
   poolNeedsEnrich:{ t: 'Mangler kontakt/nummer', w: 'Leads i puljen uden dansk nummer eller uden navngivet kontakt. De vises ikke for SDR\'er før de er beriget.', s: 'Berigelsen kører automatisk når den er tændt. Kender du selv personen, kan du rette den på kortet under Opkald ("✎ Ret lead").' },
   poolArchived: { t: 'Arkiveret', w: 'Leads markeret "Ikke relevant". De kommer aldrig tilbage i køen.', s: 'Sat af en SDR via udfaldet Ikke relevant - inkl. historik fra det gamle værktøj.' },
   poolTotal:    { t: 'Leads i alt', w: 'Alle leads i puljen uanset status.', s: 'Én fælles pulje for alle SDR\'er. Den vokser når intake kører.' },
-  udfald:       { t: 'Udfald', w: 'Demo booket = mødet er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Ikke nu = rigtig kunde, forkert timing - kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
+  udfald:       { t: 'Udfald', w: 'Demo booket = mødet er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Telefonmenu = hovednummeret svarer med "tryk 1 for…" - tæller som et opkald, leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage. Ikke nu = rigtig kunde, forkert timing - kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
   demos:        { t: 'Bookede demoer', w: 'Alle leads med udfaldet "Demo booket", nyeste øverst.', s: 'Founders tager demoen fra Calendly-bookingen. Leadet forlader ringelisterne.' },
 };
 const tip = (k) => { const x = EXPLAIN[k]; return x ? `${x.t} - ${x.w}` : ''; };
@@ -646,7 +648,7 @@ function renderResults() {
   pay.hidden = false;
 }
 let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';
-const TODAY_FILTERS = [['all', 'Alle'], ['demo-booked', 'Demo'], ['follow-up', 'Følg op'], ['no-answer', 'Ingen svar'], ['not-now', 'Ikke nu'], ['not-relevant', 'Ikke relevant']];
+const TODAY_FILTERS = [['all', 'Alle'], ['demo-booked', 'Demo'], ['follow-up', 'Følg op'], ['no-answer', 'Ingen svar'], ['ivr', 'Telefonmenu'], ['not-now', 'Ikke nu'], ['not-relevant', 'Ikke relevant']];
 function todaySort(k) { if (todaySortKey === k) todaySortAsc = !todaySortAsc; else { todaySortKey = k; todaySortAsc = k !== 'at'; } renderToday(); }
 function todayFilterSet(f) { todayFilter = f; renderToday(); }
 function renderToday() {
@@ -654,7 +656,7 @@ function renderToday() {
   const counts = {}; for (const c of all) counts[c.action] = (counts[c.action] || 0) + 1;
   $('today-filters').innerHTML = TODAY_FILTERS.map(([k, lbl]) => { const n = k === 'all' ? all.length : (counts[k] || 0); return n || k === 'all' ? `<button class="${todayFilter === k ? 'on' : ''}" onclick="todayFilterSet('${k}')">${lbl}<span class="n">${n}</span></button>` : ''; }).join('');
   document.querySelectorAll('#view-results th.sortable').forEach((th) => { th.classList.toggle('on', th.dataset.k === todaySortKey); th.classList.toggle('asc', th.dataset.k === todaySortKey && todaySortAsc); });
-  const ORDER = { 'demo-booked': 0, 'follow-up': 1, 'no-answer': 2, 'not-now': 3, 'not-relevant': 4 };
+  const ORDER = { 'demo-booked': 0, 'follow-up': 1, 'no-answer': 2, 'ivr': 2, 'not-now': 3, 'not-relevant': 4 };
   const rows = all.filter((c) => todayFilter === 'all' || c.action === todayFilter).sort((a, b) => {
     let v = 0;
     if (todaySortKey === 'at') v = new Date(a.at) - new Date(b.at);
@@ -905,7 +907,7 @@ async function disp(action, callback_at, extra) {
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
     apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...(extra || {}) }));
-    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': (gmailReady ? '✓ Mail sendt fra din Gmail - opfølgning planlagt.' : '✓ Mail klar i dit mailprogram - opfølgning planlagt.') }[action] || 'Gemt';
+    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'ivr': 'Telefonmenu - sendt til Research for et direkte nummer, prøves igen om tre hverdage.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': (gmailReady ? '✓ Mail sendt fra din Gmail - opfølgning planlagt.' : '✓ Mail klar i dit mailprogram - opfølgning planlagt.') }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -944,7 +946,10 @@ function noteThreadHtml(thread, id) {
   const rows = t.map((n) => {
     const who = n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || '');
     const when = n.at ? fmtWhen(n.at) : '';
-    const tag = n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">${e(ACTION_LABEL[n.action] || n.action)}</span>` : '';
+    // Where it was written: an outcome shows its action, a plain note the tab.
+    const WHERE = { research: 'Research', call: 'Opkald', list: 'Ringeliste', admin: 'Admin' };
+    const tag = n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">Udfald · ${e(ACTION_LABEL[n.action] || n.action)}</span>`
+      : (n.where && WHERE[n.where] ? `<span class="chip sm where">${e(WHERE[n.where])}</span>` : '');
     return `<div class="nt ${n.kind === 'call' ? 'call' : ''}">
       <div class="h"><b>${e(who)}</b>${when ? `<time>${e(when)}</time>` : ''}${tag}</div>
       <div class="t">${e(n.text)}</div>
@@ -1516,7 +1521,7 @@ function renderResearch() {
       ${L.meta.advertiser ? `<span class="proof quiet"><span class="shape"></span>${L.meta.activeNow ? (L.meta.adsMatched > 0 ? L.meta.adsMatched + ' annoncer nu' : 'Annoncerer nu') : 'Meta-annoncør'}</span>` : ''}
     </div>
     ${L.about ? `<p class="about">${e(L.about)}</p>` : ''}
-    <div class="rshneed">${L.needs_person ? '<span class="chip due sm">Mangler person</span>' : ''}${L.needs_phone ? '<span class="chip retry sm">Mangler nummer</span>' : ''}${!L.needs_phone ? `<span class="sub">Har nummer: ${e(fmtPhone(L.phone))}</span>` : ''}</div>
+    <div class="rshneed">${L.needs_person ? '<span class="chip due sm">Mangler person</span>' : ''}${L.needs_phone ? '<span class="chip retry sm">Mangler nummer</span>' : ''}${L.needs_direct ? '<span class="chip retry sm">☎ Telefonmenu - mangler direkte nummer</span>' : ''}${!L.needs_phone ? `<span class="sub">Har nummer: ${e(fmtPhone(L.phone))}</span>` : ''}</div>
     <div class="rshlinks">
       ${site ? `<a class="pill sm" href="${e(site)}" target="_blank" rel="noopener">Shoppen ↗</a>
       <a class="pill sm" href="${e(site)}/pages/about" target="_blank" rel="noopener">Om os ↗</a>
@@ -1711,6 +1716,7 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '5') disp('not-relevant');
   else if (ev.key === '6') disp('wrong-number');
   else if (ev.key === '7') { ev.preventDefault(); toggleMail(); }
+  else if (ev.key === '8') disp('ivr');
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();
 });

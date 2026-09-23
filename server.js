@@ -13506,7 +13506,7 @@ app.post("/api/twenty/push", authMiddleware, async (req, res) => {
 // Opkald / Opfølgning / Resultater).
 // ═════════════════════════════════════════════════════════════════════════════
 const POOL_ID = "pool";
-const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant", "wrong-number", "email-sent"]);
+const SDR_ACTIONS = new Set(["demo-booked", "follow-up", "no-answer", "not-now", "not-relevant", "wrong-number", "email-sent", "ivr"]);
 // A dial is not a conversation, and the difference is the whole job. These
 // four outcomes can only happen after someone picked up and talked; "ingen
 // svar" and "forkert nummer" never are. "Ikke relevant" goes both ways - it
@@ -14085,7 +14085,7 @@ async function twentyRetrySync() {
       if (working) { stats.badgesOnly++; sdrTouch(l); continue; }
       if (l.lastAction === "not-relevant") {
         l.lastAction = null; l.archived_at = null; l.archived_by = null; l.resurface_at = null;
-        sdrAppendNote(l, "admin", "Genåbnet til genopring - firmaet kendes fra Twenty");
+        sdrAppendNote(l, "admin", "Genåbnet til genopring - firmaet kendes fra Twenty", "admin");
         stats.reopened++;
       }
       if (l.callback_at && new Date(l.callback_at).getTime() <= now) l.callback_at = null;
@@ -14238,7 +14238,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14499,7 +14499,7 @@ function sdrNoteThread(l, nameById) {
   }
   for (const n of (Array.isArray(l.note_log) ? l.note_log : [])) {
     if (!n || !String(n.text || "").trim()) continue;
-    out.push({ at: n.at, by: n.by, by_name: (nameById || {})[n.by] || n.by, text: String(n.text).trim(), kind: "note" });
+    out.push({ at: n.at, by: n.by, by_name: (nameById || {})[n.by] || n.by, text: String(n.text).trim(), kind: "note", where: n.where || "" });
   }
   out.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
   return out.slice(-40);
@@ -14539,6 +14539,7 @@ function sdrSlim(l, nameById) {
     refs: sdrRefCustomers(l),
     history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
     research_by: l.research_by || null,
+    ivr_at: l.ivr_at || null, ivr_count: l.ivr_count || 0,
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
@@ -14967,6 +14968,15 @@ function sdrDispositionHandler(req, res) {
       lead.callback_at = (t && !isNaN(t.getTime())) ? t.toISOString() : sdrNextWeekdayAt(10, Math.max(1, Number(s0.email_followup_days) || 2));
       lead.resurface_at = null;
     }
+    else if (action === "ivr") {
+      // "Tryk 1 for salg, 2 for…" - a phone menu, no person reached. The
+      // number is fine, so it is a dial, not a wrong number; what the lead
+      // needs is a direct line, so Research picks it up. One more try in
+      // three weekdays; after that it rests a month unless a number turns up.
+      lead.ivr_at = nowIso; lead.ivr_count = (lead.ivr_count || 0) + 1;
+      lead.callback_at = lead.ivr_count >= 2 ? new Date(now + 30 * 86400000).toISOString() : sdrNextWeekdayAt(10, 3);
+      lead.resurface_at = null;
+    }
     else if (action === "not-now") { lead.resurface_at = new Date(now + 90 * 86400000).toISOString(); lead.callback_at = null; }
     else if (action === "not-relevant") { lead.archived_at = nowIso; lead.callback_at = null; }
     // Off my list, onto today's done pile; release the claim.
@@ -15015,6 +15025,7 @@ const SDR_RESEARCH_PASS_MS = 8 * 3600e3;     // "Spring over": out of MY queue f
 function sdrResearchScore(l) {
   let s = 0;
   if (isDkPhone(sdrPhone(l).phone)) s += 100;                       // dialable already - only a name missing
+  if (l.ivr_at) s += 60;                                             // a phone menu: a direct number unlocks it
   if (l.meta_advertiser === true || l.meta_verified_active === true) s += 40;
   s += Math.min(20, Number(l.adsMatched || 0));
   if (l.web || l.website) s += 10;                                   // something to research from
@@ -15024,7 +15035,9 @@ function sdrResearchScore(l) {
 function sdrResearchNeeds(l) {
   const person = !sdrHasPerson(l);
   const phone = !isDkPhone(sdrPhone(l).phone);
-  return { person, phone, any: person || phone };
+  // The main number answers with a menu: a direct line to a person is what's missing.
+  const direct = !!l.ivr_at && !(l.contacts || []).some((c) => c && c.name && isDkPhone(c.phone || c.direct_phone || c.mobile));
+  return { person, phone, direct, any: person || phone || direct };
 }
 function sdrResearchQueue(d, userId, now) {
   return (d.leads || []).filter((l) => {
@@ -15052,7 +15065,7 @@ function sdrResearchSlim(l, nameById) {
     phone: sdrPhone(l).phone, phone_label: sdrPhone(l).label,
     contacts: sdrContactList(l),
     meta: { advertiser: l.meta_advertiser === true || l.meta_verified_active === true, activeNow: l.meta_verified_active === true, adsMatched: Number(l.meta_ads_active_now || 0) },
-    needs_person: needs.person, needs_phone: needs.phone,
+    needs_person: needs.person, needs_phone: needs.phone, needs_direct: needs.direct, ivr_count: l.ivr_count || 0,
     real_cvr: /^\d{8}$/.test(String(l.cvr || "")) ? l.cvr : "",
   };
 }
@@ -15108,7 +15121,7 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
     // isn't lost when the card moves on. On its own it is not enrichment, so
     // it doesn't stamp research_at or count towards "beriget i dag".
     const note = str(b.note, 2000);
-    if (note) { sdrAppendNote(lead, req.userId, note); changed.push("note"); }
+    if (note) { sdrAppendNote(lead, req.userId, note, "research"); changed.push("note"); }
     if (!changed.length) return res.status(400).json({ error: "Udfyld mindst et navn eller et nummer" });
     if (changed.length === 1 && changed[0] === "note") {
       sdrTouch(lead); savePool(d);
@@ -15250,10 +15263,10 @@ app.post("/api/sdr/lead", authMiddleware, (req, res) => {
     sdrClaim(lead, me, now);
     lead.owner_override = me; lead.owner_override_at = nowIso;
     const note = str(b.note, 2000);
-    sdrAppendNote(lead, me, created ? `Tilføjet manuelt af ${nameById[me] || me}${note ? ": " + note : ""}` : `Hentet ind manuelt af ${nameById[me] || me}${note ? ": " + note : ""}`);
+    sdrAppendNote(lead, me, created ? `Tilføjet manuelt af ${nameById[me] || me}${note ? ": " + note : ""}` : `Hentet ind manuelt af ${nameById[me] || me}${note ? ": " + note : ""}`, "list");
     // Two companies on one number: say so on both, so the next caller knows -
     // and last, so it is the note the card shows.
-    if (created && sharesNumber) { sdrAppendNote(lead, me, `Samme nummer som ${sharesNumber.name}`); sdrAppendNote(sharesNumber, me, `Samme nummer som ${name} (tilføjet af ${who(me)})`); sdrTouch(sharesNumber); }
+    if (created && sharesNumber) { sdrAppendNote(lead, me, `Samme nummer som ${sharesNumber.name}`, "list"); sdrAppendNote(sharesNumber, me, `Samme nummer som ${name} (tilføjet af ${who(me)})`, "list"); sdrTouch(sharesNumber); }
     sdrTouch(lead, true);
     savePool(d);
     logActivity("sdr-manual-lead", `${nameById[me] || me} ${created ? "tilføjede" : "hentede"} ${lead.name}`, { cvr: lead.cvr, userId: me });
@@ -15281,7 +15294,7 @@ app.post("/api/sdr/research/note", authMiddleware, (req, res) => {
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
     const note = String(b.note || "").trim();
     if (!note) return res.status(400).json({ error: "Tom note" });
-    const saved_at = sdrAppendNote(lead, req.userId, note);
+    const saved_at = sdrAppendNote(lead, req.userId, note, "research");
     sdrTouch(lead);
     savePool(d);
     const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
@@ -15343,7 +15356,7 @@ app.post("/api/sdr/reopen", authMiddleware, (req, res) => {
     if (last.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Det var ikke dig, der sagde nej til det lead" });
     lead.lastAction = null; lead.archived_at = null; lead.archived_by = null;
     lead.resurface_at = null; lead.deferred_until = null; lead.callback_at = null; lead.needs_enrichment = false;
-    sdrAppendNote(lead, req.userId, "Taget tilbage fra \"" + SDR_DECLINED[last.action] + "\"");
+    sdrAppendNote(lead, req.userId, "Taget tilbage fra \"" + SDR_DECLINED[last.action] + "\"", "list");
     sdrTouch(lead);
     savePool(d);
     const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
@@ -15366,14 +15379,17 @@ app.post("/api/sdr/research/skip", authMiddleware, (req, res) => {
 });
 // One note, appended to the lead's thread. Shared by the call card and the
 // Research tab so a note written in either place shows up in the other.
-function sdrAppendNote(lead, userId, text) {
+function sdrAppendNote(lead, userId, text, where) {
   const note = String(text || "").trim().slice(0, 2000);
   const nowIso = new Date().toISOString();
   lead.last_note = note;
   lead.note_saved_at = nowIso;
   lead.note_saved_by = userId;
   lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
-  lead.note_log.push({ at: nowIso, by: userId, text: note });
+  // `where` = the tab the note was written in (research | call | list | admin),
+  // so the thread can say "skrevet i Research" - notes from a research session
+  // and notes from a call read differently.
+  lead.note_log.push({ at: nowIso, by: userId, text: note, ...(where ? { where } : {}) });
   if (lead.note_log.length > 200) lead.note_log = lead.note_log.slice(-200);
   return nowIso;
 }
@@ -15386,7 +15402,7 @@ app.post("/api/sdr/note", authMiddleware, (req, res) => {
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
     const note = String((req.body || {}).note || "").trim().slice(0, 2000);
     if (!note) return res.status(400).json({ error: "Tom note" });
-    const nowIso = sdrAppendNote(lead, req.userId, note);
+    const nowIso = sdrAppendNote(lead, req.userId, note, "call");
     sdrTouch(lead);
     savePool(d);
     sdrRespond(res, req.userId, d, { saved_at: nowIso });
@@ -15786,7 +15802,7 @@ app.post("/api/sdr/admin/move-leads", authMiddleware, (req, res) => {
         sdrUnclaim(l);
         l.owner_override = null; l.owner_override_at = null;
       }
-      sdrAppendNote(l, req.userId, fromRetry && target ? `Genopring: givet til ${target.name} af admin` : `Flyttet ${from ? "fra " + (nameById[from] || from) + " " : ""}til ${target ? target.name : "puljen"} af admin`);
+      sdrAppendNote(l, req.userId, fromRetry && target ? `Genopring: givet til ${target.name} af admin` : `Flyttet ${from ? "fra " + (nameById[from] || from) + " " : ""}til ${target ? target.name : "puljen"} af admin`, "admin");
       sdrTouch(l);
       moved.push(l.name);
     }

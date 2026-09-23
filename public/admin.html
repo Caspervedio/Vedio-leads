@@ -373,7 +373,7 @@ function fmtDur(sec) {
   const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
   return h ? `${h}t ${String(m).padStart(2, '0')}m` : `${Math.floor(s / 60)}m`;
 }
-const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer' };
+const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer', 'email-sent': 'Mail sendt', 'ivr': 'Telefonmenu' };
 
 /* auth */
 async function doLogin(ev) { ev.preventDefault(); $('l-err').textContent = ''; try { const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('l-email').value.trim(), password: $('l-pass').value }) }); const d = await r.json(); if (!r.ok) { $('l-err').textContent = d.error || 'Login fejlede'; return; } token = d.token; me = d.user; localStorage.setItem('vl_token', token); localStorage.setItem('vl_current_user', JSON.stringify(me)); try { localStorage.removeItem('vl_admin_tab'); } catch {} if (!(me && (me.is_admin === true || me.role === 'admin' || me.id === 'admin'))) { location.replace('/'); return; } boot(); } catch (ex) { $('l-err').textContent = 'Netværksfejl: ' + ex.message; } }
@@ -686,9 +686,9 @@ async function moveLeads(cvrs, to) {
    logic on the server, so commission, Slack and callback dates follow. */
 const STAGES = [
   ['demo-booked', 'Demo booket'], ['follow-up', 'Følg op'], ['email-sent', 'Mail sendt'], ['no-answer', 'Ingen svar'],
-  ['not-now', 'Ikke nu (90 dage)'], ['not-relevant', 'Ikke relevant'], ['wrong-number', 'Forkert nummer'], ['reopen', 'Åben igen (nulstil)'],
+  ['not-now', 'Ikke nu (90 dage)'], ['not-relevant', 'Ikke relevant'], ['wrong-number', 'Forkert nummer'], ['ivr', 'Telefonmenu'], ['reopen', 'Åben igen (nulstil)'],
 ];
-const STAGE_NOW = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'email-sent': 'Mail sendt', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer' };
+const STAGE_NOW = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'email-sent': 'Mail sendt', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer' , 'ivr': 'Telefonmenu' };
 function stageRowHtml(L) {
   const sdrs = moveTargets().filter((t) => t.id !== 'pool');
   const last = (L.calls_all || []).slice(-1)[0];
