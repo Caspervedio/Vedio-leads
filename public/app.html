@@ -193,23 +193,27 @@
 
 <!-- ─── SPARRING (Gemini) - a colleague in a panel on the right ─────────── -->
 <button id="ai-fab" class="ai-fab" title="Sparring - spørg om alt: scripts, indvendinger, det åbne lead" onclick="aiToggle(true)">
-  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>
+  <span class="gem"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z"/></svg></span>
 </button>
-<aside id="aipanel" class="aipanel" hidden>
+<aside id="aipanel" class="aipanel">
   <div class="ai-bar">
     <div class="ai-lights">
       <button class="close" title="Luk" onclick="aiClose()"><span>✕</span></button>
       <button class="min" title="Minimér" onclick="aiToggle(false)"><span>–</span></button>
       <button class="max" title="Bredere / smallere" onclick="aiWide()"><span>⤢</span></button>
     </div>
-    <div class="ai-title"><i>✦</i>Sparring</div>
+    <div class="ai-title"><i class="gem"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z"/></svg></i>Sparring</div>
     <div class="ai-tools"><button class="pill sm primary" onclick="aiNew()">+ Ny samtale</button><button class="pill sm tertiary" onclick="aiList()" title="Dine gemte samtaler">Samtaler</button></div>
   </div>
   <div class="ai-sub"><span id="ai-sub">Ny samtale</span></div>
   <div id="ai-chats" class="ai-chats" hidden></div>
   <div id="ai-msgs" class="ai-msgs"></div>
   <div class="ai-foot">
-    <label class="ai-ctx" id="ai-ctx" hidden><input type="checkbox" id="ai-uselead" checked> Tag <b id="ai-leadname"></b> med</label>
+    <div class="ai-ctx" id="ai-ctx" hidden>
+      <div class="ai-ctx-ic gem"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z"/></svg></div>
+      <div class="ai-ctx-t"><b id="ai-leadname"></b><span id="ai-leadsub">Sparring om dette lead</span></div>
+      <label class="switch" title="Tag leadet med i samtalen"><input type="checkbox" id="ai-uselead" checked onchange="aiCtx()"><i></i></label>
+    </div>
     <div class="ai-input"><textarea id="ai-q" rows="2" placeholder="Start typing here"></textarea><button class="ai-sendbtn" id="ai-send" onclick="aiSend()" title="Send (Enter)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button></div>
     <div class="ai-hint"><kbd>Enter</kbd> sender · <kbd>Shift</kbd>+<kbd>Enter</kbd> ny linje</div>
   </div>
@@ -456,7 +460,7 @@ async function removeItem(cvr) {
 /* Opkald card */
 function renderCard() {
   const w = $('cardwrap'); calling = false; chooserOpen = false; ceditOpen = false;
-  if (typeof aiCtx === 'function' && $('aipanel') && !$('aipanel').hidden) setTimeout(aiCtx, 0);
+  if (typeof aiOpen === 'function' && aiOpen()) setTimeout(aiCtx, 0);
   const L = S.current;
   // Start the clock the moment the lead is on screen - that is the only stamp
   // we reliably get, since the Ring op button is rarely used. Once per lead.
@@ -1512,19 +1516,24 @@ function openActivity() {
    Gemini with the team's material and the open lead in its head. Saved per
    SDR on the server; the panel remembers which conversation was open. */
 const AI = { chat: null, busy: false, list: [] };
-function aiOpen() { return !$('aipanel').hidden; }
+function aiOpen() { return $('aipanel').classList.contains('open'); }
+const AI_GEM = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z"/></svg>';
 function aiToggle(on) {
   const want = on === undefined ? !aiOpen() : !!on;
   // Open: the panel on the right. Minimised: a purple button bottom-right.
-  $('aipanel').hidden = !want; $('ai-fab').hidden = want; document.body.classList.toggle('ai-open', want);
+  $('aipanel').classList.toggle('open', want); $('ai-fab').classList.toggle('hide', want); document.body.classList.toggle('ai-open', want);
   try { $('aipanel').classList.toggle('wide', localStorage.getItem('vl_ai_wide') === '1'); } catch {}
   try { localStorage.setItem('vl_ai_open', want ? '1' : '0'); } catch {}
   if (want) { aiCtx(); if (!AI.chat) { const id = (() => { try { return localStorage.getItem('vl_ai_chat'); } catch { return ''; } })(); if (id) aiLoad(id); else aiRender(); } setTimeout(() => $('ai-q').focus(), 50); }
 }
 function aiCtx() {
   const L = S.current; const onCall = $('view-ring') && $('view-ring').classList.contains('active');
-  $('ai-ctx').hidden = !(L && onCall);
-  if (L && onCall) $('ai-leadname').textContent = L.name || '';
+  const box = $('ai-ctx'); box.hidden = !(L && onCall);
+  if (!(L && onCall)) return;
+  const on = $('ai-uselead').checked; box.classList.toggle('off', !on);
+  $('ai-leadname').textContent = L.name || '';
+  const bits = [L.contact && L.contact.name, L.meta && L.meta.activeNow ? 'kører Meta-annoncer' : (L.meta && L.meta.advertiser ? 'Meta-annoncør' : ''), L.city].filter(Boolean);
+  $('ai-leadsub').textContent = on ? (bits.length ? bits.join(' · ') : 'Sparring om dette lead') : 'Ikke med - generel sparring';
 }
 function aiClose() { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} aiToggle(false); }
 function aiWide() { const w = $('aipanel').classList.toggle('wide'); try { localStorage.setItem('vl_ai_wide', w ? '1' : '0'); } catch {} }
@@ -1572,13 +1581,13 @@ function aiRender() {
   const box = $('ai-msgs'); const msgs = (AI.chat && AI.chat.messages) || [];
   $('ai-sub').textContent = AI.chat && AI.chat.id ? AI.chat.title : 'Ny samtale';
   if (!msgs.length) {
-    box.innerHTML = `<div class="ai-empty"><div class="ai-mark">✦</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Hvad spørger jeg om for at afdække, om de har ad fatigue?'].map((q) => `<button onclick="$('ai-q').value=${JSON.stringify(q)};aiSend()">${e(q)}</button>`).join('')}</div></div>`;
+    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Hvad spørger jeg om for at afdække, om de har ad fatigue?'].map((q) => `<button onclick="$('ai-q').value=${JSON.stringify(q)};aiSend()">${e(q)}</button>`).join('')}</div></div>`;
     return;
   }
   box.innerHTML = msgs.map((m, i) => m.role === 'user'
     ? `<div class="ai-m user"><div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
-    : `<div class="ai-m bot"><i class="ai-av">✦</i><div class="ai-b">${aiMd(m.text)}</div><div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
-  ).join('') + (AI.busy ? '<div class="ai-m bot"><i class="ai-av">✦</i><div class="ai-b ai-wait"><span></span><span></span><span></span></div></div>' : '');
+    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div><div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
+  ).join('') + (AI.busy ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait"><span></span><span></span><span></span></div></div>` : '');
   box.scrollTop = box.scrollHeight;
 }
 function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
@@ -1603,7 +1612,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.target && ev.target.id === 'ai-q' && ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
 });
 function showTab(id) {
-  setTimeout(() => { if (typeof aiCtx === 'function' && !$('aipanel').hidden) aiCtx(); }, 0);
+  setTimeout(() => { if (typeof aiOpen === 'function' && aiOpen()) aiCtx(); }, 0);
   activeTab = id;
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id));
