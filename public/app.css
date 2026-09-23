@@ -530,8 +530,8 @@ main{transition:margin-right .46s var(--ease)}
 .ai-msgs{flex:1;overflow-y:auto;padding:18px 18px 8px;display:flex;flex-direction:column;gap:14px;font-size:14px;background:var(--white)}
 .ai-m{display:flex;flex-direction:column;gap:4px;max-width:100%;position:relative}
 .ai-m.user{align-items:flex-end}
-.ai-m.bot{padding-left:30px}
-.ai-av{position:absolute;left:0;top:2px;width:22px;height:22px;border-radius:50%;background:var(--violet-soft);color:var(--violet-deep);font-style:normal;font-size:11px;display:flex;align-items:center;justify-content:center}
+.ai-m.bot{padding-left:34px}
+.ai-av{position:absolute;left:0;top:2px;width:26px;height:26px;border-radius:50%;background:var(--violet-soft);color:var(--violet);font-style:normal;font-size:16px;display:flex;align-items:center;justify-content:center}
 .ai-m .ai-b{padding:11px 15px;border-radius:16px;line-height:1.55;max-width:94%}
 .ai-m.user .ai-b{background:var(--black);color:var(--white);border-bottom-right-radius:5px}
 .ai-m.bot .ai-b{background:var(--paper);border:1px solid var(--line);border-bottom-left-radius:5px}
@@ -540,14 +540,15 @@ main{transition:margin-right .46s var(--ease)}
 .ai-b ul,.ai-b ol{margin:0 0 8px 18px}.ai-b li{margin:3px 0}
 .ai-b b{font-weight:700}
 .ai-b code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--white);padding:1px 5px;border-radius:5px;border:1px solid var(--line)}
-.ai-b.ai-wait{display:inline-flex;gap:5px;padding:13px 15px}
-.ai-b.ai-wait span{width:6px;height:6px;border-radius:50%;background:var(--violet);opacity:.35;animation:aidot 1.2s infinite}
-.ai-b.ai-wait span:nth-child(2){animation-delay:.2s}.ai-b.ai-wait span:nth-child(3){animation-delay:.4s}
-@keyframes aidot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+.ai-b.ai-wait{display:inline-flex;align-items:center;gap:4px;padding:11px 15px;color:var(--txt-soft);font-size:13px}
+.ai-b.ai-wait span{width:7px;height:7px;border-radius:50%;background:var(--violet);opacity:.3;animation:aidot 1.1s infinite;margin-top:1px}
+.ai-b.ai-wait span:first-of-type{margin-left:6px}
+.ai-b.ai-wait span:nth-of-type(2){animation-delay:.18s}.ai-b.ai-wait span:nth-of-type(3){animation-delay:.36s}
+@keyframes aidot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-4px)}}
 .ai-acts{display:flex;gap:2px;margin-top:-2px}
 /* Empty state */
 .ai-empty{padding:26px 6px 10px;text-align:left}
-.ai-mark{width:40px;height:40px;border-radius:12px;background:var(--violet-soft);color:var(--violet);font-size:18px;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.ai-mark{width:44px;height:44px;border-radius:14px;background:var(--violet-soft);color:var(--violet);font-size:26px;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
 .ai-empty p{font-family:var(--display);font-size:24px;letter-spacing:.01em;margin:0 0 6px;color:var(--txt)}
 .ai-empty>span{display:block;font-size:13px;color:var(--txt-soft);margin-bottom:16px;line-height:1.5}
 .ai-starters{display:flex;flex-direction:column;gap:6px}
@@ -558,7 +559,7 @@ main{transition:margin-right .46s var(--ease)}
 /* The lead the conversation is about - a card with a switch, not a checkbox. */
 .ai-ctx{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:9px 10px 9px 9px;border-radius:14px;background:linear-gradient(135deg,var(--violet-soft),#f4effd);border:1px solid #e3d8fb;transition:background .2s var(--ease),border-color .2s var(--ease)}
 .ai-ctx[hidden]{display:none}
-.ai-ctx-ic{width:30px;height:30px;border-radius:9px;background:var(--violet);color:var(--white);font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 10px rgba(124,58,237,.3);transition:background .2s var(--ease),box-shadow .2s var(--ease)}
+.ai-ctx-ic{width:30px;height:30px;border-radius:9px;background:var(--violet);color:var(--white);font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 10px rgba(124,58,237,.3);transition:background .2s var(--ease),box-shadow .2s var(--ease)}
 .ai-ctx-t{flex:1;min-width:0;line-height:1.25}
 .ai-ctx-t b{display:block;font-size:13.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ai-ctx-t span{display:block;font-size:11.5px;color:var(--violet-deep);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

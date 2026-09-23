@@ -1563,7 +1563,9 @@ function aiMd(t) {
   for (const raw of esc.split('\n')) {
     const line = raw.replace(/\s+$/, '');
     const m = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/);
-    if (m) { const kind = /\d/.test(m[1]) ? 'ol' : 'ul'; if (!list || list.kind !== kind) { if (list) out.push(`</${list.kind}>`); list = { kind }; out.push(`<${kind}>`); } out.push(`<li>${inline(m[2])}</li>`); continue; }
+    // Numbered items keep their own number - a paragraph between "1." and "2."
+    // must not restart the count.
+    if (m) { const kind = /\d/.test(m[1]) ? 'ol' : 'ul'; if (!list || list.kind !== kind) { if (list) out.push(`</${list.kind}>`); list = { kind }; out.push(`<${kind}>`); } out.push(`<li${kind === 'ol' ? ` value="${parseInt(m[1], 10)}"` : ''}>${inline(m[2])}</li>`); continue; }
     if (list) { out.push(`</${list.kind}>`); list = null; }
     if (!line.trim()) continue;
     const h = line.match(/^#{1,3}\s+(.*)$/);
@@ -1576,13 +1578,13 @@ function aiRender() {
   const box = $('ai-msgs'); const msgs = (AI.chat && AI.chat.messages) || [];
   $('ai-sub').textContent = AI.chat && AI.chat.id ? AI.chat.title : 'Ny samtale';
   if (!msgs.length) {
-    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Hvad spørger jeg om for at afdække, om de har ad fatigue?'].map((q) => `<button onclick="$('ai-q').value=${JSON.stringify(q)};aiSend()">${e(q)}</button>`).join('')}</div></div>`;
+    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Hvad spørger jeg om for at afdække, om de har ad fatigue?'].map((q) => `<button type="button" data-q="${e(q)}">${e(q)}</button>`).join('')}</div></div>`;
     return;
   }
   box.innerHTML = msgs.map((m, i) => m.role === 'user'
     ? `<div class="ai-m user"><div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
     : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div><div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
-  ).join('') + (AI.busy ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait"><span></span><span></span><span></span></div></div>` : '');
+  ).join('') + (AI.busy ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait">Gemini skriver<span></span><span></span><span></span></div></div>` : '');
   box.scrollTop = box.scrollHeight;
 }
 function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
@@ -1605,6 +1607,10 @@ async function aiSend() {
 }
 document.addEventListener('keydown', (ev) => {
   if (ev.target && ev.target.id === 'ai-q' && ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
+});
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest && ev.target.closest('.ai-starters button[data-q]');
+  if (b) { $('ai-q').value = b.dataset.q; aiSend(); }
 });
 function showTab(id) {
   setTimeout(() => { if (typeof aiOpen === 'function' && aiOpen()) aiCtx(); }, 0);
