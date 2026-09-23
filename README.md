@@ -93,8 +93,11 @@ Hvad automatikken ikke kan, havner i Research-fanen til SDR'erne.
 
 **Sparring (den lilla ✦ nederst til højre).** En chat med Gemini i et panel til højre. Den
 kender pitchen, de 12 scripts, træningsguiden, referencekunderne og det lead
-SDR'en har åbent (kan slås fra), og svarer på dansk i telefonsprog. Samtaler
-gemmes pr. SDR (`chats/chats_<id>.json`), kan genåbnes og slettes. Svar kan
+SDR'en har åbent (kan slås fra), og svarer på dansk i telefonsprog.
+Den kan også slå op i platformen — alle leads (navn, website, person, nummer),
+SDR'ens egen liste, opfølgninger, tal og seneste opkald — og viser under svaret,
+hvad den slog op. Samtaler gemmes pr. SDR (`chats/chats_<id>.json`), kan
+genåbnes og slettes. Svar kan
 kopieres eller lægges direkte i noten.
 
 **Hvor meget der kommer ind.** Puljen fyldes op til et antal *friske* leads
