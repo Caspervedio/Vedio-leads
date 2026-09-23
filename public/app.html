@@ -1586,7 +1586,7 @@ function aiRender() {
   }
   box.innerHTML = msgs.map((m, i) => m.role === 'user'
     ? `<div class="ai-m user"><div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
-    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div><div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
+    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div>${m.tools_used && m.tools_used.length ? `<span class="sub ai-used" title="Data slået op i platformen for at svare">Slog op: ${e(m.tools_used.map((t) => ({ my_list: 'din liste', my_followups: 'dine opfølgninger', my_stats: 'dine tal', recent_calls: 'dine seneste opkald' })[t] || t.replace('search_leads', 'leads').replace('get_lead', 'lead')).join(' · '))}</span>` : ''}<div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
   ).join('') + (AI.busy ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait">Gemini skriver<span></span><span></span><span></span></div></div>` : '');
   box.scrollTop = box.scrollHeight;
 }

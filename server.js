@@ -16426,6 +16426,8 @@ function sdrChatSystemPrompt(d, userId, lead) {
   const parts = [
     `Du er sparringspartner for ${me.name || "en SDR"}, som ringer kold kanvas for Vedio. Du er en erfaren dansk salgstræner og kollega: konkret, kort, ærlig og varm. Svar altid på dansk, i et talesprog der kan bruges direkte i telefonen. Når du foreslår replikker, så skriv dem som de skal siges - korte sætninger, ingen salgsfloskler, ingen "revolutionerende". Stil ét opklarende spørgsmål hvis du mangler noget vigtigt; ellers svar bare.`,
     `Sprog: Skriv korrekt, naturligt dansk, som en dansker skriver til en kollega. Gå direkte til svaret - begynd ALDRIG med "Okay", "Selvfølgelig", "Godt spørgsmål" eller med SDR'ens navn ("Okay, Victor." er forkert dansk). Brug ikke navnet som tiltale medmindre det er naturligt. Undgå anglicismer og direkte oversættelser fra engelsk (ikke "det giver mening" for "that makes sense", ikke "ræk ud", ikke "adressere"). Danske anførselstegn og dansk tegnsætning. Brug fagord som ad fatigue kun hvis SDR'en selv bruger dem. Tonen må gerne trække mod talesprog - som man siger det i telefonen, med "du" og "I" og hverdagsord - men altid forståeligt og lige til sagen: ingen fyld, ingen lange indledninger, ingen opsummering af spørgsmålet.`,
+    `Lige nu er det ${new Date().toLocaleString("da-DK", { timeZone: "Europe/Copenhagen", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })} (dansk tid). Regn "i dag", "i går" og "denne uge" ud fra det.`,
+    `Data fra platformen: Du har værktøjer, der slår op i Vedio Ring - search_leads (alle leads på navn/website/by/person/nummer), get_lead (alt om ét lead), my_list (SDR'ens ringeliste i rækkefølge), my_followups, my_stats (dagens/ugens tal, provision) og recent_calls (seneste udfald og noter). Brug dem, så snart et spørgsmål handler om konkrete leads, personer, numre, tal eller lister - gæt aldrig på data, og find aldrig selv på firmaer eller tal. Til rene sparringsspørgsmål (replikker, indvendinger, scripts) behøver du ikke slå op. Nævn gerne kort hvad du slog op ("Jeg kiggede på din liste…"). Tidspunkter i data er UTC - dansk tid er 2 timer foran om sommeren.`,
     `Om Vedio: Vedio laver videoannoncer til virksomheder, der annoncerer på Meta (Facebook/Instagram). Kernen i pitchen: annoncer bliver trætte ("ad fatigue") og mister effekt, så der skal hele tiden nye varianter til - Vedio leverer dem hurtigt og billigt ud fra kundens eget materiale, så kunden slipper for selv at producere. SDR'ens mål er at booke en 20-minutters demo (ikke at sælge i telefonen). Lov aldrig konkrete resultater (fx "20 % billigere klik") - hold dig til det, pitchen og scripts siger.`,
     pitch ? `SDR'ens pitch (den de faktisk bruger):\n${pitch}` : "",
     guide && guide.raw ? `Træningsguide / spilleregler (JSON):\n${String(guide.raw).slice(0, 12000)}` : "",
@@ -16450,25 +16452,120 @@ function sdrChatSystemPrompt(d, userId, lead) {
   }
   return parts.filter(Boolean).join("\n\n");
 }
-async function geminiChat(system, messages) {
+// What the model may look up in the platform, on the SDR's behalf: their
+// list, follow-ups, numbers and recent calls, and any lead by name, website
+// or number. Casper: "it should be allowed to see numbers, names, companies".
+function sdrChatTools(d, userId) {
+  const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const now = Date.now();
+  const who = (id) => nameById[id] || id || "-";
+  const brief = (l) => {
+    const c = sdrPrimaryContact(l) || {}; const ph = sdrPhone(l);
+    const onList = Object.entries(d.sdr_lists || {}).find(([, L]) => (L.cvrs || []).includes(l.cvr));
+    return {
+      cvr: l.cvr, firma: l.name || "", by: l.city || "", website: l.web || l.website || "", branche: l.ind || l.industry || "",
+      kontakt: c.name ? `${c.name}${c.title ? " (" + c.title + ")" : ""}` : null, telefon: ph.phone || null, nummer_type: ph.label || null,
+      meta: l.meta_verified_active === true ? "kører annoncer nu" : l.meta_advertiser === true ? "Meta-annoncør" : null,
+      status: l.lastAction === "not-relevant" ? "arkiveret" : l.lastAction === "demo-booked" ? "demo booket" : l.retry_pool ? "i Genopring (venter på admin)" : l.lastAction || "ikke ringet",
+      ligger_hos: onList ? who(onList[0]) : (sdrClaimActive(l, now) ? who(l.claimed_by) : null),
+      opfoelgning: l.callback_at || null, opkald_i_alt: (l.calls || []).length, sidste_note: l.last_note || null,
+      historik_med_vedio: (l.retry && l.retry.badges) || undefined,
+    };
+  };
+  const full = (l) => ({
+    ...brief(l), om: l.about || null,
+    kontakter: (l.contacts || []).filter((c) => c && c.name).map((c) => ({ navn: c.name, titel: c.title || "", telefon: c.phone || c.direct_phone || c.mobile || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || "" })),
+    opkald: (l.calls || []).slice(-10).map((x) => ({ tid: x.at, af: who(x.by), udfald: x.action, note: x.note || "", varighed_s: x.duration_s || null })),
+    noter: sdrNoteThread(l, nameById).slice(-12).map((n) => ({ tid: n.at, af: n.by_name, hvor: n.kind === "call" ? "udfald " + n.action : (n.where || ""), tekst: n.text })),
+    demo: l.demo_booked_at ? { booket: l.demo_booked_at, af: who(l.demo_booked_by), status: l.demo_status || "pending" } : null,
+  });
+  const norm = (p) => String(p || "").replace(/\D/g, "").replace(/^45(?=\d{8}$)/, "");
+  const tools = {
+    search_leads: {
+      description: "Søg i alle leads i platformen på firmanavn, website, by, kontaktperson eller telefonnummer. Returnerer op til 15 korte poster.",
+      parameters: { type: "OBJECT", properties: { q: { type: "STRING", description: "Søgeord: firmanavn, domæne, by, personnavn eller nummer" } }, required: ["q"] },
+      run: ({ q }) => {
+        const s = String(q || "").trim().toLowerCase(); const digits = s.replace(/\D/g, "");
+        if (!s) return { fejl: "tomt søgeord" };
+        const hit = (d.leads || []).filter((l) => {
+          const hay = [l.name, l.web, l.website, l.city, l.ind, ...(l.contacts || []).map((c) => c && c.name)].filter(Boolean).join(" ").toLowerCase();
+          return hay.includes(s) || (digits.length >= 6 && [l.phone, l.ph, ...(l.contacts || []).map((c) => c && c.phone)].some((p) => norm(p).includes(digits)));
+        });
+        return { antal: hit.length, leads: hit.slice(0, 15).map(brief) };
+      },
+    },
+    get_lead: {
+      description: "Hent alt om ét lead: kontakter, alle opkald med udfald, noter, demo-status. Brug cvr fra search_leads eller my_list.",
+      parameters: { type: "OBJECT", properties: { cvr: { type: "STRING" } }, required: ["cvr"] },
+      run: ({ cvr }) => { const l = (d.leads || []).find((x) => x.cvr === String(cvr)); return l ? full(l) : { fejl: "ikke fundet" }; },
+    },
+    my_list: {
+      description: "SDR'ens egen ringeliste i rækkefølge (øverst = næste). Brug til 'hvem er næste', 'hvor mange Meta-annoncører har jeg' osv.",
+      parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "Antal fra toppen, standard 30, max 200" } } },
+      run: ({ limit }) => { const L = ((d.sdr_lists || {})[userId] || {}).cvrs || []; const m = new Map((d.leads || []).map((l) => [l.cvr, l])); const rows = L.map((c) => m.get(c)).filter(Boolean); return { i_alt: rows.length, leads: rows.slice(0, Math.min(200, Number(limit) || 30)).map(brief) }; },
+    },
+    my_followups: {
+      description: "SDR'ens aftalte opfølgninger og automatiske genforsøg, forfaldne først. Hver post har tidspunkt, slags og seneste note.",
+      parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "standard 40" } } },
+      run: ({ limit }) => {
+        const rows = (d.leads || []).filter((l) => l.callback_at && !l.retry_pool && !["not-relevant", "demo-booked"].includes(l.lastAction) && !l.twenty_opportunity_id && sdrCallable(l) && sdrFollowupMine(l, userId)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+        return { i_alt: rows.length, forfaldne: rows.filter((l) => new Date(l.callback_at).getTime() <= now).length, opfoelgninger: rows.slice(0, Math.min(200, Number(limit) || 40)).map((l) => ({ ...brief(l), slags: l.lastAction === "no-answer" ? "ingen svar - genforsøg" : l.lastAction === "ivr" ? "telefonmenu - genforsøg" : l.lastAction === "email-sent" ? "mail sendt - følg op" : "aftalt opfølgning" })) };
+      },
+    },
+    my_stats: {
+      description: "SDR'ens tal: opkald, samtaler og demoer i dag / denne uge / 30 dage, opkald pr. demo, liste- og puljestørrelse, provision og løn for måneden.",
+      parameters: { type: "OBJECT", properties: {} },
+      run: () => { const st = buildSdrState(userId, d); return { tal: st.stats, provision: st.commission, dagligt_maal: (st.settings || {}).daily_target }; },
+    },
+    recent_calls: {
+      description: "SDR'ens seneste registrerede opkald (udfald + note), nyeste først. Brug til 'hvem talte jeg med', 'hvad sagde de'.",
+      parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "standard 20" }, days: { type: "INTEGER", description: "kun de sidste N dage, standard 7" } } },
+      run: ({ limit, days }) => {
+        const since = now - (Math.max(1, Number(days) || 7)) * 86400e3; const out = [];
+        for (const l of d.leads || []) for (const c of (l.calls || [])) if (c.by === userId && new Date(c.at).getTime() >= since) out.push({ tid: c.at, firma: l.name, cvr: l.cvr, kontakt: (sdrPrimaryContact(l) || {}).name || null, udfald: c.action, note: c.note || "", varighed_s: c.duration_s || null });
+        out.sort((a, b) => String(b.tid).localeCompare(a.tid));
+        return { i_alt: out.length, opkald: out.slice(0, Math.min(100, Number(limit) || 20)) };
+      },
+    },
+  };
+  return {
+    declarations: Object.entries(tools).map(([name, t]) => ({ name, description: t.description, parameters: t.parameters })),
+    run: (name, args) => { const t = tools[name]; if (!t) return { fejl: "ukendt værktøj " + name }; try { return t.run(args || {}); } catch (e) { return { fejl: e.message }; } },
+  };
+}
+// Gemini with function calling: the model may ask for data up to four times
+// before it answers. Returns { text, tools_used }.
+async function geminiChat(system, messages, tools) {
   const apiKey = process.env.GEMINI_API_KEY; if (!apiKey) throw new Error("GEMINI_API_KEY mangler på serveren");
-  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 90000);
-  try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${apiKey}`, {
-      method: "POST", signal: ctl.signal, headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.text }] })),
-        generationConfig: { temperature: 0.6, maxOutputTokens: 4096 },
-      }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(`Gemini ${r.status}: ${(j.error && j.error.message) || "ukendt fejl"}`);
-    const parts = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+  const contents = messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.text }] }));
+  const used = [];
+  for (let round = 0; round < 5; round++) {
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 90000);
+    let j;
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${apiKey}`, {
+        method: "POST", signal: ctl.signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] }, contents,
+          ...(tools && round < 4 ? { tools: [{ functionDeclarations: tools.declarations }] } : {}),
+          generationConfig: { temperature: 0.6, maxOutputTokens: 4096 },
+        }),
+      });
+      j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`Gemini ${r.status}: ${(j.error && j.error.message) || "ukendt fejl"}`);
+    } finally { clearTimeout(timer); }
+    const cand = (j.candidates || [])[0] || {}; const parts = (cand.content || {}).parts || [];
+    const calls = parts.filter((p) => p.functionCall);
+    if (calls.length && tools) {
+      contents.push({ role: "model", parts: calls.map((p) => ({ functionCall: p.functionCall })) });
+      contents.push({ role: "user", parts: calls.map((p) => { const name = p.functionCall.name; const args = p.functionCall.args || {}; used.push(name + (args.q ? `("${String(args.q).slice(0, 40)}")` : args.cvr ? `(${args.cvr})` : "")); return { functionResponse: { name, response: { result: tools.run(name, args) } } }; }) });
+      continue;
+    }
     const text = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("").trim();
-    if (!text) throw new Error("Gemini svarede tomt" + (((j.candidates || [])[0] || {}).finishReason ? " (" + j.candidates[0].finishReason + ")" : ""));
-    return text;
-  } finally { clearTimeout(timer); }
+    if (!text) throw new Error("Gemini svarede tomt" + (cand.finishReason ? " (" + cand.finishReason + ")" : ""));
+    return { text, tools_used: used };
+  }
+  throw new Error("Gemini blev ved med at slå op uden at svare");
 }
 app.get("/api/sdr/chat", authMiddleware, (req, res) => {
   try { res.json({ ok: true, chats: loadChats(req.userId).sort((a, b) => String(b.updated_at).localeCompare(a.updated_at)).map(chatSummary), model: CHAT_MODEL }); }
@@ -16507,13 +16604,13 @@ app.post("/api/sdr/chat", authMiddleware, async (req, res) => {
     chat.messages.push({ role: "user", text: message, at: nowIso, ...(lead ? { lead: lead.name } : {}) });
     const system = sdrChatSystemPrompt(d, req.userId, lead);
     let reply;
-    try { reply = await geminiChat(system, chat.messages.slice(-CHAT_CONTEXT_MESSAGES)); }
+    try { reply = await geminiChat(system, chat.messages.slice(-CHAT_CONTEXT_MESSAGES), sdrChatTools(d, req.userId)); }
     catch (e) {
       // Keep the question, so a retry doesn't retype it; tell the SDR why.
       chat.updated_at = nowIso; saveChats(req.userId, chats);
       return res.status(502).json({ error: "Kunne ikke få svar: " + e.message, chat_id: chat.id });
     }
-    chat.messages.push({ role: "assistant", text: reply, at: new Date().toISOString() });
+    chat.messages.push({ role: "assistant", text: reply.text, at: new Date().toISOString(), ...(reply.tools_used.length ? { tools_used: reply.tools_used } : {}) });
     while (chat.messages.length > CHAT_MAX_MESSAGES) chat.messages.shift();
     chat.updated_at = new Date().toISOString();
     saveChats(req.userId, chats);
