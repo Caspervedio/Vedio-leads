@@ -48,6 +48,9 @@
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
       <a class="pill sm violet" id="imp-chip" href="/admin" title="Tilbage til admin" hidden></a>
       <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
+      <button class="iconbtn" id="ai-btn" title="Sparring - spørg om alt: scripts, indvendinger, det åbne lead" onclick="aiToggle()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>
+      </button>
       <button class="iconbtn" title="Træning og manuskripter" onclick="openTraining()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg>
       </button>
@@ -189,6 +192,20 @@
     </details>
   </section>
 </main>
+
+<!-- ─── SPARRING (Gemini) - a colleague in a panel on the right ─────────── -->
+<aside id="aipanel" class="aipanel" hidden>
+  <div class="ai-head">
+    <div><b>Sparring</b><span class="sub" id="ai-sub">Spørg om alt - scripts, indvendinger, det lead du har åbent.</span></div>
+    <div class="row" style="gap:6px"><button class="pill sm" onclick="aiNew()">+ Ny samtale</button><button class="pill sm tertiary" onclick="aiList()" title="Dine gemte samtaler">Samtaler</button><button class="iconbtn" title="Luk" onclick="aiToggle(false)">✕</button></div>
+  </div>
+  <div id="ai-chats" class="ai-chats" hidden></div>
+  <div id="ai-msgs" class="ai-msgs"></div>
+  <div class="ai-foot">
+    <label class="ai-ctx" id="ai-ctx" hidden><input type="checkbox" id="ai-uselead" checked> Tag <b id="ai-leadname"></b> med</label>
+    <div class="ai-input"><textarea id="ai-q" rows="2" placeholder="Skriv til din sparringspartner… (Enter sender, Shift+Enter ny linje)"></textarea><button class="pill primary" id="ai-send" onclick="aiSend()">Send</button></div>
+  </div>
+</aside>
 </div>
 
 <div id="toast"></div>
@@ -431,6 +448,7 @@ async function removeItem(cvr) {
 /* Opkald card */
 function renderCard() {
   const w = $('cardwrap'); calling = false; chooserOpen = false; ceditOpen = false;
+  if (typeof aiCtx === 'function' && $('aipanel') && !$('aipanel').hidden) setTimeout(aiCtx, 0);
   const L = S.current;
   // Start the clock the moment the lead is on screen - that is the only stamp
   // we reliably get, since the Ring op button is rarely used. Once per lead.
@@ -1482,7 +1500,95 @@ function openActivity() {
   if (HIST.loaded) renderActivity(); else histLoad();
 }
 /* ─── Tabs / settings ──────────────────────────────────────────────────── */
+/* ─── Sparring ────────────────────────────────────────────────────────────
+   Gemini with the team's material and the open lead in its head. Saved per
+   SDR on the server; the panel remembers which conversation was open. */
+const AI = { chat: null, busy: false, list: [] };
+function aiOpen() { return !$('aipanel').hidden; }
+function aiToggle(on) {
+  const want = on === undefined ? !aiOpen() : !!on;
+  $('aipanel').hidden = !want; document.body.classList.toggle('ai-open', want); $('ai-btn').classList.toggle('on', want);
+  try { localStorage.setItem('vl_ai_open', want ? '1' : '0'); } catch {}
+  if (want) { aiCtx(); if (!AI.chat) { const id = (() => { try { return localStorage.getItem('vl_ai_chat'); } catch { return ''; } })(); if (id) aiLoad(id); else aiRender(); } setTimeout(() => $('ai-q').focus(), 50); }
+}
+function aiCtx() {
+  const L = S.current; const onCall = $('view-ring') && $('view-ring').classList.contains('active');
+  $('ai-ctx').hidden = !(L && onCall);
+  if (L && onCall) $('ai-leadname').textContent = L.name || '';
+}
+function aiNew() { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} $('ai-chats').hidden = true; aiRender(); $('ai-q').focus(); }
+async function aiList() {
+  const box = $('ai-chats'); if (!box.hidden) { box.hidden = true; return; }
+  box.hidden = false; box.innerHTML = '<div class="sub" style="padding:10px 14px">Henter…</div>';
+  try {
+    const d = await get('/api/sdr/chat'); AI.list = d.chats || [];
+    box.innerHTML = AI.list.length ? AI.list.map((c) => `<div class="ai-chat ${AI.chat && AI.chat.id === c.id ? 'on' : ''}" onclick="aiLoad('${e(c.id)}')">
+      <div><b>${e(c.title)}</b><span class="sub">${e(fmtWhen(c.updated_at))} · ${c.n} beskeder${c.lead_name ? ' · ' + e(c.lead_name) : ''}</span></div>
+      <button class="linkbtn" title="Slet samtalen" onclick="event.stopPropagation();aiDelete('${e(c.id)}')">Slet</button></div>`).join('') : '<div class="sub" style="padding:10px 14px">Ingen gemte samtaler endnu.</div>';
+  } catch (ex) { box.innerHTML = `<div class="sub" style="padding:10px 14px;color:#b42318">${e(ex.message)}</div>`; }
+}
+async function aiLoad(id) {
+  try { const d = await get('/api/sdr/chat/' + encodeURIComponent(id)); AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', id); } catch {} $('ai-chats').hidden = true; aiRender(); }
+  catch { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); } catch {} aiRender(); }
+}
+async function aiDelete(id) {
+  if (!confirm('Slet samtalen? Det kan ikke fortrydes.')) return;
+  try { await fetch('/api/sdr/chat/' + encodeURIComponent(id), { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } }); if (AI.chat && AI.chat.id === id) aiNew(); $('ai-chats').hidden = true; aiList(); toast('Samtalen er slettet'); }
+  catch (ex) { toast(ex.message, 4000); }
+}
+/* Just enough markdown for advice: paragraphs, bullets, numbered lists, bold, code. */
+function aiMd(t) {
+  const esc = e(String(t || ''));
+  const inline = (x) => x.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>');
+  const out = []; let list = null;
+  for (const raw of esc.split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const m = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/);
+    if (m) { const kind = /\d/.test(m[1]) ? 'ol' : 'ul'; if (!list || list.kind !== kind) { if (list) out.push(`</${list.kind}>`); list = { kind }; out.push(`<${kind}>`); } out.push(`<li>${inline(m[2])}</li>`); continue; }
+    if (list) { out.push(`</${list.kind}>`); list = null; }
+    if (!line.trim()) continue;
+    const h = line.match(/^#{1,3}\s+(.*)$/);
+    out.push(h ? `<p><b>${inline(h[1])}</b></p>` : `<p>${inline(line)}</p>`);
+  }
+  if (list) out.push(`</${list.kind}>`);
+  return out.join('');
+}
+function aiRender() {
+  const box = $('ai-msgs'); const msgs = (AI.chat && AI.chat.messages) || [];
+  $('ai-sub').textContent = AI.chat ? AI.chat.title : 'Spørg om alt - scripts, indvendinger, det lead du har åbent.';
+  if (!msgs.length) {
+    box.innerHTML = `<div class="ai-empty"><p>Hvad kan jeg hjælpe med?</p><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Hvad spørger jeg om for at afdække, om de har ad fatigue?'].map((q) => `<button onclick="$('ai-q').value=${JSON.stringify(q)};aiSend()">${e(q)}</button>`).join('')}</div></div>`;
+    return;
+  }
+  box.innerHTML = msgs.map((m, i) => m.role === 'user'
+    ? `<div class="ai-m user"><div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
+    : `<div class="ai-m bot"><div class="ai-b">${aiMd(m.text)}</div><div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
+  ).join('') + (AI.busy ? '<div class="ai-m bot"><div class="ai-b ai-wait">Tænker…</div></div>' : '');
+  box.scrollTop = box.scrollHeight;
+}
+function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
+function aiToNote(i) { const m = AI.chat.messages[i]; const n = $('note'); if (!n) return; n.value = (n.value ? n.value.trimEnd() + '\n' : '') + m.text.trim(); n.dispatchEvent(new Event('input')); toast('Lagt i noten - husk Gem note'); }
+async function aiSend() {
+  const q = $('ai-q').value.trim(); if (!q || AI.busy) return;
+  const useLead = !$('ai-ctx').hidden && $('ai-uselead').checked && S.current ? S.current.cvr : null;
+  AI.busy = true; $('ai-send').disabled = true; $('ai-q').value = '';
+  if (!AI.chat) AI.chat = { id: null, title: q.slice(0, 60), messages: [] };
+  AI.chat.messages.push({ role: 'user', text: q, at: new Date().toISOString(), ...(useLead ? { lead: S.current.name } : {}) });
+  aiRender();
+  try {
+    const d = await post('/api/sdr/chat', { chat_id: AI.chat.id, message: q, cvr: useLead });
+    AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', d.chat.id); } catch {}
+  } catch (ex) {
+    AI.chat.messages.push({ role: 'assistant', text: 'Det gik galt: ' + ex.message + '\n\nPrøv igen om lidt.', at: new Date().toISOString(), error: true });
+    const m = String(ex.message).match(/chat_id[^a-f0-9]*([a-f0-9]{12})/); if (m && !AI.chat.id) AI.chat.id = m[1];
+  }
+  AI.busy = false; $('ai-send').disabled = false; aiRender(); $('ai-q').focus();
+}
+document.addEventListener('keydown', (ev) => {
+  if (ev.target && ev.target.id === 'ai-q' && ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
+});
 function showTab(id) {
+  setTimeout(() => { if (typeof aiCtx === 'function' && !$('aipanel').hidden) aiCtx(); }, 0);
   activeTab = id;
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id));

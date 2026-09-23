@@ -16399,6 +16399,126 @@ app.post("/api/sdr/gmail/send", authMiddleware, async (req, res) => {
 // notes. Kept in their own file - twelve of them run to ~100 KB, which would
 // otherwise ride along on every 20-second state poll and every pool write.
 // Stored as the text Casper wrote; the browser parses it for display.
+// ─── Sparring: a Gemini chat for the SDRs ──────────────────────────────────
+// "Being able to prompt, ask for advice etc. just like we do here." The model
+// gets what an experienced colleague would know - the pitch, the 12 scripts,
+// the training guide, the reference customers - and the lead the SDR has open,
+// so "give me an opener for this one" works. Conversations are saved per SDR
+// in their own file (the pool is rewritten on every click; chats aren't pool
+// data) and can be reopened or deleted.
+const CHATS_DIR = path.join(DATA_DIR, "chats");
+const CHAT_MAX_CHATS = 60, CHAT_MAX_MESSAGES = 80, CHAT_CONTEXT_MESSAGES = 30, CHAT_MAX_INPUT = 6000;
+const CHAT_MODEL = process.env.SDR_CHAT_MODEL || "gemini-2.5-flash";
+function chatFile(userId) { return path.join(CHATS_DIR, `chats_${String(userId).replace(/[^a-z0-9_-]/gi, "")}.json`); }
+function loadChats(userId) { try { const j = JSON.parse(fs.readFileSync(chatFile(userId), "utf8")); return Array.isArray(j.chats) ? j.chats : []; } catch { return []; } }
+function saveChats(userId, chats) { fs.mkdirSync(CHATS_DIR, { recursive: true }); fs.writeFileSync(chatFile(userId), JSON.stringify({ chats }, null, 1)); }
+function chatSummary(c) { return { id: c.id, title: c.title, created_at: c.created_at, updated_at: c.updated_at, n: (c.messages || []).length, lead_name: c.lead_name || "" }; }
+// What the assistant knows. Built per request - the pitch and scripts can
+// change under it, and the lead differs every time.
+function sdrChatSystemPrompt(d, userId, lead) {
+  const users = loadUsers(); const me = users.find((u) => u.id === userId) || {}; const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const settings = sdrSettings(d);
+  const pitch = String(((d.sdr_pitch || {})[userId]) || settings.pitch_text || "").trim();
+  const scripts = loadScripts();
+  const guide = scripts.find((x) => x.kind === "guide");
+  const calls = scripts.filter((x) => x.kind !== "guide").sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const customers = (loadCustomers().items || []).filter((x) => x.verified && !x.hidden).slice(0, 220);
+  const parts = [
+    `Du er sparringspartner for ${me.name || "en SDR"}, som ringer kold kanvas for Vedio. Du er en erfaren dansk salgstræner og kollega: konkret, kort, ærlig og varm. Svar altid på dansk, i et talesprog der kan bruges direkte i telefonen. Når du foreslår replikker, så skriv dem som de skal siges - korte sætninger, ingen salgsfloskler, ingen "revolutionerende". Stil ét opklarende spørgsmål hvis du mangler noget vigtigt; ellers svar bare.`,
+    `Om Vedio: Vedio laver videoannoncer til virksomheder, der annoncerer på Meta (Facebook/Instagram). Kernen i pitchen: annoncer bliver trætte ("ad fatigue") og mister effekt, så der skal hele tiden nye varianter til - Vedio leverer dem hurtigt og billigt ud fra kundens eget materiale, så kunden slipper for selv at producere. SDR'ens mål er at booke en 20-minutters demo (ikke at sælge i telefonen). Lov aldrig konkrete resultater (fx "20 % billigere klik") - hold dig til det, pitchen og scripts siger.`,
+    pitch ? `SDR'ens pitch (den de faktisk bruger):\n${pitch}` : "",
+    guide && guide.raw ? `Træningsguide / spilleregler (JSON):\n${String(guide.raw).slice(0, 12000)}` : "",
+    calls.length ? `De ${calls.length} opkaldsscripts holdet arbejder ud fra (brug dem som udgangspunkt, når du foreslår forbedringer - og sig hvilket script du bygger på):\n\n` + calls.map((x) => `=== SCRIPT ${x.id} ===\n${String(x.raw || "").slice(0, 9000)}`).join("\n\n") : "",
+    customers.length ? `Referencekunder (rigtige Vedio-kunder - nævn KUN disse, aldrig andre; "current" = kunde nu, ellers tidligere kunde):\n` + customers.map((x) => `- ${x.name}${x.cat ? " [" + x.cat + "]" : ""}${x.subscribed ? " (kunde nu)" : ""}: ${String(x.blurb || "").slice(0, 120)}`).join("\n") : "",
+  ];
+  if (lead) {
+    const c = sdrPrimaryContact(lead) || {}; const ph = sdrPhone(lead);
+    const thread = sdrNoteThread(lead, nameById).slice(-10).map((n) => `${n.at ? String(n.at).slice(0, 10) : ""} ${n.by_name || ""}${n.kind === "call" ? " (udfald " + n.action + ")" : ""}: ${n.text}`);
+    const hist = (lead.calls || []).slice(-8).map((x) => `${String(x.at).slice(0, 16)} ${nameById[x.by] || x.by}: ${x.action}${x.note ? " - " + x.note : ""}`);
+    parts.push(`Det lead SDR'en har åbent lige nu (fakta - find ikke selv på mere om dem):\n` + [
+      `Virksomhed: ${lead.name || "-"}${lead.city ? ", " + lead.city : ""}`,
+      lead.web ? `Website: ${lead.web}` : "", lead.ind || lead.industry ? `Branche: ${lead.ind || lead.industry}` : "",
+      lead.about ? `Om dem: ${String(lead.about).replace(/\n/g, " / ")}` : "",
+      `Kontakt: ${c.name ? c.name + (c.title ? " (" + c.title + ")" : "") : "ingen navngiven person - omstillingsopkald"}`,
+      `Nummer: ${ph.phone || "-"} (${ph.label || "?"})`,
+      `Meta: ${lead.meta_verified_active === true ? "kører annoncer lige nu" : lead.meta_advertiser === true ? "Meta-annoncør" : "ukendt/ingen annoncer set"}${Number(lead.meta_ads_active_now) > 0 ? " · " + lead.meta_ads_active_now + " aktive annoncer" : ""}`,
+      lead.retry && Array.isArray(lead.retry.badges) && lead.retry.badges.length ? `Historik med Vedio: ${lead.retry.badges.join(" · ")}` : "",
+      lead.lastAction ? `Sidste udfald: ${lead.lastAction}${lead.callback_at ? " (opfølgning " + String(lead.callback_at).slice(0, 16) + ")" : ""}` : "Ikke ringet endnu",
+      hist.length ? `Opkaldshistorik:\n${hist.join("\n")}` : "", thread.length ? `Noter:\n${thread.join("\n")}` : "",
+    ].filter(Boolean).join("\n"));
+  }
+  return parts.filter(Boolean).join("\n\n");
+}
+async function geminiChat(system, messages) {
+  const apiKey = process.env.GEMINI_API_KEY; if (!apiKey) throw new Error("GEMINI_API_KEY mangler på serveren");
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 90000);
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${apiKey}`, {
+      method: "POST", signal: ctl.signal, headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.text }] })),
+        generationConfig: { temperature: 0.6, maxOutputTokens: 4096 },
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`Gemini ${r.status}: ${(j.error && j.error.message) || "ukendt fejl"}`);
+    const parts = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+    const text = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("").trim();
+    if (!text) throw new Error("Gemini svarede tomt" + (((j.candidates || [])[0] || {}).finishReason ? " (" + j.candidates[0].finishReason + ")" : ""));
+    return text;
+  } finally { clearTimeout(timer); }
+}
+app.get("/api/sdr/chat", authMiddleware, (req, res) => {
+  try { res.json({ ok: true, chats: loadChats(req.userId).sort((a, b) => String(b.updated_at).localeCompare(a.updated_at)).map(chatSummary), model: CHAT_MODEL }); }
+  catch (e) { sdrFail(res, e, "chat/list"); }
+});
+app.get("/api/sdr/chat/:id", authMiddleware, (req, res) => {
+  try {
+    const c = loadChats(req.userId).find((x) => x.id === req.params.id);
+    if (!c) return res.status(404).json({ error: "Samtalen findes ikke" });
+    res.json({ ok: true, chat: c });
+  } catch (e) { sdrFail(res, e, "chat/get"); }
+});
+app.delete("/api/sdr/chat/:id", authMiddleware, (req, res) => {
+  try {
+    const chats = loadChats(req.userId); const n = chats.length;
+    saveChats(req.userId, chats.filter((x) => x.id !== req.params.id));
+    res.json({ ok: true, deleted: n - chats.filter((x) => x.id !== req.params.id).length });
+  } catch (e) { sdrFail(res, e, "chat/delete"); }
+});
+app.post("/api/sdr/chat", authMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const message = String(b.message || "").trim().slice(0, CHAT_MAX_INPUT);
+    if (!message) return res.status(400).json({ error: "Skriv en besked" });
+    const chats = loadChats(req.userId);
+    let chat = b.chat_id ? chats.find((x) => x.id === String(b.chat_id)) : null;
+    const nowIso = new Date().toISOString();
+    const d = loadPool();
+    const lead = b.cvr ? (d.leads || []).find((l) => l.cvr === String(b.cvr)) || null : null;
+    if (!chat) {
+      chat = { id: crypto.randomBytes(6).toString("hex"), title: message.replace(/\s+/g, " ").slice(0, 60) + (message.length > 60 ? "…" : ""), created_at: nowIso, updated_at: nowIso, messages: [] };
+      chats.unshift(chat);
+      while (chats.length > CHAT_MAX_CHATS) chats.pop();
+    }
+    if (lead) { chat.lead_cvr = lead.cvr; chat.lead_name = lead.name || ""; }
+    chat.messages.push({ role: "user", text: message, at: nowIso, ...(lead ? { lead: lead.name } : {}) });
+    const system = sdrChatSystemPrompt(d, req.userId, lead);
+    let reply;
+    try { reply = await geminiChat(system, chat.messages.slice(-CHAT_CONTEXT_MESSAGES)); }
+    catch (e) {
+      // Keep the question, so a retry doesn't retype it; tell the SDR why.
+      chat.updated_at = nowIso; saveChats(req.userId, chats);
+      return res.status(502).json({ error: "Kunne ikke få svar: " + e.message, chat_id: chat.id });
+    }
+    chat.messages.push({ role: "assistant", text: reply, at: new Date().toISOString() });
+    while (chat.messages.length > CHAT_MAX_MESSAGES) chat.messages.shift();
+    chat.updated_at = new Date().toISOString();
+    saveChats(req.userId, chats);
+    res.json({ ok: true, chat });
+  } catch (e) { sdrFail(res, e, "chat"); }
+});
 const SCRIPTS_FILE = path.join(DATA_DIR, "call_scripts.json");
 function loadScripts() { try { const j = JSON.parse(fs.readFileSync(SCRIPTS_FILE, "utf8")); return Array.isArray(j) ? j : []; } catch { return []; } }
 function saveScripts(list) { fs.writeFileSync(SCRIPTS_FILE, JSON.stringify(list, null, 2)); }

@@ -91,6 +91,12 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 
 Hvad automatikken ikke kan, havner i Research-fanen til SDR'erne.
 
+**Sparring (✦ i toppen).** En chat med Gemini i et panel til højre. Den
+kender pitchen, de 12 scripts, træningsguiden, referencekunderne og det lead
+SDR'en har åbent (kan slås fra), og svarer på dansk i telefonsprog. Samtaler
+gemmes pr. SDR (`chats/chats_<id>.json`), kan genåbnes og slettes. Svar kan
+kopieres eller lægges direkte i noten.
+
 **Hvor meget der kommer ind.** Puljen fyldes op til et antal *friske* leads
 (aldrig ringet, med navn + nummer, ikke parkeret) — 450 som udgangspunkt, sat
 under ⚙. Under tallet flyttes nye butikker ind og der købes telefonnumre; over

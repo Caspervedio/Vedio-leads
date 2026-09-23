@@ -495,6 +495,43 @@ details.deeper summary .sub{font-size:13px;font-weight:400;color:var(--txt-soft)
 .err{color:#b42318;font-size:13px;margin:8px 0 0;min-height:18px}
 
 /* ─── Modal / toast ─────────────────────────────────────────────────────── */
+/* Sparring panel - a colleague on the right. Overlays on normal screens,
+   pushes the content over on wide ones. */
+.aipanel{position:fixed;top:64px;right:0;bottom:0;width:440px;max-width:100vw;background:var(--white);border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(14,14,12,.08);z-index:30;display:flex;flex-direction:column}
+.aipanel[hidden]{display:none}
+@media (min-width:1640px){body.ai-open main{margin-right:440px}}
+.iconbtn.on{background:var(--violet-soft);color:var(--violet-deep);border-color:transparent}
+.ai-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--line)}
+.ai-head b{font-size:16px;font-weight:800;display:block}
+.ai-head .sub{display:block;font-size:12px;color:var(--txt-faint);margin-top:2px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ai-chats{border-bottom:1px solid var(--line);max-height:40%;overflow-y:auto;background:var(--paper)}
+.ai-chat{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px}
+.ai-chat:hover,.ai-chat.on{background:var(--white)}
+.ai-chat b{display:block;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+.ai-chat .sub{display:block;font-size:11.5px;color:var(--txt-faint)}
+.ai-msgs{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:12px;font-size:14px}
+.ai-m{display:flex;flex-direction:column;gap:4px;max-width:100%}
+.ai-m.user{align-items:flex-end}
+.ai-m .ai-b{padding:10px 14px;border-radius:14px;line-height:1.5;max-width:92%}
+.ai-m.user .ai-b{background:var(--black);color:var(--white);border-bottom-right-radius:4px}
+.ai-m.bot .ai-b{background:var(--paper);border:1px solid var(--line);border-bottom-left-radius:4px}
+.ai-m .sub{font-size:11px;color:var(--txt-faint)}
+.ai-b p{margin:0 0 8px}.ai-b p:last-child{margin-bottom:0}
+.ai-b ul,.ai-b ol{margin:0 0 8px 18px}.ai-b li{margin:2px 0}
+.ai-b code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--white);padding:1px 5px;border-radius:5px;border:1px solid var(--line)}
+.ai-b.ai-wait{color:var(--txt-faint);font-style:italic}
+.ai-acts{display:flex;gap:4px}
+.ai-empty{color:var(--txt-soft);padding:12px 2px}
+.ai-empty p{font-weight:700;color:var(--txt);margin-bottom:10px}
+.ai-starters{display:flex;flex-direction:column;gap:6px}
+.ai-starters button{text-align:left;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--line);background:var(--paper);font-size:13px;color:var(--txt-soft)}
+.ai-starters button:hover{border-color:var(--violet);color:var(--txt);background:var(--white)}
+.ai-foot{border-top:1px solid var(--line);padding:10px 14px 14px;background:var(--white)}
+.ai-ctx{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-soft);margin-bottom:8px}
+.ai-ctx b{color:var(--txt)}
+.ai-input{display:flex;gap:8px;align-items:flex-end}
+.ai-input textarea{flex:1;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:13.5px;resize:none;line-height:1.45}
+.ai-input textarea:focus{outline:none;border-color:var(--violet);background:var(--white)}
 .modalbg{position:fixed;inset:0;background:rgba(14,14,12,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
 .modal{background:var(--white);border-radius:var(--radius-lg);width:100%;max-width:440px;padding:28px;border:1px solid var(--line);max-height:calc(100vh - 40px);overflow-y:auto}
 /* Settings carries long Danish labels and the pitch - 440px squeezed it. */
