@@ -132,6 +132,12 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 .rules label.chk{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--txt);margin:0;text-transform:none;letter-spacing:0}
 .rules label.chk input{width:auto}
 .modal.wide{max-width:880px}
+/* Export window */
+.modal.export{max-width:560px}
+.exp-dates{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.modal select{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font:inherit;font-size:14px}
+.exp-sheets{margin-top:18px;padding:14px 16px;border-radius:var(--radius);background:var(--paper);border:1px solid var(--line);font-size:13px;color:var(--txt-soft);line-height:1.55}
+.exp-sheets b{color:var(--txt)}
 /* The short settings sit two-up so the panel is a screen, not a scroll. */
 .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 22px}
 .setgrid > div{min-width:0}
@@ -206,6 +212,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </nav>
     <div class="hright">
       <span id="imp-links" class="row" style="gap:6px"></span>
+      <button class="pill sm" onclick="openExport()" title="Hent et resultatark for en valgt periode"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Eksportér</button>
       <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
       <button class="iconbtn" title="Indstillinger" onclick="openSettings()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
       <button class="iconbtn" title="Log ud" onclick="logout()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>
@@ -789,6 +796,59 @@ function closeDrawer() { const a = $('drawerbg'), b = $('drawer'); if (a) a.remo
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { closeDrawer(); const s = $('settings'); if (s) s.remove(); } });
 
 /* settings incl. rules */
+/* Result sheet for a chosen period: an .xlsx built on the server with the
+   same counting rules as this page. */
+const EXP_PRESETS = [['week', 'Denne uge'], ['lastweek', 'Sidste uge'], ['month', 'Denne måned'], ['lastmonth', 'Sidste måned'], ['30', 'Sidste 30 dage'], ['year', 'I år']];
+function expKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function expRange(k) {
+  const t = new Date(); t.setHours(0, 0, 0, 0); const mon = new Date(t); mon.setDate(t.getDate() - ((t.getDay() + 6) % 7));
+  if (k === 'week') return [mon, t];
+  if (k === 'lastweek') { const a = new Date(mon); a.setDate(a.getDate() - 7); const b = new Date(mon); b.setDate(b.getDate() - 1); return [a, b]; }
+  if (k === 'month') return [new Date(t.getFullYear(), t.getMonth(), 1), t];
+  if (k === 'lastmonth') return [new Date(t.getFullYear(), t.getMonth() - 1, 1), new Date(t.getFullYear(), t.getMonth(), 0)];
+  if (k === '30') { const a = new Date(t); a.setDate(a.getDate() - 29); return [a, t]; }
+  return [new Date(t.getFullYear(), 0, 1), t];
+}
+function expPick(k) {
+  const [a, b] = expRange(k); $('ex-from').value = expKey(a); $('ex-to').value = expKey(b);
+  document.querySelectorAll('#ex-presets button').forEach((x) => x.classList.toggle('on', x.dataset.k === k));
+}
+function openExport() {
+  const sdrs = ((O && O.perUser) || []).filter((u) => u && u.id && u.id !== 'admin');
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'exportdlg';
+  bg.innerHTML = `<div class="modal export">
+    <h3>Eksportér resultater</h3><p>Et Excel-ark for den periode, du vælger. Det åbner også i Numbers og Google Sheets.</p>
+    <label>Periode</label>
+    <div class="filters left" id="ex-presets">${EXP_PRESETS.map(([k, l]) => `<button data-k="${k}" onclick="expPick('${k}')">${l}</button>`).join('')}</div>
+    <div class="exp-dates">
+      <div><label>Fra og med</label><input type="date" id="ex-from" onchange="document.querySelectorAll('#ex-presets button').forEach((x) => x.classList.remove('on'))"></div>
+      <div><label>Til og med</label><input type="date" id="ex-to" onchange="document.querySelectorAll('#ex-presets button').forEach((x) => x.classList.remove('on'))"></div>
+    </div>
+    <label>SDR</label>
+    <select id="ex-sdr"><option value="">Alle SDR'er</option>${sdrs.map((u) => `<option value="${e(u.id)}">${e(u.name || u.id)}</option>`).join('')}</select>
+    <div class="exp-sheets"><b>Arket indeholder</b><br>Oversigt med nøgletal pr. SDR · Per dag · Demoer · Alle opkald · Nye leads pr. kilde · Definitioner</div>
+    <div class="row"><button class="pill tertiary" onclick="$('exportdlg').remove()">Annuller</button><button class="pill primary" id="ex-go" style="padding:11px 20px;font-size:14px;min-height:0" onclick="doExport()">Hent Excel-ark</button></div>
+  </div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  expPick('month');
+}
+async function doExport() {
+  const from = $('ex-from').value, to = $('ex-to').value, sdr = $('ex-sdr').value;
+  if (!from || !to) { toast('Vælg en start- og slutdato'); return; }
+  if (from > to) { toast('Startdatoen ligger efter slutdatoen'); return; }
+  const btn = $('ex-go'); btn.disabled = true; btn.textContent = 'Laver arket…';
+  try {
+    const r = await fetch(`/api/sdr/admin/export?from=${from}&to=${to}${sdr ? '&sdr=' + encodeURIComponent(sdr) : ''}`, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('Fejl ' + r.status)); }
+    const blob = await r.blob();
+    const m = (r.headers.get('Content-Disposition') || '').match(/filename\*=UTF-8''([^;]+)/);
+    const name = m ? decodeURIComponent(m[1]) : `vedio-resultater_${from}_${to}.xlsx`;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+    $('exportdlg').remove(); toast('✓ ' + name + ' er hentet', 3500);
+  } catch (ex) { btn.disabled = false; btn.textContent = 'Hent Excel-ark'; toast(ex.message, 5000); }
+}
 function openSettings() {
   const s = O.settings || {}; const r = s.rules || {}; const sources = Object.keys(O.sources || {}).sort();
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'settings';

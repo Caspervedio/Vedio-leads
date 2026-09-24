@@ -15745,6 +15745,234 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     });
   } catch (e) { sdrFail(res, e, "admin/overview"); }
 });
+// ─── Result sheet export (admin) ──────────────────────────────────────────
+// A real .xlsx for a chosen period: overview per SDR, per day, demos, the
+// call log and intake by source. Built by hand (zip + SpreadsheetML) rather
+// than pulling in a spreadsheet library for one download. Opens in Excel,
+// Numbers and Google Sheets.
+const XLSX_CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function xlsxCrc32(buf) { let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = XLSX_CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+function zipBuild(files) {
+  const zlib = require("zlib");
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  const parts = []; const central = []; let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(f.name, "utf8"); const raw = Buffer.isBuffer(f.data) ? f.data : Buffer.from(String(f.data), "utf8");
+    const comp = zlib.deflateRawSync(raw); const crc = xlsxCrc32(raw);
+    const h = Buffer.alloc(30);
+    h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0x0800, 6); h.writeUInt16LE(8, 8); h.writeUInt16LE(dosTime, 10); h.writeUInt16LE(dosDate, 12);
+    h.writeUInt32LE(crc, 14); h.writeUInt32LE(comp.length, 18); h.writeUInt32LE(raw.length, 22); h.writeUInt16LE(name.length, 26); h.writeUInt16LE(0, 28);
+    parts.push(h, name, comp);
+    const c = Buffer.alloc(46);
+    c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0x0800, 8); c.writeUInt16LE(8, 10); c.writeUInt16LE(dosTime, 12); c.writeUInt16LE(dosDate, 14);
+    c.writeUInt32LE(crc, 16); c.writeUInt32LE(comp.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(name.length, 28);
+    c.writeUInt16LE(0, 30); c.writeUInt16LE(0, 32); c.writeUInt16LE(0, 34); c.writeUInt16LE(0, 36); c.writeUInt32LE(0, 38); c.writeUInt32LE(offset, 42);
+    central.push(c, name);
+    offset += h.length + name.length + comp.length;
+  }
+  const cd = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(0, 4); end.writeUInt16LE(0, 6); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16); end.writeUInt16LE(0, 20);
+  return Buffer.concat([...parts, cd, end]);
+}
+// Cell styles, by index into cellXfs below.
+const XLSX_STYLE = { head: 1, dt: 2, date: 3, pct: 4, title: 5, kr: 6, wrap: 7, bold: 8, dec1: 9, muted: 10 };
+function xlsxColName(i) { let s = ""; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+function xlsxEsc(v) { return String(v).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+// Local (Copenhagen) wall-clock time as an Excel serial number.
+function xlsxSerial(dt) { const d = new Date(dt); return (Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) - Date.UTC(1899, 11, 30)) / 864e5; }
+// sheets: [{ name, cols: [widths], rows: [[cell]], head: rowIndex | null, freeze: rows }]
+// cell: null | string | number | Date | { v, s: styleName }
+function xlsxBuild(sheets) {
+  const sheetXml = (sh) => {
+    const rows = sh.rows.map((row, ri) => {
+      const cells = (row || []).map((cell, ci) => {
+        if (cell === null || cell === undefined || cell === "") return "";
+        let v = cell, st = null;
+        if (typeof cell === "object" && !(cell instanceof Date)) { v = cell.v; st = cell.s || null; }
+        if (v === null || v === undefined || v === "" || (typeof v === "number" && !Number.isFinite(v))) return "";
+        const ref = xlsxColName(ci) + (ri + 1);
+        if (v instanceof Date) { const sid = XLSX_STYLE[st || "dt"]; return `<c r="${ref}" s="${sid}"><v>${xlsxSerial(v)}</v></c>`; }
+        const sid = st ? XLSX_STYLE[st] : (sh.head === ri ? XLSX_STYLE.head : 0);
+        const sAttr = sid ? ` s="${sid}"` : "";
+        if (typeof v === "number") return `<c r="${ref}"${sAttr}><v>${v}</v></c>`;
+        return `<c r="${ref}"${sAttr} t="inlineStr"><is><t xml:space="preserve">${xlsxEsc(v)}</t></is></c>`;
+      }).join("");
+      return `<row r="${ri + 1}">${cells}</row>`;
+    }).join("");
+    const width = Math.max(1, ...sh.rows.map((r) => (r || []).length));
+    const cols = (sh.cols || []).map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("");
+    const freeze = sh.freeze ? `<pane ySplit="${sh.freeze}" topLeftCell="A${sh.freeze + 1}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${sh.freeze + 1}" sqref="A${sh.freeze + 1}"/>` : "";
+    const filter = sh.head !== null && sh.head !== undefined && sh.filter ? `<autoFilter ref="A${sh.head + 1}:${xlsxColName(width - 1)}${Math.max(sh.head + 1, sh.rows.length)}"/>` : "";
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0">${freeze}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>${cols ? `<cols>${cols}</cols>` : ""}<sheetData>${rows}</sheetData>${filter}</worksheet>`;
+  };
+  const safeName = (n, i) => (String(n || `Ark ${i + 1}`).replace(/[\[\]:*?\/\\]/g, " ").slice(0, 31) || `Ark ${i + 1}`);
+  const names = sheets.map((sh, i) => safeName(sh.name, i));
+  const defined = sheets.map((sh, i) => {
+    if (!(sh.filter && sh.head !== null && sh.head !== undefined)) return "";
+    const width = Math.max(1, ...sh.rows.map((r) => (r || []).length));
+    return `<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xlsxEsc(names[i].replace(/'/g, "''"))}'!$A$${sh.head + 1}:$${xlsxColName(width - 1)}$${Math.max(sh.head + 1, sh.rows.length)}</definedName>`;
+  }).join("");
+  const files = [
+    { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>` },
+    { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: "xl/workbook.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${names.map((n, i) => `<sheet name="${xlsxEsc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets>${defined ? `<definedNames>${defined}</definedNames>` : ""}</workbook>` },
+    { name: "xl/_rels/workbook.xml.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { name: "xl/styles.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd-mm-yyyy hh:mm"/><numFmt numFmtId="165" formatCode="dd-mm-yyyy"/><numFmt numFmtId="166" formatCode="0.0"/></numFmts><fonts count="4"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="15"/><name val="Calibri"/><family val="2"/></font><font><i/><sz val="10"/><color rgb="FF6B675F"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEEE9F8"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="11"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>` },
+    ...sheets.map((sh, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(sh) })),
+  ];
+  return zipBuild(files);
+}
+const SDR_EXPORT_OUTCOMES = [["demo-booked", "Demo booket"], ["follow-up", "Følg op"], ["email-sent", "Mail sendt"], ["not-now", "Ikke nu"], ["no-answer", "Ingen svar"], ["ivr", "Telefonmenu"], ["wrong-number", "Forkert nummer"], ["not-relevant", "Ikke relevant"]];
+const SDR_EXPORT_WEEKDAYS = ["søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"];
+// Everything the sheet says, for [fromKey, toKey] (local dates, inclusive),
+// optionally one SDR. Counts use the same rules as the admin overview.
+function sdrExportSheets(d, { fromKey, toKey, sdr }) {
+  const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const who = (id) => nameById[id] || id || "";
+  const settings = sdrSettings(d); const rate = Number(settings.commission_dkk || 0);
+  const leads = d.leads || [];
+  const fromMs = new Date(fromKey + "T00:00:00").getTime();
+  const toD = new Date(toKey + "T00:00:00"); toD.setDate(toD.getDate() + 1); const toMs = toD.getTime();
+  const inP = (iso) => { const t = new Date(iso).getTime(); return t >= fromMs && t < toMs; };
+  const dayKeys = []; for (const x = new Date(fromMs); x.getTime() < toMs; x.setDate(x.getDate() + 1)) dayKeys.push(sdrDayKey(x));
+  const calls = [];
+  for (const l of leads) for (const c of (l.calls || [])) if (c && c.at && inP(c.at) && (!sdr || c.by === sdr)) calls.push({ c, l });
+  calls.sort((a, b) => new Date(a.c.at) - new Date(b.c.at));
+  // A demo = a lead that stands as booked now, booked inside the period -
+  // the same list as Resultater and the commission.
+  const demos = leads.filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && inP(l.demo_booked_at) && (!sdr || l.demo_booked_by === sdr))
+    .sort((a, b) => new Date(a.demo_booked_at) - new Date(b.demo_booked_at));
+  const research = leads.filter((l) => l.research_at && l.research_by && inP(l.research_at) && (!sdr || l.research_by === sdr));
+  const order = new Map(users.map((u, i) => [u.id, i]));
+  const ids = [...new Set([...calls.map((x) => x.c.by), ...demos.map((l) => l.demo_booked_by), ...research.map((l) => l.research_by)].filter(Boolean))]
+    .sort((a, b) => (order.has(a) ? order.get(a) : 999) - (order.has(b) ? order.get(b) : 999));
+  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, out: {}, secs: 0, timed: 0, research: 0, days: new Set() });
+  const tot = blank(); const per = Object.fromEntries(ids.map((id) => [id, blank()]));
+  const byDay = Object.fromEntries(dayKeys.map((k) => [k, { ...blank(), newLeads: 0, sdr: Object.fromEntries(ids.map((id) => [id, { calls: 0, demos: 0 }])) }]));
+  for (const { c } of calls) {
+    const secs = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0; const talk = sdrIsTalk(c); const k = sdrDayKey(c.at);
+    for (const m of [tot, per[c.by]]) { if (!m) continue; m.calls++; if (talk) m.talks++; m.out[c.action] = (m.out[c.action] || 0) + 1; if (secs) { m.secs += secs; m.timed++; } m.days.add(k); }
+    const bd = byDay[k]; if (bd) { bd.calls++; if (talk) bd.talks++; if (secs) bd.secs += secs; if (bd.sdr[c.by]) bd.sdr[c.by].calls++; }
+  }
+  for (const l of demos) {
+    const st = l.demo_status || "pending"; const k = sdrDayKey(l.demo_booked_at);
+    for (const m of [tot, per[l.demo_booked_by]]) { if (!m) continue; m.demos++; if (st === "qualified") m.qual++; else if (st === "unqualified") m.unqual++; else m.pending++; }
+    const bd = byDay[k]; if (bd) { bd.demos++; if (bd.sdr[l.demo_booked_by]) bd.sdr[l.demo_booked_by].demos++; }
+  }
+  for (const l of research) { tot.research++; if (per[l.research_by]) per[l.research_by].research++; }
+  const newLeads = leads.filter((l) => l.addedAt && inP(l.addedAt));
+  for (const l of newLeads) { const bd = byDay[sdrDayKey(l.addedAt)]; if (bd) bd.newLeads++; }
+
+  const ratio = (a, b) => (b > 0 ? a / b : null);
+  const fmtD = (k) => { const [y, m, dd] = k.split("-"); return `${dd}-${m}-${y}`; };
+  const cols = [tot, ...ids.map((id) => per[id])];
+  const line = (label, fn, s) => [label, ...cols.map((m) => { const v = fn(m); return v === null || v === undefined ? "" : (s ? { v, s } : v); })];
+  const titleRows = [
+    [{ v: "Vedio Ring · resultater", s: "title" }],
+    [`Periode: ${fmtD(fromKey)} til ${fmtD(toKey)}`],
+    [`SDR: ${sdr ? who(sdr) : "Alle"}`],
+    [{ v: `Hentet ${new Date().toLocaleString("da-DK", { dateStyle: "long", timeStyle: "short" })}`, s: "muted" }],
+    [],
+  ];
+  const headRow = titleRows.length;
+  const overview = [
+    ...titleRows,
+    ["Nøgletal", "I alt", ...ids.map(who)],
+    line("Opkald (udfald registreret)", (m) => m.calls),
+    line("Samtaler (fik fat i nogen)", (m) => m.talks),
+    line("Kontaktrate", (m) => ratio(m.talks, m.calls), "pct"),
+    line("Demoer booket", (m) => m.demos),
+    line("Demo pr. samtale", (m) => ratio(m.demos, m.talks), "pct"),
+    line("Opkald pr. demo", (m) => ratio(m.calls, m.demos), "dec1"),
+    line("Kvalificerede demoer", (m) => m.qual),
+    line("Ikke kvalificerede", (m) => m.unqual),
+    line("Afventer vurdering", (m) => m.pending),
+    line(`Provision (kr, ${rate} pr. kvalificeret)`, (m) => m.qual * rate, "kr"),
+    [],
+    [{ v: "Udfald", s: "bold" }],
+    ...SDR_EXPORT_OUTCOMES.map(([a, label]) => line(label, (m) => m.out[a] || 0)),
+    ...Object.keys(tot.out).filter((a) => !SDR_EXPORT_OUTCOMES.some(([x]) => x === a)).map((a) => line(a, (m) => m.out[a] || 0)),
+    [],
+    [{ v: "Tid og indsats", s: "bold" }],
+    line("Tid på leads (timer)", (m) => Math.round(m.secs / 360) / 10, "dec1"),
+    line("Snit pr. lead (min)", (m) => (m.timed ? Math.round(m.secs / m.timed / 6) / 10 : null), "dec1"),
+    line("Opkald med målt tid", (m) => m.timed),
+    line("Beriget i Research", (m) => m.research),
+    line("Dage med opkald", (m) => m.days.size),
+    line("Opkald pr. dag med opkald", (m) => (m.days.size ? Math.round(m.calls / m.days.size * 10) / 10 : null), "dec1"),
+    [],
+    [{ v: "Puljen (alle SDR'er)", s: "bold" }],
+    ["Nye leads i perioden", newLeads.length],
+    ["Heraf kan ringes til nu", newLeads.filter((l) => sdrCallable(l)).length],
+  ];
+  const dayHead = ["Dato", "Ugedag", "Opkald", "Samtaler", "Kontaktrate", "Demoer", "Tid på leads (min)", "Nye leads", ...ids.flatMap((id) => [`${who(id)} opkald`, `${who(id)} demoer`])];
+  const dayRows = dayKeys.map((k) => { const b = byDay[k]; const dt = new Date(k + "T00:00:00");
+    return [{ v: dt, s: "date" }, SDR_EXPORT_WEEKDAYS[dt.getDay()], b.calls, b.talks, ratio(b.talks, b.calls) === null ? "" : { v: ratio(b.talks, b.calls), s: "pct" }, b.demos, Math.round(b.secs / 60), b.newLeads, ...ids.flatMap((id) => [b.sdr[id].calls, b.sdr[id].demos])]; });
+  const sum = (f) => dayKeys.reduce((a, k) => a + f(byDay[k]), 0);
+  dayRows.push([{ v: "I alt", s: "bold" }, "", { v: tot.calls, s: "bold" }, { v: tot.talks, s: "bold" }, ratio(tot.talks, tot.calls) === null ? "" : { v: ratio(tot.talks, tot.calls), s: "pct" }, { v: tot.demos, s: "bold" }, { v: Math.round(tot.secs / 60), s: "bold" }, { v: newLeads.length, s: "bold" }, ...ids.flatMap((id) => [{ v: sum((b) => b.sdr[id].calls), s: "bold" }, { v: sum((b) => b.sdr[id].demos), s: "bold" }])]);
+
+  const ledger = loadTwentyLedger();
+  const ST = { pending: "Afventer", qualified: "Kvalificeret", unqualified: "Ikke kvalificeret" };
+  const demoRows = demos.map((l) => {
+    const c = sdrPrimaryContact(l) || {}; const st = l.demo_status || "pending"; const tw = twentyDemoState(ledger, l);
+    return [{ v: new Date(l.demo_booked_at), s: "dt" }, who(l.demo_booked_by), l.name || "", String(l.web || l.website || "").replace(/^https?:\/\//, ""), l.city || "", c.name || "", c.title || "", c.email || "", sdrPhone(l).phone || "",
+      ST[st] || st, l.demo_review_reason || "", st === "qualified" ? { v: rate, s: "kr" } : "", tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
+  });
+  const LABEL = Object.fromEntries(SDR_EXPORT_OUTCOMES);
+  const callRows = calls.map(({ c, l }) => [{ v: new Date(c.at), s: "dt" }, who(c.by), l.name || "", (sdrPrimaryContact(l) || {}).name || "", sdrPhone(l).phone || "", LABEL[c.action] || c.action || "", sdrIsTalk(c) ? "Ja" : "Nej",
+    Number(c.duration_s) > 0 ? { v: Math.round(Number(c.duration_s) / 6) / 10, s: "dec1" } : "", c.callback_at ? { v: new Date(c.callback_at), s: "dt" } : "", { v: c.note || "", s: "wrap" }, sdrSourceLabel(l), l.city || "", l.cvr]);
+  const bySrc = {};
+  for (const l of newLeads) {
+    const s = sdrSourceLabel(l) || "ukendt"; const b = bySrc[s] || (bySrc[s] = { n: 0, callable: 0, called: 0, talked: 0, demos: 0 });
+    b.n++; if (sdrCallable(l)) b.callable++; if ((l.calls || []).length) b.called++; if ((l.calls || []).some(sdrIsTalk)) b.talked++; if (l.lastAction === "demo-booked") b.demos++;
+  }
+  const srcRows = Object.entries(bySrc).sort((a, b) => b[1].n - a[1].n).map(([s, b]) => [s, b.n, b.callable, ratio(b.callable, b.n) === null ? "" : { v: ratio(b.callable, b.n), s: "pct" }, b.called, b.talked, b.demos]);
+  const defs = [
+    [{ v: "Sådan tælles tallene", s: "title" }], [],
+    ["Opkald", "Hvert udfald en SDR har registreret (Demo booket, Følg op, Ingen svar osv.)."],
+    ["Samtaler", "Opkald hvor de fik fat i nogen: Demo booket, Følg op, Ikke nu, Mail sendt - og Ikke relevant, når opkaldet varede mindst 20 sekunder."],
+    ["Kontaktrate", "Samtaler delt med opkald."],
+    ["Demoer", "Leads der står som booket demo nu, og som blev booket i perioden. Samme liste som Resultater og provisionen. En fortrudt booking tæller ikke."],
+    ["Provision", `Kvalificerede demoer gange den nuværende sats (${rate} kr). Demoer der afventer din vurdering er ikke med.`],
+    ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
+    ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
+    ["Nye leads", "Leads der kom ind i puljen i perioden, uanset SDR. 'Kan ringes til nu' er målt i dag."],
+    ["Tider", "Dansk tid."],
+  ];
+  return [
+    { name: "Oversigt", cols: [34, 12, ...ids.map(() => 13)], rows: overview, head: headRow, freeze: headRow + 1 },
+    { name: "Per dag", cols: [12, 10, 9, 10, 12, 9, 17, 10, ...ids.flatMap(() => [15, 15])], rows: [dayHead, ...dayRows], head: 0, freeze: 1 },
+    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Provision (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
+    { name: "Opkald", cols: [17, 12, 28, 20, 16, 16, 9, 12, 17, 60, 18, 14, 22], rows: [["Tidspunkt", "SDR", "Virksomhed", "Kontakt", "Telefon", "Udfald", "Samtale", "Tid (min)", "Følg op", "Note", "Kilde", "By", "ID"], ...callRows], head: 0, freeze: 1, filter: true },
+    { name: "Nye leads", cols: [24, 12, 17, 12, 12, 12, 14], rows: [["Kilde", "Nye leads", "Kan ringes til nu", "Andel klar", "Ringet til", "Samtaler", "Demoer booket"], ...srcRows], head: 0, freeze: 1 },
+    { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
+  ];
+}
+app.get("/api/sdr/admin/export", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    const fromKey = String(req.query.from || ""), toKey = String(req.query.to || "");
+    if (!re.test(fromKey) || !re.test(toKey) || isNaN(new Date(fromKey + "T00:00:00")) || isNaN(new Date(toKey + "T00:00:00"))) return res.status(400).json({ error: "Vælg en start- og slutdato" });
+    if (fromKey > toKey) return res.status(400).json({ error: "Startdatoen ligger efter slutdatoen" });
+    if ((new Date(toKey) - new Date(fromKey)) / 864e5 > 800) return res.status(400).json({ error: "Højst to år ad gangen" });
+    const sdr = String(req.query.sdr || "").trim() || null;
+    if (sdr && !loadUsers().some((u) => u.id === sdr)) return res.status(400).json({ error: "Ukendt SDR" });
+    const d = loadPool();
+    const buf = xlsxBuild(sdrExportSheets(d, { fromKey, toKey, sdr }));
+    const who = sdr ? "_" + String((loadUsers().find((u) => u.id === sdr) || {}).name || sdr).toLowerCase().replace(/[^a-z0-9æøå]+/g, "-") : "";
+    const file = `vedio-resultater_${fromKey}_${toKey}${who}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${file.replace(/[^\w.\-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(file)}`);
+    res.setHeader("Cache-Control", "no-store");
+    logActivity("sdr-admin", `Resultatark eksporteret: ${fromKey} til ${toKey}${sdr ? " (" + sdr + ")" : ""}`, { userId: req.userId });
+    res.send(buf);
+  } catch (e) { sdrFail(res, e, "admin/export"); }
+});
 app.get("/api/sdr/admin/leads", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;

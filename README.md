@@ -66,6 +66,9 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 - **Overblik** — tal for i dag og ugen, opkald pr. bookede demo over 30 dage,
   per SDR med opkald, taletid og manuelt berigede leads, provision, puljens
   tilstand, 14-dages strip og Gemini-opsummering af ugen.
+- **Eksportér** (knap i toppen) — et Excel-ark (.xlsx) for en valgt periode,
+  evt. én SDR: Oversigt med nøgletal pr. SDR, Per dag, Demoer, alle Opkald,
+  Nye leads pr. kilde og Definitioner. Samme tælleregler som Overblik.
 - **Leads** — hele puljen med filtre. Ret et lead, arkivér det, eller slet
   det permanent. "Se som Christian / Marcus" åbner SDR-appen som dem.
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
