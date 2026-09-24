@@ -289,6 +289,19 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
    clipped them. Tighter gutters fit it, and it scrolls rather than clips if a
    window is narrower still. */
 #view-list .tablewrap{overflow-x:auto}
+/* Resultater: the status column (chip + review buttons + Ret) was clipped
+   by the panel's overflow:hidden on narrower windows. */
+#view-results .tablewrap{overflow-x:auto}
+#tb-demo td{vertical-align:top}
+.demotbl th,.demotbl td{padding-left:12px;padding-right:12px}
+.demotbl th:first-child,.demotbl td:first-child{padding-left:20px}
+.demotbl th:last-child,.demotbl td:last-child{padding-right:20px}
+#tb-demo td:nth-child(3){min-width:180px;max-width:240px;overflow-wrap:anywhere}
+#tb-demo td:nth-child(5){max-width:220px;min-width:120px}
+#tb-demo td.demost{min-width:150px;max-width:210px}
+#tb-demo td.demost .chip{white-space:normal;line-height:1.35}
+#tb-demo td.demost .review{display:flex;flex-wrap:wrap;gap:6px}
+#tb-demo td.demost .linkbtn{display:block;margin-top:8px}
 #view-list th,#view-list td{padding-left:14px;padding-right:14px}
 #view-list th:first-child,#view-list td:first-child{padding-left:20px}
 #view-list th:last-child,#view-list td:last-child{padding-right:20px}
@@ -675,7 +688,6 @@ main{transition:margin-right .46s var(--ease)}
   #tb-fu td:nth-child(6) .pill{width:100%;justify-content:center;min-height:44px}
   #view-list thead,#view-followups thead{display:none}
   /* other tables scroll sideways inside their panel */
-  #view-results .tablewrap{overflow-x:auto}
   #view-results table{min-width:640px}
   #view-results th,#view-results td{padding:10px 14px}
   .tiles{grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}

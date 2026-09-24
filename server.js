@@ -14239,7 +14239,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
 const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "sdr_touched_at"];
-const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "city", "sdr_contact_touched_at"];
+const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
 // Leads only in memory (new intake) are kept; nothing is ever dropped.
@@ -14539,6 +14539,7 @@ function sdrSlim(l, nameById) {
     refs: sdrRefCustomers(l),
     history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
     research_by: l.research_by || null,
+    main_phone: l.phone || l.ph || "", renamed_from: l.renamed_from || "",
     ivr_at: l.ivr_at || null, ivr_count: l.ivr_count || 0,
     has_person: sdrHasPerson(l),
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
@@ -15540,6 +15541,77 @@ app.post("/api/sdr/contact", authMiddleware, (req, res) => {
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "contact"); }
 });
+// A lead's name changes (wrong company booked, a trading name): keep the old
+// one so search still finds it and the thread says what happened.
+function sdrRenameLead(lead, name, userId) {
+  const prev = lead.name || "";
+  lead.renamed_from = prev;
+  lead.name = name;
+  // Into the thread only - last_note stays the SDR's own note.
+  lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+  lead.note_log.push({ at: new Date().toISOString(), by: userId, text: `Navn rettet: ${prev || "(uden navn)"} → ${name}`, where: sdrIsAdmin(userId) ? "admin" : (lead.lastAction === "demo-booked" ? "results" : "list") });
+}
+// SDR: correct a lead after the fact - above all a booked demo under
+// Resultater (wrong company, contact's real name, a better number). Allowed on
+// any booked demo and on leads that are the SDR's own; the demo itself (who
+// booked it, when, status) is never touched here.
+app.post("/api/sdr/lead-edit", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const b = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === String(b.cvr || ""));
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const onMyList = (((d.sdr_lists || {})[req.userId] || {}).cvrs || []).includes(lead.cvr);
+    const mine = lead.claimed_by === req.userId || lead.demo_booked_by === req.userId || onMyList;
+    if (!(lead.lastAction === "demo-booked" || mine || sdrIsAdmin(req.userId))) return res.status(403).json({ error: "Du kan kun rette leads på din egen liste eller bookede demoer" });
+    const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    const nowIso = new Date().toISOString(); const changed = [];
+    // Validate everything before changing anything.
+    const mainIn = typeof b.main_phone === "string" ? str(b.main_phone, 30) : null;
+    if (mainIn && !isDkPhone(mainIn)) return res.status(400).json({ error: "Hovednummeret skal være et dansk nummer" });
+    const c = b.contact && typeof b.contact === "object" ? b.contact : null;
+    const cPhone = c ? str(c.phone, 30) : "";
+    if (cPhone && !isDkPhone(cPhone)) return res.status(400).json({ error: "Kontaktens nummer skal være et dansk nummer" });
+    const nameIn = typeof b.name === "string" ? str(b.name, 160) : "";
+    if (typeof b.name === "string" && !nameIn) return res.status(400).json({ error: "Firmaet skal have et navn" });
+
+    if (nameIn && nameIn !== (lead.name || "")) { sdrRenameLead(lead, nameIn, req.userId); changed.push("firmanavn"); }
+    if (typeof b.web === "string") {
+      const dom = str(b.web, 200).toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+      const cur = String(lead.web || lead.website || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+      if (dom !== cur) { lead.web = dom ? `https://${dom}` : ""; if (lead.website !== undefined || dom) lead.website = lead.web; changed.push("hjemmeside"); }
+    }
+    if (typeof b.city === "string" && str(b.city, 80) !== (lead.city || "")) { lead.city = str(b.city, 80); changed.push("by"); }
+    if (mainIn !== null) {
+      const np = mainIn ? normDkPhone(mainIn) : "";
+      if (np && np !== normDkPhone(lead.phone || lead.ph || "")) { lead.phone = np; lead.ph = np; lead.phone_missing = false; lead.phone_source = "sdr-manual-main"; changed.push("hovednummer"); }
+    }
+    if (c && str(c.name, 120)) {
+      const name = str(c.name, 120); const prevName = str(c.prev_name, 120).toLowerCase();
+      lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+      let x = lead.contacts.find((y) => y && y.name && y.name.trim().toLowerCase() === name.toLowerCase())
+        || (prevName ? lead.contacts.find((y) => y && y.name && y.name.trim().toLowerCase() === prevName) : null);
+      const before = x ? JSON.stringify([x.name, x.title || "", x.email || "", x.phone || ""]) : null;
+      if (!x) { x = { name, source_discovery: "sdr-manual", addedAt: nowIso, added_by: req.userId }; lead.contacts.unshift(x); }
+      else lead.contacts = [x, ...lead.contacts.filter((y) => y !== x)];
+      x.name = name;
+      if (typeof c.title === "string") { const t = str(c.title, 120); if (t) x.title = t; else delete x.title; }
+      if (typeof c.email === "string") { const m = str(c.email, 160); if (m) x.email = m; else delete x.email; }
+      if (cPhone) { const np = normDkPhone(cPhone); if (np !== normDkPhone(x.phone || "")) { x.phone = np; x.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; x.source_phone = "sdr-manual"; } }
+      else if (typeof c.phone === "string" && x.phone && x.source_phone === "sdr-manual") { delete x.phone; delete x.phones; delete x.source_phone; }
+      const after = JSON.stringify([x.name, x.title || "", x.email || "", x.phone || ""]);
+      if (before === null) changed.push("ny kontakt"); else if (before !== after) changed.push("kontakt");
+      if (before !== after || lead.preferred_contact_name !== name) { x.editedAt = nowIso; x.edited_by = req.userId; }
+      lead.preferred_contact_name = name;
+    }
+    const note = str(b.note, 2000);
+    if (note) { sdrAppendNote(lead, req.userId, note, sdrIsAdmin(req.userId) ? "admin" : (lead.lastAction === "demo-booked" ? "results" : "list")); changed.push("note"); }
+    if (!changed.length) return res.json({ ok: true, changed, state: buildSdrState(req.userId, d) });
+    sdrTouch(lead, true);
+    savePool(d);
+    logActivity("sdr", `${req.userId} rettede ${lead.name}: ${changed.join(", ")}`, { cvr: lead.cvr, userId: req.userId });
+    res.json({ ok: true, changed, state: buildSdrState(req.userId, d) });
+  } catch (e) { sdrFail(res, e, "lead-edit"); }
+});
 // "Fortryd" - revert the last outcome on a lead (same SDR, ≤10 min).
 app.post("/api/sdr/undo", authMiddleware, (req, res) => {
   try {
@@ -15826,6 +15898,7 @@ app.post("/api/sdr/admin/lead-edit", authMiddleware, (req, res) => {
       const np = p ? normDkPhone(p) : "";
       if (np !== (lead.phone || "")) { lead.phone = np; lead.ph = np; lead.phone_missing = !np; lead.phone_source = np ? "admin-manual" : ""; changed.push("hovednummer"); }
     }
+    if (typeof b.name === "string" && str(b.name, 160) && str(b.name, 160) !== (lead.name || "")) { sdrRenameLead(lead, str(b.name, 160), req.userId); changed.push("navn"); }
     if (typeof b.web === "string" && str(b.web, 200) !== (lead.web || "")) { lead.web = str(b.web, 200); changed.push("website"); }
     if (typeof b.niche === "string" && str(b.niche, 80) !== (lead.ind || "")) { lead.ind = str(b.niche, 80); changed.push("niche"); }
     if (typeof b.city === "string" && str(b.city, 80) !== (lead.city || "")) { lead.city = str(b.city, 80); changed.push("by"); }

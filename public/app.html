@@ -182,7 +182,7 @@
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Bookede demoer</h3><p>Booket i Calendly under et opkald. Founders tager demoen.</p></div></div>
-      <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
+      <table class="demotbl"><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
     <details class="deeper" id="deeper">
       <summary><span>Pulje &amp; pipeline</span><span class="sub">Hvor mange leads der er klar, venter på berigelse, eller er arkiveret - hold musen over et tal for forklaring.</span></summary>
@@ -398,7 +398,7 @@ function dueKind(l) {
    and the latest note - "the one who asked for a mail" is how they remember. */
 function leadMatches(l, q) {
   if (!q) return true;
-  const hay = [l.name, l.city, l.niche, l.web, l.last_note, l.contact && l.contact.name, l.contact && l.contact.email, ...(l.contacts || []).map((c) => c.name)].filter(Boolean).join(' ').toLowerCase();
+  const hay = [l.name, l.renamed_from, l.city, l.niche, l.web, l.last_note, l.contact && l.contact.name, l.contact && l.contact.email, ...(l.contacts || []).map((c) => c.name)].filter(Boolean).join(' ').toLowerCase();
   const digits = q.replace(/\D/g, '');
   return hay.includes(q.toLowerCase()) || (digits.length >= 4 && String(l.phone || '').replace(/\D/g, '').includes(digits));
 }
@@ -597,17 +597,61 @@ function renderDemos() {
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending';
     const chip = `<span class="chip st-${e(st)}" title="${e(l.demo_review_reason || '')}">${ST[st] || st}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>`;
     const ctl = admin ? `<div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div>` : '';
-    return `<tr class="rowlink" onclick="openLeadPeek('${e(l.cvr)}')">
+    return `<tr class="rowlink" onclick="openDemoEdit('${e(l.cvr)}')" title="Klik for at rette leadet">
       <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
+      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? (l.city ? ' · ' : '') + e(String(l.web).replace(/^https?:\/\//, '')) : ''}${l.renamed_from ? `<br>tidl. ${e(l.renamed_from)}` : ''}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>
-      <td onclick="event.stopPropagation()">${chip}${ctl}</td>
+      <td class="demost" onclick="event.stopPropagation()">${chip}${ctl}<button class="linkbtn" onclick="openDemoEdit('${e(l.cvr)}')">✎ Ret</button></td>
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer booket endnu.</td></tr>`;
 }
-function openLeadPeek(cvr) { const l = (S.demos || []).find((x) => x.cvr === cvr); if (!l) return; toast(`${l.name} · ${l.contact ? l.contact.name + ' · ' : ''}${fmtPhone(l.phone)}`, 3500); }
+/* A booked demo can still be wrong: the company was a distributor, the
+   contact's real name came out later, a better number. Anyone may fix it -
+   who booked it and when stays as it is. */
+function openDemoEdit(cvr) {
+  const l = (S.demos || []).find((x) => x.cvr === cvr); if (!l) return;
+  const c = l.contact || {};
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'demoedit';
+  bg.innerHTML = `<div class="modal wide">
+    <h3>Ret ${e(l.name)}</h3><p>Booket ${e(fmtWhen(l.demo_booked_at))}${l.demo_booked_by_name ? ' af ' + e(l.demo_booked_by_name) : ''}. Ret det, der er forkert - bookingen og status bliver som de er.</p>
+    <div class="al-grid">
+      <div class="full"><label>Firma</label><input id="de-name" value="${e(l.name)}" autocomplete="off"></div>
+      <div><label>Hovednummer</label><input id="de-main" value="${e(l.main_phone || '')}" placeholder="+45 …" autocomplete="off"></div>
+      <div><label>Hjemmeside</label><input id="de-web" value="${e(String(l.web || '').replace(/^https?:\/\//, ''))}" placeholder="firma.dk" autocomplete="off"></div>
+      <div><label>By</label><input id="de-city" value="${e(l.city || '')}" autocomplete="off"></div>
+      <div class="sep full">Kontaktperson</div>
+      <div><label>Navn</label><input id="de-cname" value="${e(c.name || '')}" placeholder="fx Mette Jensen" autocomplete="off"></div>
+      <div><label>Titel</label><input id="de-ctitle" value="${e(c.title || '')}" placeholder="Ejer, marketingchef…" autocomplete="off"></div>
+      <div><label>Direkte nummer</label><input id="de-cphone" value="${e(l.phone_label === 'direkte' && l.phone ? fmtPhone(l.phone) : '')}" placeholder="+45 …" autocomplete="off"></div>
+      <div><label>Email</label><input id="de-cemail" type="email" value="${e(c.email || '')}" autocomplete="off"></div>
+      <div class="full"><label>Ny note (valgfri)</label><textarea id="de-note" rows="2" placeholder="fx Der er lovet 1 gratis video"></textarea></div>
+    </div>
+    <div class="row"><button class="pill tertiary" onclick="$('demoedit').remove()">Annuller</button><button class="pill primary" id="de-save" style="padding:11px 20px;font-size:14px" onclick="saveDemoEdit('${e(l.cvr)}', ${e(JSON.stringify(c.name || ''))})">Gem</button></div>
+  </div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  setTimeout(() => { const n = $('de-name'); if (n) n.focus(); }, 30);
+}
+async function saveDemoEdit(cvr, prevName) {
+  const v = (id) => ($(id) ? $(id).value.trim() : '');
+  if (!v('de-name')) { toast('Firmaet skal have et navn'); $('de-name').focus(); return; }
+  const body = { cvr, name: v('de-name'), web: v('de-web'), city: v('de-city'), main_phone: v('de-main'), note: v('de-note') };
+  if (v('de-cname')) body.contact = { name: v('de-cname'), prev_name: prevName || '', title: v('de-ctitle'), email: v('de-cemail'), phone: v('de-cphone') };
+  const btn = $('de-save'); if (btn) { btn.disabled = true; btn.textContent = 'Gemmer…'; }
+  try {
+    const r = await fetch('/api/sdr/lead-edit', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('Fejl ' + r.status));
+    $('demoedit').remove();
+    apply(d, { keepCurrent: true });
+    toast(d.changed && d.changed.length ? `✓ Gemt: ${d.changed.join(', ')}` : 'Intet at gemme - alt var som før');
+  } catch (ex) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Gem'; }
+    toast(ex.message, 6000);
+  }
+}
 
 /* Resultater - tiles + explainers */
 const EXPLAIN = {
@@ -972,7 +1016,7 @@ function noteThreadHtml(thread, id) {
     const who = n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || '');
     const when = n.at ? fmtWhen(n.at) : '';
     // Where it was written: an outcome shows its action, a plain note the tab.
-    const WHERE = { research: 'Research', call: 'Opkald', list: 'Ringeliste', admin: 'Admin' };
+    const WHERE = { research: 'Research', call: 'Opkald', list: 'Ringeliste', admin: 'Admin', results: 'Resultater' };
     const tag = n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">Udfald · ${e(ACTION_LABEL[n.action] || n.action)}</span>`
       : (n.where && WHERE[n.where] ? `<span class="chip sm where">${e(WHERE[n.where])}</span>` : '');
     return `<div class="nt ${n.kind === 'call' ? 'call' : ''}">

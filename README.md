@@ -39,7 +39,7 @@ sorteres først, så omstillingsopkald først dukker op, når de gode er brugt.
 | **Ringeliste** | Dagens 60 leads. Træk i rækkefølgen, fjern et lead for i dag. |
 | **Opkald** | Ét kort ad gangen: firma, kontakt, nummer, pitch, noter, udfald. |
 | **Opfølgning** | Aftalte tilbagekald og sendte mails, kun ens egne. |
-| **Resultater** | Dagens opkald, demoer, provision. |
+| **Resultater** | Dagens opkald, demoer, provision. En booket demo kan rettes bagefter (✎ Ret): firmanavn, hjemmeside, kontakt, numre og en note - bookingen og status røres ikke. |
 | **Research** | Opgaven mellem opkaldene: find navn og nummer på leads, automatikken ikke kunne færdiggøre. |
 
 **Kortet** viser to linjer om hvad firmaet laver (Gemini læser deres website),
