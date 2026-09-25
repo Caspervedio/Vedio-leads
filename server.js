@@ -14832,6 +14832,44 @@ app.post("/api/cron/pool-backup", (req, res) => {
     res.json({ ok: true, file: name, bytes: size, pruned });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Read-only export for the LinkedIn outreach tool (a separate app that never writes here).
+// This route only ever calls loadPool(): no savePool, no sdrTouch, no claims, so it cannot
+// change a lead or an SDR list. A whitelist of fields goes out; phone numbers and e-mail
+// addresses stay here. Without LINKEDIN_EXPORT_KEY set it answers 401 to everyone.
+app.get("/api/leads/export", (req, res) => {
+  const key = process.env.LINKEDIN_EXPORT_KEY || "";
+  const given = Buffer.from(String(req.headers["x-api-key"] || "")); const want = Buffer.from(key);
+  if (!key || given.length !== want.length || !crypto.timingSafeEqual(given, want)) return res.status(401).json({ error: "unauthorized" });
+  try {
+    const d = loadPool(); const now = Date.now();
+    const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
+    const out = (d.leads || []).filter((l) => l && l.cvr).map((l) => {
+      const claimed = sdrClaimActive(l, now);
+      return {
+        cvr: String(l.cvr), name: l.name || "", web: l.web || l.website || "", city: l.city || "",
+        industry: l.ind || l.industry || l.niche || "", about: l.about || "",
+        employees: l.employees || l.emp || l.emps || null,
+        platform: l.storeleads_platform || null, trafficRank: l.storeleads_rank || null,
+        metaAdsActive: typeof l.meta_verified_active === "boolean" ? l.meta_verified_active : null,
+        metaAdsCount: Number(l.meta_ads_active_now || 0),
+        companyLinkedin: l.linkedin_url || null,
+        preferredContactName: l.preferred_contact_name || null,
+        contacts: (Array.isArray(l.contacts) ? l.contacts : []).filter((c) => c && c.name).slice(0, 8).map((c) => ({
+          name: c.name, title: c.title || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "",
+          seniority: c.seniority || "", isDecisionMaker: c.is_decision_maker === true,
+          hasDkPhone: isDkPhone(c.phone || c.direct_phone || c.mobile),
+        })),
+        lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
+        callbackAt: l.callback_at || null, resurfaceAt: l.resurface_at || null,
+        calls: (Array.isArray(l.calls) ? l.calls : []).map((c) => ({ at: c.at, by: c.by, byName: nameById[c.by] || c.by, action: c.action, note: String(c.note || "").slice(0, 300) })),
+        claimedBy: claimed ? l.claimed_by : null, claimedByName: claimed ? (nameById[l.claimed_by] || l.claimed_by) : null, claimedAt: claimed ? l.claimed_at : null,
+        retryPool: l.retry_pool === true, hasCrmDeal: !!l.twenty_opportunity_id,
+        addedAt: l.addedAt || null, updatedAt: l.sdr_touched_at || l.lastCallAt || l.addedAt || null,
+      };
+    });
+    res.set("Cache-Control", "no-store"); res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // Public, unauthenticated: just the count of leads ready to dial (for the
 // login screen). Reveals a single number, nothing else.
 app.get("/api/sdr/public/ready-count", (req, res) => {
