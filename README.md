@@ -46,6 +46,12 @@ sorteres først, så omstillingsopkald først dukker op, når de gode er brugt.
 op til tre Vedio-kunder i samme branche man kan nævne, og et link til deres
 egne annoncer i Meta Ad Library. Alt hvad kortet påstår, er tjekket — "kører
 annoncer lige nu" kommer fra deres Facebook-side, ikke fra et gæt.
+Er leadet selv Vedio-kunde (samme website eller firmanavn i kundelisten), står
+det på kortet og i listen: en *nuværende* kunde ringes aldrig op koldt og
+kommer ikke på listerne; en *tidligere* kunde får mærket "Tidl. kunde".
+Referencekunder vises kun fra leadets egen branche. Kunder vi ikke kunne læse
+hjemmesiden på, kan admin finde via Google (kun svar hvor en af kildernes egne
+sider bekræfter firmaet) eller give en kategori i listen under Tilgang.
 
 **Udfald** (1–8): Demo booket · Mail sendt · Følg op · Ingen svar · Ikke nu ·
 Ikke relevant · Forkert nummer · Telefonmenu ("tryk 1 for…" — leadet sendes

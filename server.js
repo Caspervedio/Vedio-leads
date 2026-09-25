@@ -14327,6 +14327,7 @@ function sdrEligible(l, now) {
   if (!l || l.lastAction === "not-relevant" || l.lastAction === "demo-booked") return false;
   if (l.twenty_opportunity_id || l.apollo_enrichment_pending === true) return false;
   if (l.retry_pool) return false; // Genopring: waits for admin to hand it out
+  if (sdrIsCurrentCustomer(l)) return false; // already pays us - not a cold call
   if (l.resurface_at && new Date(l.resurface_at).getTime() > now) return false;
   if (l.deferred_until && new Date(l.deferred_until).getTime() > now) return false;
   if (l.callback_at && new Date(l.callback_at).getTime() > now) return false;
@@ -14401,27 +14402,30 @@ const W = (s) => `(?<![a-zæøå0-9])(?:${s})(?![a-zæøå0-9])`;
 const CAT_RULES = [
   ["webshop-mode", new RegExp(`apparel|fashion|cloth|footwear|outerwear|undergarment|herret[øo]j|damet[øo]j|${W("t[øo]j|mode|sko|shoes?")}`, "i")],
   ["webshop-smykker", new RegExp(`jewel|smykke|guld|s[øo]lv|${W("ure|ur|watch|watches")}`, "i")],
-  ["webshop-bolig", new RegExp(`garden|furnish|m[øo]bl|interi[øo]r|belysning|keramik|kitchen|dining|decor|${W("home|bolig|lampe|lamper|glas")}`, "i")],
+  ["webshop-bolig", new RegExp(`garden|furnish|m[øo]bl|interi[øo]r|belysning|keramik|kitchen|dining|decor|blomst|florist|flower|visual art|art print|kunsttryk|plakat|poster|${W("home|bolig|lampe|lamper|glas|planter|plante")}`, "i")],
   // Skønhed before sport: Google's taxonomy files skin care under
   // "Beauty & Fitness", and the word fitness used to drag it into sport.
-  ["webshop-skonhed", new RegExp(`beauty|cosmet|sk[øo]nhed|parfume|hudpleje|h[åa]rpleje|frisør|frisor|barber|makeup|wellness|personal care|nail care|skin care|${W("hud|hair|h[åa]r|salon|klinik")}`, "i")],
-  ["webshop-sport", new RegExp(`sport|outdoor|cykel|snowboard|lystfisk|vintersport|${W("fitness|bike|ski|jagt")}`, "i")],
+  ["webshop-skonhed", new RegExp(`beauty|cosmet|sk[øo]nhed|parfume|hudpleje|h[åa]rpleje|frisør|frisor|barber|makeup|wellness|personal care|nail care|skin care|negle|vipper|eyelash|${W("hud|hair|h[åa]r|salon|nails?|lash|lashes|brows?")}`, "i")],
+  ["webshop-sport", new RegExp(`sport|outdoor|cykel|snowboard|lystfisk|vintersport|fitnesscent|tr[æa]ningscent|crossfit|pilates|${W("fitness|bike|ski|jagt|yoga|golf|padel")}`, "i")],
   ["webshop-mad-drikke", new RegExp(`beverage|kaffe|coffee|chokolade|delikatesse|bryggeri|${W("food|drink|vin|wine|[øo]l|beer|slik|k[øo]d")}`, "i")],
   ["webshop-elektronik", new RegExp(`electronic|elektronik|computer|gadget|${W("mobil|audio|hifi")}`, "i")],
-  ["webshop-boern", new RegExp(`baby|b[øo]rn|kids|children|leget[øo]j|barnevogn|${W("toys?")}`, "i")],
+  ["webshop-boern", new RegExp(`baby|b[øo]rn|kids|children|leget[øo]j|barnevogn|maternity|gravid|ammet[øo]j|${W("toys?|mom|moms")}`, "i")],
   ["webshop-dyr", new RegExp(`foder|animal|hundefoder|${W("pet|pets|dyr|hund|hunde|kat|katte|hest|heste|fjerkr[æa]")}`, "i")],
   ["webshop-hobby", new RegExp(`hobby|craft|leget|musik|instrument|kunst|${W("game|games|spil|book|books|b[øo]ger")}`, "i")],
   ["sundhed-klinik", new RegExp(`klinik|clinic|dental|fysio|kiroprakt|sundhed|optik|briller|hospital|psykolog|dyrl[æa]ge|${W("tand|l[æa]ge|health")}`, "i")],
   ["byggeri-haandvaerk", new RegExp(`bygge|h[åa]ndv[æa]rk|t[øo]mrer|murer|elektriker|snedker|entrepren|construction|installat|${W("vvs|maler")}`, "i")],
-  ["ejendom-bolig", new RegExp(`ejendom|m[æa]gler|real estate|udlejning|property/i|${W("bolig")}`, "i")],
-  ["finans-forsikring", new RegExp(`forsikring|insurance|finans|revisor|advokat|regnskab|pension|${W("bank|l[åa]n")}`, "i")],
+  ["ejendom-bolig", new RegExp(`ejendom|m[æa]gler|real estate|udlejning|property|${W("bolig")}`, "i")],
+  ["finans-forsikring", new RegExp(`forsikring|insurance|finans|revisor|advokat|regnskab|pension|${W("bank|l[åa]n|finance|financial")}`, "i")],
   ["rejser-oplevelser", new RegExp(`rejse|travel|tourism|ferie|oplevelse|charter|${W("hotel|hoteller|event|events")}`, "i")],
   ["restauration", new RegExp(`restaurant|caf[eé]|cafeteri|catering|takeaway|bageri|${W("bar|barer|pizzeria")}`, "i")],
   ["bureau-marketing", new RegExp(`bureau|marketing|reklame|agency|kommunikation|design.*web|web.*design|${W("seo|media|some")}`, "i")],
-  ["it-software", new RegExp(`software|saas|tech|digital|udvikling|hosting|${W("it|app|apps|data|cloud|erp|crm")}`, "i")],
+  ["it-software", new RegExp(`software|saas|tech|digital|udvikling|hosting|web services|wordpress|${W("it|app|apps|data|cloud|erp|crm")}`, "i")],
   ["produktion-industri", new RegExp(`produktion|industri|fabrik|manufact|maskin|tr[æa]industri|engros|${W("metal")}`, "i")],
   ["uddannelse", new RegExp(`uddann|kursus|academy|education|efterskole|gymnasium|${W("skole|skoler")}`, "i")],
   ["transport-bil", new RegExp(`auto|transport|logistik|fragt|${W("bil|biler|vogn|d[æa]k|motor|marine|b[åa]d|b[åa]de")}`, "i")],
+  // Last: services sold to other companies. There were 8 verified customers in
+  // this category and no rule that could ever put a lead next to them.
+  ["b2b-service", new RegExp(`erhvervsreng[øo]ring|kontorreng[øo]ring|commercial cleaning|rekrutter|recruit|vikarbureau|konsulent|consult|erhvervsservice|business service|facility|vagtselskab|kontorartikler|office suppl|${W("b2b|vikar")}`, "i")],
 ];
 function catMatch(s) {
   const t = String(s || "").toLowerCase();
@@ -14440,7 +14444,22 @@ function catFromText(niche, about, name) {
 }
 function loadCustomers() { try { return JSON.parse(fs.readFileSync(CUSTOMERS_FILE, "utf8")); } catch { return { updated_at: null, include_former: false, items: [] }; } }
 function saveCustomers(c) { c.updated_at = new Date().toISOString(); fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(c, null, 2)); }
-let _custIdx = { mtime: 0, byCat: {}, all: [] };
+let _custIdx = { mtime: 0, byCat: {}, all: [], byDomain: new Map(), byName: new Map() };
+// A lead that IS a Vedio customer: same website, or the same company name
+// once "ApS", ".dk" and punctuation are gone (and long enough not to be a
+// coincidence - "JM" matches nothing).
+function custDomain(u) { return String(u || "").toLowerCase().trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[\/?#].*$/, ""); }
+function custNameKey(n) {
+  const k = String(n || "").toLowerCase().replace(/\.(dk|com|se|no|de|eu|shop|nu|net|org)\b/g, " ")
+    .replace(/\b(aps|a\/s|as|ivs|i\/s|k\/s|p\/s|smba|amba|holding|danmark|denmark)\b/g, " ").replace(/[^a-z0-9æøå]+/g, "");
+  return k.length >= 5 ? k : "";
+}
+function sdrCustomerOf(l) {
+  const idx = customerIndex(); if (!idx.byDomain) return null;
+  const dom = custDomain(l.web || l.website);
+  return (dom && idx.byDomain.get(dom)) || idx.byName.get(custNameKey(l.name)) || null;
+}
+function sdrIsCurrentCustomer(l) { const c = sdrCustomerOf(l); return !!(c && c.subscribed); }
 function customerIndex() {
   let mtime = 0; try { mtime = fs.statSync(CUSTOMERS_FILE).mtimeMs; } catch { return _custIdx; }
   if (mtime === _custIdx.mtime) return _custIdx;
@@ -14452,7 +14471,14 @@ function customerIndex() {
   for (const x of usable) { const k = x.cat || "andet"; (byCat[k] = byCat[k] || []).push(x); }
   // Best first: current customers, then the ones we can show a logo for.
   for (const k of Object.keys(byCat)) byCat[k].sort((a, b) => (b.subscribed - a.subscribed) || (b.domain ? 1 : 0) - (a.domain ? 1 : 0));
-  _custIdx = { mtime, byCat, all: usable };
+  // Every customer, shown or not, for spotting leads that already are one.
+  const byDomain = new Map(), byName = new Map();
+  for (const x of c.items || []) {
+    if (!x || !x.name) continue;
+    const dom = custDomain(x.domain); if (dom && !byDomain.has(dom)) byDomain.set(dom, x);
+    const nk = custNameKey(x.name); if (nk && !byName.has(nk)) byName.set(nk, x);
+  }
+  _custIdx = { mtime, byCat, all: usable, byDomain, byName };
   return _custIdx;
 }
 // No neighbour categories. The bridge existed to paper over the old guessed
@@ -14471,7 +14497,8 @@ function sdrRefCustomers(l) {
   if (!idx.all.length) return [];
   const cat = catFromText(l.ind || l.industry || l.niche, l.about, l.name);
   if (!cat || cat === "andet") return [];
-  const pool = [...(idx.byCat[cat] || [])];
+  const self = sdrCustomerOf(l);
+  const pool = (idx.byCat[cat] || []).filter((x) => x !== self);
   for (const n of (CAT_NEIGHBOURS[cat] || [])) {
     if (pool.length >= 3) break;
     for (const x of (idx.byCat[n] || [])) { if (pool.length >= 3) break; pool.push(x); }
@@ -14538,6 +14565,7 @@ function sdrSlim(l, nameById) {
     note_thread: sdrNoteThread(l, nameById),
     refs: sdrRefCustomers(l),
     history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
+    customer: (() => { const c = sdrCustomerOf(l); return c ? { current: !!c.subscribed, name: c.name } : null; })(),
     research_by: l.research_by || null,
     main_phone: l.phone || l.ph || "", renamed_from: l.renamed_from || "",
     ivr_at: l.ivr_at || null, ivr_count: l.ivr_count || 0,
@@ -15292,7 +15320,7 @@ app.post("/api/sdr/lead", authMiddleware, (req, res) => {
     lead.needs_enrichment = false;
     // Never say "it's on your list" unless the list will actually keep it -
     // nothing has been saved yet, so refusing here changes nothing.
-    if (!sdrEligible(lead, now)) return res.status(409).json({ error: `${lead.name} kan ikke komme på listen lige nu${!sdrCallable(lead) ? " - der mangler et dansk nummer" : ""}.` });
+    if (!sdrEligible(lead, now)) return res.status(409).json({ error: `${lead.name} kan ikke komme på listen lige nu${sdrIsCurrentCustomer(lead) ? " - de er allerede Vedio-kunde" : !sdrCallable(lead) ? " - der mangler et dansk nummer" : ""}.` });
     // Top of my list, claimed, off everyone else's.
     d.sdr_lists = d.sdr_lists || {};
     for (const [uid, Lst] of Object.entries(d.sdr_lists)) if (uid !== me) Lst.cvrs = (Lst.cvrs || []).filter((x) => x !== lead.cvr);
@@ -17563,7 +17591,7 @@ app.post("/api/sdr/admin/customers/classify", authMiddleware, async (req, res) =
       const list = readable.map((x, i) => `${i + 1}. ${x.name} (${x.domain})\n   WEBSITE: ${pages.get(x.key)}`).join("\n\n");
       const j = await callGemini(`Nedenfor staar danske virksomheder med tekst hentet fra deres egen forside. Bedoem UDELUKKENDE ud fra teksten, hvad virksomheden laver.
 
-For hver: vaelg den bedst passende kategori, og skriv EN kort dansk linje (max 60 tegn) om hvad de laver - faktuelt, ingen salgssprog. Gaet ikke: hvis teksten ikke fortaeller hvad de laver (fx cookie-tekst, fejlside eller parkeret domaene), saa saet cat til "andet" og lad blurb vaere tom.
+For hver: vaelg den bedst passende kategori, og skriv EN kort dansk linje (max 60 tegn) om hvad de laver - faktuelt, ingen salgssprog. Skoenhedsklinikker, negle- og vippesaloner, frisoerer og hudpleje er webshop-skonhed (Skoenhed og pleje), ogsaa naar de kalder sig klinik; sundhed-klinik er behandling af sygdom og smerter. Gaet ikke: hvis teksten ikke fortaeller hvad de laver (fx cookie-tekst, fejlside eller parkeret domaene), saa saet cat til "andet" og lad blurb vaere tom.
 
 Kategorier: ${VEDIO_CATS.join(", ")}
 
@@ -17586,6 +17614,64 @@ Svar som JSON: {"items":[{"n":1,"cat":"webshop-mode","blurb":"..."}]}`);
     res.json({ ok: true, classified: done, unreachable, remaining, done: remaining === 0 });
   } catch (e) { sdrFail(res, e, "customers/classify"); }
 });
+// Customers we could not read the first time (bot-blocked site, wrong
+// domain from an e-mail address, no domain at all). Second try: the www
+// address, then Google - but only an answer Google actually backs, for this
+// exact company, counts. Anything unsure stays hidden; the admin can set the
+// category by hand.
+app.post("/api/sdr/admin/customers/recheck", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini ikke konfigureret" });
+    const c = loadCustomers(); const withFormer = !!c.include_former || req.query.former === "1";
+    const want = (x) => x && x.name && !x.verified && !x.hidden && x.verified_via !== "admin" && !x.rechecked_at && (x.subscribed || (withFormer && x.paid));
+    const todo = (c.items || []).filter(want).slice(0, 6);
+    const stats = { tried: todo.length, fromSite: 0, fromSearch: 0, unsure: 0 };
+    for (const x of todo) {
+      x.rechecked_at = new Date().toISOString();
+      let page = null;
+      for (const u of x.domain ? [`https://www.${custDomain(x.domain)}`, `http://${custDomain(x.domain)}`] : []) {
+        const s0 = await fetchHomepageText(u).catch(() => null);
+        const text = s0 ? [s0.title, s0.description, s0.text].filter(Boolean).join(" - ").replace(/\s+/g, " ").trim() : "";
+        if (text.length > 40) { page = text.slice(0, 900); break; }
+      }
+      const ask = page
+        ? `Nedenfor er tekst fra forsiden af den danske virksomhed "${x.name}" (${x.domain}). Bedoem UDELUKKENDE ud fra teksten, hvad de laver.`
+        : `Brug Google Search til at finde ud af, hvad den danske virksomhed "${x.name}"${x.domain ? ` (domaene ${x.domain})` : ""} laver. Det skal vaere PRAECIS denne virksomhed - ikke en med et lignende navn. Er du ikke sikker, saa svar {"cat":"andet","blurb":""}.`;
+      const prompt = `${ask}
+
+Vaelg den bedst passende kategori og skriv EN kort dansk linje (max 60 tegn) om hvad de laver - faktuelt, ingen salgssprog. Skoenhedsklinikker, negle- og vippesaloner, frisoerer og hudpleje er webshop-skonhed; sundhed-klinik er behandling af sygdom og smerter.
+Kategorier: ${VEDIO_CATS.join(", ")}
+${page ? `\nTEKST: ${page}\n` : ""}
+Svar KUN som JSON: {"cat":"...","blurb":"..."}`;
+      let r = null, grounded = false;
+      try {
+        if (page) r = await callGemini(prompt);
+        else {
+          const g = await callGeminiWithSearch(prompt);
+          // Backed = one of Google's sources IS this company: its site carries
+          // the company's name or domain. A directory or a look-alike doesn't
+          // count ("aimaze i/s" came back as an unrelated t-shirt shop).
+          const chunks = (g.grounding && Array.isArray(g.grounding.groundingChunks) ? g.grounding.groundingChunks : []).map((k) => k.web || {}).filter((w) => w.title || w.uri);
+          const keys = [custNameKey(x.name), (custDomain(x.domain).split(".")[0] || "").replace(/[^a-z0-9æøå]/g, "")].filter((k) => k && k.length >= 4);
+          const own = chunks.find((w) => { const t = String(w.title || "").toLowerCase().replace(/[^a-z0-9æøå]/g, ""); return keys.some((k) => t.includes(k)); });
+          grounded = !!own;
+          const m = String(g.text || "").match(/\{[\s\S]*\}/); r = m ? JSON.parse(m[0]) : null;
+          if (own) x.source = own.title || "";
+        }
+      } catch (_) { r = null; }
+      const cat = r && VEDIO_CATS.includes(String(r.cat)) ? String(r.cat) : "andet";
+      const blurb = String((r && r.blurb) || "").trim().slice(0, 120);
+      if (cat !== "andet" && blurb && (page || grounded)) {
+        x.cat = cat; x.blurb = blurb; x.verified = true; x.verified_via = page ? "site" : "search"; x.site_ok = !!page;
+        if (page) stats.fromSite++; else stats.fromSearch++;
+      } else stats.unsure++;
+    }
+    saveCustomers(c);
+    const remaining = (c.items || []).filter(want).length;
+    res.json({ ok: true, ...stats, remaining, done: remaining === 0 });
+  } catch (e) { sdrFail(res, e, "customers/recheck"); }
+});
 app.get("/api/sdr/admin/customers", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
@@ -17598,6 +17684,8 @@ app.get("/api/sdr/admin/customers", authMiddleware, (req, res) => {
       subscribed: (c.items || []).filter((x) => x.subscribed).length,
       hidden: (c.items || []).filter((x) => x.hidden).length,
       unclassified: (c.items || []).filter((x) => !x.cat).length,
+      unverified_current: (c.items || []).filter((x) => x.subscribed && !x.verified && !x.hidden).length,
+      recheckable: (c.items || []).filter((x) => x.subscribed && !x.verified && !x.hidden && x.verified_via !== "admin" && !x.rechecked_at).length,
       byCat, cats: VEDIO_CATS.map((k) => ({ key: k, label: CAT_LABEL[k] })),
       items: (c.items || []).slice().sort((a, b) => (b.subscribed - a.subscribed) || String(a.name).localeCompare(b.name, "da")),
     });
@@ -17612,7 +17700,8 @@ app.post("/api/sdr/admin/customers/update", authMiddleware, (req, res) => {
       const x = (c.items || []).find((y) => y.key === b.key);
       if (!x) return res.status(404).json({ error: "Kunde ikke fundet" });
       if (typeof b.hidden === "boolean") x.hidden = b.hidden;
-      if (typeof b.cat === "string" && VEDIO_CATS.includes(b.cat)) x.cat = b.cat;
+      // The admin knows the customer: their category counts as checked.
+      if (typeof b.cat === "string" && VEDIO_CATS.includes(b.cat)) { x.cat = b.cat; x.verified = b.cat !== "andet"; x.verified_via = "admin"; }
       if (typeof b.blurb === "string") x.blurb = b.blurb.trim().slice(0, 120);
     }
     saveCustomers(c);

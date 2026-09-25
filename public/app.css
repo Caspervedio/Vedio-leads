@@ -358,6 +358,8 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .vhistory .k{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-right:4px}
 .vhistory .hb{font-size:12px;font-weight:700;padding:4px 10px;border-radius:var(--pill);background:var(--paper);border:1px solid var(--line);color:var(--txt-soft)}
 .vhistory .hb.h1{background:var(--violet-soft);border-color:#d9ccf6;color:var(--violet-deep)}
+.vhistory .hb.hcur{background:#fdf0e3;border-color:#f3cfa6;color:#9a4b07}
+.chip.curcust{background:#fdf0e3;color:#9a4b07;border-color:#f3cfa6}
 .vhistory .hb.h2{background:#e6f6ec;border-color:#c9ead5;color:var(--approve)}
 .vhistory .hb.h3{background:#fdf0ec;border-color:#f3d6cc;color:#B3352B}
 .ref{display:inline-flex;align-items:center;gap:7px;padding:5px 11px 5px 6px;border-radius:var(--pill);background:var(--white);border:1px solid var(--line);font-size:13px;cursor:help}

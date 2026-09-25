@@ -414,7 +414,7 @@ function renderList() {
     <tr class="rowlink" draggable="true" data-cvr="${e(l.cvr)}" ondragstart="dragStart(event,'${e(l.cvr)}')" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="drop(event,'${e(l.cvr)}')" ondragend="dragEnd(event)" onclick="jumpTo('${e(l.cvr)}')">
       <td class="handle" onclick="event.stopPropagation()">⋮⋮</td>
       <td class="num" style="color:var(--txt-faint)">${i + 1}</td>
-      <td><b>${e(l.name)}</b>${l.research_by && me && l.research_by === me.id ? ' <span class="chip sm mine" title="Du fandt selv kontakten eller nummeret i Research">Din research</span>' : ''}<span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(l.niche) : ''}</span></td>
+      <td><b>${e(l.name)}</b>${l.customer ? (l.customer.current ? ' <span class="chip sm curcust" title="Betaler for Vedio i dag - ring ikke kold">Kunde nu</span>' : ' <span class="chip sm mine" title="Har tidligere betalt for Vedio - godt at nævne">Tidl. kunde</span>') : ''}${l.research_by && me && l.research_by === me.id ? ' <span class="chip sm mine" title="Du fandt selv kontakten eller nummeret i Research">Din research</span>' : ''}<span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(l.niche) : ''}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="chip sm">Omstilling</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>
       <td>${signalChip(l)}</td>
@@ -999,9 +999,13 @@ async function disp(action, callback_at, extra) {
    handed out from Genopring): former customer, earlier demo, how they came in.
    Something to open with instead of a cold introduction. */
 function historyHtml(L) {
-  const h = (L && L.history) || [];
+  const h = [...((L && L.history) || [])];
+  // Matched against Vedio's own customer list (website or company name).
+  const c = L && L.customer;
+  if (c && c.current) h.unshift('Nuværende Vedio-kunde');
+  else if (c && !h.some((b) => /^Tidligere kunde/.test(b))) h.unshift('Tidligere Vedio-kunde');
   if (!h.length) return '';
-  const tone = (b) => /^(Tidligere kunde|Har prøvet|Har haft demo)/.test(b) ? 'h1' : /Facebook/.test(b) ? 'h2' : /^Tabt/.test(b) ? 'h3' : '';
+  const tone = (b) => /^Nuværende Vedio-kunde/.test(b) ? 'hcur' : /^(Tidligere kunde|Tidligere Vedio-kunde|Har prøvet|Har haft demo)/.test(b) ? 'h1' : /Facebook/.test(b) ? 'h2' : /^Tabt/.test(b) ? 'h3' : '';
   return `<div class="vhistory"><span class="k">Historik med Vedio</span>${h.map((b) => `<span class="hb ${tone(b)}">${e(b)}</span>`).join('')}</div>`;
 }
 /* Reference customers in the same line of business - something concrete to
