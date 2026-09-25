@@ -209,8 +209,9 @@
       <div class="ai-ctx-t"><b id="ai-leadname"></b><span id="ai-leadsub">Sparring om dette lead</span></div>
       <label class="switch" title="Tag leadet med i samtalen"><input type="checkbox" id="ai-uselead" checked onchange="aiCtx()"><i></i></label>
     </div>
-    <div class="ai-input"><textarea id="ai-q" rows="2" placeholder="Start typing here"></textarea><button class="ai-sendbtn" id="ai-send" onclick="aiSend()" title="Send (Enter)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button></div>
-    <div class="ai-hint"><kbd>Enter</kbd> sender · <kbd>Shift</kbd>+<kbd>Enter</kbd> ny linje</div>
+    <div class="ai-files" id="ai-files" hidden></div>
+    <div class="ai-input"><button type="button" class="ai-attach" onclick="$('ai-file').click()" title="Vedhæft billeder, PDF, Word, PowerPoint, Excel, lyd eller video - eller træk dem ind"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.4 11.1-8.9 8.9a5.5 5.5 0 0 1-7.8-7.8l8.9-8.9a3.7 3.7 0 0 1 5.2 5.2l-8.9 8.9a1.8 1.8 0 0 1-2.6-2.6l8.2-8.2"/></svg></button><input type="file" id="ai-file" multiple hidden onchange="aiPick(this)"><textarea id="ai-q" rows="2" placeholder="Start typing here"></textarea><button class="ai-sendbtn" id="ai-send" onclick="aiSend()" title="Send (Enter)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button></div>
+    <div class="ai-hint"><kbd>Enter</kbd> sender · <kbd>Shift</kbd>+<kbd>Enter</kbd> ny linje · træk filer ind</div>
   </div>
 </aside>
 </div>
@@ -1563,7 +1564,7 @@ function openActivity() {
 /* ─── Sparring ────────────────────────────────────────────────────────────
    Gemini with the team's material and the open lead in its head. Saved per
    SDR on the server; the panel remembers which conversation was open. */
-const AI = { chat: null, busy: false, list: [] };
+const AI = { chat: null, list: [], files: [], waiting: new Map(), listTab: 'chats' };
 function aiOpen() { return $('aipanel').classList.contains('open'); }
 const AI_GEM = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z"/></svg>';
 function aiToggle(on) {
@@ -1572,7 +1573,7 @@ function aiToggle(on) {
   $('aipanel').classList.toggle('open', want); $('ai-fab').classList.toggle('hide', want); document.body.classList.toggle('ai-open', want);
   try { $('aipanel').classList.toggle('wide', localStorage.getItem('vl_ai_wide') === '1'); } catch {}
   try { localStorage.setItem('vl_ai_open', want ? '1' : '0'); } catch {}
-  if (want) { aiCtx(); if (!AI.chat) { const id = (() => { try { return localStorage.getItem('vl_ai_chat'); } catch { return ''; } })(); if (id) aiLoad(id); else aiRender(); } setTimeout(() => $('ai-q').focus(), 50); }
+  if (want) { $('ai-fab').classList.remove('ping'); aiCtx(); if (!AI.chat) { const id = (() => { try { return localStorage.getItem('vl_ai_chat'); } catch { return ''; } })(); if (id) aiLoad(id); else aiRender(); } setTimeout(() => $('ai-q').focus(), 50); }
 }
 function aiCtx() {
   const L = S.current; const onCall = $('view-ring') && $('view-ring').classList.contains('active');
@@ -1592,15 +1593,25 @@ function aiNew() { AI.chat = null; try { localStorage.removeItem('vl_ai_chat'); 
 // The list takes the whole panel while it is open - messages and composer
 // step aside, the button reads "Tilbage".
 function aiListing(on) { $('aipanel').classList.toggle('listing', on); $('ai-chats').hidden = !on; $('ai-listbtn').textContent = on ? 'Tilbage' : 'Samtaler'; }
-async function aiList() {
-  const box = $('ai-chats'); if (!box.hidden) { aiListing(false); return; }
-  aiListing(true); box.innerHTML = '<div class="ai-chats-empty">Henter…</div>';
+async function aiList(tab) {
+  const box = $('ai-chats');
+  if (!tab && !box.hidden) { aiListing(false); return; }
+  if (tab) AI.listTab = tab;
+  aiListing(true);
+  const tabs = `<div class="ai-ltabs"><button type="button" class="${AI.listTab === 'chats' ? 'on' : ''}" onclick="aiList('chats')">Samtaler</button><button type="button" class="${AI.listTab === 'arts' ? 'on' : ''}" onclick="aiList('arts')">Artefakter</button></div>`;
+  box.innerHTML = tabs + '<div class="ai-chats-empty">Henter…</div>';
   try {
+    if (AI.listTab === 'arts') {
+      const d = await get('/api/sdr/artifacts'); const list = d.artifacts || [];
+      box.innerHTML = tabs + (list.length ? list.map((a) => `<div class="ai-chat" onclick="openArtifact('${e(a.id)}')"><div class="ai-art-row"><i class="ai-art-ic sm">${a.kind === 'page' ? AI_ICON.page : AI_ICON.doc}</i><div><b>${e(a.title)}</b><span class="sub">${a.kind === 'page' ? 'Side' : 'Dokument'} · v${a.version} · ${e(fmtWhen(a.updated_at))}${a.shared ? ` · <span class="ai-shared">Delt${a.views ? ' · set ' + a.views + (a.views === 1 ? ' gang' : ' gange') : ''}</span>` : ''}</span></div></div></div>`).join('')
+        : '<div class="ai-chats-empty">Ingen artefakter endnu. Bed Gemini om fx "en one-pager til leadet som artefakt" - eller tryk "Gem som artefakt" under et svar.</div>');
+      return;
+    }
     const d = await get('/api/sdr/chat'); AI.list = d.chats || [];
-    box.innerHTML = `<div class="ai-chats-k">Dine samtaler</div>` + (AI.list.length ? AI.list.map((c) => `<div class="ai-chat ${AI.chat && AI.chat.id === c.id ? 'on' : ''}" onclick="aiLoad('${e(c.id)}')">
+    box.innerHTML = tabs + (AI.list.length ? AI.list.map((c) => `<div class="ai-chat ${AI.chat && AI.chat.id === c.id ? 'on' : ''}" onclick="aiLoad('${e(c.id)}')">
       <div><b>${e(c.title)}</b><span class="sub">${e(fmtWhen(c.updated_at))} · ${c.n} beskeder${c.lead_name ? ' · ' + e(c.lead_name) : ''}</span></div>
       <button class="linkbtn del" title="Slet samtalen" onclick="event.stopPropagation();aiDelete('${e(c.id)}')">Slet</button></div>`).join('') : '<div class="ai-chats-empty">Ingen gemte samtaler endnu - de gemmes af sig selv, når du skriver.</div>');
-  } catch (ex) { box.innerHTML = `<div class="sub" style="padding:10px 14px;color:#b42318">${e(ex.message)}</div>`; }
+  } catch (ex) { box.innerHTML = tabs + `<div class="sub" style="padding:10px 14px;color:#b42318">${e(ex.message)}</div>`; }
 }
 async function aiLoad(id) {
   try { const d = await get('/api/sdr/chat/' + encodeURIComponent(id)); AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', id); } catch {} aiListing(false); aiRender(); }
@@ -1632,35 +1643,252 @@ function aiMd(t) {
 }
 function aiRender() {
   const box = $('ai-msgs'); const msgs = (AI.chat && AI.chat.messages) || [];
-  $('ai-sub').textContent = AI.chat && AI.chat.id ? AI.chat.title : 'Ny samtale';
+  $('ai-sub').textContent = AI.chat && AI.chat.id ? AI.chat.title : (AI.chat && AI.chat.title) || 'Ny samtale';
   if (!msgs.length) {
-    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Hvad spørger jeg om for at afdække, om de har ad fatigue?'].map((q) => `<button type="button" data-q="${e(q)}">${e(q)}</button>`).join('')}</div></div>`;
+    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega. Du kan også vedhæfte billeder, PDF'er, dokumenter og video.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Lav en one-pager om Vedio, jeg kan sende til et lead - som artefakt'].map((q) => `<button type="button" data-q="${e(q)}">${e(q)}</button>`).join('')}</div></div>`;
     return;
   }
+  const wait = AI.chat ? AI.waiting.get(AI.chat) : null;
+  const USED = { my_list: 'din liste', my_followups: 'dine opfølgninger', my_stats: 'dine tal', recent_calls: 'dine seneste opkald' };
   box.innerHTML = msgs.map((m, i) => m.role === 'user'
-    ? `<div class="ai-m user"><div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
-    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div>${m.tools_used && m.tools_used.length ? `<span class="sub ai-used" title="Data slået op i platformen for at svare">Slog op: ${e(m.tools_used.map((t) => ({ my_list: 'din liste', my_followups: 'dine opfølgninger', my_stats: 'dine tal', recent_calls: 'dine seneste opkald' })[t] || t.replace('search_leads', 'leads').replace('get_lead', 'lead')).join(' · '))}</span>` : ''}<div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}</div></div>`
-  ).join('') + (AI.busy ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait">Gemini skriver<span></span><span></span><span></span></div></div>` : '');
+    ? `<div class="ai-m user">${aiAttHtml(m.files)}${m.text ? `<div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>` : ''}${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
+    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div>${aiArtsHtml(m.artifacts)}${m.tools_used && m.tools_used.length ? `<span class="sub ai-used" title="Data slået op i platformen for at svare">Slog op: ${e(m.tools_used.map((t) => USED[t] || t.replace('search_leads', 'leads').replace('get_lead', 'lead')).join(' · '))}</span>` : ''}<div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}${!m.error && AI.chat.id && !(m.artifacts && m.artifacts.length) ? `<button class="linkbtn" onclick="aiSaveArt(${i})" title="Gem svaret som et dokument, du kan åbne stort, downloade og dele med et link">Gem som artefakt</button>` : ''}</div></div>`
+  ).join('') + (wait ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait">${e(wait)}<span></span><span></span><span></span></div></div>` : '');
   box.scrollTop = box.scrollHeight;
 }
 function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
 function aiToNote(i) { const m = AI.chat.messages[i]; const n = $('note'); if (!n) return; n.value = (n.value ? n.value.trimEnd() + '\n' : '') + m.text.trim(); n.dispatchEvent(new Event('input')); toast('Lagt i noten - husk Gem note'); }
+/* Sending never blocks the panel: the question shows at once, files that
+   are still uploading finish first, and the answer lands in its own chat -
+   even if the SDR has moved on to another conversation meanwhile. */
 async function aiSend() {
-  const q = $('ai-q').value.trim(); if (!q || AI.busy) return;
+  const q = $('ai-q').value.trim(); const atts = AI.files.filter((a) => !a.removed);
+  if (!q && !atts.length) return;
+  if (atts.some((a) => a.state === 'error')) { toast('En fil kunne ikke bruges - fjern den først', 3500); return; }
+  const chat = AI.chat || (AI.chat = { id: null, title: (q || atts[0].name).slice(0, 60), messages: [] });
+  if (AI.waiting.has(chat)) { toast('Gemini svarer stadig i denne samtale - start en ny, hvis du vil spørge om noget andet', 3500); return; }
   const useLead = !$('ai-ctx').hidden && $('ai-uselead').checked && S.current ? S.current.cvr : null;
-  AI.busy = true; $('ai-send').disabled = true; $('ai-q').value = '';
-  if (!AI.chat) AI.chat = { id: null, title: q.slice(0, 60), messages: [] };
-  AI.chat.messages.push({ role: 'user', text: q, at: new Date().toISOString(), ...(useLead ? { lead: S.current.name } : {}) });
-  aiRender();
+  $('ai-q').value = ''; AI.files = []; aiFilesRender();
+  chat.messages.push({ role: 'user', text: q, at: new Date().toISOString(), ...(useLead ? { lead: S.current.name } : {}), ...(atts.length ? { files: atts.map((a) => ({ id: a.id, name: a.name, mime: a.mime, kind: a.kind, thumb: a.thumb })) } : {}) });
+  const media = atts.some((a) => /^(video|audio)\//.test(a.mime || ''));
+  const setWait = (t) => { AI.waiting.set(chat, t); if (AI.chat === chat) aiRender(); };
+  setWait(atts.some((a) => a.state === 'uploading') ? 'Uploader filer' : atts.length ? (media ? 'Gemini ser og lytter' : 'Gemini læser filerne') : 'Gemini skriver');
   try {
-    const d = await post('/api/sdr/chat', { chat_id: AI.chat.id, message: q, cvr: useLead });
-    AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', d.chat.id); } catch {}
+    await Promise.all(atts.map((a) => a.done));
+    if (atts.length) setWait(media ? 'Gemini ser og lytter' : 'Gemini læser filerne');
+    const r = await fetch('/api/sdr/chat', { method: 'POST', headers: { ...ah(), 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chat.id, message: q, cvr: useLead, files: atts.map((a) => a.id) }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) { logout(); return; }
+    if (!r.ok) { if (d.chat_id && !chat.id) chat.id = d.chat_id; throw new Error(d.error || ('HTTP ' + r.status)); }
+    AI.waiting.delete(chat);
+    if (AI.chat === chat) { AI.chat = d.chat; try { localStorage.setItem('vl_ai_chat', d.chat.id); } catch {} aiRender(); }
+    else { chat.id = d.chat.id; toastAction(`Svar klar i "${d.chat.title}"`, 'Åbn', () => { aiToggle(true); aiLoad(d.chat.id); }, 8000); }
+    if (!aiOpen()) $('ai-fab').classList.add('ping');
   } catch (ex) {
-    AI.chat.messages.push({ role: 'assistant', text: 'Det gik galt: ' + ex.message + '\n\nPrøv igen om lidt.', at: new Date().toISOString(), error: true });
-    const m = String(ex.message).match(/chat_id[^a-f0-9]*([a-f0-9]{12})/); if (m && !AI.chat.id) AI.chat.id = m[1];
+    AI.waiting.delete(chat);
+    chat.messages.push({ role: 'assistant', text: 'Det gik galt: ' + ex.message + '\n\nPrøv igen om lidt.', at: new Date().toISOString(), error: true });
+    if (AI.chat === chat) aiRender();
   }
-  AI.busy = false; $('ai-send').disabled = false; aiRender(); $('ai-q').focus();
 }
+
+/* ─── Sparring: attachments ───────────────────────────────────────────────
+   Upload starts the moment a file is picked, dropped or pasted, in 8 MB
+   chunks with progress; the SDR keeps typing meanwhile. */
+const AI_ICON = {
+  doc: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>',
+  page: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r=".6" fill="currentColor"/><circle cx="9" cy="6.5" r=".6" fill="currentColor"/></svg>',
+  image: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></svg>',
+  video: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg>',
+  audio: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg>',
+  pdf: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><text x="12" y="17.5" font-size="6.5" font-weight="800" text-anchor="middle" fill="currentColor" stroke="none" font-family="Inter,sans-serif">PDF</text></svg>',
+};
+function aiFileIcon(f) {
+  const m = String(f.mime || ''); const n = String(f.name || '').toLowerCase();
+  if (/^image\//.test(m) || /\.(png|jpe?g|webp|heic|heif)$/.test(n)) return AI_ICON.image;
+  if (/^video\//.test(m) || /\.(mp4|mov|m4v|webm|avi|mpe?g|wmv|3gp)$/.test(n)) return AI_ICON.video;
+  if (/^audio\//.test(m) || /\.(mp3|wav|m4a|aac|ogg|flac|aiff?)$/.test(n)) return AI_ICON.audio;
+  if (/pdf/.test(m) || /\.pdf$/.test(n)) return AI_ICON.pdf;
+  return AI_ICON.doc;
+}
+function fmtSize(n) { n = Number(n) || 0; if (n < 1024) return n + ' B'; if (n < 1048576) return Math.round(n / 1024) + ' KB'; if (n < 1073741824) return (n / 1048576).toLocaleString('da-DK', { maximumFractionDigits: n < 10485760 ? 1 : 0 }) + ' MB'; return (n / 1073741824).toLocaleString('da-DK', { maximumFractionDigits: 1 }) + ' GB'; }
+function aiAttHtml(files) {
+  if (!files || !files.length) return '';
+  return `<div class="ai-att">${files.map((f) => `<span class="ai-attf" title="${e(f.name)}">${f.thumb ? `<img src="${e(f.thumb)}" alt="">` : `<i>${aiFileIcon(f)}</i>`}<b>${e(f.name)}</b></span>`).join('')}</div>`;
+}
+function aiPick(inp) { aiAddFiles([...inp.files]); inp.value = ''; $('ai-q').focus(); }
+function aiAddFiles(list) {
+  for (const f of list) {
+    if (AI.files.filter((a) => !a.removed).length >= 10) { toast('Højst 10 filer pr. besked', 3000); break; }
+    const att = { key: Math.random().toString(36).slice(2), file: f, name: f.name || 'fil', size: f.size, mime: f.type || '', state: 'uploading', sent: 0, id: null, kind: null, thumb: null };
+    AI.files.push(att);
+    att.done = aiUpload(att); att.done.catch(() => {});
+  }
+  aiFilesRender();
+}
+async function aiThumb(file) {
+  const bmp = await createImageBitmap(file); const k = Math.min(1, 160 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.72);
+}
+function aiPutChunk(att, off, end) {
+  return new Promise((ok, fail) => {
+    const x = new XMLHttpRequest(); x.open('PUT', `/api/sdr/chat/files/${att.id}?offset=${off}`);
+    x.setRequestHeader('Authorization', 'Bearer ' + token); x.setRequestHeader('Content-Type', 'application/octet-stream');
+    x.upload.onprogress = (ev) => { att.sent = off + ev.loaded; aiFilesRender(); };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch {} if (x.status >= 200 && x.status < 300) ok(j); else { const er = new Error(j.error || ('Fejl ' + x.status)); er.status = x.status; er.file = j.file; fail(er); } };
+    x.onerror = () => fail(new Error('Forbindelsen røg under upload'));
+    x.send(att.file.slice(off, end));
+  });
+}
+// Resolves when the bytes are in. A video Gemini still processes is watched
+// separately - the send waits on the server, not in the composer.
+async function aiUpload(att) {
+  try {
+    if (/^image\/(png|jpe?g|webp)$/.test(att.mime)) att.thumb = await aiThumb(att.file).catch(() => null);
+    const d = await post('/api/sdr/chat/files', { name: att.name, size: att.size, type: att.mime, thumb: att.thumb });
+    let f = d.file; att.id = f.id; att.kind = f.kind; if (f.mime) att.mime = f.mime;
+    const chunk = f.chunk || att.size; let off = f.received || 0;
+    while (off < att.size && !att.removed) {
+      const end = Math.min(att.size, off + chunk); let tries = 0;
+      for (;;) {
+        try { f = (await aiPutChunk(att, off, end)).file; break; }
+        catch (ex) {
+          if (ex.status === 409 && ex.file) { f = ex.file; break; } // the server has another offset - carry on from there
+          if ((ex.status && ex.status < 500) || ++tries >= 4) throw ex;
+          await new Promise((ok) => setTimeout(ok, 1500 * tries));
+        }
+      }
+      if (f.received <= off && f.state === 'uploading') throw new Error('Uploaden gik i stå');
+      off = f.received; att.sent = off; aiFilesRender();
+    }
+    att.state = f.state; att.sent = att.size; aiFilesRender();
+    if (att.removed) { aiFileForget(att); return att; }
+    if (att.state === 'error') throw new Error(f.error || 'Filen kunne ikke bruges');
+    if (att.state === 'processing') aiWatch(att);
+    return att;
+  } catch (ex) { att.state = 'error'; att.error = ex.message; aiFilesRender(); throw ex; }
+}
+async function aiWatch(att) {
+  while (att.state === 'processing' && !att.removed) {
+    await new Promise((ok) => setTimeout(ok, 3000));
+    try { const g = await get('/api/sdr/chat/files/' + att.id); att.state = g.file.state; if (g.file.error) att.error = g.file.error; } catch {}
+    aiFilesRender();
+  }
+}
+function aiFileRemove(key) { const a = AI.files.find((x) => x.key === key); if (!a) return; a.removed = true; if (a.state !== 'uploading') aiFileForget(a); AI.files = AI.files.filter((x) => x !== a || a.state === 'uploading'); aiFilesRender(); }
+function aiFileForget(a) { if (a.id) fetch('/api/sdr/chat/files/' + a.id, { method: 'DELETE', headers: ah() }).catch(() => {}); }
+function aiFilesRender() {
+  if (aiFilesRender.raf) return;
+  aiFilesRender.raf = requestAnimationFrame(() => {
+    aiFilesRender.raf = 0;
+    const box = $('ai-files'); const list = AI.files.filter((a) => !a.removed);
+    box.hidden = !list.length;
+    box.innerHTML = list.map((a) => {
+      const pct = a.size ? Math.min(100, Math.round(100 * (a.sent || 0) / a.size)) : 0;
+      const st = a.state === 'uploading' ? (a.id ? (pct < 100 ? `${pct}%` : 'Sender…') : 'Starter…') : a.state === 'processing' ? 'Gemini gør den klar…' : a.state === 'error' ? (a.error || 'Fejl') : 'Klar';
+      return `<div class="ai-file ${a.state}" title="${e(a.name)}${a.state === 'error' ? ' - ' + e(a.error || '') : ''}">${a.thumb ? `<img src="${a.thumb}" alt="">` : `<i>${aiFileIcon(a)}</i>`}<div class="ai-file-t"><b>${e(a.name)}</b><span>${e(fmtSize(a.size))} · ${e(st)}</span></div><button type="button" class="ai-file-x" onclick="aiFileRemove('${a.key}')" title="Fjern">×</button>${a.state === 'uploading' ? `<u style="width:${a.id ? Math.max(3, pct) : 3}%"></u>` : ''}</div>`;
+    }).join('');
+  });
+}
+// Drag files onto the panel; paste a screenshot into the text field.
+function aiDropInit() {
+  const p = $('aipanel'); let depth = 0; const isFiles = (ev) => [...((ev.dataTransfer && ev.dataTransfer.types) || [])].includes('Files');
+  p.addEventListener('dragenter', (ev) => { if (!isFiles(ev)) return; ev.preventDefault(); depth++; p.classList.add('dropping'); });
+  p.addEventListener('dragover', (ev) => { if (isFiles(ev)) ev.preventDefault(); });
+  p.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; p.classList.remove('dropping'); } });
+  p.addEventListener('drop', (ev) => { if (!isFiles(ev)) return; ev.preventDefault(); depth = 0; p.classList.remove('dropping'); aiListing(false); aiAddFiles([...ev.dataTransfer.files]); $('ai-q').focus(); });
+  $('ai-q').addEventListener('paste', (ev) => {
+    const files = [...((ev.clipboardData && ev.clipboardData.files) || [])]; if (!files.length) return;
+    ev.preventDefault();
+    const hm = new Date().toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }).replace(':', '.');
+    aiAddFiles(files.map((f, i) => (!f.name || /^image\.(png|jpe?g)$/i.test(f.name)) ? new File([f], `Skærmbillede ${hm}${files.length > 1 ? ' ' + (i + 1) : ''}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type || 'image/png' }) : f));
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', aiDropInit); else aiDropInit();
+
+/* ─── Sparring: artifacts ─────────────────────────────────────────────────
+   A document or web page Gemini made, opened large, downloadable, and
+   shareable with a link that works without login (and can be withdrawn).
+   Shown in a sandboxed frame: a page's scripts can't reach the app. */
+const ART = { cur: null };
+function aiArtsHtml(arts) {
+  if (!arts || !arts.length) return '';
+  return `<div class="ai-arts">${arts.map((a) => `<button type="button" class="ai-art" onclick="openArtifact('${e(a.id)}')"><i class="ai-art-ic">${a.kind === 'page' ? AI_ICON.page : AI_ICON.doc}</i><span class="ai-art-t"><b>${e(a.title)}</b><span>${a.kind === 'page' ? 'Side' : 'Dokument'}${a.version > 1 ? ' · version ' + a.version : ''}</span></span><span class="ai-art-go">Åbn ↗</span></button>`).join('')}</div>`;
+}
+async function aiSaveArt(i) {
+  const m = AI.chat && AI.chat.messages[i]; if (!m || !AI.chat.id) return;
+  try { const d = await post('/api/sdr/artifacts/from-message', { chat_id: AI.chat.id, index: i, at: m.at }); AI.chat = d.chat; aiRender(); openArtifact(d.artifact.id); }
+  catch (ex) { toast(ex.message, 4000); }
+}
+async function openArtifact(id) {
+  let a; try { a = (await get('/api/sdr/artifacts/' + encodeURIComponent(id))).artifact; } catch (ex) { toast(ex.message, 4000); return; }
+  ART.cur = a;
+  let bg = $('artview');
+  if (!bg) { bg = document.createElement('div'); bg.id = 'artview'; bg.className = 'artbg'; bg.addEventListener('click', (ev) => { if (ev.target === bg) artClose(); }); document.body.appendChild(bg); }
+  bg.innerHTML = `<div class="artwin" role="dialog" aria-label="${e(a.title)}">
+    <div class="art-top"><i class="ai-art-ic">${a.kind === 'page' ? AI_ICON.page : AI_ICON.doc}</i>
+      <div class="art-t"><b>${e(a.title)}</b><span>${a.kind === 'page' ? 'Side' : 'Dokument'} · version ${a.version} · ${e(fmtWhen(a.updated_at))}</span></div>
+      <div class="art-acts">
+        <button class="pill sm" id="art-sharebtn" onclick="artShare()"></button>
+        <button class="pill sm" onclick="artDownload()">Download</button>
+        <button class="pill sm tertiary" onclick="artCopy()">${a.kind === 'page' ? 'Kopiér HTML' : 'Kopiér tekst'}</button>
+        <button class="pill sm tertiary art-del" onclick="artDelete()">Slet</button>
+        <button class="iconbtn" onclick="artClose()" title="Luk (Esc)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div></div>
+    <div class="art-share" id="art-sharebox" hidden></div>
+    <div class="art-body"><iframe id="art-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" title="${e(a.title)}"></iframe></div>
+  </div>`;
+  artShareBox();
+  requestAnimationFrame(() => bg.classList.add('open'));
+  try { const r = await fetch('/api/sdr/artifacts/' + encodeURIComponent(a.id) + '/render', { headers: ah() }); ART.html = await r.text(); if ($('art-frame')) $('art-frame').srcdoc = ART.html; } catch {}
+}
+function artUrl() { return ART.cur && ART.cur.token ? location.origin + '/a/' + ART.cur.token : ''; }
+function artShareBox() {
+  const a = ART.cur; const b = $('art-sharebox'); const btn = $('art-sharebtn'); if (!a || !b) return;
+  btn.className = 'pill sm ' + (a.shared ? '' : 'violet'); btn.textContent = a.shared ? 'Kopiér link' : 'Del link';
+  b.hidden = !a.shared; if (!a.shared) { b.innerHTML = ''; return; }
+  b.innerHTML = `<span class="art-dot"></span><input readonly value="${e(artUrl())}" onclick="this.select()"><button class="linkbtn" onclick="artUnshare()">Stop deling</button><span class="art-note">Alle med linket kan se det - uden login${a.views ? ` · set ${a.views} ${a.views === 1 ? 'gang' : 'gange'}` : ''}</span>`;
+}
+async function artShare() {
+  const a = ART.cur; if (!a) return;
+  if (a.shared) { artCopyLink(); return; }
+  try { const d = await post(`/api/sdr/artifacts/${a.id}/share`); Object.assign(a, d.artifact); artShareBox(); artCopyLink(); }
+  catch (ex) { toast(ex.message, 4000); }
+}
+function artCopyLink() { const u = artUrl(); navigator.clipboard.writeText(u).then(() => toast('✓ Link kopieret - alle med linket kan se det', 3000), () => { const i = document.querySelector('#art-sharebox input'); if (i) { i.focus(); i.select(); } toast('Linket er markeret - tryk ⌘C for at kopiere', 3500); }); }
+async function artUnshare() {
+  if (!confirm('Stop deling? Linket holder op med at virke med det samme.')) return;
+  try { const r = await fetch(`/api/sdr/artifacts/${ART.cur.id}/share`, { method: 'DELETE', headers: ah() }); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Fejl'); Object.assign(ART.cur, d.artifact); artShareBox(); toast('Linket virker ikke længere'); }
+  catch (ex) { toast(ex.message, 4000); }
+}
+function artSlug(t) { return String(t || 'artefakt').toLowerCase().replace(/[æ]/g, 'ae').replace(/[ø]/g, 'oe').replace(/[å]/g, 'aa').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'artefakt'; }
+// A document downloads as the finished page (opens in any browser, prints to
+// PDF); a page as its own HTML.
+function artDownload() {
+  const a = ART.cur; if (!a) return;
+  const html = a.kind === 'page' ? a.content : (ART.html || '');
+  const x = document.createElement('a'); x.href = URL.createObjectURL(new Blob([html], { type: 'text/html' })); x.download = artSlug(a.title) + '.html';
+  document.body.appendChild(x); x.click(); setTimeout(() => { URL.revokeObjectURL(x.href); x.remove(); }, 1500);
+}
+// Copies with formatting, so a pasted mail keeps its headings and bullets.
+async function artCopy() {
+  const a = ART.cur; if (!a) return;
+  if (a.kind === 'page') { navigator.clipboard.writeText(a.content).then(() => toast('HTML kopieret'), () => toast('Kunne ikke kopiere')); return; }
+  const plain = String(a.content).replace(/^#{1,6}\s+/gm, '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2').replace(/`([^`]+)`/g, '$1').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+  try {
+    const doc = new DOMParser().parseFromString(ART.html || '', 'text/html'); const main = doc.querySelector('main');
+    if (main) { main.querySelectorAll('.brand,footer').forEach((n) => n.remove()); }
+    await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([main ? main.innerHTML : plain], { type: 'text/html' }), 'text/plain': new Blob([plain], { type: 'text/plain' }) })]);
+    toast('Kopieret - med formatering');
+  } catch { navigator.clipboard.writeText(plain).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
+}
+async function artDelete() {
+  const a = ART.cur; if (!a || !confirm(`Slet "${a.title}"?${a.shared ? ' Linket holder op med at virke.' : ''} Det kan ikke fortrydes.`)) return;
+  try { await fetch('/api/sdr/artifacts/' + a.id, { method: 'DELETE', headers: ah() }); artClose(); toast('Artefaktet er slettet'); if (!$('ai-chats').hidden && AI.listTab === 'arts') aiList('arts'); }
+  catch (ex) { toast(ex.message, 4000); }
+}
+function artClose() { const bg = $('artview'); if (!bg) return; bg.classList.remove('open'); ART.cur = null; setTimeout(() => { if (!bg.classList.contains('open')) bg.remove(); }, 260); }
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('artview')) { ev.stopPropagation(); artClose(); } }, true);
 document.addEventListener('keydown', (ev) => {
   if (ev.target && ev.target.id === 'ai-q' && ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
 });

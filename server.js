@@ -16728,6 +16728,8 @@ function sdrChatSystemPrompt(d, userId, lead) {
     `Du er sparringspartner for ${me.name || "en SDR"}, som ringer kold kanvas for Vedio. Du er en erfaren dansk salgstræner og kollega: konkret, kort, ærlig og varm. Svar altid på dansk, i et talesprog der kan bruges direkte i telefonen. Når du foreslår replikker, så skriv dem som de skal siges - korte sætninger, ingen salgsfloskler, ingen "revolutionerende". Stil ét opklarende spørgsmål hvis du mangler noget vigtigt; ellers svar bare.`,
     `Sprog: Skriv korrekt, naturligt dansk, som en dansker skriver til en kollega. Gå direkte til svaret - begynd ALDRIG med "Okay", "Selvfølgelig", "Godt spørgsmål" eller med SDR'ens navn ("Okay, Victor." er forkert dansk). Brug ikke navnet som tiltale medmindre det er naturligt. Undgå anglicismer og direkte oversættelser fra engelsk (ikke "det giver mening" for "that makes sense", ikke "ræk ud", ikke "adressere"). Danske anførselstegn og dansk tegnsætning. Brug fagord som ad fatigue kun hvis SDR'en selv bruger dem. Tonen må gerne trække mod talesprog - som man siger det i telefonen, med "du" og "I" og hverdagsord - men altid forståeligt og lige til sagen: ingen fyld, ingen lange indledninger, ingen opsummering af spørgsmålet.`,
     `Lige nu er det ${new Date().toLocaleString("da-DK", { timeZone: "Europe/Copenhagen", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })} (dansk tid). Regn "i dag", "i går" og "denne uge" ud fra det.`,
+    `Filer: SDR'en kan vedhæfte billeder, skærmbilleder, PDF'er, Word/PowerPoint/Excel, lyd og video. Se grundigt på dem og svar konkret ud fra indholdet (fx "i 0:12 siger hun …", "på slide 3 står der …"). Kan en fil ikke læses, så sig det i stedet for at gætte.`,
+    `Artefakter: Med create_artifact laver du et selvstændigt stykke indhold, der vises stort, kan downloades og deles med et link - fx en one-pager til et lead, et mailudkast, et opkaldsscript, et oplæg, en tjekliste eller en side, der kan sendes til en kunde. Brug det, når SDR'en beder om noget, der skal bruges videre eller sendes til andre, eller nævner artefakt, dokument eller side. Almindelige svar og korte råd er IKKE artefakter. Type "dokument" = markdown (overskrifter, punkter, tabeller). Type "side" = én komplet, selvstændig HTML-fil med al CSS inline (ingen eksterne scripts; Google Fonts er ok), mobilvenlig og i Vedios stil: baggrund #F4F2EE, tekst #0E0E0C, lilla accent #7C3AED, fonten Inter. Skriv på dansk, medmindre andet ønskes. Ret et eksisterende artefakt med update_artifact i stedet for at lave et nyt. Efter et artefakt svarer du kort (1-2 sætninger) og gentager ikke indholdet. Artefakter kan blive delt med kunder: skriv aldrig interne noter, provision, telefonnumre eller andre leads' data ind i dem, medmindre SDR'en beder om det.`,
     `Data fra platformen: Du har værktøjer, der slår op i Vedio Ring - search_leads (alle leads på navn/website/by/person/nummer), get_lead (alt om ét lead), my_list (SDR'ens ringeliste i rækkefølge), my_followups, my_stats (dagens/ugens tal, provision) og recent_calls (seneste udfald og noter). Brug dem, så snart et spørgsmål handler om konkrete leads, personer, numre, tal eller lister - gæt aldrig på data, og find aldrig selv på firmaer eller tal. Til rene sparringsspørgsmål (replikker, indvendinger, scripts) behøver du ikke slå op. Nævn gerne kort hvad du slog op ("Jeg kiggede på din liste…"). Tidspunkter i data er UTC - dansk tid er 2 timer foran om sommeren.`,
     `Om Vedio: Vedio laver videoannoncer til virksomheder, der annoncerer på Meta (Facebook/Instagram). Kernen i pitchen: annoncer bliver trætte ("ad fatigue") og mister effekt, så der skal hele tiden nye varianter til - Vedio leverer dem hurtigt og billigt ud fra kundens eget materiale, så kunden slipper for selv at producere. SDR'ens mål er at booke en 20-minutters demo (ikke at sælge i telefonen). Lov aldrig konkrete resultater (fx "20 % billigere klik") - hold dig til det, pitchen og scripts siger.`,
     pitch ? `SDR'ens pitch (den de faktisk bruger):\n${pitch}` : "",
@@ -16756,7 +16758,7 @@ function sdrChatSystemPrompt(d, userId, lead) {
 // What the model may look up in the platform, on the SDR's behalf: their
 // list, follow-ups, numbers and recent calls, and any lead by name, website
 // or number. Casper: "it should be allowed to see numbers, names, companies".
-function sdrChatTools(d, userId) {
+function sdrChatTools(d, userId, ctx) {
   const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const now = Date.now();
   const who = (id) => nameById[id] || id || "-";
@@ -16829,19 +16831,54 @@ function sdrChatTools(d, userId) {
       },
     },
   };
+  // Artifacts: a standalone document or web page the SDR can open large,
+  // download and share by link. Made (or revised) by the model on request.
+  if (ctx) {
+    const made = (a) => { ctx.created = (ctx.created || []).filter((x) => x.id !== a.id); ctx.created.push(artSummary(a)); };
+    tools.create_artifact = {
+      description: "Lav et artefakt: et selvstændigt dokument eller en webside, som SDR'en kan åbne stort, downloade og dele med et link. Kun når SDR'en beder om noget, der skal bruges videre eller sendes til andre (one-pager, mailudkast, script, oplæg, tjekliste, side til en kunde) eller nævner artefakt/dokument/side. Ikke til almindelige svar.",
+      parameters: { type: "OBJECT", properties: {
+        title: { type: "STRING", description: "kort titel, fx 'One-pager · Aya House'" },
+        kind: { type: "STRING", description: "'dokument' (markdown) eller 'side' (komplet selvstændig HTML)" },
+        content: { type: "STRING", description: "dokument: markdown med overskrifter, punkter, tabeller. side: én komplet HTML-fil med al CSS inline" },
+      }, required: ["title", "kind", "content"] },
+      run: ({ title, kind, content }) => {
+        if (!String(content || "").trim()) return { fejl: "indholdet er tomt" };
+        const a = artCreate(userId, { title, kind, content, chat_id: ctx.chat_id }); made(a);
+        return { ok: true, id: a.id, version: a.version, type: a.kind === "page" ? "side" : "dokument", besked: "Artefaktet vises som et kort under dit svar. Svar SDR'en med 1-2 sætninger om hvad du har lavet - gentag ikke indholdet." };
+      },
+    };
+    tools.update_artifact = {
+      description: "Ret et artefakt, der allerede findes (ny version med samme link). Brug id fra listen over artefakter i samtalen. Send hele det nye indhold, ikke kun ændringen.",
+      parameters: { type: "OBJECT", properties: {
+        id: { type: "STRING", description: "artefaktets id" },
+        content: { type: "STRING", description: "hele det nye indhold" },
+        title: { type: "STRING", description: "ny titel (valgfri)" },
+      }, required: ["id", "content"] },
+      run: ({ id, content, title }) => {
+        const a = artLoad(userId, id); if (!a) return { fejl: "artefaktet findes ikke" };
+        if (!String(content || "").trim()) return { fejl: "indholdet er tomt" };
+        artUpdate(a, { content, title }); made(a);
+        return { ok: true, id: a.id, version: a.version, besked: "Rettet. Svar kort hvad du har ændret." };
+      },
+    };
+  }
   return {
     declarations: Object.entries(tools).map(([name, t]) => ({ name, description: t.description, parameters: t.parameters })),
     run: (name, args) => { const t = tools[name]; if (!t) return { fejl: "ukendt værktøj " + name }; try { return t.run(args || {}); } catch (e) { return { fejl: e.message }; } },
+    quiet: new Set(["create_artifact", "update_artifact"]),
+    fallback: () => (ctx && ctx.created && ctx.created.length ? `Her er "${ctx.created[ctx.created.length - 1].title}" - åbn det herunder.` : ""),
   };
 }
 // Gemini with function calling: the model may ask for data up to four times
 // before it answers. Returns { text, tools_used }.
 async function geminiChat(system, messages, tools) {
   const apiKey = process.env.GEMINI_API_KEY; if (!apiKey) throw new Error("GEMINI_API_KEY mangler på serveren");
-  const contents = messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.text }] }));
+  // A message may carry prebuilt parts (attached files + text).
+  const contents = messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: m.parts || [{ text: m.text }] }));
   const used = [];
   for (let round = 0; round < 5; round++) {
-    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 90000);
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 240000);
     let j;
     try {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${apiKey}`, {
@@ -16849,7 +16886,7 @@ async function geminiChat(system, messages, tools) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] }, contents,
           ...(tools && round < 4 ? { tools: [{ functionDeclarations: tools.declarations }] } : {}),
-          generationConfig: { temperature: 0.6, maxOutputTokens: 4096 },
+          generationConfig: { temperature: 0.6, maxOutputTokens: 24000 },
         }),
       });
       j = await r.json().catch(() => ({}));
@@ -16859,10 +16896,11 @@ async function geminiChat(system, messages, tools) {
     const calls = parts.filter((p) => p.functionCall);
     if (calls.length && tools) {
       contents.push({ role: "model", parts: calls.map((p) => ({ functionCall: p.functionCall })) });
-      contents.push({ role: "user", parts: calls.map((p) => { const name = p.functionCall.name; const args = p.functionCall.args || {}; used.push(name + (args.q ? `("${String(args.q).slice(0, 40)}")` : args.cvr ? `(${args.cvr})` : "")); return { functionResponse: { name, response: { result: tools.run(name, args) } } }; }) });
+      contents.push({ role: "user", parts: calls.map((p) => { const name = p.functionCall.name; const args = p.functionCall.args || {}; if (!(tools.quiet && tools.quiet.has(name))) used.push(name + (args.q ? `("${String(args.q).slice(0, 40)}")` : args.cvr ? `(${args.cvr})` : "")); return { functionResponse: { name, response: { result: tools.run(name, args) } } }; }) });
       continue;
     }
-    const text = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("").trim();
+    let text = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("").trim();
+    if (!text && tools && tools.fallback) text = tools.fallback() || "";
     if (!text) throw new Error("Gemini svarede tomt" + (cand.finishReason ? " (" + cand.finishReason + ")" : ""));
     return { text, tools_used: used };
   }
@@ -16886,37 +16924,469 @@ app.delete("/api/sdr/chat/:id", authMiddleware, (req, res) => {
     res.json({ ok: true, deleted: n - chats.filter((x) => x.id !== req.params.id).length });
   } catch (e) { sdrFail(res, e, "chat/delete"); }
 });
+// Save one chat without losing another that finished meanwhile: a reply can
+// take a minute (a video to watch), and the SDR may have used another chat.
+function chatPut(userId, chat) {
+  const fresh = loadChats(userId);
+  const i = fresh.findIndex((x) => x.id === chat.id);
+  if (i >= 0) fresh[i] = chat; else fresh.unshift(chat);
+  fresh.sort((a, b) => String(b.updated_at).localeCompare(a.updated_at));
+  while (fresh.length > CHAT_MAX_CHATS) fresh.pop();
+  saveChats(userId, fresh);
+}
 app.post("/api/sdr/chat", authMiddleware, async (req, res) => {
   try {
     const b = req.body || {};
     const message = String(b.message || "").trim().slice(0, CHAT_MAX_INPUT);
-    if (!message) return res.status(400).json({ error: "Skriv en besked" });
+    const fileIds = (Array.isArray(b.files) ? b.files : []).map(String).slice(0, CHAT_FILES_PER_MESSAGE);
+    if (!message && !fileIds.length) return res.status(400).json({ error: "Skriv en besked" });
+    // Files must be uploaded; a video Gemini is still processing is waited for.
+    const recs = [];
+    for (const id of fileIds) {
+      const r = chatFileLoad(req.userId, id);
+      if (!r) return res.status(404).json({ error: "En vedhæftet fil findes ikke" });
+      if (r.state === "uploading") return res.status(409).json({ error: `"${r.name}" er ikke færdig med at uploade` });
+      if (r.state === "error") return res.status(400).json({ error: `"${r.name}" kunne ikke bruges: ${r.error || "ukendt fejl"}` });
+      recs.push(r);
+    }
+    try { await chatFilesReady(req.userId, recs, 300000); }
+    catch (e) { return res.status(409).json({ error: e.message }); }
     const chats = loadChats(req.userId);
     let chat = b.chat_id ? chats.find((x) => x.id === String(b.chat_id)) : null;
     const nowIso = new Date().toISOString();
     const d = loadPool();
     const lead = b.cvr ? (d.leads || []).find((l) => l.cvr === String(b.cvr)) || null : null;
-    if (!chat) {
-      chat = { id: crypto.randomBytes(6).toString("hex"), title: message.replace(/\s+/g, " ").slice(0, 60) + (message.length > 60 ? "…" : ""), created_at: nowIso, updated_at: nowIso, messages: [] };
-      chats.unshift(chat);
-      while (chats.length > CHAT_MAX_CHATS) chats.pop();
-    }
+    const titleSrc = message || (recs.length ? "Fil: " + recs.map((r) => r.name).join(", ") : "");
+    if (!chat) chat = { id: crypto.randomBytes(6).toString("hex"), title: titleSrc.replace(/\s+/g, " ").slice(0, 60) + (titleSrc.length > 60 ? "…" : ""), created_at: nowIso, updated_at: nowIso, messages: [] };
     if (lead) { chat.lead_cvr = lead.cvr; chat.lead_name = lead.name || ""; }
-    chat.messages.push({ role: "user", text: message, at: nowIso, ...(lead ? { lead: lead.name } : {}) });
-    const system = sdrChatSystemPrompt(d, req.userId, lead);
+    chat.messages.push({ role: "user", text: message, at: nowIso, ...(lead ? { lead: lead.name } : {}), ...(recs.length ? { files: recs.map(chatFileBrief) } : {}) });
+    // Artifacts already in this chat, so the model can revise instead of copy.
+    const arts = new Map(); for (const m of chat.messages) for (const a of (m.artifacts || [])) arts.set(a.id, a);
+    const artLine = arts.size ? `\n\nArtefakter i denne samtale (ret dem med update_artifact og deres id):\n` + [...arts.values()].map((a) => `- id ${a.id}: "${a.title}" (${a.kind === "page" ? "side" : "dokument"}, version ${a.version})`).join("\n") : "";
+    const system = sdrChatSystemPrompt(d, req.userId, lead) + artLine;
+    const ctx = { chat_id: chat.id, created: [] };
+    const context = chat.messages.slice(-CHAT_CONTEXT_MESSAGES).map((m) => (m.role === "user" && m.files && m.files.length ? { ...m, parts: chatMessageParts(req.userId, m) } : m));
     let reply;
-    try { reply = await geminiChat(system, chat.messages.slice(-CHAT_CONTEXT_MESSAGES), sdrChatTools(d, req.userId)); }
+    try { reply = await geminiChat(system, context, sdrChatTools(d, req.userId, ctx)); }
     catch (e) {
       // Keep the question, so a retry doesn't retype it; tell the SDR why.
-      chat.updated_at = nowIso; saveChats(req.userId, chats);
+      chat.updated_at = nowIso; chatPut(req.userId, chat);
       return res.status(502).json({ error: "Kunne ikke få svar: " + e.message, chat_id: chat.id });
     }
-    chat.messages.push({ role: "assistant", text: reply.text, at: new Date().toISOString(), ...(reply.tools_used.length ? { tools_used: reply.tools_used } : {}) });
+    chat.messages.push({ role: "assistant", text: reply.text, at: new Date().toISOString(), ...(reply.tools_used.length ? { tools_used: reply.tools_used } : {}), ...(ctx.created.length ? { artifacts: ctx.created } : {}) });
     while (chat.messages.length > CHAT_MAX_MESSAGES) chat.messages.shift();
     chat.updated_at = new Date().toISOString();
-    saveChats(req.userId, chats);
+    chatPut(req.userId, chat);
     res.json({ ok: true, chat });
   } catch (e) { sdrFail(res, e, "chat"); }
+});
+
+// ─── Sparring: attachments ───────────────────────────────────────────────
+// Images, PDFs, audio and video go to Gemini's Files API in 8 MiB chunks
+// relayed through us: the upload URL carries our API key, so the browser
+// can't hold it, and Cloud Run caps one request at 32 MiB. Gemini keeps the
+// file 48 hours. Word/PowerPoint/Excel and text files are read here and
+// handed over as text - Gemini can't open .docx itself.
+const CHAT_FILES_DIR = path.join(DATA_DIR, "chat_files");
+const CHAT_FILES_PER_MESSAGE = 10;
+const CHAT_FILE_MAX_MEDIA = 1024 * 1024 * 1024;
+const CHAT_FILE_MAX_TEXT = 25 * 1024 * 1024;
+const CHAT_FILE_TEXT_CHARS = 400000;
+const CHAT_EXT = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", heic: "image/heic", heif: "image/heif",
+  pdf: "application/pdf",
+  mp3: "audio/mp3", wav: "audio/wav", aif: "audio/aiff", aiff: "audio/aiff", aac: "audio/aac", ogg: "audio/ogg", flac: "audio/flac", m4a: "audio/aac",
+  mp4: "video/mp4", m4v: "video/mp4", mov: "video/mov", avi: "video/avi", webm: "video/webm", mpeg: "video/mpeg", mpg: "video/mpg", wmv: "video/wmv", "3gp": "video/3gpp", flv: "video/x-flv",
+  docx: "@docx", pptx: "@pptx", xlsx: "@xlsx",
+  txt: "@text", md: "@text", markdown: "@text", csv: "@text", tsv: "@text", json: "@text", html: "@text", htm: "@text", xml: "@text", rtf: "@text", srt: "@text", vtt: "@text", log: "@text",
+};
+const CHAT_TYPE = { "image/png": "image/png", "image/jpeg": "image/jpeg", "image/webp": "image/webp", "image/heic": "image/heic", "image/heif": "image/heif", "application/pdf": "application/pdf",
+  "audio/mpeg": "audio/mp3", "audio/mp3": "audio/mp3", "audio/wav": "audio/wav", "audio/x-wav": "audio/wav", "audio/aiff": "audio/aiff", "audio/x-aiff": "audio/aiff", "audio/aac": "audio/aac", "audio/ogg": "audio/ogg", "audio/flac": "audio/flac", "audio/x-m4a": "audio/aac", "audio/mp4": "audio/aac",
+  "video/mp4": "video/mp4", "video/quicktime": "video/mov", "video/x-msvideo": "video/avi", "video/webm": "video/webm", "video/mpeg": "video/mpeg", "video/x-ms-wmv": "video/wmv", "video/3gpp": "video/3gpp", "video/x-flv": "video/x-flv" };
+// → { kind: "media", mime } | { kind: "text", fmt } | null
+function chatFileKind(name, type) {
+  const ext = String(name || "").toLowerCase().split(".").pop();
+  const byExt = CHAT_EXT[ext];
+  const m = byExt || CHAT_TYPE[String(type || "").toLowerCase()] || (/^text\//i.test(type || "") ? "@text" : null);
+  if (!m) return null;
+  if (m[0] === "@") return { kind: "text", fmt: m.slice(1) };
+  return { kind: "media", mime: m };
+}
+const chatFilesDir = (userId) => path.join(CHAT_FILES_DIR, String(userId).replace(/[^a-z0-9_-]/gi, ""));
+function chatFileLoad(userId, id) { if (!/^[a-f0-9]{16}$/.test(String(id))) return null; try { return JSON.parse(fs.readFileSync(path.join(chatFilesDir(userId), id + ".json"), "utf8")); } catch { return null; } }
+function chatFileSave(userId, rec) { fs.mkdirSync(chatFilesDir(userId), { recursive: true }); fs.writeFileSync(path.join(chatFilesDir(userId), rec.id + ".json"), JSON.stringify(rec)); }
+function chatFileBrief(r) { return { id: r.id, name: r.name, mime: r.mime || "", size: r.size, kind: r.kind, ...(r.thumb ? { thumb: r.thumb } : {}) }; }
+function chatFilePublic(r) {
+  const expired = r.gemini && r.gemini.expires_at && Date.parse(r.gemini.expires_at) < Date.now();
+  return { ...chatFileBrief(r), state: expired ? "expired" : r.state, error: r.error || "", received: r.offset || 0, chunk: r.upload ? r.upload.chunk : null, chars: r.chars || 0 };
+}
+function geminiKey() { const k = process.env.GEMINI_API_KEY; if (!k) throw new Error("GEMINI_API_KEY mangler på serveren"); return k; }
+// The resumable upload URL carries our key: store it without, add it on use.
+function geminiUploadUrl(up) { const u = new URL(up.url); if (up.had_key) u.searchParams.set("key", geminiKey()); return u.toString(); }
+function geminiFileState(f) { return f.state === "ACTIVE" ? "ready" : f.state === "FAILED" ? "error" : "processing"; }
+function chatFileFromGemini(rec, f) {
+  rec.gemini = { name: f.name, uri: f.uri, expires_at: f.expirationTime || new Date(Date.now() + 47 * 3600e3).toISOString() };
+  rec.state = geminiFileState(f);
+  if (rec.state === "error") rec.error = (f.error && f.error.message) || "Gemini kunne ikke læse filen";
+  if (f.mimeType) rec.mime = f.mimeType;
+}
+async function chatFilePoll(userId, rec) {
+  if (rec.kind !== "media" || rec.state !== "processing" || !rec.gemini) return rec;
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${rec.gemini.name}?key=${geminiKey()}`);
+  const j = await r.json().catch(() => ({}));
+  if (r.ok && j.state) { chatFileFromGemini(rec, j); chatFileSave(userId, rec); }
+  return rec;
+}
+async function chatFilesReady(userId, recs, maxMs) {
+  const t0 = Date.now();
+  for (;;) {
+    for (const r of recs) if (r.state === "processing") await chatFilePoll(userId, r);
+    const bad = recs.find((r) => r.state === "error"); if (bad) throw new Error(`Gemini kunne ikke læse "${bad.name}": ${bad.error}`);
+    if (!recs.some((r) => r.state === "processing")) return;
+    if (Date.now() - t0 > maxMs) throw new Error("Gemini er stadig i gang med at se filen igennem - prøv igen om et øjeblik");
+    await new Promise((ok) => setTimeout(ok, 3000));
+  }
+}
+// What the model gets for a user message with attachments.
+function chatMessageParts(userId, m) {
+  const parts = [];
+  for (const f of m.files || []) {
+    const r = chatFileLoad(userId, f.id);
+    if (!r) { parts.push({ text: `[Filen "${f.name}" findes ikke længere]` }); continue; }
+    if (r.kind === "text") {
+      let t = ""; try { t = fs.readFileSync(path.join(chatFilesDir(userId), r.id + ".txt"), "utf8"); } catch {}
+      parts.push({ text: `Vedhæftet fil "${r.name}"${r.truncated ? " (forkortet)" : ""}:\n"""\n${t}\n"""` });
+      continue;
+    }
+    const live = r.state === "ready" && r.gemini && r.gemini.uri && Date.parse(r.gemini.expires_at) > Date.now() + 60000;
+    if (live) parts.push({ fileData: { mimeType: r.mime, fileUri: r.gemini.uri } });
+    else parts.push({ text: `[Filen "${r.name}" er ikke længere tilgængelig${r.gemini && Date.parse(r.gemini.expires_at) <= Date.now() + 60000 ? " - Gemini gemmer filer i 48 timer. Sig til SDR'en, at den skal uploades igen, hvis du skal se den" : ""}]` });
+  }
+  parts.push({ text: m.text || "(Ingen tekst - se på den vedhæftede fil og fortæl, hvad du ser, og hvad SDR'en kan bruge den til.)" });
+  return parts;
+}
+// .docx / .pptx / .xlsx are zip files of XML. Enough of a zip reader to get
+// the text out - no dependency for it.
+function zipEntries(buf) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("filen er ikke et gyldigt Office-dokument");
+  const n = buf.readUInt16LE(eocd + 10); let p = buf.readUInt32LE(eocd + 16); const out = {};
+  for (let k = 0; k < n; k++) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(p + 10), csize = buf.readUInt32LE(p + 20), nlen = buf.readUInt16LE(p + 28), xlen = buf.readUInt16LE(p + 30), clen = buf.readUInt16LE(p + 32), off = buf.readUInt32LE(p + 42);
+    const name = buf.slice(p + 46, p + 46 + nlen).toString("utf8");
+    out[name] = () => {
+      const lnlen = buf.readUInt16LE(off + 26), lxlen = buf.readUInt16LE(off + 28);
+      const data = buf.slice(off + 30 + lnlen + lxlen, off + 30 + lnlen + lxlen + csize);
+      return (method === 8 ? require("zlib").inflateRawSync(data) : data).toString("utf8");
+    };
+    p += 46 + nlen + xlen + clen;
+  }
+  return out;
+}
+function xmlText(x) {
+  return String(x).replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (m, c) => String.fromCodePoint(Number(c))).replace(/&amp;/g, "&");
+}
+function officeText(buf, fmt) {
+  const z = zipEntries(buf); const num = (n) => Number((n.match(/(\d+)\.xml$/) || [])[1] || 0);
+  if (fmt === "docx") {
+    const doc = z["word/document.xml"]; if (!doc) throw new Error("ingen tekst fundet i dokumentet");
+    return xmlText(doc().replace(/<w:tab\/>/g, "\t").replace(/<w:br[^>]*\/>/g, "\n").replace(/<\/w:p>/g, "\n")).replace(/\n{3,}/g, "\n\n").trim();
+  }
+  if (fmt === "pptx") {
+    const slides = Object.keys(z).filter((k) => /^ppt\/slides\/slide\d+\.xml$/.test(k)).sort((a, b) => num(a) - num(b));
+    return slides.map((k) => `--- Slide ${num(k)} ---\n` + xmlText(z[k]().replace(/<\/a:p>/g, "\n")).replace(/\n{2,}/g, "\n").trim()).join("\n\n");
+  }
+  if (fmt === "xlsx") {
+    const ss = z["xl/sharedStrings.xml"] ? (z["xl/sharedStrings.xml"]().match(/<si>[\s\S]*?<\/si>/g) || []).map(xmlText) : [];
+    const sheets = Object.keys(z).filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)).sort((a, b) => num(a) - num(b));
+    return sheets.map((k) => {
+      const rows = (z[k]().match(/<row[\s\S]*?<\/row>/g) || []).map((row) => (row.match(/<c [^>]*?(?:\/>|>[\s\S]*?<\/c>)/g) || []).map((c) => {
+        const t = (c.match(/ t="(\w+)"/) || [])[1]; const v = (c.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+        if (t === "s") return ss[Number(v)] || ""; if (t === "inlineStr") return xmlText((c.match(/<is>([\s\S]*?)<\/is>/) || [])[1] || "");
+        return v != null ? xmlText(v) : "";
+      }).join("\t"));
+      return `--- Ark ${num(k)} ---\n` + rows.join("\n");
+    }).join("\n\n");
+  }
+  return buf.toString("utf8").replace(/^﻿/, "");
+}
+// 1) Announce the file. Media: open a Gemini upload session.
+app.post("/api/sdr/chat/files", authMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || "fil").replace(/[\\/\x00-\x1f]/g, " ").trim().slice(0, 160) || "fil";
+    const size = Math.floor(Number(b.size) || 0);
+    const k = chatFileKind(name, b.type);
+    if (!k) return res.status(415).json({ error: `"${name}" kan Gemini ikke læse. Brug billeder, PDF, Word/PowerPoint/Excel, tekst, lyd eller video.` });
+    if (!(size > 0)) return res.status(400).json({ error: "Filen er tom" });
+    if (k.kind === "media" && size > CHAT_FILE_MAX_MEDIA) return res.status(413).json({ error: `"${name}" er for stor - højst 1 GB` });
+    if (k.kind === "text" && size > CHAT_FILE_MAX_TEXT) return res.status(413).json({ error: `"${name}" er for stor - højst 25 MB for dokumenter` });
+    const thumb = typeof b.thumb === "string" && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(b.thumb) && b.thumb.length < 40000 ? b.thumb : null;
+    const rec = { id: crypto.randomBytes(8).toString("hex"), owner: req.userId, name, size, kind: k.kind, mime: k.mime || "", fmt: k.fmt || "", state: "uploading", offset: 0, created_at: new Date().toISOString(), ...(thumb ? { thumb } : {}) };
+    if (k.kind === "media") {
+      const r = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${geminiKey()}`, {
+        method: "POST",
+        headers: { "X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start", "X-Goog-Upload-Header-Content-Length": String(size), "X-Goog-Upload-Header-Content-Type": k.mime, "Content-Type": "application/json" },
+        body: JSON.stringify({ file: { display_name: name.slice(0, 120) } }),
+      });
+      const url = r.headers.get("x-goog-upload-url");
+      if (!r.ok || !url) { const t = await r.text().catch(() => ""); throw new Error(`Gemini ville ikke tage imod filen (${r.status}) ${t.slice(0, 160)}`); }
+      const gran = Number(r.headers.get("x-goog-upload-chunk-granularity")) || 8 * 1024 * 1024;
+      const u = new URL(url); const hadKey = u.searchParams.has("key"); u.searchParams.delete("key");
+      rec.upload = { url: u.toString(), had_key: hadKey, chunk: Math.max(gran, Math.floor((8 * 1024 * 1024) / gran) * gran) };
+    } else rec.upload = { chunk: size };
+    chatFileSave(req.userId, rec);
+    res.json({ ok: true, file: chatFilePublic(rec) });
+  } catch (e) { sdrFail(res, e, "chat/files"); }
+});
+// 2) The bytes, one chunk at a time, in order (?offset=N).
+app.put("/api/sdr/chat/files/:id", authMiddleware, express.raw({ type: () => true, limit: "30mb" }), async (req, res) => {
+  try {
+    const rec = chatFileLoad(req.userId, req.params.id);
+    if (!rec) return res.status(404).json({ error: "Filen findes ikke" });
+    if (rec.state !== "uploading") return res.json({ ok: true, file: chatFilePublic(rec) });
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const offset = Number(req.query.offset || 0);
+    if (offset !== rec.offset) return res.status(409).json({ error: "Forkert rækkefølge", file: chatFilePublic(rec) });
+    if (!buf.length || offset + buf.length > rec.size) return res.status(400).json({ error: "Forkert størrelse på stykket" });
+    const last = offset + buf.length === rec.size;
+    if (rec.kind === "text") {
+      if (!last || offset !== 0) return res.status(400).json({ error: "Dokumenter sendes i ét stykke" });
+      let text;
+      try { text = officeText(buf, rec.fmt); } catch (e) { rec.state = "error"; rec.error = e.message; chatFileSave(req.userId, rec); return res.status(422).json({ error: `"${rec.name}": ${e.message}`, file: chatFilePublic(rec) }); }
+      if (!text.trim()) { rec.state = "error"; rec.error = "ingen tekst i filen"; chatFileSave(req.userId, rec); return res.status(422).json({ error: `"${rec.name}" har ingen tekst, Gemini kan læse`, file: chatFilePublic(rec) }); }
+      rec.truncated = text.length > CHAT_FILE_TEXT_CHARS; text = text.slice(0, CHAT_FILE_TEXT_CHARS);
+      fs.writeFileSync(path.join(chatFilesDir(req.userId), rec.id + ".txt"), text);
+      rec.chars = text.length; rec.offset = rec.size; rec.state = "ready"; delete rec.upload;
+      chatFileSave(req.userId, rec);
+      return res.json({ ok: true, file: chatFilePublic(rec) });
+    }
+    if (!last && buf.length % rec.upload.chunk !== 0) return res.status(400).json({ error: "Stykket har forkert størrelse" });
+    const r = await fetch(geminiUploadUrl(rec.upload), {
+      method: "POST",
+      headers: { "Content-Length": String(buf.length), "X-Goog-Upload-Offset": String(offset), "X-Goog-Upload-Command": last ? "upload, finalize" : "upload" },
+      body: buf,
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      rec.state = "error"; rec.error = `Gemini afviste upload (${r.status}) ${t.slice(0, 160)}`; chatFileSave(req.userId, rec);
+      return res.status(502).json({ error: rec.error, file: chatFilePublic(rec) });
+    }
+    rec.offset = offset + buf.length;
+    if (last) {
+      const j = await r.json().catch(() => ({}));
+      if (!j.file) { rec.state = "error"; rec.error = "Gemini svarede ikke med filen"; }
+      else { chatFileFromGemini(rec, j.file); delete rec.upload; }
+    }
+    chatFileSave(req.userId, rec);
+    res.json({ ok: true, file: chatFilePublic(rec) });
+  } catch (e) { sdrFail(res, e, "chat/files/put"); }
+});
+// 3) Status - asks Gemini while a video is still being processed.
+app.get("/api/sdr/chat/files/:id", authMiddleware, async (req, res) => {
+  try {
+    const rec = chatFileLoad(req.userId, req.params.id);
+    if (!rec) return res.status(404).json({ error: "Filen findes ikke" });
+    await chatFilePoll(req.userId, rec).catch(() => {});
+    res.json({ ok: true, file: chatFilePublic(rec) });
+  } catch (e) { sdrFail(res, e, "chat/files/get"); }
+});
+// Removed from the composer before sending.
+app.delete("/api/sdr/chat/files/:id", authMiddleware, async (req, res) => {
+  try {
+    const rec = chatFileLoad(req.userId, req.params.id);
+    if (!rec) return res.json({ ok: true });
+    const used = loadChats(req.userId).some((c) => (c.messages || []).some((m) => (m.files || []).some((f) => f.id === rec.id)));
+    if (used) return res.json({ ok: true, kept: true });
+    if (rec.gemini && rec.gemini.name) fetch(`https://generativelanguage.googleapis.com/v1beta/${rec.gemini.name}?key=${geminiKey()}`, { method: "DELETE" }).catch(() => {});
+    for (const ext of [".json", ".txt"]) { try { fs.unlinkSync(path.join(chatFilesDir(req.userId), rec.id + ext)); } catch {} }
+    res.json({ ok: true });
+  } catch (e) { sdrFail(res, e, "chat/files/delete"); }
+});
+
+// ─── Sparring: artifacts ─────────────────────────────────────────────────
+// A document (markdown) or a web page (HTML) made in the chat, stored per
+// SDR, with versions. Sharing hands out an unguessable /a/<token> link that
+// works without login and can be withdrawn. Pages are served sandboxed (an
+// opaque origin), so their scripts can never reach the app or its login.
+const ARTIFACTS_DIR = path.join(DATA_DIR, "artifacts");
+const ARTIFACT_SHARES_FILE = path.join(ARTIFACTS_DIR, "shares.json");
+const ARTIFACT_MAX = 400000;
+const artDir = (userId) => path.join(ARTIFACTS_DIR, String(userId).replace(/[^a-z0-9_-]/gi, ""));
+function artLoad(userId, id) { if (!/^[a-f0-9]{12}$/.test(String(id))) return null; try { return JSON.parse(fs.readFileSync(path.join(artDir(userId), id + ".json"), "utf8")); } catch { return null; } }
+function artSave(a) { fs.mkdirSync(artDir(a.owner), { recursive: true }); fs.writeFileSync(path.join(artDir(a.owner), a.id + ".json"), JSON.stringify(a)); }
+function artList(userId) { let f = []; try { f = fs.readdirSync(artDir(userId)); } catch {} return f.filter((x) => /^[a-f0-9]{12}\.json$/.test(x)).map((x) => artLoad(userId, x.slice(0, 12))).filter(Boolean); }
+function artSummary(a) { return { id: a.id, title: a.title, kind: a.kind, version: a.version, updated_at: a.updated_at, created_at: a.created_at, chat_id: a.chat_id || null, shared: !!(a.share && a.share.token), token: a.share ? a.share.token : null, views: a.share ? a.share.views || 0 : 0 }; }
+function artShares() { try { return JSON.parse(fs.readFileSync(ARTIFACT_SHARES_FILE, "utf8")) || {}; } catch { return {}; } }
+function artSharesSave(m) { fs.mkdirSync(ARTIFACTS_DIR, { recursive: true }); fs.writeFileSync(ARTIFACT_SHARES_FILE, JSON.stringify(m)); }
+function artClean(kind, content) {
+  let c = String(content || "").replace(/^\s*```[a-z]*\s*\n([\s\S]*?)\n```\s*$/i, "$1").slice(0, ARTIFACT_MAX);
+  if (kind === "page" && !/<html[\s>]|<body[\s>]/i.test(c)) c = `<!doctype html><html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${c}</body></html>`;
+  return c;
+}
+function artKind(k) { return /side|page|html|web/i.test(String(k || "")) ? "page" : "doc"; }
+function artCreate(userId, { title, kind, content, chat_id }) {
+  const now = new Date().toISOString(); const k = artKind(kind);
+  const a = { id: crypto.randomBytes(6).toString("hex"), owner: userId, chat_id: chat_id || null, title: String(title || "").replace(/\s+/g, " ").trim().slice(0, 120) || "Uden titel", kind: k, content: artClean(k, content), version: 1, versions: [], created_at: now, updated_at: now, share: null };
+  artSave(a); return a;
+}
+function artUpdate(a, { content, title }) {
+  a.versions = [...(a.versions || []), { v: a.version, at: a.updated_at, title: a.title, content: a.content }].slice(-10);
+  a.version += 1; a.updated_at = new Date().toISOString();
+  if (title && String(title).trim()) a.title = String(title).replace(/\s+/g, " ").trim().slice(0, 120);
+  if (content != null) a.content = artClean(a.kind, content);
+  artSave(a); return a;
+}
+// Markdown → HTML for documents. Everything is escaped first; only links to
+// http(s)/mailto survive as links.
+function mdToHtml(md) {
+  const esc = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const inline = (x) => {
+    const codes = []; let t = esc(x).replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+    t = t.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+    return t.replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${codes[Number(i)]}</code>`);
+  };
+  const lines = String(md || "").replace(/\r\n?/g, "\n").split("\n"); const out = []; let para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
+  const isRow = (l) => /\|/.test(l); const isSep = (l) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*```/.test(l)) { flush(); const buf = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]); out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue; }
+    const h = l.match(/^(#{1,6})\s+(.*)$/); if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { flush(); out.push("<hr>"); continue; }
+    if (isRow(l) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      flush(); const head = cells(l); i += 2; const body = [];
+      while (i < lines.length && isRow(lines[i]) && lines[i].trim()) body.push(cells(lines[i++]));
+      i--; out.push(`<div class="tbl"><table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`); continue;
+    }
+    if (/^\s*>\s?/.test(l)) { flush(); const q = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, "")); i--; out.push(`<blockquote>${q.map(inline).join("<br>")}</blockquote>`); continue; }
+    const li = l.match(/^\s*([-*+•]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      flush(); const ol = /\d/.test(li[1]); const items = [];
+      while (i < lines.length) { const m = lines[i].match(/^\s*([-*+•]|\d+[.)])\s+(.*)$/); if (!m || /\d/.test(m[1]) !== ol) break; items.push(inline(m[2])); i++; }
+      i--; out.push(ol ? `<ol>${items.map((x) => `<li>${x}</li>`).join("")}</ol>` : `<ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>`); continue;
+    }
+    if (!l.trim()) { flush(); continue; }
+    para.push(l);
+  }
+  flush(); return out.join("\n");
+}
+// The logo travels inside the page: a sandboxed preview frame, a downloaded
+// file and a forwarded mail all show it without reaching back to us.
+const ART_LOGO = (() => { try { return "data:image/png;base64," + fs.readFileSync(path.join(__dirname, "public", "brand", "vedio_logo_trim.png")).toString("base64"); } catch { return "/brand/vedio_logo_trim.png"; } })();
+function artHtml(a) {
+  if (a.kind === "page") return a.content;
+  const esc = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const ownH1 = /^\s*#\s+/.test(String(a.content || "").replace(/^\s*\n/, ""));
+  return `<!doctype html><html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${esc(a.title)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<style>
+:root{--paper:#F4F2EE;--ink:#0E0E0C;--soft:#6C6961;--line:#E4E1DA;--violet:#7C3AED;--violet-soft:#EFE9FB}
+*{box-sizing:border-box}html{background:var(--paper)}
+body{margin:0;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;color:var(--ink);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+main{max-width:780px;margin:40px auto;padding:48px 56px;background:#fff;border:1px solid var(--line);border-radius:24px}
+.brand{display:block;height:22px;margin-bottom:34px}
+h1{font-size:34px;line-height:1.15;letter-spacing:-.02em;margin:0 0 18px;font-weight:800}
+h2{font-size:22px;letter-spacing:-.01em;margin:34px 0 10px;font-weight:800}
+h3{font-size:17px;margin:26px 0 8px;font-weight:700}h4,h5,h6{font-size:15px;margin:20px 0 6px}
+p{margin:0 0 14px}ul,ol{margin:0 0 16px;padding-left:22px}li{margin:4px 0}
+a{color:var(--violet);text-decoration:underline;text-underline-offset:3px}
+strong{font-weight:700}code{background:var(--violet-soft);border-radius:6px;padding:1px 6px;font-size:.92em}
+pre{background:#16151a;color:#f3f1ff;border-radius:14px;padding:16px 18px;overflow:auto;font-size:13.5px}pre code{background:none;padding:0}
+blockquote{margin:0 0 16px;padding:10px 18px;border-left:3px solid var(--violet);background:var(--violet-soft);border-radius:0 12px 12px 0}
+hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+.tbl{overflow-x:auto;margin:0 0 18px;border:1px solid var(--line);border-radius:14px}
+table{border-collapse:collapse;width:100%;font-size:14.5px}th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#FAF9F6;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft)}tr:last-child td{border-bottom:0}
+footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--soft)}
+@media (max-width:720px){main{margin:0;border-radius:0;border:0;padding:28px 20px}h1{font-size:27px}}
+</style></head><body><main><img class="brand" src="${ART_LOGO}" alt="Vedio">${ownH1 ? "" : `<h1>${esc(a.title)}</h1>`}
+${mdToHtml(a.content)}
+<footer>Delt fra Vedio</footer></main></body></html>`;
+}
+function artHeaders(res, a) {
+  res.set("X-Robots-Tag", "noindex, nofollow"); res.set("Referrer-Policy", "no-referrer"); res.set("Cache-Control", "no-store"); res.set("X-Content-Type-Options", "nosniff");
+  res.set("Content-Security-Policy", a.kind === "page"
+    ? "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
+    : "default-src 'none'; img-src 'self' https: data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; base-uri 'none'; form-action 'none'");
+}
+app.get("/api/sdr/artifacts", authMiddleware, (req, res) => {
+  try { res.json({ ok: true, artifacts: artList(req.userId).sort((a, b) => String(b.updated_at).localeCompare(a.updated_at)).map(artSummary) }); }
+  catch (e) { sdrFail(res, e, "artifacts"); }
+});
+app.get("/api/sdr/artifacts/:id", authMiddleware, (req, res) => {
+  try {
+    const a = artLoad(req.userId, req.params.id); if (!a) return res.status(404).json({ error: "Artefaktet findes ikke længere" });
+    res.json({ ok: true, artifact: { ...artSummary(a), content: a.content, versions: (a.versions || []).map((v) => ({ v: v.v, at: v.at })) } });
+  } catch (e) { sdrFail(res, e, "artifacts/get"); }
+});
+// The rendered page, for the viewer in the app (shown in a sandboxed iframe).
+app.get("/api/sdr/artifacts/:id/render", authMiddleware, (req, res) => {
+  try {
+    const a = artLoad(req.userId, req.params.id); if (!a) return res.status(404).json({ error: "Artefaktet findes ikke længere" });
+    res.type("html").send(artHtml(a));
+  } catch (e) { sdrFail(res, e, "artifacts/render"); }
+});
+// "Gem som artefakt" on an answer.
+app.post("/api/sdr/artifacts/from-message", authMiddleware, (req, res) => {
+  try {
+    const b = req.body || {}; const chats = loadChats(req.userId);
+    const chat = chats.find((c) => c.id === String(b.chat_id || ""));
+    // By timestamp: the browser's list can hold a local error line the server never saw.
+    const m = chat && ((b.at && chat.messages.find((x) => x.at === String(b.at) && x.role === "assistant")) || chat.messages[Number(b.index)]);
+    if (!m || m.role !== "assistant") return res.status(404).json({ error: "Svaret findes ikke" });
+    const first = String(m.text).split("\n").map((x) => x.replace(/^#+\s*|\*\*/g, "").trim()).find(Boolean) || chat.title;
+    const a = artCreate(req.userId, { title: String(b.title || "").trim() || first.slice(0, 80), kind: "doc", content: m.text, chat_id: chat.id });
+    m.artifacts = [...(m.artifacts || []), artSummary(a)];
+    chatPut(req.userId, chat);
+    res.json({ ok: true, artifact: artSummary(a), chat });
+  } catch (e) { sdrFail(res, e, "artifacts/from-message"); }
+});
+app.post("/api/sdr/artifacts/:id/share", authMiddleware, (req, res) => {
+  try {
+    const a = artLoad(req.userId, req.params.id); if (!a) return res.status(404).json({ error: "Artefaktet findes ikke længere" });
+    if (!(a.share && a.share.token)) {
+      a.share = { token: crypto.randomBytes(18).toString("base64url"), at: new Date().toISOString(), views: 0 };
+      artSave(a); const m = artShares(); m[a.share.token] = { owner: a.owner, id: a.id }; artSharesSave(m);
+      logActivity("sdr", `${req.userId} delte artefaktet "${a.title}" med et link`, { userId: req.userId });
+    }
+    res.json({ ok: true, artifact: artSummary(a) });
+  } catch (e) { sdrFail(res, e, "artifacts/share"); }
+});
+app.delete("/api/sdr/artifacts/:id/share", authMiddleware, (req, res) => {
+  try {
+    const a = artLoad(req.userId, req.params.id); if (!a) return res.status(404).json({ error: "Artefaktet findes ikke længere" });
+    if (a.share && a.share.token) { const m = artShares(); delete m[a.share.token]; artSharesSave(m); a.share = null; artSave(a); }
+    res.json({ ok: true, artifact: artSummary(a) });
+  } catch (e) { sdrFail(res, e, "artifacts/unshare"); }
+});
+app.delete("/api/sdr/artifacts/:id", authMiddleware, (req, res) => {
+  try {
+    const a = artLoad(req.userId, req.params.id); if (!a) return res.json({ ok: true });
+    if (a.share && a.share.token) { const m = artShares(); delete m[a.share.token]; artSharesSave(m); }
+    try { fs.unlinkSync(path.join(artDir(req.userId), a.id + ".json")); } catch {}
+    res.json({ ok: true });
+  } catch (e) { sdrFail(res, e, "artifacts/delete"); }
+});
+// The public link. No login - the token is the key.
+app.get("/a/:token", (req, res) => {
+  try {
+    const tok = String(req.params.token || ""); const ref = /^[A-Za-z0-9_-]{20,64}$/.test(tok) ? artShares()[tok] : null;
+    const a = ref ? artLoad(ref.owner, ref.id) : null;
+    if (!a || !a.share || a.share.token !== tok) {
+      res.set("X-Robots-Tag", "noindex"); res.set("Cache-Control", "no-store");
+      return res.status(404).type("html").send(`<!doctype html><html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Linket virker ikke</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F4F2EE;font-family:-apple-system,BlinkMacSystemFont,Inter,sans-serif;color:#0E0E0C}div{text-align:center;padding:24px}h1{font-size:22px;margin:0 0 8px}p{color:#6C6961;margin:0}</style></head><body><div><h1>Linket virker ikke længere</h1><p>Det er blevet slettet eller ikke delt mere.</p></div></body></html>`);
+    }
+    a.share.views = (a.share.views || 0) + 1; a.share.last_view_at = new Date().toISOString();
+    try { artSave(a); } catch {}
+    artHeaders(res, a);
+    res.type("html").send(artHtml(a));
+  } catch (e) { res.status(500).send("Fejl"); }
 });
 const SCRIPTS_FILE = path.join(DATA_DIR, "call_scripts.json");
 function loadScripts() { try { const j = JSON.parse(fs.readFileSync(SCRIPTS_FILE, "utf8")); return Array.isArray(j) ? j : []; } catch { return []; } }

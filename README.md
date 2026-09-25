@@ -106,6 +106,19 @@ hvad den slog op. Samtaler gemmes pr. SDR (`chats/chats_<id>.json`), kan
 genåbnes og slettes. Svar kan
 kopieres eller lægges direkte i noten.
 
+*Filer:* 📎, træk ind eller indsæt et skærmbillede. Billeder, PDF, lyd og video
+(op til 1 GB) sendes i stykker á 8 MB videre til Geminis Files API, som gemmer
+dem i 48 timer; Word/PowerPoint/Excel og tekstfiler læses på serveren og gives
+som tekst (`chat_files/<id>/`). Uploaden starter med det samme og vises med
+fremdrift — man kan skrive videre, og sende før en video er færdigbehandlet.
+
+*Artefakter:* Gemini kan lave et dokument (markdown) eller en webside (HTML)
+som et kort under svaret — eller man trykker "Gem som artefakt". Det åbnes stort,
+kan downloades, kopieres med formatering og deles med et link (`/a/<token>`),
+der virker uden login, tæller visninger og kan slås fra igen. Sider vises i en
+sandbox og kan ikke nå appen. Gemt pr. SDR i `artifacts/<id>/`, med versioner;
+"Artefakter" ligger ved siden af "Samtaler" i panelet.
+
 **Hvor meget der kommer ind.** Puljen fyldes op til et antal *friske* leads
 (aldrig ringet, med navn + nummer, ikke parkeret) — 450 som udgangspunkt, sat
 under ⚙. Under tallet flyttes nye butikker ind og der købes telefonnumre; over
