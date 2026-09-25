@@ -76,7 +76,9 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   som er den første flaskehals), integrationernes status, CSV-import og
   referencekundelisten.
 - **Demoer** — godkend eller afvis bookede demoer. Provision følger de
-  godkendte.
+  godkendte. Vælg en måned, så står provisionen pr. SDR for måneden øverst
+  (kvalificerede × sats, afventende vist for sig) - til lønkørslen - med et
+  link til månedens Excel-ark.
 - **⚙** — Calendly-link, dagligt mål, listestørrelse, provision, pitch,
   mailskabeloner, Slack-webhook og reglerne for hvad puljen må servere.
 

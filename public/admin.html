@@ -160,6 +160,11 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 /* Demoer: the status column holds a badge, the reason and two buttons - give it
    room, and let the table scroll rather than clip if the window is narrow. */
 #view-demos .tablewrap{overflow-x:auto}
+.demo-ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.demo-ctl select{border:1px solid var(--line);border-radius:var(--pill);padding:6px 30px 6px 12px;font:inherit;font-size:12.5px;font-weight:700;background-color:var(--white);color:var(--txt);cursor:pointer}
+#pay-card td.num,#pay-card th.num{text-align:right}
+#pay-card tr.total td{font-weight:800;border-top:1px solid var(--line)}
+#pay-card .paywarn{padding:12px 24px;border-top:1px solid var(--line);font-size:13px;color:#8A5A12;background:#FBF4E6;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 #view-demos td,#view-demos th{padding-left:12px;padding-right:12px}
 #view-demos td:first-child,#view-demos th:first-child{padding-left:24px}
 #view-demos td.demost{min-width:230px}
@@ -351,8 +356,9 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 
   <!-- DEMOER -->
   <section id="view-demos" class="view">
+    <div class="tablewrap" id="pay-card" hidden></div>
     <div class="tablewrap">
-      <div class="thead"><div><h3>Bookede demoer</h3><p>Godkend efter mødet: kvalificeret = ICP, interesseret og mødt op. Kun godkendte udløser provision.</p></div><div class="filters" id="demo-filters"></div></div>
+      <div class="thead"><div><h3>Bookede demoer</h3><p>Godkend efter mødet: kvalificeret = ICP, interesseret og mødt op. Kun godkendte udløser provision.</p></div><div class="demo-ctl"><select id="demo-month" onchange="setDemoMonth(this.value)" title="Vis demoer booket i en bestemt måned - med provisionen for måneden øverst"></select><div class="filters" id="demo-filters"></div></div></div>
       <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
   </section>
@@ -502,10 +508,42 @@ function renderIntakeRate() {
     <div class="lbl">Heraf klar at ringe</div>${days.map((d) => `<div class="d"><div class="v ${d.newCallable ? 'new' : 'zero'}">${d.newCallable || 0}</div>${dl(d.day)}</div>`).join('')}`;
 }
 let demoFilter = 'pending';
+// Month filter for payroll: a month shows only demos booked that month, with
+// the commission for it on top. Same rule as the SDRs' own results page:
+// qualified demos, counted in the month they were booked.
+let demoMonth = ''; try { demoMonth = localStorage.getItem('vl_admin_demo_month') || ''; } catch {}
+function demoMonthKey(iso) { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+function demoMonthLabel(k) { const [y, m] = k.split('-').map(Number); const s = new Date(y, m - 1, 1).toLocaleDateString('da-DK', { month: 'long', year: 'numeric' }); return s.charAt(0).toUpperCase() + s.slice(1); }
+function setDemoMonth(v) { demoMonth = v || ''; try { localStorage.setItem('vl_admin_demo_month', demoMonth); } catch {} renderDemos(); }
+function kr(n) { return Number(n || 0).toLocaleString('da-DK') + ' kr'; }
+function renderPay(list) {
+  const card = $('pay-card'); if (!demoMonth) { card.hidden = true; card.innerHTML = ''; return; }
+  const rate = Number(((O.settings || {}).commission_dkk) ?? 1000); const label = demoMonthLabel(demoMonth);
+  const per = {};
+  for (const l of list) { const k = l.demo_booked_by_name || l.demo_booked_by || 'Ukendt'; const p = per[k] || (per[k] = { q: 0, p: 0, u: 0 }); const st = l.demo_status || 'pending'; if (st === 'qualified') p.q++; else if (st === 'unqualified') p.u++; else p.p++; }
+  const names = Object.keys(per).sort((a, b) => per[b].q - per[a].q || a.localeCompare(b, 'da'));
+  const tot = names.reduce((a, k) => ({ q: a.q + per[k].q, p: a.p + per[k].p, u: a.u + per[k].u }), { q: 0, p: 0, u: 0 });
+  const [y, m] = demoMonth.split('-').map(Number);
+  card.innerHTML = `<div class="thead"><div><h3>Provision · ${e(label)}</h3><p>Kvalificerede demoer booket i ${e(label.toLowerCase())} gange ${kr(rate)} - samme regel som på SDR'ernes resultatside. Grundløn er ikke med.</p></div><button class="pill sm" onclick="downloadExport('${y}-${String(m).padStart(2, '0')}-01','${new Date(y, m, 0).getFullYear()}-${String(new Date(y, m, 0).getMonth() + 1).padStart(2, '0')}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}','',this)" title="Hele resultatarket for måneden - fanen Demoer har en linje pr. demo med provision">Hent måneden som Excel</button></div>
+    <table><thead><tr><th>SDR</th><th class="num">Kvalificerede</th><th class="num">Provision</th><th class="num">Afventer vurdering</th><th class="num">Ikke kvalificerede</th></tr></thead><tbody>
+      ${names.length ? names.map((k) => `<tr><td><b>${e(k)}</b></td><td class="num">${per[k].q}</td><td class="num"><b>${kr(per[k].q * rate)}</b></td><td class="num">${per[k].p || '-'}</td><td class="num">${per[k].u || '-'}</td></tr>`).join('')
+        + `<tr class="total"><td>I alt</td><td class="num">${tot.q}</td><td class="num">${kr(tot.q * rate)}</td><td class="num">${tot.p || '-'}</td><td class="num">${tot.u || '-'}</td></tr>`
+        : `<tr class="empty-row"><td colspan="5">Ingen demoer booket i ${e(label.toLowerCase())}.</td></tr>`}
+    </tbody></table>
+    ${tot.p ? `<div class="paywarn">⚠ ${tot.p} ${tot.p === 1 ? 'demo' : 'demoer'} fra ${e(label.toLowerCase())} afventer din vurdering og er ikke med i provisionen endnu.<button class="pill sm" onclick="demoFilter='pending';renderDemos()">Vis dem</button></div>` : ''}`;
+  card.hidden = false;
+}
 function renderDemos() {
-  const rows = (O.demos || []).filter((l) => demoFilter === 'all' || (l.demo_status || 'pending') === demoFilter);
-  const counts = { pending: 0, qualified: 0, unqualified: 0 }; for (const l of O.demos || []) counts[l.demo_status || 'pending']++;
-  $('demo-filters').innerHTML = [['pending', 'Afventer'], ['qualified', 'Kvalificeret'], ['unqualified', 'Ikke kval.'], ['all', 'Alle']].map(([k, l]) => `<button class="${demoFilter === k ? 'on' : ''}" onclick="demoFilter='${k}';renderDemos()">${l}<span class="n">${k === 'all' ? (O.demos || []).length : counts[k]}</span></button>`).join('');
+  const all = O.demos || [];
+  const nowKey = demoMonthKey(new Date());
+  const months = [...new Set([nowKey, ...all.filter((l) => l.demo_booked_at).map((l) => demoMonthKey(l.demo_booked_at))])].sort().reverse();
+  if (demoMonth && !months.includes(demoMonth)) demoMonth = '';
+  $('demo-month').innerHTML = `<option value="">Alle måneder</option>` + months.map((k) => `<option value="${k}" ${k === demoMonth ? 'selected' : ''}>${demoMonthLabel(k)}</option>`).join('');
+  const inMonth = all.filter((l) => !demoMonth || (l.demo_booked_at && demoMonthKey(l.demo_booked_at) === demoMonth));
+  renderPay(inMonth);
+  const rows = inMonth.filter((l) => demoFilter === 'all' || (l.demo_status || 'pending') === demoFilter);
+  const counts = { pending: 0, qualified: 0, unqualified: 0 }; for (const l of inMonth) counts[l.demo_status || 'pending']++;
+  $('demo-filters').innerHTML = [['pending', 'Afventer'], ['qualified', 'Kvalificeret'], ['unqualified', 'Ikke kval.'], ['all', 'Alle']].map(([k, l]) => `<button class="${demoFilter === k ? 'on' : ''}" onclick="demoFilter='${k}';renderDemos()">${l}<span class="n">${k === 'all' ? inMonth.length : counts[k]}</span></button>`).join('');
   const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending'; return `<tr class="rowlink" onclick="openLead('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
@@ -517,7 +555,7 @@ function renderDemos() {
       <td class="demost" onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}</span>${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
         ${twentyCell(l.twenty)}
         <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
-    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? 'endnu' : 'i den kategori'}.</td></tr>`;
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? (demoMonth ? 'i ' + e(demoMonthLabel(demoMonth).toLowerCase()) : 'endnu') : 'i den kategori' + (demoMonth ? ' i ' + e(demoMonthLabel(demoMonth).toLowerCase()) : '')}.</td></tr>`;
 }
 // Where the demo stands in Victor's Twenty pipeline (pushed ~10 min after booking).
 function twentyCell(t) {
@@ -836,7 +874,11 @@ async function doExport() {
   const from = $('ex-from').value, to = $('ex-to').value, sdr = $('ex-sdr').value;
   if (!from || !to) { toast('Vælg en start- og slutdato'); return; }
   if (from > to) { toast('Startdatoen ligger efter slutdatoen'); return; }
-  const btn = $('ex-go'); btn.disabled = true; btn.textContent = 'Laver arket…';
+  if (await downloadExport(from, to, sdr, $('ex-go'))) $('exportdlg').remove();
+}
+async function downloadExport(from, to, sdr, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Laver arket…'; }
   try {
     const r = await fetch(`/api/sdr/admin/export?from=${from}&to=${to}${sdr ? '&sdr=' + encodeURIComponent(sdr) : ''}`, { headers: { Authorization: 'Bearer ' + token } });
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('Fejl ' + r.status)); }
@@ -845,8 +887,10 @@ async function doExport() {
     const name = m ? decodeURIComponent(m[1]) : `vedio-resultater_${from}_${to}.xlsx`;
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
-    $('exportdlg').remove(); toast('✓ ' + name + ' er hentet', 3500);
-  } catch (ex) { btn.disabled = false; btn.textContent = 'Hent Excel-ark'; toast(ex.message, 5000); }
+    toast('✓ ' + name + ' er hentet', 3500);
+    return true;
+  } catch (ex) { toast(ex.message, 5000); return false; }
+  finally { if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = label; } }
 }
 function openSettings() {
   const s = O.settings || {}; const r = s.rules || {}; const sources = Object.keys(O.sources || {}).sort();
