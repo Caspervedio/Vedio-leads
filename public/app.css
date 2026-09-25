@@ -363,6 +363,7 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .vhistory .hb.h2{background:#e6f6ec;border-color:#c9ead5;color:var(--approve)}
 .vhistory .hb.h3{background:#fdf0ec;border-color:#f3d6cc;color:#B3352B}
 .ref{display:inline-flex;align-items:center;gap:7px;padding:5px 11px 5px 6px;border-radius:var(--pill);background:var(--white);border:1px solid var(--line);font-size:13px;cursor:help}
+.ref .tidl{font-style:normal;font-size:10.5px;font-weight:700;color:var(--txt-faint);margin-left:5px;text-transform:uppercase;letter-spacing:.04em}
 .ref img{width:18px;height:18px;border-radius:4px;display:block;object-fit:contain}
 .ref b{font-weight:650}
 .ref i{font-style:normal;font-size:10.5px;color:var(--txt-faint);text-transform:uppercase;letter-spacing:.06em}
