@@ -527,7 +527,7 @@ function renderCard() {
       <div class="steplbl two"><i>2</i> Udfald</div>
       <div class="row disp">
         <button class="pill approve" onclick="disp('demo-booked')"><span class="key">1</span>Demo booket</button>
-        <button class="pill" onclick="toggleMail()" title="De bad om en mail - skabelon klar, og opfølgning planlægges automatisk"><span class="key">2</span>Send mail ▾</button>
+        <button class="pill" onclick="markMailSent()" title="Du har sendt dem en mail fra din egen Gmail. Leadet får mærket ✉ Mail sendt, og en opfølgning planlægges om ${e(String((S.settings && S.settings.email_followup_days) || 2))} hverdage">✉ Mail sendt</button>
         <button class="pill" onclick="toggleChooser()"><span class="key">3</span>Følg op ▾</button>
       </div>
       <div class="row disp muted">
@@ -814,6 +814,15 @@ function fillMail(text, L) {
     .replace(/\{note\}/g, ($('note') && $('note').value.trim()) || '')
     .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
 }
+/* "Mail sendt": the SDR writes the mail in their own Gmail (with their
+   signature) and marks it here, so the lead gets the ✉ badge and a
+   follow-up. The in-app composer below is no longer reachable from the
+   card - Gmail sends from the API carried no signature - but is kept so it
+   can come back once it can. */
+function markMailSent() {
+  const L = S.current; if (!L) return;
+  disp('email-sent', null, { email_to: (L.contact && L.contact.email) || L.email_to || '' });
+}
 function toggleMail() {
   const box = $('mailbox'); const L = S.current; if (!L) return;
   mailOpen = !mailOpen; box.hidden = !mailOpen; if (!mailOpen) return;
@@ -976,7 +985,7 @@ async function disp(action, callback_at, extra) {
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
     apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...(extra || {}) }));
-    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'ivr': 'Telefonmenu - sendt til Research for et direkte nummer, prøves igen om tre hverdage.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': (gmailReady ? '✓ Mail sendt fra din Gmail - opfølgning planlagt.' : '✓ Mail klar i dit mailprogram - opfølgning planlagt.') }[action] || 'Gemt';
+    const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'ivr': 'Telefonmenu - sendt til Research for et direkte nummer, prøves igen om tre hverdage.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': `✉ Markeret som mail sendt - opfølgning om ${(S.settings && S.settings.email_followup_days) || 2} hverdage.` }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -1916,7 +1925,6 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '4') disp('not-now');
   else if (ev.key === '5') disp('not-relevant');
   else if (ev.key === '6') disp('wrong-number');
-  else if (ev.key === '7') { ev.preventDefault(); toggleMail(); }
   else if (ev.key === '8') disp('ivr');
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();

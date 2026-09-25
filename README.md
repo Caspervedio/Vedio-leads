@@ -47,14 +47,15 @@ op til tre Vedio-kunder i samme branche man kan nævne, og et link til deres
 egne annoncer i Meta Ad Library. Alt hvad kortet påstår, er tjekket — "kører
 annoncer lige nu" kommer fra deres Facebook-side, ikke fra et gæt.
 
-**Udfald** (1–8): Demo booket · Send mail · Følg op · Ingen svar · Ikke nu ·
+**Udfald** (1–8): Demo booket · Mail sendt · Følg op · Ingen svar · Ikke nu ·
 Ikke relevant · Forkert nummer · Telefonmenu ("tryk 1 for…" — leadet sendes
 til Research for et direkte nummer og prøves igen om tre hverdage). Alt kan
 fortrydes i 10 minutter.
 
-**Mails** sendes fra SDR'ens egen Gmail (forbindes under ⚙), så svar lander i
-deres indbakke. Er den ikke forbundet, åbnes udkastet i deres mailprogram.
-Et lead med en sendt mail får automatisk en opfølgning to hverdage efter.
+**Mails** skriver SDR'en selv i sin egen Gmail (med deres signatur) og trykker
+"✉ Mail sendt" på kortet. Leadet får mærket ✉ Mail sendt og automatisk en
+opfølgning to hverdage efter. (At sende fra værktøjet via Gmail er slået fra på
+kortet - mails derfra kom uden signatur. Koden ligger der stadig.)
 
 **Noter** er en tråd pr. lead: alt hvad nogen har skrevet, ældst først, med
 navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
