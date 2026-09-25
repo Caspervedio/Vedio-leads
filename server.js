@@ -14448,6 +14448,9 @@ let _custIdx = { mtime: 0, byCat: {}, all: [], byDomain: new Map(), byName: new 
 // A lead that IS a Vedio customer: same website, or the same company name
 // once "ApS", ".dk" and punctuation are gone (and long enough not to be a
 // coincidence - "JM" matches nothing).
+// A bot wall ("checking your browser", proof-of-work, captcha) is not the
+// company's site - reading it filed an ad agency as anti-bot software.
+function looksLikeBotWall(t) { return /proof.of.work|checking your browser|just a moment|verify you are human|are you a robot|captcha|cf-browser-verification|ddos protection|enable javascript and cookies|anubis/i.test(String(t || "")); }
 function custDomain(u) { return String(u || "").toLowerCase().trim().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[\/?#].*$/, ""); }
 function custNameKey(n) {
   const k = String(n || "").toLowerCase().replace(/\.(dk|com|se|no|de|eu|shop|nu|net|org)\b/g, " ")
@@ -17577,7 +17580,7 @@ app.post("/api/sdr/admin/customers/classify", authMiddleware, async (req, res) =
         try {
           const s = await fetchHomepageText(x.domain);
           const text = [s && s.title, s && s.description, s && s.text].filter(Boolean).join(" - ").replace(/\s+/g, " ").trim();
-          if (text.length > 40) pages.set(x.key, text.slice(0, 700));
+          if (text.length > 40 && !looksLikeBotWall(text.slice(0, 1500))) pages.set(x.key, text.slice(0, 700));
         } catch (_) {}
       }));
     }
@@ -17633,7 +17636,7 @@ app.post("/api/sdr/admin/customers/recheck", authMiddleware, async (req, res) =>
       for (const u of x.domain ? [`https://www.${custDomain(x.domain)}`, `http://${custDomain(x.domain)}`] : []) {
         const s0 = await fetchHomepageText(u).catch(() => null);
         const text = s0 ? [s0.title, s0.description, s0.text].filter(Boolean).join(" - ").replace(/\s+/g, " ").trim() : "";
-        if (text.length > 40) { page = text.slice(0, 900); break; }
+        if (text.length > 40 && !looksLikeBotWall(text.slice(0, 1500))) { page = text.slice(0, 900); break; }
       }
       const ask = page
         ? `Nedenfor er tekst fra forsiden af den danske virksomhed "${x.name}" (${x.domain}). Bedoem UDELUKKENDE ud fra teksten, hvad de laver.`
@@ -17653,8 +17656,14 @@ Svar KUN som JSON: {"cat":"...","blurb":"..."}`;
           // the company's name or domain. A directory or a look-alike doesn't
           // count ("aimaze i/s" came back as an unrelated t-shirt shop).
           const chunks = (g.grounding && Array.isArray(g.grounding.groundingChunks) ? g.grounding.groundingChunks : []).map((k) => k.web || {}).filter((w) => w.title || w.uri);
-          const keys = [custNameKey(x.name), (custDomain(x.domain).split(".")[0] || "").replace(/[^a-z0-9æøå]/g, "")].filter((k) => k && k.length >= 4);
-          const own = chunks.find((w) => { const t = String(w.title || "").toLowerCase().replace(/[^a-z0-9æøå]/g, ""); return keys.some((k) => t.includes(k)); });
+          // With a known domain the source must BE that domain ("naturecell.com"
+          // is not "naturecell.co.kr"); without one, a Danish site carrying the name.
+          const dom = custDomain(x.domain); const nk = custNameKey(x.name);
+          const own = chunks.find((w) => {
+            const host = custDomain(String(w.title || "").trim().split(/\s/)[0]);
+            if (dom) return host === dom || host.endsWith("." + dom);
+            return /\.dk$/.test(host) && nk && host.replace(/[^a-z0-9æøå]/g, "").includes(nk);
+          });
           grounded = !!own;
           const m = String(g.text || "").match(/\{[\s\S]*\}/); r = m ? JSON.parse(m[0]) : null;
           if (own) x.source = own.title || "";
