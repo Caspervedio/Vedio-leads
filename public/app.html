@@ -330,8 +330,8 @@ const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'n
 function signalChip(l) {
   // A due callback outranks the Meta signal - it's what the SDR must act on.
   // Which kind matters: agreed callback, our own retry, or a sent mail.
-  if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) { const k = dueKind(l); return `<span class="chip ${k.cls}">${k.label} · ${e(fmtWhen(l.callback_at))}</span>`; }
-  if (l.email_sent_at) return `<span class="chip mail">✉ Mail sendt ${e(fmtAgo(l.email_sent_at))}</span>`;
+  if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) { const k = dueKind(l); return k.cls === 'mail' ? '<span class="chip mail">Mail sendt</span>' : `<span class="chip ${k.cls}">${k.label} · ${e(fmtWhen(l.callback_at))}</span>`; }
+  if (l.email_sent_at) return '<span class="chip mail">Mail sendt</span>';
   if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.activeNow ? (l.meta.adsMatched > 0 ? l.meta.adsMatched + ' annoncer nu' : 'Annoncerer nu') : 'Meta-annoncør'}</span>`;
   return `<span class="chip">${e(l.source_label || '-')}</span>`;
 }
@@ -584,7 +584,7 @@ function renderFollowups() {
   $('tb-fu').innerHTML = rows.length ? rows.map((l) => { const over = new Date(l.callback_at).getTime() <= Date.now();
     return `<tr class="rowlink" onclick="jumpTo('${e(l.cvr)}')">
       <td><span class="chip ${over ? 'over' : 'due'}">${e(fmtWhen(l.callback_at))}</span><span class="sub">${e(dueKind(l).label.replace(/^[◆✉↻]\s*/, ''))}</span></td>
-      <td><b>${e(l.name)}</b><span class="sub">${l.email_sent_at ? `<span class="chip mail sm">✉ Mail ${e(fmtAgo(l.email_sent_at))}</span>` : e(l.city || '')}</span></td>
+      <td><b>${e(l.name)}</b><span class="sub">${l.email_sent_at ? `<span class="chip mail sm">Mail sendt</span>` : e(l.city || '')}</span></td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '<span class="chip sm">Omstilling</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
