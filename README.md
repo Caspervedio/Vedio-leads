@@ -110,6 +110,8 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   d. 28. kl. 23:59 (`commission_locks.json`) og ændres aldrig bagefter: et møde
   der afvises efter udbetaling, modregnes i den næste åbne periode, og intet
   betales to gange. Hvert møde beholder satsen fra godkendelsesdagen.
+  Et godkendt møde i en åben periode kan flyttes til næste måneds løn ("→
+  <måned>" i møde-listen) og tilbage igen, så længe perioden ikke er låst.
 - **⚙** — Calendly-link, dagligt mål, listestørrelse, provision, pitch,
   mailskabeloner, Slack-webhook og reglerne for hvad puljen må servere.
 

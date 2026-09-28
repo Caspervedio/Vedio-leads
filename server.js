@@ -14238,7 +14238,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14730,6 +14730,8 @@ function demoCommissionRate(l, settings) { return Number.isFinite(Number(l.commi
 function demoApprovedAsOf(l, t) {
   if (l.lastAction !== "demo-booked" && !(l.demo_reviewed_at && new Date(l.demo_reviewed_at) > t)) return false;
   const q = demoQualifiedAt(l); if (!q || new Date(q) > t) return false;
+  // Moved to a later salary period by the admin: not due before that period starts.
+  if (l.commission_period && commissionBounds(l.commission_period).from > t) return false;
   if (l.demo_status === "qualified" && l.lastAction === "demo-booked") return true;
   return !!(l.demo_reviewed_at && new Date(l.demo_reviewed_at) > t);
 }
@@ -14744,7 +14746,7 @@ function commissionDeltas(d, locks, asOf, settings, nameById) {
     const want = demoApprovedAsOf(l, asOf) ? 1 : 0, have = paid.get(l.cvr) || 0;
     if (want === have) continue;
     const q = demoQualifiedAt(l);
-    out.push({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: (nameById || {})[l.demo_booked_by] || l.demo_booked_by, booked_at: l.demo_booked_at || null, qualified_at: q, approved_period: q ? commissionPeriodOf(q) : null, rate: demoCommissionRate(l, settings), sign: want > have ? 1 : -1 });
+    out.push({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: (nameById || {})[l.demo_booked_by] || l.demo_booked_by, booked_at: l.demo_booked_at || null, qualified_at: q, approved_period: q ? commissionPeriodOf(q) : null, moved_to: l.commission_period || null, rate: demoCommissionRate(l, settings), sign: want > have ? 1 : -1 });
   }
   return out;
 }
@@ -16209,6 +16211,31 @@ app.get("/api/sdr/admin/export", authMiddleware, (req, res) => {
     res.send(buf);
   } catch (e) { sdrFail(res, e, "admin/export"); }
 });
+// Move one approved meeting's commission to a later salary period (or back
+// to the period its approval date gives). Only between periods that are not
+// locked yet - a paid month never changes. The approval date is left as is.
+app.post("/api/sdr/admin/commission/move", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const settings = sdrSettings(d);
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const { cvr, period } = req.body || {};
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead || lead.lastAction !== "demo-booked" || lead.demo_status !== "qualified") return res.status(404).json({ error: "Kun et godkendt møde kan flyttes" });
+    const { locks, open } = commissionLocks(d, settings, nameById);
+    const paid = Object.values(locks.periods || {}).reduce((a, P) => a + (P.entries || []).filter((e) => e.cvr === cvr).reduce((x, e) => x + e.sign, 0), 0);
+    if (paid > 0) return res.status(409).json({ error: "Mødet er allerede med i en låst lønperiode" });
+    const natural = commissionPeriodOf(demoQualifiedAt(lead));
+    const target = /^\d{4}-\d{2}$/.test(String(period || "")) ? String(period) : null;
+    if (!target || target < open || target < natural || locks.periods[target]) return res.status(400).json({ error: "Vælg en lønperiode, der ikke er låst" });
+    if (target === natural) delete lead.commission_period; else lead.commission_period = target;
+    lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+    lead.note_log.push({ at: new Date().toISOString(), by: req.userId, where: "admin", text: `Provision flyttet til ${commissionLabel(target)}-lønnen` });
+    sdrTouch(lead); savePool(d);
+    logActivity("sdr-commission", `Provision for ${lead.name} flyttet til ${commissionLabel(target)}`, { cvr, userId: req.userId, period: target });
+    res.json({ ok: true, period: target });
+  } catch (e) { sdrFail(res, e, "admin/commission/move"); }
+});
 // Payroll: one salary period - who gets what, meeting by meeting, and what is
 // still waiting for approval. Closed periods come from the ledger, unchanged.
 app.get("/api/sdr/admin/commission", authMiddleware, (req, res) => {
@@ -16222,11 +16249,13 @@ app.get("/api/sdr/admin/commission", authMiddleware, (req, res) => {
     const bySdr = {};
     for (const e of v.entries) { const b = bySdr[e.by] || (bySdr[e.by] = { id: e.by, name: e.by_name, n: 0, rev: 0, amount: 0 }); if (e.sign > 0) b.n++; else b.rev++; b.amount += e.sign * e.rate; }
     const pending = v.open ? (d.leads || []).filter((l) => l.lastAction === "demo-booked" && (l.demo_status || "pending") === "pending").map((l) => ({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: nameById[l.demo_booked_by] || l.demo_booked_by || "", booked_at: l.demo_booked_at })).sort((a, b) => String(a.booked_at).localeCompare(b.booked_at)) : [];
-    const keys = [...new Set([...Object.keys(locks.periods || {}), open])].sort().reverse();
+    const moved = v.locked ? [] : (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_status === "qualified" && l.commission_period && l.commission_period > want && demoQualifiedAt(l) && commissionPeriodOf(demoQualifiedAt(l)) <= want)
+      .map((l) => ({ cvr: l.cvr, name: l.name || "", by_name: nameById[l.demo_booked_by] || l.demo_booked_by, to: l.commission_period, to_label: commissionLabel(l.commission_period), rate: demoCommissionRate(l, settings) }));
+    const keys = [...new Set([...Object.keys(locks.periods || {}), open, commissionNext(open)])].sort().reverse();
     res.json({ ok: true, rate: Number(settings.commission_dkk || 0), cutoff_day: COMMISSION_CUTOFF_DAY,
       periods: keys.map((k) => { const b = commissionBounds(k); return { key: k, label: commissionLabel(k), open: k === open, locked: !!(locks.periods || {})[k], from: b.from.toISOString(), to: b.to.toISOString() }; }),
       period: { ...v, entries: undefined }, entries: v.entries.sort((a, b) => String(a.by_name).localeCompare(b.by_name, "da") || String(a.qualified_at).localeCompare(b.qualified_at)),
-      per: Object.values(bySdr).sort((a, b) => b.amount - a.amount), pending,
+      per: Object.values(bySdr).sort((a, b) => b.amount - a.amount), pending, moved, next: commissionNext(open), next_label: commissionLabel(commissionNext(open)),
       total: v.entries.reduce((a, e) => a + e.sign * e.rate, 0) });
   } catch (e) { sdrFail(res, e, "admin/commission"); }
 });

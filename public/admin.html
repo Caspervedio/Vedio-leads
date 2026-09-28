@@ -173,6 +173,8 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 #pay-card .payrow{display:grid;grid-template-columns:1fr auto 90px;gap:12px;padding:5px 0;border-bottom:1px dashed var(--line)}
 #pay-card .payrow b{text-align:right}#pay-card .payrow.neg b,#pay-card .payrow.neg .sub{color:#b42318}
 #pay-card h3 .chip{margin-left:8px;vertical-align:2px}
+#pay-card .paymoved{padding:10px 24px 12px;border-top:1px solid var(--line);font-size:13px;background:#faf8ff}
+#pay-card .payrow .linkbtn{font-size:12px;padding:0 4px;color:var(--violet)}
 #pay-card .paywarn{padding:12px 24px;border-top:1px solid var(--line);font-size:13px;color:#8A5A12;background:#FBF4E6;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 #view-demos td,#view-demos th{padding-left:12px;padding-right:12px}
 #view-demos td:first-child,#view-demos th:first-child{padding-left:24px}
@@ -531,6 +533,10 @@ async function loadPay() {
   if (!payPeriod) { PAY = PAY && PAY.periods ? { periods: PAY.periods } : null; if (!PAY) { try { PAY = { periods: (await get('/api/sdr/admin/commission')).periods }; } catch {} } return; }
   try { PAY = await get('/api/sdr/admin/commission?period=' + encodeURIComponent(payPeriod)); } catch (ex) { toast(ex.message, 4000); PAY = null; }
 }
+async function payMove(cvr, period) {
+  try { await post('/api/sdr/admin/commission/move', { cvr, period }); toast('✓ Flyttet - udbetales med ' + (PAY.periods.find((p) => p.key === period) || { label: period }).label.split(' ')[0] + '-lønnen'); await loadPay(); renderDemos(); loadOverview(); }
+  catch (ex) { toast(ex.message, 5000); }
+}
 function renderPay() {
   const card = $('pay-card');
   if (!payPeriod || !PAY || !PAY.period) { card.hidden = true; card.innerHTML = ''; return; }
@@ -545,7 +551,8 @@ function renderPay() {
         + `<tr class="total"><td>I alt</td><td class="num">${rows.reduce((a, u) => a + u.n, 0)}</td><td class="num">${rows.reduce((a, u) => a + u.rev, 0) ? '−' + rows.reduce((a, u) => a + u.rev, 0) : '-'}</td><td class="num">${kr(PAY.total)}</td></tr>`
         : `<tr class="empty-row"><td colspan="4">Ingen godkendte møder i perioden${P.locked ? '' : ' endnu'}.</td></tr>`}
     </tbody></table>
-    ${(PAY.entries || []).length ? `<details class="payitems"><summary>Møde for møde (${PAY.entries.length})</summary>${Object.entries(byName).map(([n, xs]) => `<div class="payname">${e(n)}</div>${xs.map((x) => `<div class="payrow ${x.sign < 0 ? 'neg' : ''}"><span>${e(x.name)}</span><span class="sub">${x.sign < 0 ? 'afvist efter udbetaling' : 'godkendt ' + e(dShort(x.qualified_at))}${x.approved_period && x.approved_period !== P.key && x.sign > 0 ? ' · overført' : ''}</span><b>${x.sign < 0 ? '−' : ''}${kr(x.rate)}</b></div>`).join('')}`).join('')}</details>` : ''}
+    ${(PAY.entries || []).length ? `<details class="payitems"><summary>Møde for møde (${PAY.entries.length})</summary>${Object.entries(byName).map(([n, xs]) => `<div class="payname">${e(n)}</div>${xs.map((x) => `<div class="payrow ${x.sign < 0 ? 'neg' : ''}"><span>${e(x.name)}</span><span class="sub">${x.sign < 0 ? 'afvist efter udbetaling' : 'godkendt ' + e(dShort(x.qualified_at))}${x.moved_to && x.sign > 0 ? ' · flyttet hertil' : x.approved_period && x.approved_period !== P.key && x.sign > 0 ? ' · overført' : ''}${!P.locked && x.sign > 0 && PAY.next ? ` <button class="linkbtn" onclick="payMove('${e(x.cvr)}','${PAY.next}')" title="Udbetales med ${e(PAY.next_label)}-lønnen i stedet">→ ${e(PAY.next_label.split(' ')[0])}</button>` : ''}</span><b>${x.sign < 0 ? '−' : ''}${kr(x.rate)}</b></div>`).join('')}`).join('')}</details>` : ''}
+    ${(PAY.moved || []).length ? `<div class="paymoved"><b>Flyttet til senere lønperiode</b>${PAY.moved.map((x) => `<div class="payrow"><span>${e(x.name)} <span class="sub">· ${e(x.by_name)}</span></span><span class="sub">udbetales med ${e(x.to_label.split(' ')[0])}-lønnen <button class="linkbtn" onclick="payMove('${e(x.cvr)}','${P.key}')">Flyt tilbage</button></span><b>${kr(x.rate)}</b></div>`).join('')}</div>` : ''}
     ${(PAY.pending || []).length ? `<div class="paywarn">⚠ ${PAY.pending.length} ${PAY.pending.length === 1 ? 'demo afventer' : 'demoer afventer'} din vurdering. Godkender du ${PAY.pending.length === 1 ? 'den' : 'dem'} inden ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59, kommer ${PAY.pending.length === 1 ? 'den' : 'de'} med i ${e(P.label.split(' ')[0])}-lønnen - ellers i næste.<button class="pill sm" onclick="demoFilter='pending';renderDemos()">Vis dem</button></div>` : ''}`;
   card.hidden = false;
 }
