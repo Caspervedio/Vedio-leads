@@ -167,6 +167,12 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 .demo-ctl select{border:1px solid var(--line);border-radius:var(--pill);padding:6px 30px 6px 12px;font:inherit;font-size:12.5px;font-weight:700;background-color:var(--white);color:var(--txt);cursor:pointer}
 #pay-card td.num,#pay-card th.num{text-align:right}
 #pay-card tr.total td{font-weight:800;border-top:1px solid var(--line)}
+#pay-card .payitems{padding:10px 24px 14px;border-top:1px solid var(--line);font-size:13px}
+#pay-card .payitems summary{cursor:pointer;font-weight:700}
+#pay-card .payname{margin:12px 0 4px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint)}
+#pay-card .payrow{display:grid;grid-template-columns:1fr auto 90px;gap:12px;padding:5px 0;border-bottom:1px dashed var(--line)}
+#pay-card .payrow b{text-align:right}#pay-card .payrow.neg b,#pay-card .payrow.neg .sub{color:#b42318}
+#pay-card h3 .chip{margin-left:8px;vertical-align:2px}
 #pay-card .paywarn{padding:12px 24px;border-top:1px solid var(--line);font-size:13px;color:#8A5A12;background:#FBF4E6;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 #view-demos td,#view-demos th{padding-left:12px;padding-right:12px}
 #view-demos td:first-child,#view-demos th:first-child{padding-left:24px}
@@ -238,7 +244,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
     <div class="tablewrap" id="sdr-table">
       <div class="thead"><div><h3>Per SDR</h3><p>Hver SDR har sin egen liste, der altid fyldes op fra den fælles pulje. I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder. Kolonner med ◦ er farvet mod benchmark: <b style="color:var(--approve)">grøn</b> er i mål, <b style="color:#A9761E">gul</b> er på vej, <b style="color:#B3352B">rød</b> er langt fra. Sæt benchmarks under ⚙.</p></div><button class="pill sm violet" onclick="openExport()" title="Hent et Excel-ark med resultaterne for en valgt periode" style="flex-shrink:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Eksportér resultater</button></div>
-      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num bench" title="Udfald registreret i dag. Farven måler mod det daglige mål, fordelt over arbejdsdagen 08-16 - så kl. 10 forventes en fjerdedel.">Opkald</th><th class="num" title="Samlet tid med kortet fremme i dag. Uret tæller kun, mens Opkald-fanen er den de kigger på, og stopper når de skifter fane eller vindue. Det er research + opkald + notat, ikke ren taletid. Loft på 20 minutter pr. lead.">Tid på leads</th><th class="num bench" title="Gennemsnitlig tid med kortet fremme pr. lead - tallet under viser hvor mange af dagens opkald der er målt. Farves først ved mindst 5 målte. Benchmark sættes under ⚙.">Snit pr. lead</th><th class="num" title="Leads SDR'en har beriget manuelt i Research-fanen i dag.">Beriget</th><th class="num" title="Leads taget af listen i dag med 'Fjern fra listen' (ikke vores målgruppe, for svag, ring senere). Tæller ikke som opkald.">Fjernet</th><th class="num" title="Demoer booket i dag.">Demoer</th><th class="num bench" title="Udfald fra mandag til nu. Farven måler mod det daglige mål gange de hverdage, der er gået.">Opkald uge</th><th class="num">Demoer uge</th><th class="num bench" title="Opkald pr. bookede demo, målt på de sidste 30 dage. Står der - er der ingen demo i perioden at regne på.">Opk./demo</th><th class="num" title="Godkendte møder denne måned. Tallet i parentes afventer din godkendelse.">Kval. møder</th><th class="num" title="Provision for godkendte møder denne måned.">Provision</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num bench" title="Udfald registreret i dag. Farven måler mod det daglige mål, fordelt over arbejdsdagen 08-16 - så kl. 10 forventes en fjerdedel.">Opkald</th><th class="num" title="Samlet tid med kortet fremme i dag. Uret tæller kun, mens Opkald-fanen er den de kigger på, og stopper når de skifter fane eller vindue. Det er research + opkald + notat, ikke ren taletid. Loft på 20 minutter pr. lead.">Tid på leads</th><th class="num bench" title="Gennemsnitlig tid med kortet fremme pr. lead - tallet under viser hvor mange af dagens opkald der er målt. Farves først ved mindst 5 målte. Benchmark sættes under ⚙.">Snit pr. lead</th><th class="num" title="Leads SDR'en har beriget manuelt i Research-fanen i dag.">Beriget</th><th class="num" title="Leads taget af listen i dag med 'Fjern fra listen' (ikke vores målgruppe, for svag, ring senere). Tæller ikke som opkald.">Fjernet</th><th class="num" title="Demoer booket i dag.">Demoer</th><th class="num bench" title="Udfald fra mandag til nu. Farven måler mod det daglige mål gange de hverdage, der er gået.">Opkald uge</th><th class="num">Demoer uge</th><th class="num bench" title="Opkald pr. bookede demo, målt på de sidste 30 dage. Står der - er der ingen demo i perioden at regne på.">Opk./demo</th><th class="num" title="Møder godkendt i den åbne lønperiode (fra d. 29. til og med d. 28.). Tallet i parentes afventer din godkendelse - godkendt inden d. 28. kommer de med.">Kval. møder</th><th class="num" title="Provision i den åbne lønperiode: godkendt til og med d. 28. = denne måneds løn, fra d. 29. = næste måneds.">Provision</th></tr></thead><tbody id="tb-sdr"></tbody></table>
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
@@ -434,7 +440,7 @@ function renderOverview() {
   const sumC = (O.perUser || []).reduce((a, u) => a + (u.commissionMonth || 0), 0);
   const sumQ = (O.perUser || []).reduce((a, u) => a + (u.demosQualMonth || 0), 0);
   $('tiles').innerHTML = [
-    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Samtaler i dag', `${t.talksToday ?? 0}`], ['Opkald denne uge', t.callsWeek], ['Demo pr. samtale · 30 dage', t.demoPerTalk30Pct == null ? '-' : t.demoPerTalk30Pct + '%'], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], ['Provision · md', fmtKr(sumC)],
+    ['Opkald i dag', t.callsToday, true], ['Demoer i dag', t.demosToday, true], ['Samtaler i dag', `${t.talksToday ?? 0}`], ['Opkald denne uge', t.callsWeek], ['Demo pr. samtale · 30 dage', t.demoPerTalk30Pct == null ? '-' : t.demoPerTalk30Pct + '%'], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], [`Provision · ${(O.commission && O.commission.period_label) || 'lønperiode'}`, fmtKr(sumC)],
   ].map(([l, v, hi]) => `<div class="tile"><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
   const goal = Number(s.daily_target || 60);
   const bench = s.bench || {};
@@ -512,39 +518,48 @@ function renderIntakeRate() {
     <div class="lbl">Heraf klar at ringe</div>${days.map((d) => `<div class="d"><div class="v ${d.newCallable ? 'new' : 'zero'}">${d.newCallable || 0}</div>${dl(d.day)}</div>`).join('')}`;
 }
 let demoFilter = 'pending';
-// Month filter for payroll: a month shows only demos booked that month, with
-// the commission for it on top. Same rule as the SDRs' own results page:
-// qualified demos, counted in the month they were booked.
-let demoMonth = ''; try { demoMonth = localStorage.getItem('vl_admin_demo_month') || ''; } catch {}
-function demoMonthKey(iso) { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
-function demoMonthLabel(k) { const [y, m] = k.split('-').map(Number); const s = new Date(y, m - 1, 1).toLocaleDateString('da-DK', { month: 'long', year: 'numeric' }); return s.charAt(0).toUpperCase() + s.slice(1); }
-function setDemoMonth(v) { demoMonth = v || ''; try { localStorage.setItem('vl_admin_demo_month', demoMonth); } catch {} renderDemos(); }
+// Payroll follows the salary period, not the calendar: a meeting approved up
+// to and including the 28th is paid with that month's salary, from the 29th
+// with the next. Closed periods are locked on the server and never change.
+let payPeriod = ''; try { payPeriod = localStorage.getItem('vl_admin_pay_period') || ''; } catch {}
+let PAY = null;
 function kr(n) { return Number(n || 0).toLocaleString('da-DK') + ' kr'; }
-function renderPay(list) {
-  const card = $('pay-card'); if (!demoMonth) { card.hidden = true; card.innerHTML = ''; return; }
-  const rate = Number(((O.settings || {}).commission_dkk) ?? 1000); const label = demoMonthLabel(demoMonth);
-  const per = {};
-  for (const l of list) { const k = l.demo_booked_by_name || l.demo_booked_by || 'Ukendt'; const p = per[k] || (per[k] = { q: 0, p: 0, u: 0 }); const st = l.demo_status || 'pending'; if (st === 'qualified') p.q++; else if (st === 'unqualified') p.u++; else p.p++; }
-  const names = Object.keys(per).sort((a, b) => per[b].q - per[a].q || a.localeCompare(b, 'da'));
-  const tot = names.reduce((a, k) => ({ q: a.q + per[k].q, p: a.p + per[k].p, u: a.u + per[k].u }), { q: 0, p: 0, u: 0 });
-  const [y, m] = demoMonth.split('-').map(Number);
-  card.innerHTML = `<div class="thead"><div><h3>Provision · ${e(label)}</h3><p>Kvalificerede demoer booket i ${e(label.toLowerCase())} gange ${kr(rate)} - samme regel som på SDR'ernes resultatside. Grundløn er ikke med.</p></div><button class="pill sm" onclick="downloadExport('${y}-${String(m).padStart(2, '0')}-01','${new Date(y, m, 0).getFullYear()}-${String(new Date(y, m, 0).getMonth() + 1).padStart(2, '0')}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}','',this)" title="Hele resultatarket for måneden - fanen Demoer har en linje pr. demo med provision">Hent måneden som Excel</button></div>
-    <table><thead><tr><th>SDR</th><th class="num">Kvalificerede</th><th class="num">Provision</th><th class="num">Afventer vurdering</th><th class="num">Ikke kvalificerede</th></tr></thead><tbody>
-      ${names.length ? names.map((k) => `<tr><td><b>${e(k)}</b></td><td class="num">${per[k].q}</td><td class="num"><b>${kr(per[k].q * rate)}</b></td><td class="num">${per[k].p || '-'}</td><td class="num">${per[k].u || '-'}</td></tr>`).join('')
-        + `<tr class="total"><td>I alt</td><td class="num">${tot.q}</td><td class="num">${kr(tot.q * rate)}</td><td class="num">${tot.p || '-'}</td><td class="num">${tot.u || '-'}</td></tr>`
-        : `<tr class="empty-row"><td colspan="5">Ingen demoer booket i ${e(label.toLowerCase())}.</td></tr>`}
+function dShort(iso) { return new Date(iso).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }); }
+function dKey(iso) { const x = new Date(iso); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
+async function setDemoMonth(v) { payPeriod = v || ''; try { localStorage.setItem('vl_admin_pay_period', payPeriod); } catch {} await loadPay(); renderDemos(); }
+async function loadPay() {
+  if (!payPeriod) { PAY = PAY && PAY.periods ? { periods: PAY.periods } : null; if (!PAY) { try { PAY = { periods: (await get('/api/sdr/admin/commission')).periods }; } catch {} } return; }
+  try { PAY = await get('/api/sdr/admin/commission?period=' + encodeURIComponent(payPeriod)); } catch (ex) { toast(ex.message, 4000); PAY = null; }
+}
+function renderPay() {
+  const card = $('pay-card');
+  if (!payPeriod || !PAY || !PAY.period) { card.hidden = true; card.innerHTML = ''; return; }
+  const P = PAY.period; const label = P.label.charAt(0).toUpperCase() + P.label.slice(1);
+  const lockAt = new Date(P.to);
+  const status = P.locked ? `<span class="chip ok" title="Låst ${e(new Date(P.locked_at).toLocaleString('da-DK'))} - ændres ikke mere">Låst</span>` : P.future ? '<span class="chip">Kommende</span>' : `<span class="chip due" title="Alt, du godkender inden da, kommer med i denne periode">Åben · låses ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59</span>`;
+  const rows = PAY.per || [];
+  const byName = {}; for (const x of PAY.entries || []) (byName[x.by_name] = byName[x.by_name] || []).push(x);
+  card.innerHTML = `<div class="thead"><div><h3>Løn · ${e(label)} ${status}</h3><p>Møder godkendt (kvalificeret) fra ${e(dShort(P.from))} til og med ${e(dShort(P.to))} - godkendt efter d. 28. ryger med i næste måneds løn. Hvert møde har satsen fra den dag, det blev godkendt. Grundløn er ikke med.</p></div><button class="pill sm" onclick="downloadExport('${dKey(P.from)}','${dKey(P.to)}','',this)" title="Hele resultatarket for lønperioden - fanen Demoer har godkendelsesdato og lønperiode pr. møde">Hent perioden som Excel</button></div>
+    <table><thead><tr><th>SDR</th><th class="num">Godkendte møder</th><th class="num" title="Møder der var betalt i en låst periode, men siden er afvist - trækkes fra her">Modregnet</th><th class="num">Til udbetaling</th></tr></thead><tbody>
+      ${rows.length ? rows.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.n}</td><td class="num">${u.rev ? '−' + u.rev : '-'}</td><td class="num"><b>${kr(u.amount)}</b></td></tr>`).join('')
+        + `<tr class="total"><td>I alt</td><td class="num">${rows.reduce((a, u) => a + u.n, 0)}</td><td class="num">${rows.reduce((a, u) => a + u.rev, 0) ? '−' + rows.reduce((a, u) => a + u.rev, 0) : '-'}</td><td class="num">${kr(PAY.total)}</td></tr>`
+        : `<tr class="empty-row"><td colspan="4">Ingen godkendte møder i perioden${P.locked ? '' : ' endnu'}.</td></tr>`}
     </tbody></table>
-    ${tot.p ? `<div class="paywarn">⚠ ${tot.p} ${tot.p === 1 ? 'demo' : 'demoer'} fra ${e(label.toLowerCase())} afventer din vurdering og er ikke med i provisionen endnu.<button class="pill sm" onclick="demoFilter='pending';renderDemos()">Vis dem</button></div>` : ''}`;
+    ${(PAY.entries || []).length ? `<details class="payitems"><summary>Møde for møde (${PAY.entries.length})</summary>${Object.entries(byName).map(([n, xs]) => `<div class="payname">${e(n)}</div>${xs.map((x) => `<div class="payrow ${x.sign < 0 ? 'neg' : ''}"><span>${e(x.name)}</span><span class="sub">${x.sign < 0 ? 'afvist efter udbetaling' : 'godkendt ' + e(dShort(x.qualified_at))}${x.approved_period && x.approved_period !== P.key && x.sign > 0 ? ' · overført' : ''}</span><b>${x.sign < 0 ? '−' : ''}${kr(x.rate)}</b></div>`).join('')}`).join('')}</details>` : ''}
+    ${(PAY.pending || []).length ? `<div class="paywarn">⚠ ${PAY.pending.length} ${PAY.pending.length === 1 ? 'demo afventer' : 'demoer afventer'} din vurdering. Godkender du ${PAY.pending.length === 1 ? 'den' : 'dem'} inden ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59, kommer ${PAY.pending.length === 1 ? 'den' : 'de'} med i ${e(P.label.split(' ')[0])}-lønnen - ellers i næste.<button class="pill sm" onclick="demoFilter='pending';renderDemos()">Vis dem</button></div>` : ''}`;
   card.hidden = false;
 }
 function renderDemos() {
   const all = O.demos || [];
-  const nowKey = demoMonthKey(new Date());
-  const months = [...new Set([nowKey, ...all.filter((l) => l.demo_booked_at).map((l) => demoMonthKey(l.demo_booked_at))])].sort().reverse();
-  if (demoMonth && !months.includes(demoMonth)) demoMonth = '';
-  $('demo-month').innerHTML = `<option value="">Alle måneder</option>` + months.map((k) => `<option value="${k}" ${k === demoMonth ? 'selected' : ''}>${demoMonthLabel(k)}</option>`).join('');
-  const inMonth = all.filter((l) => !demoMonth || (l.demo_booked_at && demoMonthKey(l.demo_booked_at) === demoMonth));
-  renderPay(inMonth);
+  const periods = (PAY && PAY.periods) || [];
+  if (payPeriod && periods.length && !periods.some((p) => p.key === payPeriod)) payPeriod = '';
+  $('demo-month').innerHTML = `<option value="">Alle demoer</option>` + periods.map((p) => `<option value="${p.key}" ${p.key === payPeriod ? 'selected' : ''}>Løn ${e(p.label)}${p.open ? ' · åben' : p.locked ? ' · låst' : ''}</option>`).join('');
+  if (!periods.length && !renderDemos.loading) { renderDemos.loading = true; loadPay().then(() => { renderDemos.loading = false; if (PAY && PAY.periods && PAY.periods.length) renderDemos(); }); }
+  renderPay();
+  // With a salary period chosen: the meetings in it, plus - while it is open -
+  // everything still waiting for approval.
+  const inPeriod = payPeriod && PAY && PAY.period ? new Set([...(PAY.entries || []).map((x) => x.cvr), ...(PAY.pending || []).map((x) => x.cvr)]) : null;
+  const inMonth = inPeriod ? all.filter((l) => inPeriod.has(l.cvr)) : all;
   const rows = inMonth.filter((l) => demoFilter === 'all' || (l.demo_status || 'pending') === demoFilter);
   const counts = { pending: 0, qualified: 0, unqualified: 0 }; for (const l of inMonth) counts[l.demo_status || 'pending']++;
   $('demo-filters').innerHTML = [['pending', 'Afventer'], ['qualified', 'Kvalificeret'], ['unqualified', 'Ikke kval.'], ['all', 'Alle']].map(([k, l]) => `<button class="${demoFilter === k ? 'on' : ''}" onclick="demoFilter='${k}';renderDemos()">${l}<span class="n">${k === 'all' ? inMonth.length : counts[k]}</span></button>`).join('');
@@ -559,7 +574,7 @@ function renderDemos() {
       <td class="demost" onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}</span>${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
         ${twentyCell(l.twenty)}
         <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
-    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? (demoMonth ? 'i ' + e(demoMonthLabel(demoMonth).toLowerCase()) : 'endnu') : 'i den kategori' + (demoMonth ? ' i ' + e(demoMonthLabel(demoMonth).toLowerCase()) : '')}.</td></tr>`;
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? (payPeriod ? 'i lønperioden' : 'endnu') : 'i den kategori' + (payPeriod ? ' i lønperioden' : '')}.</td></tr>`;
 }
 // Where the demo stands in Victor's Twenty pipeline (pushed ~10 min after booking).
 function twentyCell(t) {
@@ -570,7 +585,7 @@ function twentyCell(t) {
 }
 async function demoReview(cvr, status) {
   let reason = ''; if (status === 'unqualified') { reason = prompt('Hvorfor ikke kvalificeret? (no-show, ikke ICP, ikke interesseret…)'); if (reason === null) return; }
-  try { await post('/api/sdr/demo-review', { cvr, status, reason }); toast(status === 'qualified' ? '✓ Kvalificeret - provision tæller' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); loadOverview(); } catch (ex) { toast(ex.message, 4000); }
+  try { await post('/api/sdr/demo-review', { cvr, status, reason }); toast(status === 'qualified' ? '✓ Kvalificeret - tæller i den åbne lønperiode' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); await loadPay(); loadOverview(); } catch (ex) { toast(ex.message, 4000); }
 }
 
 /* leads browser */

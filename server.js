@@ -14238,7 +14238,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14706,6 +14706,71 @@ function sdrEnsureList(d, userId, now, settings) {
   for (const cvr of L.cvrs) { const l = byCvr.get(cvr); if (l && (l.claimed_by !== userId || !l.claimed_at || now - new Date(l.claimed_at).getTime() > 86400e3)) { sdrClaim(l, userId, now); dirty = true; } }
   return { list: L, dirty };
 }
+// ─── Commission follows the salary period ────────────────────────────────
+// Casper: salaries lock on the 28th. A meeting approved (kvalificeret) up to
+// and including the 28th is paid with that month's salary; approved from the
+// 29th it rolls to the next. When a period closes it is written into a ledger
+// (commission_locks.json) and never changes again: a meeting approved late
+// lands in the open period, and one un-approved after it was paid is set off
+// (modregnet) there. Each meeting keeps the rate it was approved at.
+const COMMISSION_CUTOFF_DAY = 28;
+const COMMISSION_FIRST_PERIOD = "2026-09";
+const COMMISSION_LOCKS_FILE = path.join(DATA_DIR, "commission_locks.json");
+function commissionPeriodOf(t) { const d = new Date(t); let y = d.getFullYear(), m = d.getMonth(); if (d.getDate() > COMMISSION_CUTOFF_DAY) { m++; if (m > 11) { m = 0; y++; } } return `${y}-${String(m + 1).padStart(2, "0")}`; }
+function commissionNext(P) { const [y, m] = P.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`; }
+function commissionPrev(P) { const [y, m] = P.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; }
+// Approvals from the 29th of the month before (00:00) to the 28th (23:59:59).
+function commissionBounds(P) { const [y, m] = P.split("-").map(Number); return { from: new Date(y, m - 2, COMMISSION_CUTOFF_DAY + 1, 0, 0, 0, 0), to: new Date(y, m - 1, COMMISSION_CUTOFF_DAY, 23, 59, 59, 999) }; }
+function commissionLabel(P) { const [y, m] = P.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleDateString("da-DK", { month: "long", year: "numeric" }); }
+function loadCommissionLocks() { try { const j = JSON.parse(fs.readFileSync(COMMISSION_LOCKS_FILE, "utf8")); return j && j.periods ? j : { periods: {} }; } catch { return { periods: {} }; } }
+// When the meeting was approved. Older approvals only carry the review stamp.
+function demoQualifiedAt(l) { return l.demo_qualified_at || (l.demo_status === "qualified" ? (l.demo_reviewed_at || l.demo_booked_at || null) : null); }
+function demoCommissionRate(l, settings) { return Number.isFinite(Number(l.commission_rate)) && l.commission_rate !== null ? Number(l.commission_rate) : Number(settings.commission_dkk || 0); }
+// Approved as of `t`: a review that took it away after `t` doesn't count yet.
+function demoApprovedAsOf(l, t) {
+  if (l.lastAction !== "demo-booked" && !(l.demo_reviewed_at && new Date(l.demo_reviewed_at) > t)) return false;
+  const q = demoQualifiedAt(l); if (!q || new Date(q) > t) return false;
+  if (l.demo_status === "qualified" && l.lastAction === "demo-booked") return true;
+  return !!(l.demo_reviewed_at && new Date(l.demo_reviewed_at) > t);
+}
+// What a period adds to the ledger: +1 for an approved meeting not yet paid,
+// -1 for a paid one that is no longer approved.
+function commissionDeltas(d, locks, asOf, settings, nameById) {
+  const paid = new Map();
+  for (const P of Object.keys(locks.periods || {})) for (const e of locks.periods[P].entries || []) paid.set(e.cvr, (paid.get(e.cvr) || 0) + e.sign);
+  const out = [];
+  for (const l of d.leads || []) {
+    if (!l || !l.demo_booked_by || (!demoQualifiedAt(l) && !paid.has(l.cvr))) continue;
+    const want = demoApprovedAsOf(l, asOf) ? 1 : 0, have = paid.get(l.cvr) || 0;
+    if (want === have) continue;
+    const q = demoQualifiedAt(l);
+    out.push({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: (nameById || {})[l.demo_booked_by] || l.demo_booked_by, booked_at: l.demo_booked_at || null, qualified_at: q, approved_period: q ? commissionPeriodOf(q) : null, rate: demoCommissionRate(l, settings), sign: want > have ? 1 : -1 });
+  }
+  return out;
+}
+// Lock every period that has closed. Lazy - runs whenever commission is read,
+// so it happens within minutes of midnight on the 28th once anyone opens the tool.
+function commissionLocks(d, settings, nameById) {
+  const locks = loadCommissionLocks();
+  const open = commissionPeriodOf(Date.now()); let changed = false;
+  for (let P = COMMISSION_FIRST_PERIOD; P < open; P = commissionNext(P)) {
+    if (locks.periods[P]) continue;
+    const { from, to } = commissionBounds(P);
+    locks.periods[P] = { locked_at: new Date().toISOString(), from: from.toISOString(), to: to.toISOString(), entries: commissionDeltas(d, locks, to, settings, nameById) };
+    changed = true;
+  }
+  if (changed) { try { fs.writeFileSync(COMMISSION_LOCKS_FILE, JSON.stringify(locks, null, 1)); logActivity("sdr-commission", `Lønperiode låst: ${Object.keys(locks.periods).slice(-1)[0]}`, {}); } catch (e) { console.error("[commission] lock write", e.message); } }
+  return { locks, open };
+}
+function commissionPeriodView(d, P, settings, nameById) {
+  const { locks, open } = commissionLocks(d, settings, nameById);
+  const { from, to } = commissionBounds(P);
+  const base = { key: P, label: commissionLabel(P), from: from.toISOString(), to: to.toISOString(), open: P === open };
+  if (locks.periods[P]) return { ...base, locked: true, locked_at: locks.periods[P].locked_at, entries: locks.periods[P].entries || [] };
+  if (P === open) return { ...base, locked: false, entries: commissionDeltas(d, locks, new Date(), settings, nameById) };
+  return { ...base, locked: false, future: true, entries: [] };
+}
+function commissionSum(entries, by) { const x = entries.filter((e) => !by || e.by === by); return { amount: x.reduce((a, e) => a + e.sign * e.rate, 0), n: x.filter((e) => e.sign > 0).length, rev: x.filter((e) => e.sign < 0).length }; }
 function buildSdrState(userId, d) {
   d = d || loadPool();
   const users = loadUsers();
@@ -14793,18 +14858,22 @@ function buildSdrState(userId, d) {
     const p = per[l.research_by]; if (p) p.researchToday = (p.researchToday || 0) + 1;
   }
   todayCalls.sort((a, b) => new Date(b.at) - new Date(a.at));
-  // Commission: {commission_dkk} per QUALIFIED meeting, counted in the month
-  // the demo was booked. pending = booked, not yet reviewed by admin.
+  // Commission: approved meetings in the open salary period (see
+  // commissionPeriodOf). pending = booked, not yet reviewed by admin - it lands
+  // in this period if approved by the 28th.
   const rate = Number(settings.commission_dkk || 0);
-  const mKey = sdrMonthKey(now);
-  const lm = new Date(now); lm.setDate(1); lm.setMonth(lm.getMonth() - 1); const lmKey = sdrMonthKey(lm);
+  const cOpen = commissionPeriodView(d, commissionPeriodOf(now), settings, nameById);
+  const cLast = commissionPeriodView(d, commissionPrev(cOpen.key), settings, nameById);
+  const mKey = cOpen.key, lmKey = cLast.key;
   for (const p of Object.values(per)) { p.demosQualMonth = 0; p.demosPendingMonth = 0; p.demosUnqualMonth = 0; p.commissionMonth = 0; p.commissionLastMonth = 0; p.demosQualLastMonth = 0; }
+  const perOf = (by) => per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
+  for (const e of cOpen.entries) { const p = perOf(e.by); if (e.sign > 0) p.demosQualMonth++; p.commissionMonth += e.sign * e.rate; }
+  for (const e of cLast.entries) { const p = perOf(e.by); if (e.sign > 0) p.demosQualLastMonth++; p.commissionLastMonth += e.sign * e.rate; }
   for (const l of demos) {
     const by = l.demo_booked_by; if (!by) continue;
-    const p = per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
-    const k = sdrMonthKey(l.demo_booked_at || now); const st = l.demo_status || "pending";
-    if (k === mKey) { if (st === "qualified") { p.demosQualMonth++; p.commissionMonth += rate; } else if (st === "unqualified") p.demosUnqualMonth++; else p.demosPendingMonth++; }
-    else if (k === lmKey && st === "qualified") { p.demosQualLastMonth++; p.commissionLastMonth += rate; }
+    const st = l.demo_status || "pending";
+    if (st === "pending") perOf(by).demosPendingMonth++;
+    else if (st === "unqualified" && commissionPeriodOf(l.demo_reviewed_at || l.demo_booked_at || now) === mKey) perOf(by).demosUnqualMonth++;
   }
   const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
   const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || p.demosPendingMonth > 0 || p.demosQualMonth > 0 || users.some((u) => u.id === p.id && !u.role)));
@@ -14815,10 +14884,10 @@ function buildSdrState(userId, d) {
   // Casper: an SDR should see the money the moment they book, not a 0 that
   // waits on a founder. Booked counts until it is rejected, so `expected`
   // includes pending; `confirmed_kr` stays what the founders have approved.
-  const expected_kr = (mine.demosQualMonth + mine.demosPendingMonth) * rate;
+  const expected_kr = mine.commissionMonth + mine.demosPendingMonth * rate;
   // What they actually take home this month: base + what the meetings earned.
   const base_kr = Math.max(0, Number(settings.base_salary_dkk) || 0);
-  const commission = { month: mKey, rate, expected_kr, base_kr, salary_kr: base_kr + expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
+  const commission = { month: mKey, period_label: cOpen.label, period_from: cOpen.from, period_to: cOpen.to, rate, expected_kr, base_kr, salary_kr: base_kr + expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_locked: !!cLast.locked, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
 
   const stats = {
@@ -15798,8 +15867,12 @@ app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
     if (!["pending", "qualified", "unqualified"].includes(status)) return res.status(400).json({ error: "Ugyldig status" });
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead || lead.lastAction !== "demo-booked") return res.status(404).json({ error: "Ingen booket demo på det lead" });
+    const was = lead.demo_status || "pending"; const nowIso = new Date().toISOString();
+    // The approval date decides the salary period (see commissionPeriodOf);
+    // the rate is fixed at approval so a later change doesn't touch it.
+    if (status === "qualified" && was !== "qualified") { lead.demo_qualified_at = nowIso; lead.commission_rate = Number(sdrSettings(d).commission_dkk || 0); }
     lead.demo_status = status; lead.demo_review_reason = String(reason || "").trim().slice(0, 200);
-    lead.demo_reviewed_by = req.userId; lead.demo_reviewed_at = new Date().toISOString();
+    lead.demo_reviewed_by = req.userId; lead.demo_reviewed_at = nowIso;
     sdrTouch(lead);
     savePool(d);
     logActivity("sdr-demo-review", `Demo ${lead.name}: ${status}${lead.demo_review_reason ? " - " + lead.demo_review_reason : ""}`, { cvr, userId: req.userId, status });
@@ -16002,10 +16075,12 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     .sort((a, b) => new Date(a.demo_booked_at) - new Date(b.demo_booked_at));
   const research = leads.filter((l) => l.research_at && l.research_by && inP(l.research_at) && (!sdr || l.research_by === sdr));
   const screens = []; for (const l of leads) for (const x of (Array.isArray(l.screen_log) ? l.screen_log : [])) if (x && x.at && inP(x.at) && (!sdr || x.by === sdr)) screens.push(x);
+  // Commission by APPROVAL date (what the salary follows), not booking date.
+  const approved = leads.filter((l) => l.lastAction === "demo-booked" && l.demo_status === "qualified" && demoQualifiedAt(l) && inP(demoQualifiedAt(l)) && (!sdr || l.demo_booked_by === sdr));
   const order = new Map(users.map((u, i) => [u.id, i]));
-  const ids = [...new Set([...calls.map((x) => x.c.by), ...demos.map((l) => l.demo_booked_by), ...research.map((l) => l.research_by), ...screens.map((x) => x.by)].filter(Boolean))]
+  const ids = [...new Set([...calls.map((x) => x.c.by), ...demos.map((l) => l.demo_booked_by), ...research.map((l) => l.research_by), ...screens.map((x) => x.by), ...approved.map((l) => l.demo_booked_by)].filter(Boolean))]
     .sort((a, b) => (order.has(a) ? order.get(a) : 999) - (order.has(b) ? order.get(b) : 999));
-  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: new Set() });
+  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, approved: 0, commission: 0, days: new Set() });
   const tot = blank(); const per = Object.fromEntries(ids.map((id) => [id, blank()]));
   const byDay = Object.fromEntries(dayKeys.map((k) => [k, { ...blank(), newLeads: 0, sdr: Object.fromEntries(ids.map((id) => [id, { calls: 0, demos: 0 }])) }]));
   for (const { c } of calls) {
@@ -16020,6 +16095,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   }
   for (const l of research) { tot.research++; if (per[l.research_by]) per[l.research_by].research++; }
   for (const x of screens) { tot.screened++; if (per[x.by]) per[x.by].screened++; }
+  for (const l of approved) { const r = demoCommissionRate(l, settings); for (const m of [tot, per[l.demo_booked_by]]) { if (!m) continue; m.approved++; m.commission += r; } }
   const newLeads = leads.filter((l) => l.addedAt && inP(l.addedAt));
   for (const l of newLeads) { const bd = byDay[sdrDayKey(l.addedAt)]; if (bd) bd.newLeads++; }
 
@@ -16047,7 +16123,8 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     line("Kvalificerede demoer", (m) => m.qual),
     line("Ikke kvalificerede", (m) => m.unqual),
     line("Afventer vurdering", (m) => m.pending),
-    line(`Provision (kr, ${rate} pr. kvalificeret)`, (m) => m.qual * rate, "kr"),
+    line("Godkendt (kvalificeret) i perioden", (m) => m.approved),
+    line("Provision for godkendte i perioden (kr)", (m) => m.commission, "kr"),
     [],
     [{ v: "Udfald", s: "bold" }],
     ...SDR_EXPORT_OUTCOMES.map(([a, label]) => line(label, (m) => m.out[a] || 0)),
@@ -16076,8 +16153,9 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   const ST = { pending: "Afventer", qualified: "Kvalificeret", unqualified: "Ikke kvalificeret" };
   const demoRows = demos.map((l) => {
     const c = sdrPrimaryContact(l) || {}; const st = l.demo_status || "pending"; const tw = twentyDemoState(ledger, l);
+    const q = st === "qualified" ? demoQualifiedAt(l) : null;
     return [{ v: new Date(l.demo_booked_at), s: "dt" }, who(l.demo_booked_by), l.name || "", String(l.web || l.website || "").replace(/^https?:\/\//, ""), l.city || "", c.name || "", c.title || "", c.email || "", sdrPhone(l).phone || "",
-      ST[st] || st, l.demo_review_reason || "", st === "qualified" ? { v: rate, s: "kr" } : "", tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
+      ST[st] || st, l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "", tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
   });
   const LABEL = Object.fromEntries(SDR_EXPORT_OUTCOMES);
   const callRows = calls.map(({ c, l }) => [{ v: new Date(c.at), s: "dt" }, who(c.by), l.name || "", (sdrPrimaryContact(l) || {}).name || "", sdrPhone(l).phone || "", LABEL[c.action] || c.action || "", sdrIsTalk(c) ? "Ja" : "Nej",
@@ -16094,7 +16172,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     ["Samtaler", "Opkald hvor de fik fat i nogen: Demo booket, Følg op, Ikke nu, Mail sendt - og Ikke relevant, når opkaldet varede mindst 20 sekunder."],
     ["Kontaktrate", "Samtaler delt med opkald."],
     ["Demoer", "Leads der står som booket demo nu, og som blev booket i perioden. Samme liste som Resultater og provisionen. En fortrudt booking tæller ikke."],
-    ["Provision", `Kvalificerede demoer gange den nuværende sats (${rate} kr). Demoer der afventer din vurdering er ikke med.`],
+    ["Provision", `Møder godkendt (kvalificeret) i perioden gange satsen på godkendelsesdagen (nu ${rate} kr). Lønnen følger lønperioden: godkendt til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, godkendt fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
     ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
     ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
     ["Fjernet uden opkald", "Leads SDR'en tog af listen med 'Fjern fra listen' (ikke vores målgruppe, for svag lige nu, ring senere). Tæller ikke som opkald."],
@@ -16104,7 +16182,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   return [
     { name: "Oversigt", cols: [34, 12, ...ids.map(() => 13)], rows: overview, head: headRow, freeze: headRow + 1 },
     { name: "Per dag", cols: [12, 10, 9, 10, 12, 9, 17, 10, ...ids.flatMap(() => [15, 15])], rows: [dayHead, ...dayRows], head: 0, freeze: 1 },
-    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Provision (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
+    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 17, 16, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Godkendt", "Lønperiode", "Provision (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
     { name: "Opkald", cols: [17, 12, 28, 20, 16, 16, 9, 12, 17, 60, 18, 14, 22], rows: [["Tidspunkt", "SDR", "Virksomhed", "Kontakt", "Telefon", "Udfald", "Samtale", "Tid (min)", "Følg op", "Note", "Kilde", "By", "ID"], ...callRows], head: 0, freeze: 1, filter: true },
     { name: "Nye leads", cols: [24, 12, 17, 12, 12, 12, 14], rows: [["Kilde", "Nye leads", "Kan ringes til nu", "Andel klar", "Ringet til", "Samtaler", "Demoer booket"], ...srcRows], head: 0, freeze: 1 },
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
@@ -16130,6 +16208,27 @@ app.get("/api/sdr/admin/export", authMiddleware, (req, res) => {
     logActivity("sdr-admin", `Resultatark eksporteret: ${fromKey} til ${toKey}${sdr ? " (" + sdr + ")" : ""}`, { userId: req.userId });
     res.send(buf);
   } catch (e) { sdrFail(res, e, "admin/export"); }
+});
+// Payroll: one salary period - who gets what, meeting by meeting, and what is
+// still waiting for approval. Closed periods come from the ledger, unchanged.
+app.get("/api/sdr/admin/commission", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const settings = sdrSettings(d);
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const { locks, open } = commissionLocks(d, settings, nameById);
+    const want = /^\d{4}-\d{2}$/.test(String(req.query.period || "")) ? String(req.query.period) : open;
+    const v = commissionPeriodView(d, want, settings, nameById);
+    const bySdr = {};
+    for (const e of v.entries) { const b = bySdr[e.by] || (bySdr[e.by] = { id: e.by, name: e.by_name, n: 0, rev: 0, amount: 0 }); if (e.sign > 0) b.n++; else b.rev++; b.amount += e.sign * e.rate; }
+    const pending = v.open ? (d.leads || []).filter((l) => l.lastAction === "demo-booked" && (l.demo_status || "pending") === "pending").map((l) => ({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: nameById[l.demo_booked_by] || l.demo_booked_by || "", booked_at: l.demo_booked_at })).sort((a, b) => String(a.booked_at).localeCompare(b.booked_at)) : [];
+    const keys = [...new Set([...Object.keys(locks.periods || {}), open])].sort().reverse();
+    res.json({ ok: true, rate: Number(settings.commission_dkk || 0), cutoff_day: COMMISSION_CUTOFF_DAY,
+      periods: keys.map((k) => { const b = commissionBounds(k); return { key: k, label: commissionLabel(k), open: k === open, locked: !!(locks.periods || {})[k], from: b.from.toISOString(), to: b.to.toISOString() }; }),
+      period: { ...v, entries: undefined }, entries: v.entries.sort((a, b) => String(a.by_name).localeCompare(b.by_name, "da") || String(a.qualified_at).localeCompare(b.qualified_at)),
+      per: Object.values(bySdr).sort((a, b) => b.amount - a.amount), pending,
+      total: v.entries.reduce((a, e) => a + e.sign * e.rate, 0) });
+  } catch (e) { sdrFail(res, e, "admin/commission"); }
 });
 app.get("/api/sdr/admin/leads", authMiddleware, (req, res) => {
   try {

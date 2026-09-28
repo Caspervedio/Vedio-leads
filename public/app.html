@@ -161,7 +161,7 @@
     </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Per SDR</h3><p>I dag og denne uge (mandag til nu).</p></div></div>
-      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num">Kval. møder · md</th><th class="num">Provision · md</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num" title="Godkendt i den åbne lønperiode (29.-28.)">Kval. møder · løn</th><th class="num" title="Provision i den åbne lønperiode: godkendt til og med d. 28. = denne måneds løn">Provision · løn</th></tr></thead><tbody id="tb-sdr"></tbody></table>
     </div>
     <div class="tablewrap">
       <div class="thead">
@@ -711,6 +711,7 @@ function renderResults() {
   const c = S.commission; const pay = $('pay');
   if (!c) { pay.hidden = true; return; }
   const mName = new Date(c.month + '-01').toLocaleDateString('da-DK', { month: 'long' });
+  const fmtDay = (iso) => iso ? new Date(iso).toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }) : '';
   const lName = new Date(c.last_month + '-01').toLocaleDateString('da-DK', { month: 'long' });
   if (me && me.is_admin) {
     // Admin: totals across SDRs this month + pending queue to review.
@@ -722,7 +723,7 @@ function renderResults() {
         <div><b style="color:#c4b5fd">${sum('demosPendingMonth')}</b><span>afventer din godkendelse</span></div>
         <div><b>${e(fmtKr(sum('commissionLastMonth')))}</b><span>${e(lName)}</span></div>
       </div>
-      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret møde - tallet her er kun de godkendte. SDR'en ser sine bookede møder talt med fra start, så et afslag under <b>Bookede demoer</b> trækker beløbet ned igen hos dem.</div>`;
+      <div class="rule">${e(fmtKr(c.rate))} pr. godkendt møde i ${e(mName)}-lønnen: godkendt fra ${e(fmtDay(c.period_from))} til og med ${e(fmtDay(c.period_to))}. Godkender du efter d. 28., kommer det med i næste måneds løn. Se hele lønperioden under Admin → Demoer.</div>`;
     pay.hidden = false; return;
   }
   pay.innerHTML = `
@@ -733,7 +734,7 @@ function renderResults() {
       <div><b style="color:#c4b5fd">${c.pending_n}</b><span>afventer godkendelse</span></div>
       <div><b>${e(fmtKr(c.last_kr))}</b><span>${e(lName)} · ${c.last_n} møder</span></div>
     </div>
-    <div class="rule">${e(fmtKr(c.rate))} pr. møde, talt med fra du booker det. Founders bekræfter bagefter at mødet var ICP og interesseret - bliver et møde afvist, falder beløbet igen.${c.confirmed_n ? ` ${e(fmtKr(c.confirmed_kr))} er allerede godkendt.` : ''}${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
+    <div class="rule">${e(fmtKr(c.rate))} pr. møde. Beløbet tæller med fra du booker, og kommer med i ${e(mName)}-lønnen, når founders har godkendt mødet senest ${e(fmtDay(c.period_to))} - godkendt senere, kommer det med i næste måneds løn. Bliver et møde afvist, falder beløbet igen.${c.confirmed_n ? ` ${e(fmtKr(c.confirmed_kr))} er allerede godkendt.` : ''}${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
   pay.hidden = false;
 }
 let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';

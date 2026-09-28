@@ -103,10 +103,13 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
   som er den første flaskehals), integrationernes status, CSV-import og
   referencekundelisten.
-- **Demoer** — godkend eller afvis bookede demoer. Provision følger de
-  godkendte. Vælg en måned, så står provisionen pr. SDR for måneden øverst
-  (kvalificerede × sats, afventende vist for sig) - til lønkørslen - med et
-  link til månedens Excel-ark.
+- **Demoer** — godkend eller afvis bookede demoer. Provision følger
+  **lønperioden**: et møde godkendt til og med d. 28. kommer med i den
+  måneds løn, godkendt fra d. 29. i næste måneds. Vælg "Løn <måned>" for at se
+  hvad hver SDR skal have, møde for møde. En lønperiode låses automatisk efter
+  d. 28. kl. 23:59 (`commission_locks.json`) og ændres aldrig bagefter: et møde
+  der afvises efter udbetaling, modregnes i den næste åbne periode, og intet
+  betales to gange. Hvert møde beholder satsen fra godkendelsesdagen.
 - **⚙** — Calendly-link, dagligt mål, listestørrelse, provision, pitch,
   mailskabeloner, Slack-webhook og reglerne for hvad puljen må servere.
 
