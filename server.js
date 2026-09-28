@@ -13615,7 +13615,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40 };
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -14238,7 +14238,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14617,6 +14617,10 @@ function sdrQueue(d, userId, now, exclude, settings) {
   const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !ex.has(l.cvr));
   const due = eligible.filter((l) => sdrIsDue(l, now)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
+    // Parked leads (no answer N times, or "for svag lige nu") come back at the
+    // bottom, behind everything that hasn't been tried.
+    const az = a.parked_at ? 1 : 0, bz = b.parked_at ? 1 : 0;
+    if (az !== bz) return az - bz;
     // A named decision-maker outranks everything else: you can have the
     // conversation. Switchboard-only leads are real work, just further down.
     const ap = sdrHasPerson(a) ? 1 : 0, bp = sdrHasPerson(b) ? 1 : 0;
@@ -14777,6 +14781,11 @@ function buildSdrState(userId, d) {
       }
     }
   }
+  // Taken off the list without a call ("Fjern fra listen"), today.
+  for (const l of leads) for (const x of (Array.isArray(l.screen_log) ? l.screen_log : [])) {
+    if (!x || new Date(x.at).getTime() < t0.getTime()) continue;
+    const p = per[x.by]; if (p) p.screenedToday = (p.screenedToday || 0) + 1;
+  }
   // Manual enrichment done from the Research tab today, per SDR.
   for (const l of leads) {
     if (!l.research_by || !l.research_at) continue;
@@ -14816,6 +14825,7 @@ function buildSdrState(userId, d) {
     callsToday: mine.callsToday, demosToday: mine.demosToday, callsWeek: mine.callsWeek, demosWeek: mine.demosWeek,
     calls30: mine.calls30 || 0, demos30: mine.demos30 || 0, callsPerDemo30: perDemo(mine.calls30 || 0, mine.demos30 || 0),
     talksToday: mine.talksToday || 0, talksWeek: mine.talksWeek || 0, talks30: mine.talks30 || 0,
+    screenedToday: mine.screenedToday || 0,
     listRemaining: items.length, listDone: (L.done || []).length,
     followupsDue: items.filter((l) => sdrIsDue(l, now)).length, followupsOpen: followups.length,
     poolAvailable: available.length,
@@ -14980,8 +14990,8 @@ function sdrDispositionHandler(req, res) {
     const nowIso = new Date(now).toISOString();
     const cleanNote = String(note || "").trim().slice(0, 2000);
     // Snapshot for "Fortryd" (10-min window, same SDR).
-    const UNDO_FIELDS = ["lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to"];
-    lead._undo = { at: nowIso, by: req.userId, prev: Object.fromEntries(UNDO_FIELDS.map((k) => [k, k === "contacts" ? JSON.parse(JSON.stringify(lead.contacts || [])) : (lead[k] === undefined ? null : lead[k])])) };
+    const UNDO_FIELDS = ["parked_at", "parked_reason", "note_log", "lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to"];
+    lead._undo = { at: nowIso, by: req.userId, prev: Object.fromEntries(UNDO_FIELDS.map((k) => [k, (k === "contacts" || k === "note_log") ? JSON.parse(JSON.stringify(lead[k] || [])) : (lead[k] === undefined ? null : lead[k])])) };
     // Call duration ≈ tel: tap → outcome (ignore if the tap was >2h ago).
     // Time on the lead: from the card opening to this outcome. Falls back to
     // the Ring op stamp for anyone who dialled before the card was stamped.
@@ -15001,6 +15011,7 @@ function sdrDispositionHandler(req, res) {
     lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
+    let parkedAfter = 0;
     lead.owner_override = null; lead.owner_override_at = null; // the call is the owner now
     lead.retry_pool = false; // an outcome takes it out of Genopring, or a callback would never surface
     lead.lastAction = action; lead.lastCallAt = nowIso; lead.calls_count = (lead.calls_count || 0) + 1;
@@ -15030,9 +15041,31 @@ function sdrDispositionHandler(req, res) {
     }
     else if (action === "no-answer") {
       lead.no_answer_count = (lead.no_answer_count || 0) + 1;
-      const h = new Date().getHours();
-      // Retry same day if early, else next weekday 09:00. After 4 misses, park a week.
-      lead.callback_at = lead.no_answer_count >= 4 ? new Date(now + 7 * 86400000).toISOString() : (h < 13 ? new Date(now + 3 * 3600000).toISOString() : sdrNextWeekdayAt(9));
+      // Unanswered in a row, counted since the last conversation (or the last
+      // time it was parked). Casper: leads that never pick up kept coming back
+      // and took the place of fresh ones - after N tries they leave the lists
+      // and follow-ups and rejoin the pool, at the bottom, weeks later.
+      const s0 = sdrSettings(d);
+      const after = Math.max(2, Number(s0.no_answer_park_after) || 3);
+      let streak = 0;
+      for (let i = lead.calls.length - 1; i >= 0; i--) {
+        const c = lead.calls[i]; if (!c) continue;
+        if (lead.parked_at && String(c.at) <= String(lead.parked_at)) break;
+        if (c.action === "no-answer") streak++; else break;
+      }
+      if (streak >= after) {
+        const days = Math.max(7, Number(s0.no_answer_park_days) || 60);
+        const back = new Date(now + days * 86400e3);
+        lead.callback_at = null; lead.resurface_at = back.toISOString();
+        lead.parked_at = nowIso; lead.parked_reason = "no-answer";
+        lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+        lead.note_log.push({ at: nowIso, by: req.userId, where: "auto", text: `Parkeret automatisk efter ${streak} forsøg uden svar - tilbage i puljen ${back.toLocaleDateString("da-DK", { day: "numeric", month: "long" })}` });
+        parkedAfter = streak;
+      } else {
+        // Retry same day if early, else next weekday 09:00.
+        const h = new Date().getHours();
+        lead.callback_at = h < 13 ? new Date(now + 3 * 3600000).toISOString() : sdrNextWeekdayAt(9);
+      }
     }
     else if (action === "email-sent") {
       // "Send me an email" - the SDR opened it in their own mail app. Record
@@ -15066,7 +15099,7 @@ function sdrDispositionHandler(req, res) {
     sdrUnclaim(lead);
     savePool(d);
     logActivity("sdr-call", `${meUser ? meUser.name : req.userId} · ${lead.name}: ${action}${cleanNote ? " - " + cleanNote.slice(0, 80) : ""}`, { cvr, userId: req.userId, action });
-    sdrRespond(res, req.userId, d);
+    sdrRespond(res, req.userId, d, parkedAfter ? { parked: { after: parkedAfter, until: lead.resurface_at } } : null);
   } catch (e) { sdrFail(res, e, "disposition"); }
 }
 app.post("/api/sdr/disposition", authMiddleware, sdrDispositionHandler);
@@ -15090,6 +15123,49 @@ app.post("/api/sdr/admin/set-stage", authMiddleware, (req, res) => {
     req.body = { cvr: b.cvr, action: b.action, callback_at: b.callback_at || null, note: note ? `${note} (sat af admin)` : "Sat af admin" };
     return sdrDispositionHandler(req, res);
   } catch (e) { sdrFail(res, e, "admin/set-stage"); }
+});
+// "Fjern fra listen" - the SDR decides without calling: not our audience,
+// too weak right now, or ring later. Not a call: nothing in calls[], so it
+// never counts as a dial. Logged in screen_log (counted as "fjernet") and in
+// the note thread; "Fortryd" works as for an outcome.
+const SDR_SCREEN = {
+  icp: { label: "Ikke vores målgruppe" },
+  weak: { label: "For svag lige nu", days: 90 },
+  later: { label: "Ring senere" },
+};
+app.post("/api/sdr/screen", authMiddleware, (req, res) => {
+  try {
+    const { cvr, reason, callback_at, note } = req.body || {};
+    const R = SDR_SCREEN[reason]; if (!R) return res.status(400).json({ error: "Vælg hvorfor" });
+    const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
+    const lead = (d.leads || []).find((l) => l.cvr === cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    let when = null;
+    if (reason === "later") {
+      when = callback_at ? new Date(callback_at) : null;
+      if (!when || isNaN(when.getTime()) || when.getTime() < now - 60000) return res.status(400).json({ error: "Vælg en dato fremme i tiden" });
+    }
+    const F = ["lastAction", "archived_at", "archived_by", "resurface_at", "callback_at", "deferred_until", "owner_override", "owner_override_at", "note_log", "last_note", "screen_log", "parked_at", "parked_reason"];
+    lead._undo = { at: nowIso, by: req.userId, kind: "screen", prev: Object.fromEntries(F.map((k) => [k, lead[k] === undefined ? null : JSON.parse(JSON.stringify(lead[k]))])) };
+    const cleanNote = String(note || "").trim().slice(0, 2000);
+    if (reason === "icp") { lead.lastAction = "not-relevant"; lead.archived_at = nowIso; lead.archived_by = req.userId; lead.callback_at = null; }
+    else if (reason === "weak") { lead.callback_at = null; lead.resurface_at = new Date(now + R.days * 86400e3).toISOString(); lead.parked_at = nowIso; lead.parked_reason = "weak"; }
+    else { lead.callback_at = when.toISOString(); lead.owner_override = req.userId; lead.owner_override_at = nowIso; lead.resurface_at = null; }
+    lead.deferred_until = null; lead.opened_at = null; lead.opened_by = null; lead.last_call_started_at = null;
+    const label = R.label + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : reason === "weak" ? " - tilbage i puljen om 3 måneder" : "");
+    lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+    lead.note_log.push({ at: nowIso, by: req.userId, where: "list", text: `Fjernet fra listen uden opkald: ${label}${cleanNote ? " - " + cleanNote : ""}` });
+    if (cleanNote) { lead.last_note = cleanNote; lead.note_saved_at = nowIso; lead.note_saved_by = req.userId; }
+    lead.screen_log = [...(Array.isArray(lead.screen_log) ? lead.screen_log : []), { at: nowIso, by: req.userId, reason }].slice(-20);
+    sdrTouch(lead);
+    const { list: L } = sdrEnsureList(d, req.userId, now, sdrSettings(d));
+    L.cvrs = L.cvrs.filter((x) => x !== cvr);
+    if (reason !== "later") sdrUnclaim(lead);
+    savePool(d);
+    const users = loadUsers(); const me = users.find((u) => u.id === req.userId);
+    logActivity("sdr-screen", `${me ? me.name : req.userId} · ${lead.name}: fjernet uden opkald (${R.label})`, { cvr, userId: req.userId, reason });
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "screen"); }
 });
 // Skip = move to the end of my list (not out of it).
 // ─── Research: the between-calls task ─────────────────────────────────────
@@ -15925,10 +16001,11 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   const demos = leads.filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && inP(l.demo_booked_at) && (!sdr || l.demo_booked_by === sdr))
     .sort((a, b) => new Date(a.demo_booked_at) - new Date(b.demo_booked_at));
   const research = leads.filter((l) => l.research_at && l.research_by && inP(l.research_at) && (!sdr || l.research_by === sdr));
+  const screens = []; for (const l of leads) for (const x of (Array.isArray(l.screen_log) ? l.screen_log : [])) if (x && x.at && inP(x.at) && (!sdr || x.by === sdr)) screens.push(x);
   const order = new Map(users.map((u, i) => [u.id, i]));
-  const ids = [...new Set([...calls.map((x) => x.c.by), ...demos.map((l) => l.demo_booked_by), ...research.map((l) => l.research_by)].filter(Boolean))]
+  const ids = [...new Set([...calls.map((x) => x.c.by), ...demos.map((l) => l.demo_booked_by), ...research.map((l) => l.research_by), ...screens.map((x) => x.by)].filter(Boolean))]
     .sort((a, b) => (order.has(a) ? order.get(a) : 999) - (order.has(b) ? order.get(b) : 999));
-  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, out: {}, secs: 0, timed: 0, research: 0, days: new Set() });
+  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: new Set() });
   const tot = blank(); const per = Object.fromEntries(ids.map((id) => [id, blank()]));
   const byDay = Object.fromEntries(dayKeys.map((k) => [k, { ...blank(), newLeads: 0, sdr: Object.fromEntries(ids.map((id) => [id, { calls: 0, demos: 0 }])) }]));
   for (const { c } of calls) {
@@ -15942,6 +16019,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     const bd = byDay[k]; if (bd) { bd.demos++; if (bd.sdr[l.demo_booked_by]) bd.sdr[l.demo_booked_by].demos++; }
   }
   for (const l of research) { tot.research++; if (per[l.research_by]) per[l.research_by].research++; }
+  for (const x of screens) { tot.screened++; if (per[x.by]) per[x.by].screened++; }
   const newLeads = leads.filter((l) => l.addedAt && inP(l.addedAt));
   for (const l of newLeads) { const bd = byDay[sdrDayKey(l.addedAt)]; if (bd) bd.newLeads++; }
 
@@ -15980,6 +16058,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     line("Snit pr. lead (min)", (m) => (m.timed ? Math.round(m.secs / m.timed / 6) / 10 : null), "dec1"),
     line("Opkald med målt tid", (m) => m.timed),
     line("Beriget i Research", (m) => m.research),
+    line("Fjernet fra listen uden opkald", (m) => m.screened),
     line("Dage med opkald", (m) => m.days.size),
     line("Opkald pr. dag med opkald", (m) => (m.days.size ? Math.round(m.calls / m.days.size * 10) / 10 : null), "dec1"),
     [],
@@ -16018,6 +16097,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     ["Provision", `Kvalificerede demoer gange den nuværende sats (${rate} kr). Demoer der afventer din vurdering er ikke med.`],
     ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
     ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
+    ["Fjernet uden opkald", "Leads SDR'en tog af listen med 'Fjern fra listen' (ikke vores målgruppe, for svag lige nu, ring senere). Tæller ikke som opkald."],
     ["Nye leads", "Leads der kom ind i puljen i perioden, uanset SDR. 'Kan ringes til nu' er målt i dag."],
     ["Tider", "Dansk tid."],
   ];
@@ -17829,6 +17909,8 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
+      if (Number.isFinite(Number(b.no_answer_park_after)) && Number(b.no_answer_park_after) >= 2) d.sdr_settings.no_answer_park_after = Math.min(10, Math.round(Number(b.no_answer_park_after)));
+      if (Number.isFinite(Number(b.no_answer_park_days)) && Number(b.no_answer_park_days) >= 7) d.sdr_settings.no_answer_park_days = Math.min(365, Math.round(Number(b.no_answer_park_days)));
       if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);
       if (b.rules && typeof b.rules === "object") {
         const r = { ...SDR_DEFAULT_RULES, ...(d.sdr_settings.rules || {}) };

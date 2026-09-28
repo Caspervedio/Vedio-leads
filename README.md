@@ -65,6 +65,21 @@ Ikke relevant · Forkert nummer · Telefonmenu ("tryk 1 for…" — leadet sende
 til Research for et direkte nummer og prøves igen om tre hverdage). Alt kan
 fortrydes i 10 minutter.
 
+**Fjern fra listen** (uden at ringe — tæller ikke som et opkald): *Ikke vores
+målgruppe* (arkiveres), *For svag lige nu* (hviler 90 dage og kommer tilbage
+nederst i puljen) eller *Ring senere* (en dato; bliver SDR'ens opfølgning).
+Trykkes "Ikke relevant" eller "Følg op" uden "Ring op", spørger kortet om det var
+et opkald. Tallet "fjernet" står ved "ringet i dag", i admins Per SDR og i Excel.
+Tasterne følger nu etiketterne på knapperne.
+
+**Ingen svar gang på gang:** efter 3 opkald i træk uden svar (siden sidste
+samtale) parkeres leadet i 60 dage og kommer tilbage nederst i puljen — begge
+tal sættes under ⚙.
+
+Kortet har altid et link til Meta Ad Library med firmanavnet i søgefeltet og
+LinkedIn-søgninger: på kontakten (når vi ikke har profilen) og "Find andre" hos
+firmaet.
+
 **Mails** skriver SDR'en selv i sin egen Gmail (med deres signatur) og trykker
 "✉ Mail sendt" på kortet. Leadet får mærket ✉ Mail sendt og automatisk en
 opfølgning to hverdage efter. (At sende fra værktøjet via Gmail er slået fra på

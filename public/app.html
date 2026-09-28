@@ -76,7 +76,7 @@
       </div>
       <div class="mini">
         <div><b id="s-remaining">0</b><span>tilbage på listen</span></div>
-        <div><b id="s-done">0</b><span>ringet i dag</span></div>
+        <div title="Leads du har ringet til i dag. Under: dem du har fjernet fra listen uden at ringe - de tæller ikke som opkald."><b id="s-done">0</b><span>ringet i dag<i id="s-screened" class="s-screened" hidden></i></span></div>
         <div><b id="s-demos">0</b><span>demoer i dag</span></div>
         <div title="Dine opkald pr. bookede demo de sidste 30 dage. Vises når du har booket mindst én."><b id="s-perdemo">-</b><span>opkald pr. demo</span></div>
         <div><b id="s-avail">0</b><span>klar i puljen</span></div>
@@ -234,6 +234,7 @@ let token = (impersonating ? sessionStorage.getItem('vl_imp_token') : '') || loc
 let me = null;
 let S = null;                 // last server state
 let calling = false;
+let calledCvr = null; // the lead "Ring op" was pressed on - an outcome without it was probably not a call
 let chooserOpen = false;
 let ceditOpen = false;
 let pollTimer = null;
@@ -347,6 +348,18 @@ function signalChip(l) {
    An exact-phrase search on the Facebook PAGE NAME does work: "Cornhole.dk"
    returns 76 ads against the 74 he found by hand. The page name beats the
    registered company name here - it is what the advertiser calls itself. */
+// The brand as people search for it: "KUN DET BEDSTE ApS" → "KUN DET BEDSTE".
+function searchName(L) {
+  return String((L && L.meta && L.meta.pageName) || (L && L.name) || '').split('|')[0]
+    .replace(/\b(ApS|A\/S|IVS|I\/S|K\/S|P\/S|AMBA|SMBA)\b\.?/gi, '').replace(/\s+/g, ' ').trim();
+}
+// SDR feedback: many leads run ads we haven't linked - always offer the Ad
+// Library with the company name in the search field.
+function adLibNameUrl(L) {
+  const q = searchName(L); if (!q) return '';
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all&search_type=keyword_exact_phrase&q=${encodeURIComponent('"' + q + '"')}`;
+}
+function liPeopleUrl(q) { return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(q)}`; }
 function adLibUrl(L) {
   const m = (L && L.meta) || {};
   // Their own advertiser page when we know its Ad Library id: a keyword search
@@ -372,6 +385,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('s-calls').textContent = st.callsToday || 0; $('s-target').textContent = target;
   $('s-bar').style.width = Math.min(100, Math.round(100 * (st.callsToday || 0) / target)) + '%';
   $('s-remaining').textContent = st.listRemaining || 0; $('s-done').textContent = st.listDone || 0;
+  if ($('s-screened')) { $('s-screened').hidden = !st.screenedToday; $('s-screened').textContent = st.screenedToday ? ` · ${st.screenedToday} fjernet` : ''; }
   $('s-demos').textContent = st.demosToday || 0; $('s-avail').textContent = st.poolAvailable || 0;
   $('s-perdemo').textContent = st.callsPerDemo30 == null ? '-' : st.callsPerDemo30;
   $('n-list').textContent = st.listRemaining || 0; if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0; $('n-list').classList.toggle('due', (st.followupsDue || 0) > 0);
@@ -481,6 +495,10 @@ function renderCard() {
             ? `<a class="proof quiet" href="${url}" target="_blank" rel="noopener" title="Søger Meta Ad Library efter &quot;${e(m.pageName || L.name || '')}&quot; - inkl. tidligere annoncer"><span class="shape"></span>Meta-annoncør ↗</a>`
             : `<span class="proof quiet"><span class="shape"></span>Meta-annoncør</span>`))
     : `<span class="proof quiet"><span class="shape"></span>${e(L.source_label || 'Kvalificeret lead')}</span>`;
+  // A second way in: the name search - for leads we haven't confirmed, and for
+  // advertisers whose page link opens an empty library.
+  const nameAd = adLibNameUrl(L);
+  const adAlt = nameAd && (!m.advertiser || m.adlibId) ? `<a class="adname" href="${nameAd}" target="_blank" rel="noopener" title="Åbner Meta Ad Library med &quot;${e(searchName(L))}&quot; i søgefeltet">${m.advertiser ? 'Søg på navn ↗' : 'Tjek Meta-annoncer ↗'}</a>` : '';
   const isDue = L.callback_at && new Date(L.callback_at).getTime() <= Date.now();
   const web = (L.web || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   w.innerHTML = `
@@ -491,15 +509,15 @@ function renderCard() {
         <h2>${e(L.name || '-')}</h2>
         <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${web ? `<span>·</span><a href="${e(/^https?:/.test(L.web) ? L.web : 'https://' + L.web)}" target="_blank" rel="noopener">${e(web)}</a>` : ''}${L.niche ? `<span>·</span><span>${e(L.niche)}</span>` : ''}</div>
       </div>
-      ${proof}
+      <div class="proofwrap">${proof}${adAlt}</div>
     </div>
     ${L.about ? `<p class="about">${e(L.about)}</p>` : ''}
     ${historyHtml(L)}
     <div class="person ${c ? '' : 'none'}">
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
       <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
-      <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : ''}${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret lead</button></div>`
-      : `<span><b>Omstillingsopkald.</b> Vi har ikke fundet et navn - ring på hovednummeret og spørg: <i>"Hvem står for jeres markedsføring - må jeg tale med dem?"</i> Skriv navnet ind, når du får det.</span><div class="links"><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
+      <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : `<a href="${e(liPeopleUrl(c.name + ' ' + searchName(L)))}" target="_blank" rel="noopener" title="Søger efter ${e(c.name)} på LinkedIn">Søg på LinkedIn ↗</a>`}<a href="${e(liPeopleUrl(searchName(L)))}" target="_blank" rel="noopener" title="Andre der arbejder hos ${e(searchName(L))} - hvis kontakten ikke er den rigtige">Find andre ↗</a>${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret lead</button></div>`
+      : `<span><b>Omstillingsopkald.</b> Vi har ikke fundet et navn - ring på hovednummeret og spørg: <i>"Hvem står for jeres markedsføring - må jeg tale med dem?"</i> Skriv navnet ind, når du får det.</span><div class="links"><a href="${e(liPeopleUrl(searchName(L)))}" target="_blank" rel="noopener" title="Folk der arbejder hos ${e(searchName(L))} - find marketingansvarlig eller ejer">Find på LinkedIn ↗</a><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
       ${(L.contacts || []).length > 1 ? `<div class="others"><span class="k">Andre hos ${e(L.name || 'firmaet')}</span>${(L.contacts || []).filter((x) => !c || x.name !== c.name).map((x) => `<button class="oc" onclick="selectContact('${e(x.name).replace(/'/g, '&#39;')}')" title="${e(x.title || '')}${x.phone ? ' · ' + e(fmtPhone(x.phone)) : ''}">${x.has_phone ? '📞 ' : ''}${e(x.name)}${x.title ? `<span>${e(x.title)}</span>` : ''}</button>`).join('')}</div>` : ''}
       <div id="cedit" hidden></div>
     </div>
@@ -524,6 +542,7 @@ function renderCard() {
       <div class="row">
         <a class="pill primary" id="callbtn" href="${dk ? telHref(L.phone) : '#'}" onclick="onCall(event)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg><span id="calllbl">Ring op</span></a>
         ${S.settings && S.settings.calendly_url ? `<a class="pill primary violet-cta" href="${e(calendlyFor(L))}" target="_blank" rel="noopener" title="Åbner Calendly med kontakten udfyldt og SDR som kilde">Book demo i Calendly ↗</a>` : ''}
+        <button class="pill tertiary screenbtn" onclick="toggleScreen()" title="Tag leadet af listen uden at ringe - fx forkert målgruppe, for svag lige nu eller ring senere. Tæller ikke som et opkald.">Fjern fra listen ▾</button>
       </div>
       <div class="steplbl two"><i>2</i> Udfald</div>
       <div class="row disp">
@@ -534,7 +553,7 @@ function renderCard() {
       <div class="row disp muted">
         <button class="pill" onclick="disp('no-answer')"><span class="key">4</span>Ingen svar</button>
         <button class="pill" onclick="disp('not-now')"><span class="key">5</span>Ikke nu</button>
-        <button class="pill" onclick="disp('not-relevant')"><span class="key">6</span>Ikke relevant</button>
+        <button class="pill" onclick="notRelevant()"><span class="key">6</span>Ikke relevant</button>
         <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke - leadet sendes til berigelse"><span class="key">7</span>Forkert nummer</button>
         <button class="pill" onclick="disp('ivr')" title="Tryk 1 for salg, 2 for… - ingen person nået. Leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage">Telefonmenu</button>
       </div>
@@ -656,7 +675,7 @@ async function saveDemoEdit(cvr, prevName) {
 
 /* Resultater - tiles + explainers */
 const EXPLAIN = {
-  callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag. Alle fem udfald tæller som et opkald - også "Ingen svar".', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
+  callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag - også "Ingen svar". Leads du fjerner med "Fjern fra listen" tæller ikke.', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
   demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald - filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
   callsWeek:    { t: 'Opkald denne uge', w: 'Dine udfald fra mandag 00:00 til nu.', s: 'Samme opkalds-log som "Opkald i dag", bare en længere periode.' },
   demosWeek:    { t: 'Demoer denne uge', w: 'Dine "Demo booket" fra mandag til nu.', s: 'Samme opkalds-log, filtreret på udfald.' },
@@ -765,24 +784,60 @@ function activeSeconds(cvr) { return activeCvr === cvr ? Math.round(activeMs / 1
 function onCall(ev) {
   const L = S.current; if (!L) return;
   if (!isDk(L.phone)) { ev.preventDefault(); toast('Vi ringer kun til danske numre - ret nummeret via "✎ Ret lead".', 3500); return; }
-  calling = true;
+  calling = true; calledCvr = L.cvr;
   const b = $('callbtn'); if (b) { b.classList.add('calling'); const lbl = $('calllbl'); if (lbl) lbl.innerHTML = '<span class="dot" style="margin-right:6px"></span>Ringer… vælg udfald'; }
   post('/api/sdr/call-started', { cvr: L.cvr }).catch(() => {});
 }
+function closeChooser() { chooserOpen = false; const c = $('chooser'); if (c) { c.hidden = true; c.dataset.kind = ''; } }
 function toggleChooser() {
-  const c = $('chooser'); chooserOpen = !chooserOpen; c.hidden = !chooserOpen; if (!chooserOpen) return;
+  const c = $('chooser'); const open = !(chooserOpen && c.dataset.kind === 'fu');
+  chooserOpen = open; c.hidden = !open; c.dataset.kind = open ? 'fu' : ''; if (!open) return;
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
   const dflt = new Date(); dflt.setDate(dflt.getDate() + 1); dflt.setHours(9, 0, 0, 0);
   const local = new Date(dflt.getTime() - dflt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  // No "Ring op" on this lead: most likely a reschedule without a call - which
+  // must not count as one. One switch, preset from what the tool saw.
+  const dialed = calledCvr === (S.current && S.current.cvr);
   c.innerHTML = `<div class="chooser">
     <span class="kicker">Følg op</span>
-    ${new Date().getHours() < 15 ? `<button class="pill" onclick="disp('follow-up','${at(0, 15)}')">I dag 15:00</button>` : ''}
-    <button class="pill" onclick="disp('follow-up','${at(1, 9)}')">I morgen 09:00</button>
-    <button class="pill" onclick="disp('follow-up','${at(3, 9)}')">Om 3 dage</button>
-    <button class="pill" onclick="disp('follow-up','${at(7, 9)}')">Næste uge</button>
+    ${new Date().getHours() < 15 ? `<button class="pill" onclick="fuPick('${at(0, 15)}')">I dag 15:00</button>` : ''}
+    <button class="pill" onclick="fuPick('${at(1, 9)}')">I morgen 09:00</button>
+    <button class="pill" onclick="fuPick('${at(3, 9)}')">Om 3 dage</button>
+    <button class="pill" onclick="fuPick('${at(7, 9)}')">Næste uge</button>
+    <button class="pill" onclick="fuPick('${at(14, 9)}')">Om 2 uger</button>
     <input type="datetime-local" id="fu-dt" value="${local}">
-    <button class="pill violet" onclick="disp('follow-up', new Date($('fu-dt').value).toISOString())">Planlæg</button>
+    <button class="pill violet" onclick="fuPick(new Date($('fu-dt').value).toISOString())">Planlæg</button>
+    <label class="fu-called" title="Slå fra, hvis du flytter leadet uden at have ringet - så tæller det ikke som et opkald"><span class="switch sm"><input type="checkbox" id="fu-called" ${dialed ? 'checked' : ''}><i></i></span> Jeg har ringet</label>
   </div>`;
+}
+function fuPick(iso) {
+  const called = $('fu-called') ? $('fu-called').checked : true;
+  if (called) disp('follow-up', iso); else screen('later', iso);
+}
+/* "Fjern fra listen": off the list without a call - it never counts as one. */
+function toggleScreen(first) {
+  const c = $('chooser'); const open = !(chooserOpen && c.dataset.kind === 'screen');
+  chooserOpen = open; c.hidden = !open; c.dataset.kind = open ? 'screen' : ''; if (!open) return;
+  if (typeof mailOpen !== 'undefined' && mailOpen) { mailOpen = false; $('mailbox').hidden = true; }
+  const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
+  c.innerHTML = `<div class="chooser screen">
+    ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fjern fra listen</span>'}
+    <button class="pill" onclick="screen('icp')" title="Arkiveres - kommer ikke igen">Ikke vores målgruppe</button>
+    <button class="pill" onclick="screen('weak')" title="Tilbage i puljen om 3 måneder, nederst">For svag lige nu</button>
+    <span class="screen-later">Ring senere: <button class="pill sm" onclick="screen('later','${at(7, 9)}')">Om 1 uge</button><button class="pill sm" onclick="screen('later','${at(14, 9)}')">Om 2 uger</button><button class="pill sm" onclick="screen('later','${at(30, 9)}')">Om 1 måned</button></span>
+    <span class="sub" style="width:100%">Tæller ikke som et opkald. En note i feltet ovenfor gemmes med.</span>
+  </div>`;
+}
+async function screen(reason, when) {
+  const L = S.current; if (!L || busy) return; busy = true;
+  const note = ($('note') && $('note').value.trim()) || '';
+  try {
+    apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note }));
+    const msg = { icp: 'Fjernet - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fjernet - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
+    toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
+  finally { busy = false; }
 }
 /* ─── "Send mig en mail" ───────────────────────────────────────────────────
    The most common ask on a cold call. Pick a template, check the address,
@@ -980,12 +1035,21 @@ async function mailSend(forceClient) {
   mailOpen = false; $('mailbox').hidden = true;
   await disp('email-sent', null, { email_template: t.name || '', email_to: to });
 }
+// "Ikke relevant" is an outcome of a call. Pressed without "Ring op" it was
+// usually a screening decision - ask once, so it isn't counted as a dial.
+function notRelevant() {
+  const L = S.current; if (!L) return;
+  if (calledCvr === L.cvr) { disp('not-relevant'); return; }
+  toggleScreen(`Du har ikke trykket <b>Ring op</b> på ${e(L.name)}. Fjern det uden at det tæller som opkald - eller <button class="linkbtn" onclick="calledCvr=S.current.cvr;disp('not-relevant')">jeg har ringet, registrér Ikke relevant</button>`);
+}
 async function disp(action, callback_at, extra) {
   const L = S.current; if (!L || busy) return; busy = true;
   const note = ($('note') && $('note').value.trim()) || '';
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
-    apply(await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...(extra || {}) }));
+    const r = await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...(extra || {}) });
+    apply(r);
+    if (r.parked) { toastAction(`Ingen svar ${r.parked.after} gange i træk - parkeret til ${fmtWhen(r.parked.until)} og tilbage i puljen nederst.`, 'Fortryd', () => undoLast(L.cvr), 8000); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     const msg = { 'demo-booked': '✓ Demo booket - godt gået.', 'follow-up': '✓ Opfølgning planlagt ' + fmtWhen(callback_at), 'no-answer': 'Ingen svar - prøver igen senere.', 'ivr': 'Telefonmenu - sendt til Research for et direkte nummer, prøves igen om tre hverdage.', 'not-now': 'Ikke nu - dukker op igen om 90 dage.', 'not-relevant': 'Ikke relevant - arkiveret.', 'wrong-number': 'Forkert nummer - sendt til berigelse.', 'email-sent': `✉ Markeret som mail sendt - opfølgning om ${(S.settings && S.settings.email_followup_days) || 2} hverdage.` }[action] || 'Gemt';
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1033,7 +1097,7 @@ function noteThreadHtml(thread, id) {
     const who = n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || '');
     const when = n.at ? fmtWhen(n.at) : '';
     // Where it was written: an outcome shows its action, a plain note the tab.
-    const WHERE = { research: 'Research', call: 'Opkald', list: 'Ringeliste', admin: 'Admin', results: 'Resultater' };
+    const WHERE = { research: 'Research', call: 'Opkald', list: 'Ringeliste', admin: 'Admin', results: 'Resultater', auto: 'Automatisk' };
     const tag = n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">Udfald · ${e(ACTION_LABEL[n.action] || n.action)}</span>`
       : (n.where && WHERE[n.where] ? `<span class="chip sm where">${e(WHERE[n.where])}</span>` : '');
     return `<div class="nt ${n.kind === 'call' ? 'call' : ''}">
@@ -2150,16 +2214,18 @@ async function saveSettings() {
 document.addEventListener('keydown', (ev) => {
   if ($('app').hidden) return;
   const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((ev.target && ev.target.tagName) || '');
-  if (ev.key === 'Escape') { if ($('settings')) $('settings').remove(); if (chooserOpen) toggleChooser(); if (ceditOpen) toggleCedit(); if (inField) ev.target.blur(); return; }
+  if (ev.key === 'Escape') { if ($('settings')) $('settings').remove(); if (chooserOpen) closeChooser(); if (ceditOpen) toggleCedit(); if (inField) ev.target.blur(); return; }
   if (inField) return;
   if (!$('view-ring').classList.contains('active')) return;
   if (ev.key === ' ') { ev.preventDefault(); const b = $('callbtn'); if (b) b.click(); }
+  // The keys follow the labels on the buttons (they used to be one off:
+  // 5 said "Ikke nu" but archived, 6 said "Ikke relevant" but wiped the number).
   else if (ev.key === '1') disp('demo-booked');
-  else if (ev.key === '2') toggleChooser();
-  else if (ev.key === '3') disp('no-answer');
-  else if (ev.key === '4') disp('not-now');
-  else if (ev.key === '5') disp('not-relevant');
-  else if (ev.key === '6') disp('wrong-number');
+  else if (ev.key === '3') toggleChooser();
+  else if (ev.key === '4') disp('no-answer');
+  else if (ev.key === '5') disp('not-now');
+  else if (ev.key === '6') notRelevant();
+  else if (ev.key === '7') disp('wrong-number');
   else if (ev.key === '8') disp('ivr');
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();

@@ -628,6 +628,18 @@ main{transition:margin-right .46s var(--ease)}
 .ai-sendbtn:hover{background:var(--violet)}
 .ai-sendbtn:disabled{opacity:.45}
 .ai-hint{font-size:11px;color:var(--txt-faint);margin-top:8px;padding-left:4px}
+/* "Fjern fra listen" - off the list without a call */
+.screenbtn{margin-left:auto;font-size:13px;color:var(--txt-soft)}
+.chooser.screen{flex-wrap:wrap}
+.chooser.screen .screen-q{width:100%;font-size:13.5px;color:var(--txt);line-height:1.5;margin-bottom:2px}
+.chooser.screen .screen-q .linkbtn{font-size:13px;padding:0;color:var(--violet);text-decoration:underline;text-underline-offset:3px}
+.chooser.screen .screen-later{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px;font-weight:700;color:var(--txt-soft);margin-left:6px}
+.fu-called{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--txt-soft);margin-left:auto;cursor:pointer}
+.switch.sm{width:32px;height:18px}.switch.sm i::after{width:14px;height:14px}.switch.sm input:checked+i::after{transform:translateX(14px)}
+.s-screened{font-style:normal;color:var(--txt-faint)}
+.proofwrap{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.adname{font-size:12px;font-weight:700;color:var(--txt-soft);text-decoration:none;padding:2px 4px;border-radius:6px}
+.adname:hover{color:var(--violet);background:var(--violet-soft)}
 /* Attachments: chips above the composer, upload progress as a thin bar */
 .ai-attach{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--txt-soft);flex-shrink:0;margin-left:-8px;transition:background .15s var(--ease),color .15s var(--ease)}
 .ai-attach:hover{background:var(--violet-soft);color:var(--violet)}
