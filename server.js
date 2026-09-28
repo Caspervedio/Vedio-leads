@@ -14770,7 +14770,10 @@ function commissionPeriodView(d, P, settings, nameById) {
   const base = { key: P, label: commissionLabel(P), from: from.toISOString(), to: to.toISOString(), open: P === open };
   if (locks.periods[P]) return { ...base, locked: true, locked_at: locks.periods[P].locked_at, entries: locks.periods[P].entries || [] };
   if (P === open) return { ...base, locked: false, entries: commissionDeltas(d, locks, new Date(), settings, nameById) };
-  return { ...base, locked: false, future: true, entries: [] };
+  // A coming period: what has already been moved into it (a preview).
+  const pre = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_status === "qualified" && l.commission_period === P && l.demo_booked_by)
+    .map((l) => { const q = demoQualifiedAt(l); return { cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: (nameById || {})[l.demo_booked_by] || l.demo_booked_by, booked_at: l.demo_booked_at || null, qualified_at: q, approved_period: q ? commissionPeriodOf(q) : null, moved_to: P, rate: demoCommissionRate(l, settings), sign: 1 }; });
+  return { ...base, locked: false, future: true, entries: pre };
 }
 function commissionSum(entries, by) { const x = entries.filter((e) => !by || e.by === by); return { amount: x.reduce((a, e) => a + e.sign * e.rate, 0), n: x.filter((e) => e.sign > 0).length, rev: x.filter((e) => e.sign < 0).length }; }
 function buildSdrState(userId, d) {
