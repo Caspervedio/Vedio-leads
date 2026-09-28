@@ -52,6 +52,13 @@ kommer ikke på listerne; en *tidligere* kunde får mærket "Tidl. kunde".
 Referencekunder vises kun fra leadets egen branche. Kunder vi ikke kunne læse
 hjemmesiden på, kan admin finde via Google (kun svar hvor en af kildernes egne
 sider bekræfter firmaet) eller give en kategori i listen under Tilgang.
+Inden for branchen kommer den tætteste niche først (en kafferister til et
+kaffe-lead) via kundens niche-ord; nogle vises kun ved et niche-match (fx en
+negleklinik kun til klinikker). SDR'ernes egen referenceliste er lagt ind:
+godkendte tidligere kunder vises med "tidl. kunde", store brands (LEGO, Orkla,
+Toyota, Billund Airport) og konkurrent-lignende cases vises ikke automatisk, og
+bookede demoer ligger skjult, indtil de har købt. En genimport af kunde-CSV'en
+bevarer alt dette.
 
 **Udfald** (1–8): Demo booket · Mail sendt · Følg op · Ingen svar · Ikke nu ·
 Ikke relevant · Forkert nummer · Telefonmenu ("tryk 1 for…" — leadet sendes

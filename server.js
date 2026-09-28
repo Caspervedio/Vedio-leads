@@ -14422,7 +14422,7 @@ const CAT_RULES = [
   ["it-software", new RegExp(`software|saas|tech|digital|udvikling|hosting|web services|wordpress|${W("it|app|apps|data|cloud|erp|crm")}`, "i")],
   ["produktion-industri", new RegExp(`produktion|industri|fabrik|manufact|maskin|tr[æa]industri|engros|${W("metal")}`, "i")],
   ["uddannelse", new RegExp(`uddann|kursus|academy|education|efterskole|gymnasium|${W("skole|skoler")}`, "i")],
-  ["transport-bil", new RegExp(`auto|transport|logistik|fragt|${W("bil|biler|vogn|d[æa]k|motor|marine|b[åa]d|b[åa]de")}`, "i")],
+  ["transport-bil", new RegExp(`auto|transport|logistik|fragt|k[øo]reskole|k[øo]rekort|${W("bil|biler|vogn|d[æa]k|motor|marine|b[åa]d|b[åa]de")}`, "i")],
   // Last: services sold to other companies. There were 8 verified customers in
   // this category and no rule that could ever put a lead next to them.
   ["b2b-service", new RegExp(`erhvervsreng[øo]ring|kontorreng[øo]ring|commercial cleaning|rekrutter|recruit|vikarbureau|konsulent|consult|erhvervsservice|business service|facility|vagtselskab|kontorartikler|office suppl|${W("b2b|vikar")}`, "i")],
@@ -14469,7 +14469,10 @@ function customerIndex() {
   const c = loadCustomers();
   // verified = we read their website and learned what they do. Anything else
   // stays out; a wrong name-drop is worse than none.
-  const usable = (c.items || []).filter((x) => x && x.name && x.verified && !x.hidden && (x.subscribed || (c.include_former && x.paid)));
+  // ref_ok = the team has approved this one as a reference (the SDRs' own
+  // list), so a former customer on it is shown even with former ones off.
+  // auto_ref:false = only by hand (LEGO-size brands, a competitor-like case).
+  const usable = (c.items || []).filter((x) => x && x.name && x.verified && !x.hidden && x.auto_ref !== false && (x.subscribed || x.ref_ok || (c.include_former && x.paid)));
   const byCat = {};
   for (const x of usable) { const k = x.cat || "andet"; (byCat[k] = byCat[k] || []).push(x); }
   // Best first: current customers, then the ones we can show a logo for.
@@ -14477,7 +14480,7 @@ function customerIndex() {
   // Every customer, shown or not, for spotting leads that already are one.
   const byDomain = new Map(), byName = new Map();
   for (const x of c.items || []) {
-    if (!x || !x.name) continue;
+    if (!x || !x.name || x.pending_demo) continue;
     const dom = custDomain(x.domain); if (dom && !byDomain.has(dom)) byDomain.set(dom, x);
     const nk = custNameKey(x.name); if (nk && !byName.has(nk)) byName.set(nk, x);
   }
@@ -14501,14 +14504,20 @@ function sdrRefCustomers(l) {
   const cat = catFromText(l.ind || l.industry || l.niche, l.about, l.name);
   if (!cat || cat === "andet") return [];
   const self = sdrCustomerOf(l);
-  const pool = (idx.byCat[cat] || []).filter((x) => x !== self);
-  for (const n of (CAT_NEIGHBOURS[cat] || [])) {
-    if (pool.length >= 3) break;
-    for (const x of (idx.byCat[n] || [])) { if (pool.length >= 3) break; pool.push(x); }
-  }
-  return pool.slice(0, 3).map((x) => ({
+  // Within the category, the closest niche first: a coffee roaster before a
+  // wine shop for a coffee lead. "strict" customers only appear on a niche
+  // match (a nail clinic only for clinics, a furniture brand only for
+  // furniture shops).
+  const text = [l.ind, l.industry, l.niche, l.about, l.name].filter(Boolean).join(" ").toLowerCase();
+  const tagHit = (x) => (x.tags || []).find((t) => { const k = String(t || "").toLowerCase().trim(); return k.length >= 3 && new RegExp(`(^|[^a-zæøå0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(text); }) || "";
+  const pool = (idx.byCat[cat] || []).filter((x) => x !== self)
+    .map((x) => { const hit = tagHit(x); return { x, hit, score: (hit ? 100 : 0) + (x.subscribed ? 10 : 0) + (x.domain ? 1 : 0) }; })
+    .filter((r) => !(r.x.strict && !r.hit))
+    .sort((a, b) => b.score - a.score);
+  return pool.slice(0, 3).map(({ x, hit }) => ({
     name: x.name, domain: x.domain || "", blurb: x.blurb || "",
-    current: !!x.subscribed, cat: x.cat || "", cat_label: CAT_LABEL[x.cat] || "",
+    current: !!x.subscribed, status: x.subscribed ? "current" : x.source === "sdr-list" ? "list" : "former",
+    cat: x.cat || "", cat_label: CAT_LABEL[x.cat] || "", note: x.note || "", why: hit,
     same_cat: true,
   }));
 }
@@ -14568,7 +14577,7 @@ function sdrSlim(l, nameById) {
     note_thread: sdrNoteThread(l, nameById),
     refs: sdrRefCustomers(l),
     history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
-    customer: (() => { const c = sdrCustomerOf(l); return c ? { current: !!c.subscribed, name: c.name } : null; })(),
+    customer: (() => { const c = sdrCustomerOf(l); return c ? { current: !!c.subscribed, name: c.name, list: c.source === "sdr-list" } : null; })(),
     research_by: l.research_by || null,
     main_phone: l.phone || l.ph || "", renamed_from: l.renamed_from || "",
     ivr_at: l.ivr_at || null, ivr_count: l.ivr_count || 0,
@@ -17531,8 +17540,10 @@ app.post("/api/sdr/admin/customers/import", authMiddleware, async (req, res) => 
       if (!subscribed && !paid) continue;                 // trial-only: never a reference
       const key = (domain || name).toLowerCase();
       const old = byKey.get(key) || {};
+      // Keep what we learned (category, checked, tags, notes, the team's
+      // approval) - a re-import used to drop "verified" and hide every reference.
       byKey.set(key, {
-        key, name, domain, subscribed, paid,
+        ...old, key, name, domain: domain || old.domain || "", subscribed, paid,
         cat: old.cat || "", blurb: old.blurb || "", hidden: old.hidden || false,
         company_id: g("Company ID") || old.company_id || "",
       });
@@ -17681,6 +17692,37 @@ Svar KUN som JSON: {"cat":"...","blurb":"..."}`;
     res.json({ ok: true, ...stats, remaining, done: remaining === 0 });
   } catch (e) { sdrFail(res, e, "customers/recheck"); }
 });
+// The SDRs' own reference list: patch customers we already hold (category,
+// niche tags, a usage note, approval) and add the ones the export doesn't
+// have, marked source "sdr-list". Matched by key, domain or company name.
+app.post("/api/sdr/admin/customers/bulk", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const list = Array.isArray((req.body || {}).items) ? req.body.items.slice(0, 300) : [];
+    const c = loadCustomers(); c.items = c.items || [];
+    const out = { patched: [], added: [], skipped: [] };
+    for (const it of list) {
+      const name = String(it.name || "").trim(); if (!name) { out.skipped.push("(uden navn)"); continue; }
+      const dom = custDomain(it.domain);
+      let x = it.key ? c.items.find((y) => y.key === it.key) : null;
+      if (!x && dom) x = c.items.find((y) => custDomain(y.domain) === dom);
+      if (!x && custNameKey(name)) x = c.items.find((y) => custNameKey(y.name) === custNameKey(name));
+      const isNew = !x;
+      if (isNew) { x = { key: "sdr-" + (dom || custNameKey(name) || crypto.randomBytes(4).toString("hex")), name, domain: dom, subscribed: false, paid: true, source: "sdr-list", added_at: new Date().toISOString() }; c.items.push(x); }
+      if (dom && !x.domain) x.domain = dom;
+      if (typeof it.cat === "string" && VEDIO_CATS.includes(it.cat)) { x.cat = it.cat; x.verified = it.cat !== "andet"; x.verified_via = x.verified_via === "site" && !isNew ? x.verified_via : "sdr-list"; }
+      if (typeof it.blurb === "string" && it.blurb.trim() && (isNew || !x.blurb)) x.blurb = it.blurb.trim().slice(0, 120);
+      if (Array.isArray(it.tags)) x.tags = it.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean).slice(0, 20);
+      if (typeof it.note === "string") x.note = it.note.trim().slice(0, 240);
+      for (const f of ["strict", "ref_ok", "hidden", "pending_demo"]) if (typeof it[f] === "boolean") { if (it[f]) x[f] = true; else delete x[f]; }
+      if (it.auto_ref === false) x.auto_ref = false; else if (it.auto_ref === true) delete x.auto_ref;
+      (isNew ? out.added : out.patched).push(x.name);
+    }
+    saveCustomers(c);
+    logActivity("sdr-admin", `Referenceliste fra SDR'erne: ${out.patched.length} rettet, ${out.added.length} tilføjet`, { userId: req.userId });
+    res.json({ ok: true, ...out });
+  } catch (e) { sdrFail(res, e, "customers/bulk"); }
+});
 app.get("/api/sdr/admin/customers", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
@@ -17708,7 +17750,11 @@ app.post("/api/sdr/admin/customers/update", authMiddleware, (req, res) => {
     if (b.key) {
       const x = (c.items || []).find((y) => y.key === b.key);
       if (!x) return res.status(404).json({ error: "Kunde ikke fundet" });
-      if (typeof b.hidden === "boolean") x.hidden = b.hidden;
+      if (typeof b.hidden === "boolean") { x.hidden = b.hidden; if (!b.hidden) delete x.pending_demo; }
+      if (Array.isArray(b.tags)) x.tags = b.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean).slice(0, 20);
+      if (typeof b.note === "string") x.note = b.note.trim().slice(0, 240);
+      for (const f of ["strict", "ref_ok"]) if (typeof b[f] === "boolean") x[f] = b[f];
+      if (typeof b.auto_ref === "boolean") { if (b.auto_ref) delete x.auto_ref; else x.auto_ref = false; }
       // The admin knows the customer: their category counts as checked.
       if (typeof b.cat === "string" && VEDIO_CATS.includes(b.cat)) { x.cat = b.cat; x.verified = b.cat !== "andet"; x.verified_via = "admin"; }
       if (typeof b.blurb === "string") x.blurb = b.blurb.trim().slice(0, 120);
