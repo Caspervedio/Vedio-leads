@@ -448,7 +448,7 @@ function renderFocus() {
       ${tile('fo-size', 'Størrelse', F.options.size, 'Alle størrelser', cur.size)}
       ${tile('fo-role', 'Kontakt', F.options.role, 'Alle kontakter', cur.role)}
     </div>
-    <div class="fb-note"><i></i>${F.short ? 'Ikke flere i dit fokus lige nu - resten af listen er fyldt op med andre.' : `Altid ${target} på listen - op til 3 opfølgninger øverst, resten ${on ? 'fra dit fokus' : 'friske leads fra puljen'}.`}</div>`;
+    <div class="fb-note"><i></i>${F.short ? 'Ikke flere i dit fokus lige nu - resten af listen er fyldt op med andre.' : `Altid ${target} på listen: op til 3 opfølgninger (◆) - de er med uanset fokus - og resten ${on ? 'fra dit fokus' : 'friske leads fra puljen'}.`}</div>`;
 }
 async function setFocus(clear) {
   const body = clear ? {} : { cat: $('fo-cat').value, size: $('fo-size').value, role: $('fo-role').value };

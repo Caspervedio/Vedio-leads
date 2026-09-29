@@ -14407,7 +14407,7 @@ const CAT_RULES = [
   // "Beauty & Fitness", and the word fitness used to drag it into sport.
   ["webshop-skonhed", new RegExp(`beauty|cosmet|sk[øo]nhed|parfume|hudpleje|h[åa]rpleje|frisør|frisor|barber|makeup|wellness|personal care|nail care|skin care|negle|vipper|eyelash|${W("hud|hair|h[åa]r|salon|nails?|lash|lashes|brows?")}`, "i")],
   ["webshop-sport", new RegExp(`sport|outdoor|cykel|snowboard|lystfisk|vintersport|fitnesscent|tr[æa]ningscent|crossfit|pilates|${W("fitness|bike|ski|jagt|yoga|golf|padel")}`, "i")],
-  ["webshop-mad-drikke", new RegExp(`beverage|kaffe|coffee|chokolade|delikatesse|bryggeri|${W("food|drink|vin|wine|[øo]l|beer|slik|k[øo]d")}`, "i")],
+  ["webshop-mad-drikke", new RegExp(`beverage|kaffe|coffee|chokolade|delikatesse|bryggeri|k[øo]dvare|slagter|p[åa]l[æa]g|fiskebutik|fiskehus|ostebutik|vinhandel|${W("food|drink|vin|wine|[øo]l|beer|slik|k[øo]d|fisk")}`, "i")],
   ["webshop-elektronik", new RegExp(`electronic|elektronik|computer|gadget|${W("mobil|audio|hifi")}`, "i")],
   ["webshop-boern", new RegExp(`baby|b[øo]rn|kids|children|leget[øo]j|barnevogn|maternity|gravid|ammet[øo]j|${W("toys?|mom|moms")}`, "i")],
   ["webshop-dyr", new RegExp(`foder|animal|hundefoder|${W("pet|pets|dyr|hund|hunde|kat|katte|hest|heste|fjerkr[æa]")}`, "i")],
@@ -14416,8 +14416,10 @@ const CAT_RULES = [
   ["byggeri-haandvaerk", new RegExp(`bygge|h[åa]ndv[æa]rk|t[øo]mrer|murer|elektriker|snedker|entrepren|construction|installat|${W("vvs|maler")}`, "i")],
   ["ejendom-bolig", new RegExp(`ejendom|m[æa]gler|real estate|udlejning|property|${W("bolig")}`, "i")],
   ["finans-forsikring", new RegExp(`forsikring|insurance|finans|revisor|advokat|regnskab|pension|${W("bank|l[åa]n|finance|financial")}`, "i")],
+  // Restaurants before travel/experiences: "til private og events" filed a
+  // fish shop and a butcher under Rejser (food shops now match food first).
+  ["restauration", new RegExp(`restaurant|caf[eé]|cafeteri|catering|take-?away|bageri|${W("bar|barer|pizzeria")}`, "i")],
   ["rejser-oplevelser", new RegExp(`rejse|travel|tourism|ferie|oplevelse|charter|${W("hotel|hoteller|event|events")}`, "i")],
-  ["restauration", new RegExp(`restaurant|caf[eé]|cafeteri|catering|takeaway|bageri|${W("bar|barer|pizzeria")}`, "i")],
   ["bureau-marketing", new RegExp(`bureau|marketing|reklame|agency|kommunikation|design.*web|web.*design|${W("seo|media|some")}`, "i")],
   ["it-software", new RegExp(`software|saas|tech|digital|udvikling|hosting|web services|wordpress|${W("it|app|apps|data|cloud|erp|crm")}`, "i")],
   ["produktion-industri", new RegExp(`produktion|industri|fabrik|manufact|maskin|tr[æa]industri|engros|${W("metal")}`, "i")],
@@ -14440,6 +14442,11 @@ function catMatch(s) {
 function catFromText(niche, about, name) {
   const path = String(niche || "").split("/").map((x) => x.trim()).filter(Boolean);
   const leaf = path.length ? path[path.length - 1] : "";
+  // StoreLeads' "Gifts & Special Events" says nothing about the business -
+  // florists, gift shops and party rentals alike. Read the description.
+  // Only a product the description names (flowers, food, jewellery…) beats it;
+  // party and tent rentals stay under experiences.
+  if (/^gifts?\s*&\s*special events$/i.test(leaf)) { const x = catMatch(about) || catMatch(name); return x && /^webshop-/.test(x) ? x : catMatch(leaf) || x || ""; }
   return catMatch(leaf) || catMatch(niche) || catMatch(about) || catMatch(name) || "";
 }
 function loadCustomers() { try { return JSON.parse(fs.readFileSync(CUSTOMERS_FILE, "utf8")); } catch { return { updated_at: null, include_former: false, items: [] }; } }
@@ -14734,11 +14741,21 @@ function sdrEnsureList(d, userId, now, settings) {
   const agreed = (l) => (l.lastAction === "follow-up" || l.lastAction === "email-sent" || !l.lastAction) ? 0 : 1;
   const allDue = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !(L.done || []).includes(l.cvr))
     .sort((a, b) => (agreed(a) - agreed(b)) || (new Date(a.callback_at) - new Date(b.callback_at)));
-  const dueKeep = new Set(allDue.slice(0, dueSlots).map((l) => l.cvr));
+  // Never reorder what the SDR sees: the top lead is the open one ("Ring →"
+  // puts a lead first, "Spring over" puts it last). Callbacks already on the
+  // list keep their place; new ones go in right after the open lead.
   const beforeDue = L.cvrs.join(",");
-  for (const c of L.cvrs) { const l = byCvr.get(c); if (l && sdrIsDue(l, now) && !dueKeep.has(c) && l.claimed_by === userId) sdrUnclaim(l); } // waits in Opfølgning
-  L.cvrs = [...allDue.slice(0, dueSlots).map((l) => l.cvr), ...L.cvrs.filter((c) => { const l = byCvr.get(c); return !(l && sdrIsDue(l, now)) || dueKeep.has(c); }).filter((c) => !dueKeep.has(c))];
-  for (const l of allDue.slice(0, dueSlots)) if (l.claimed_by !== userId) sdrClaim(l, userId, now);
+  const isDueC = (c) => { const l = byCvr.get(c); return !!(l && sdrIsDue(l, now)); };
+  const onListDue = new Set(L.cvrs.filter(isDueC));
+  const keepDue = new Set();
+  if (L.cvrs[0] && onListDue.has(L.cvrs[0])) keepDue.add(L.cvrs[0]);
+  for (const l of allDue) if (keepDue.size < dueSlots && onListDue.has(l.cvr)) keepDue.add(l.cvr);
+  const addDue = [];
+  for (const l of allDue) { if (keepDue.size >= dueSlots) break; if (!keepDue.has(l.cvr) && !onListDue.has(l.cvr)) { keepDue.add(l.cvr); addDue.push(l.cvr); } }
+  for (const c of onListDue) if (!keepDue.has(c)) { const l = byCvr.get(c); if (l && l.claimed_by === userId) sdrUnclaim(l); } // waits in Opfølgning
+  L.cvrs = L.cvrs.filter((c) => !onListDue.has(c) || keepDue.has(c));
+  if (addDue.length) L.cvrs.splice(L.cvrs.length ? 1 : 0, 0, ...addDue);
+  for (const c of addDue) { const l = byCvr.get(c); if (l && l.claimed_by !== userId) sdrClaim(l, userId, now); }
   if (L.cvrs.join(",") !== beforeDue) dirty = true;
   // Casper: ten at a time - more on one list felt overwhelming. The list
   // holds `target` FRESH leads (list_size, default 10); callbacks that are due
@@ -14753,13 +14770,14 @@ function sdrEnsureList(d, userId, now, settings) {
     // first - also ones waiting in the pool - then the list as it was.
     const mine = (c) => { const l = byCvr.get(c); return !!(l && sdrReservedFor(l) === userId); };
     const waiting = sdrQueue(d, userId, now, new Set([...L.cvrs, ...(L.done || [])]), settings).filter((l) => !sdrIsDue(l, now) && sdrReservedFor(l) === userId && (!L.focus || sdrFocusMatch(l, L.focus))).map((l) => l.cvr);
-    const ranked = [...freshCvrs.filter(mine), ...waiting, ...freshCvrs.filter((c) => !mine(c))];
+    const top = L.cvrs[0] && !dueNow(L.cvrs[0]) ? [L.cvrs[0]] : []; // the open lead always stays
+    const ranked = [...top, ...freshCvrs.filter((c) => !top.includes(c) && mine(c)), ...waiting, ...freshCvrs.filter((c) => !top.includes(c) && !mine(c))];
     const keepSet = new Set(ranked.slice(0, freshTarget));
     for (const c of waiting) if (keepSet.has(c)) { const l = byCvr.get(c); L.cvrs.push(c); sdrClaim(l, userId, now); }
     freshCvrs = ranked.filter((c) => keepSet.has(c));
     const drop = new Set(L.cvrs.filter((c) => !dueNow(c) && !keepSet.has(c)));
     for (const cvr of drop) { const l = byCvr.get(cvr); if (l && l.claimed_by === userId) sdrUnclaim(l); }
-    L.cvrs = [...L.cvrs.filter(dueNow), ...freshCvrs]; dirty = true;
+    L.cvrs = L.cvrs.filter((c) => dueNow(c) || keepSet.has(c)); dirty = true; // same order as before
   }
   if (freshCvrs.length < freshTarget) {
     const skip = new Set([...L.cvrs, ...(L.done || [])]);
