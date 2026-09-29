@@ -13615,7 +13615,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40 };
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 60, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -14611,12 +14611,53 @@ function sdrFollowupMine(l, userId) {
   const owner = sdrFollowupOwner(l);
   return !owner || owner === userId;
 }
+// ─── "Fokus i dag" - what the SDR wants to ring today ────────────────────
+// Three small handles, each optional: line of business, webshop size (from
+// StoreLeads' estimated yearly sales - we have no headcounts) and who we'd
+// reach. The list tops up from the focus first and from the rest when it
+// runs dry, so there are always fresh leads.
+const SDR_DUE_SLOTS = 3; // callbacks due that may sit on the 10-lead list at once
+const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem (1-5 mio. kr/år)", large: "Store (over 5 mio. kr/år)" };
+const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
+function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
+function sdrLeadSize(l) {
+  // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
+  const kr = (Number(l.storeleads_estimated_sales_yearly) || 0) / 100 * 6.9;
+  if (!kr) return "";
+  return kr < 1e6 ? "small" : kr < 5e6 ? "medium" : "large";
+}
+function sdrLeadRole(l) {
+  const c = sdrPrimaryContact(l); if (!c) return "switchboard";
+  const t = String(c.title || "").toLowerCase();
+  if (/(owner|ejer|indehaver|founder|stifter|ceo|chief executive|direkt[øo]r|director|managing|adm\.|partner|general manager|grundlægger)/.test(t)) return "owner";
+  if (/(marketing|markedsf|e-?commerce|webshop|digital|growth|brand|social|salg|sales|kommunikation|cmo|head of online)/.test(t)) return "marketing";
+  return "other";
+}
+function sdrFocusMatch(l, f) {
+  if (!f) return true;
+  if (f.cat && sdrLeadCat(l) !== f.cat) return false;
+  if (f.size && sdrLeadSize(l) !== f.size) return false;
+  if (f.role && sdrLeadRole(l) !== f.role) return false;
+  return true;
+}
+// A lead an SDR researched or added themselves is theirs until it has been
+// called (Casper: "the lead being researched by one SDR follows that SDR") -
+// also when the 10-lead list sends it back to the pool for a while.
+function sdrReservedFor(l) {
+  if (l.owner_override) return l.owner_override;
+  if (l.research_by && l.research_at && !(l.lastCallAt && l.lastCallAt > l.research_at)) return l.research_by;
+  if (l.manual_by && !l.lastCallAt) return l.manual_by;
+  return null;
+}
 function sdrQueue(d, userId, now, exclude, settings) {
   const ex = exclude || new Set();
   const s = settings || sdrSettings(d);
-  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !ex.has(l.cvr));
+  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !ex.has(l.cvr) && (() => { const r = sdrReservedFor(l); return !r || r === userId; })());
   const due = eligible.filter((l) => sdrIsDue(l, now)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
+    // My own research / own additions first - they're mine.
+    const ar = sdrReservedFor(a) === userId ? 1 : 0, br = sdrReservedFor(b) === userId ? 1 : 0;
+    if (ar !== br) return br - ar;
     // Parked leads (no answer N times, or "for svag lige nu") come back at the
     // bottom, behind everything that hasn't been tried.
     const az = a.parked_at ? 1 : 0, bz = b.parked_at ? 1 : 0;
@@ -14668,7 +14709,6 @@ function sdrEnsureList(d, userId, now, settings) {
     d.sdr_lists[userId] = { date: key, cvrs: [], done: (L && L.date === key ? L.done : []) || [] };
     return { list: d.sdr_lists[userId], dirty };
   }
-  const target = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
   // The list is a persistent personal pool (max `target`, fed from the shared
   // pool): it carries over from day to day; only the "done today" bookkeeping
   // resets each morning.
@@ -14680,26 +14720,56 @@ function sdrEnsureList(d, userId, now, settings) {
     const l = byCvr.get(cvr);
     // A promised callback stays on the list even if a rule change would now
     // exclude the lead - we told them we'd ring back.
-    const keep = !!l && sdrEligible(l, now) && (sdrPassesRules(l, settings) || sdrIsDue(l, now)) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId);
+    const res = l ? sdrReservedFor(l) : null;
+    const keep = !!l && sdrEligible(l, now) && (sdrPassesRules(l, settings) || sdrIsDue(l, now)) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && (!res || res === userId || sdrIsDue(l, now));
     if (!keep && l && l.claimed_by === userId) sdrUnclaim(l);
     return keep;
   });
   if (L.cvrs.length !== before) dirty = true;
-  const inList = new Set(L.cvrs);
-  const due = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !inList.has(l.cvr) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !(L.done || []).includes(l.cvr))
-    .sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
-  if (due.length) {
-    L.cvrs = [...due.map((l) => l.cvr), ...L.cvrs];
-    for (const l of due) sdrClaim(l, userId, now);
-    dirty = true;
+  // Callbacks that are due take a few slots at the top - agreed ones before
+  // "no answer" retries, oldest first. The rest wait in Opfølgning and rotate
+  // in as slots free up; the list itself never grows past `target`.
+  const target = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
+  const dueSlots = Math.min(SDR_DUE_SLOTS, Math.max(0, target - 1));
+  const agreed = (l) => (l.lastAction === "follow-up" || l.lastAction === "email-sent" || !l.lastAction) ? 0 : 1;
+  const allDue = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !(L.done || []).includes(l.cvr))
+    .sort((a, b) => (agreed(a) - agreed(b)) || (new Date(a.callback_at) - new Date(b.callback_at)));
+  const dueKeep = new Set(allDue.slice(0, dueSlots).map((l) => l.cvr));
+  const beforeDue = L.cvrs.join(",");
+  for (const c of L.cvrs) { const l = byCvr.get(c); if (l && sdrIsDue(l, now) && !dueKeep.has(c) && l.claimed_by === userId) sdrUnclaim(l); } // waits in Opfølgning
+  L.cvrs = [...allDue.slice(0, dueSlots).map((l) => l.cvr), ...L.cvrs.filter((c) => { const l = byCvr.get(c); return !(l && sdrIsDue(l, now)) || dueKeep.has(c); }).filter((c) => !dueKeep.has(c))];
+  for (const l of allDue.slice(0, dueSlots)) if (l.claimed_by !== userId) sdrClaim(l, userId, now);
+  if (L.cvrs.join(",") !== beforeDue) dirty = true;
+  // Casper: ten at a time - more on one list felt overwhelming. The list
+  // holds `target` FRESH leads (list_size, default 10); callbacks that are due
+  // sit on top and don't count. Extra fresh leads go back to the pool (a
+  // researched or self-added one stays reserved and comes back first), and
+  // every state load tops it up again - from the SDR's focus first.
+  const dueNow = (cvr) => { const l = byCvr.get(cvr); return !!(l && sdrIsDue(l, now)); };
+  const freshTarget = Math.max(1, target - L.cvrs.filter(dueNow).length);
+  let freshCvrs = L.cvrs.filter((c) => !dueNow(c));
+  if (freshCvrs.length > freshTarget) {
+    // Keep the SDR's own reserved leads (their research, their additions)
+    // first - also ones waiting in the pool - then the list as it was.
+    const mine = (c) => { const l = byCvr.get(c); return !!(l && sdrReservedFor(l) === userId); };
+    const waiting = sdrQueue(d, userId, now, new Set([...L.cvrs, ...(L.done || [])]), settings).filter((l) => !sdrIsDue(l, now) && sdrReservedFor(l) === userId && (!L.focus || sdrFocusMatch(l, L.focus))).map((l) => l.cvr);
+    const ranked = [...freshCvrs.filter(mine), ...waiting, ...freshCvrs.filter((c) => !mine(c))];
+    const keepSet = new Set(ranked.slice(0, freshTarget));
+    for (const c of waiting) if (keepSet.has(c)) { const l = byCvr.get(c); L.cvrs.push(c); sdrClaim(l, userId, now); }
+    freshCvrs = ranked.filter((c) => keepSet.has(c));
+    const drop = new Set(L.cvrs.filter((c) => !dueNow(c) && !keepSet.has(c)));
+    for (const cvr of drop) { const l = byCvr.get(cvr); if (l && l.claimed_by === userId) sdrUnclaim(l); }
+    L.cvrs = [...L.cvrs.filter(dueNow), ...freshCvrs]; dirty = true;
   }
-  // Auto top-up: the list is always kept at list_size (default 60). Every
-  // state load refills from the pool in pool order as leads get dispositioned,
-  // removed or pruned - the SDR never has to fetch leads by hand. Leads done
-  // today and leads removed for today (deferred_until) are skipped.
-  if (L.cvrs.length < target) {
+  if (freshCvrs.length < freshTarget) {
     const skip = new Set([...L.cvrs, ...(L.done || [])]);
-    for (const l of sdrQueue(d, userId, now, skip, settings).slice(0, target - L.cvrs.length)) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); dirty = true; }
+    const q = sdrQueue(d, userId, now, skip, settings).filter((l) => !sdrIsDue(l, now));
+    const want = freshTarget - freshCvrs.length;
+    const pick = (L.focus ? q.filter((l) => sdrFocusMatch(l, L.focus)) : q).slice(0, want);
+    const short = !!L.focus && pick.length < want;
+    if (short) for (const l of q) { if (pick.length >= want) break; if (!pick.includes(l)) pick.push(l); }
+    if (!!L.focus_short !== short) { L.focus_short = short; dirty = true; }
+    for (const l of pick) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); dirty = true; }
   }
   // Re-stamp my claims at most once a day per lead (keeps pool writes down);
   // a lead on my list that nobody holds, or whose claim lapsed, is taken back.
@@ -14894,6 +14964,18 @@ function buildSdrState(userId, d) {
   const base_kr = Math.max(0, Number(settings.base_salary_dkk) || 0);
   const commission = { month: mKey, period_label: cOpen.label, period_from: cOpen.from, period_to: cOpen.to, rate, expected_kr, base_kr, salary_kr: base_kr + expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_locked: !!cLast.locked, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
+  // What the focus dropdowns can offer: fresh leads in the pool plus those on the list.
+  const focusBase = [...available.filter((l) => !sdrIsDue(l, now)), ...items.filter((l) => !sdrIsDue(l, now))];
+  const cnt = (fn) => { const m = {}; for (const l of focusBase) { const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
+  const cats = cnt(sdrLeadCat), sizes = cnt(sdrLeadSize), roles = cnt(sdrLeadRole);
+  const focus = {
+    current: L.focus || null, short: !!L.focus_short,
+    options: {
+      cat: Object.entries(cats).filter(([k]) => k !== "andet").sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ key: k, label: CAT_LABEL[k] || k, n })),
+      size: Object.keys(SDR_SIZE).map((k) => ({ key: k, label: SDR_SIZE[k], n: sizes[k] || 0 })),
+      role: Object.keys(SDR_ROLE).map((k) => ({ key: k, label: SDR_ROLE[k], n: roles[k] || 0 })),
+    },
+  };
 
   const stats = {
     callsToday: mine.callsToday, demosToday: mine.demosToday, callsWeek: mine.callsWeek, demosWeek: mine.demosWeek,
@@ -14925,7 +15007,8 @@ function buildSdrState(userId, d) {
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
     settings: settingsOut, stats, commission,
-    list: { date: L.date, items: items.map((l) => sdrSlim(l, nameById)), doneCount: (L.done || []).length },
+    list: { date: L.date, items: items.map((l) => sdrSlim(l, nameById)), doneCount: (L.done || []).length, target: Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size) },
+    focus,
     current: current ? sdrSlim(current, nameById) : null,
     upNext: upNext.map((l) => sdrSlim(l, nameById)),
     followups: followups.map((l) => sdrSlim(l, nameById)),
@@ -15240,6 +15323,34 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
     logActivity("sdr-screen", `${me ? me.name : req.userId} · ${lead.name}: fjernet uden opkald (${R.label})`, { cvr, userId: req.userId, reason });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "screen"); }
+});
+// "Fokus i dag": save the SDR's focus and swap the fresh leads on the list
+// that don't fit it (callbacks due stay; their own researched leads go back
+// to the pool but stay reserved to them).
+app.post("/api/sdr/focus", authMiddleware, (req, res) => {
+  try {
+    const b = req.body || {};
+    const f = {
+      cat: typeof b.cat === "string" && (CAT_LABEL[b.cat] || b.cat === "andet") ? b.cat : "",
+      size: SDR_SIZE[b.size] ? b.size : "",
+      role: SDR_ROLE[b.role] ? b.role : "",
+    };
+    const d = loadPool(); const now = Date.now(); const settings = sdrSettings(d);
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    L.focus = f.cat || f.size || f.role ? f : null;
+    if (L.focus) {
+      const byCvr = new Map((d.leads || []).map((l) => [l.cvr, l]));
+      L.cvrs = L.cvrs.filter((cvr) => {
+        const l = byCvr.get(cvr);
+        if (!l || sdrIsDue(l, now) || sdrFocusMatch(l, L.focus)) return true;
+        if (l.claimed_by === req.userId) sdrUnclaim(l);
+        return false;
+      });
+    }
+    sdrEnsureList(d, req.userId, now, settings);
+    savePool(d);
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "focus"); }
 });
 // Skip = move to the end of my list (not out of it).
 // ─── Research: the between-calls task ─────────────────────────────────────

@@ -89,6 +89,7 @@
       <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - oprettes som nyt lead">+ Nyt lead</button>
     </div>
     <div id="sub-list">
+      <div class="focusbar" id="focusbar"></div>
       <div class="tablewrap">
         <table>
           <thead><tr><th style="width:36px"></th><th style="width:44px">#</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Signal</th><th></th></tr></thead>
@@ -394,7 +395,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; const nr = $('n-rsh'); if (nr) nr.textContent = S.research.remaining || 0; }
   renderList();
   if (!keepCurrent) renderCard(); else if ($('note')) $('note').value = prevNote;
-  renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday();
+  renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday(); renderFocus();
 }
 
 /* Ringeliste */
@@ -416,6 +417,25 @@ function leadMatches(l, q) {
   const hay = [l.name, l.renamed_from, l.city, l.niche, l.web, l.last_note, l.contact && l.contact.name, l.contact && l.contact.email, ...(l.contacts || []).map((c) => c.name)].filter(Boolean).join(' ').toLowerCase();
   const digits = q.replace(/\D/g, '');
   return hay.includes(q.toLowerCase()) || (digits.length >= 4 && String(l.phone || '').replace(/\D/g, '').includes(digits));
+}
+/* "Fokus i dag": what the SDR wants to ring. Three optional choices, each
+   with how many leads it holds; the list tops up from the focus first. */
+function renderFocus() {
+  const F = S.focus; const box = $('focusbar'); if (!box || !F) return;
+  const cur = F.current || {};
+  const sel = (id, opts, all, val) => `<select id="${id}" onchange="setFocus()" class="${val ? 'on' : ''}"><option value="">${all}</option>${opts.map((o) => `<option value="${e(o.key)}" ${o.key === val ? 'selected' : ''} ${!o.n && o.key !== val ? 'disabled' : ''}>${e(o.label)} (${o.n})</option>`).join('')}</select>`;
+  const target = (S.list && S.list.target) || 10;
+  box.innerHTML = `<span class="fb-k">Fokus i dag</span>
+    ${sel('fo-cat', F.options.cat || [], 'Alle brancher', cur.cat)}
+    ${sel('fo-size', F.options.size || [], 'Alle størrelser', cur.size)}
+    ${sel('fo-role', F.options.role || [], 'Alle kontakter', cur.role)}
+    ${F.current ? '<button class="linkbtn" onclick="setFocus(true)">Nulstil</button>' : ''}
+    <span class="fb-note ${F.short ? 'warn' : ''}">${F.short ? 'Ikke flere i dit fokus lige nu - resten af listen er fyldt op med andre.' : F.current ? `Altid ${target} på listen - op til 3 opfølgninger øverst, resten fra dit fokus.` : `Altid ${target} på listen - op til 3 opfølgninger øverst, resten friske leads. Vælg et fokus, hvis du vil ringe til noget bestemt i dag.`}</span>`;
+}
+async function setFocus(clear) {
+  const body = clear ? {} : { cat: $('fo-cat').value, size: $('fo-size').value, role: $('fo-role').value };
+  try { apply(await post('/api/sdr/focus', body), { keepCurrent: true }); toast(clear ? 'Fokus nulstillet' : 'Fokus sat - listen er opdateret'); }
+  catch (ex) { toast(ex.message, 4000); }
 }
 function renderList() {
   const all = (S.list && S.list.items) || [];

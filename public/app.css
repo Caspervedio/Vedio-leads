@@ -637,6 +637,13 @@ main{transition:margin-right .46s var(--ease)}
 .fu-called{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--txt-soft);margin-left:auto;cursor:pointer}
 .switch.sm{width:32px;height:18px}.switch.sm i::after{width:14px;height:14px}.switch.sm input:checked+i::after{transform:translateX(14px)}
 .s-screened{font-style:normal;color:var(--txt-faint)}
+/* "Fokus i dag" above the call list */
+.focusbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--white)}
+.focusbar .fb-k{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-right:4px}
+.focusbar select{border:1px solid var(--line);border-radius:var(--pill);padding:7px 30px 7px 12px;font:inherit;font-size:13px;font-weight:600;background-color:var(--paper);color:var(--txt);cursor:pointer;max-width:260px}
+.focusbar select.on{border-color:var(--violet);background-color:var(--violet-soft);color:var(--violet-deep)}
+.focusbar .fb-note{font-size:12px;color:var(--txt-faint);margin-left:auto}
+.focusbar .fb-note.warn{color:#9a4b07}
 .proofwrap{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
 .adname{font-size:12px;font-weight:700;color:var(--txt-soft);text-decoration:none;padding:2px 4px;border-radius:6px}
 .adname:hover{color:var(--violet);background:var(--violet-soft)}

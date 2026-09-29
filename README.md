@@ -65,6 +65,15 @@ Ikke relevant · Forkert nummer · Telefonmenu ("tryk 1 for…" — leadet sende
 til Research for et direkte nummer og prøves igen om tre hverdage). Alt kan
 fortrydes i 10 minutter.
 
+**Ringelisten er 10 ad gangen** (⚙ "Leads på hver SDR's liste"): op til 3
+forfaldne opfølgninger øverst (aftalte før "ingen svar"), resten friske leads
+fra puljen; resten af opfølgningerne venter i Opfølgning og roterer ind. Listen
+fyldes op efter hvert opkald. Leads en SDR selv har researchet eller tilføjet,
+er reserveret til dem (andre får dem ikke) og kommer først. **Fokus i dag**
+over listen: branche, webshop-størrelse (StoreLeads' anslåede omsætning) og
+kontakt (ejer/direktør, marketing/salg, omstilling) - listen fyldes fra fokus
+først og fra resten, når fokus er tomt.
+
 **Fjern fra listen** (uden at ringe — tæller ikke som et opkald): *Ikke vores
 målgruppe* (arkiveres), *For svag lige nu* (hviler 90 dage og kommer tilbage
 nederst i puljen) eller *Ring senere* (en dato; bliver SDR'ens opfølgning).
