@@ -423,14 +423,32 @@ function leadMatches(l, q) {
 function renderFocus() {
   const F = S.focus; const box = $('focusbar'); if (!box || !F) return;
   const cur = F.current || {};
-  const sel = (id, opts, all, val) => `<select id="${id}" onchange="setFocus()" class="${val ? 'on' : ''}"><option value="">${all}</option>${opts.map((o) => `<option value="${e(o.key)}" ${o.key === val ? 'selected' : ''} ${!o.n && o.key !== val ? 'disabled' : ''}>${e(o.label)} (${o.n})</option>`).join('')}</select>`;
   const target = (S.list && S.list.target) || 10;
-  box.innerHTML = `<span class="fb-k">Fokus i dag</span>
-    ${sel('fo-cat', F.options.cat || [], 'Alle brancher', cur.cat)}
-    ${sel('fo-size', F.options.size || [], 'Alle størrelser', cur.size)}
-    ${sel('fo-role', F.options.role || [], 'Alle kontakter', cur.role)}
-    ${F.current ? '<button class="linkbtn" onclick="setFocus(true)">Nulstil</button>' : ''}
-    <span class="fb-note ${F.short ? 'warn' : ''}">${F.short ? 'Ikke flere i dit fokus lige nu - resten af listen er fyldt op med andre.' : F.current ? `Altid ${target} på listen - op til 3 opfølgninger øverst, resten fra dit fokus.` : `Altid ${target} på listen - op til 3 opfølgninger øverst, resten friske leads. Vælg et fokus, hvis du vil ringe til noget bestemt i dag.`}</span>`;
+  const chevron = '<svg class="fsel-c" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+  // A tile per choice: the label, what is picked and how many leads it holds.
+  // The native select sits invisibly on top, so the dropdown stays native.
+  const tile = (id, label, opts, all, val) => {
+    const o = (opts || []).find((x) => x.key === val);
+    return `<label class="fsel ${o ? 'on' : ''}">
+      <span class="fsel-k">${label}</span>
+      <span class="fsel-v">${o ? `${e(o.label)}<em>${o.n}</em>` : e(all)}</span>${chevron}
+      <select id="${id}" onchange="setFocus()" aria-label="${label}"><option value="">${e(all)}</option>${(opts || []).map((x) => `<option value="${e(x.key)}" ${x.key === val ? 'selected' : ''} ${!x.n && x.key !== val ? 'disabled' : ''}>${e(x.label)} (${x.n})</option>`).join('')}</select>
+    </label>`;
+  };
+  const on = !!F.current;
+  box.className = 'focusbar' + (on ? ' active' : '') + (F.short ? ' short' : '');
+  box.innerHTML = `
+    <div class="fb-head">
+      <span class="fb-ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg></span>
+      <div class="fb-t"><b>Fokus i dag</b><span>${on ? 'Listen fyldes op med det, du har valgt' : 'Vælg hvad du vil ringe til - eller lad listen tage det hele'}</span></div>
+      ${on ? '<button class="fb-reset" onclick="setFocus(true)" title="Nulstil fokus"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>Nulstil</button>' : ''}
+    </div>
+    <div class="fb-tiles">
+      ${tile('fo-cat', 'Branche', F.options.cat, 'Alle brancher', cur.cat)}
+      ${tile('fo-size', 'Størrelse', F.options.size, 'Alle størrelser', cur.size)}
+      ${tile('fo-role', 'Kontakt', F.options.role, 'Alle kontakter', cur.role)}
+    </div>
+    <div class="fb-note"><i></i>${F.short ? 'Ikke flere i dit fokus lige nu - resten af listen er fyldt op med andre.' : `Altid ${target} på listen - op til 3 opfølgninger øverst, resten ${on ? 'fra dit fokus' : 'friske leads fra puljen'}.`}</div>`;
 }
 async function setFocus(clear) {
   const body = clear ? {} : { cat: $('fo-cat').value, size: $('fo-size').value, role: $('fo-role').value };
