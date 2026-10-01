@@ -14984,12 +14984,18 @@ function buildSdrState(userId, d) {
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
   // What the focus dropdowns can offer: fresh leads in the pool plus those on the list.
   const focusBase = [...available.filter((l) => !sdrIsDue(l, now)), ...items.filter((l) => !sdrIsDue(l, now))];
-  const cnt = (fn) => { const m = {}; for (const l of focusBase) { const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
-  const cats = cnt(sdrLeadCat), sizes = cnt(sdrLeadSize), roles = cnt(sdrLeadRole);
+  // Counts per option given the OTHER choices - pick "Bolig" and the sizes
+  // show how many Bolig leads are small/medium/large - so a combination is
+  // visible before it is chosen.
+  const fc = L.focus || {};
+  const okExcept = (l, skip) => (skip === "cat" || !fc.cat || sdrLeadCat(l) === fc.cat) && (skip === "size" || !fc.size || sdrLeadSize(l) === fc.size) && (skip === "role" || !fc.role || sdrLeadRole(l) === fc.role);
+  const cnt = (fn, skip) => { const m = {}; for (const l of focusBase) { if (skip && !okExcept(l, skip)) continue; const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
+  const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size"), roles = cnt(sdrLeadRole, "role");
   const focus = {
-    current: L.focus || null, short: !!L.focus_short,
+    current: L.focus || null, short: !!L.focus && !!L.focus_short,
+    matching: L.focus ? focusBase.filter((l) => sdrFocusMatch(l, L.focus)).length : focusBase.length,
     options: {
-      cat: Object.entries(cats).filter(([k]) => k !== "andet").sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ key: k, label: CAT_LABEL[k] || k, n })),
+      cat: Object.entries(catsAll).filter(([k]) => k !== "andet").sort((a, b) => b[1] - a[1]).map(([k]) => ({ key: k, label: CAT_LABEL[k] || k, n: cats[k] || 0 })),
       size: Object.keys(SDR_SIZE).map((k) => ({ key: k, label: SDR_SIZE[k], n: sizes[k] || 0 })),
       role: Object.keys(SDR_ROLE).map((k) => ({ key: k, label: SDR_ROLE[k], n: roles[k] || 0 })),
     },
@@ -15025,7 +15031,7 @@ function buildSdrState(userId, d) {
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
     settings: settingsOut, stats, commission,
-    list: { date: L.date, items: items.map((l) => sdrSlim(l, nameById)), doneCount: (L.done || []).length, target: Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size) },
+    list: { date: L.date, items: items.map((l) => ({ ...sdrSlim(l, nameById), in_focus: L.focus ? sdrFocusMatch(l, L.focus) : null })), doneCount: (L.done || []).length, target: Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size) },
     focus,
     current: current ? sdrSlim(current, nameById) : null,
     upNext: upNext.map((l) => sdrSlim(l, nameById)),
@@ -15356,6 +15362,7 @@ app.post("/api/sdr/focus", authMiddleware, (req, res) => {
     const d = loadPool(); const now = Date.now(); const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
     L.focus = f.cat || f.size || f.role ? f : null;
+    if (!L.focus) L.focus_short = false;
     if (L.focus) {
       const byCvr = new Map((d.leads || []).map((l) => [l.cvr, l]));
       L.cvrs = L.cvrs.filter((cvr) => {

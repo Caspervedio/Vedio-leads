@@ -665,6 +665,8 @@ main{transition:margin-right .46s var(--ease)}
 .fb-note i{width:7px;height:7px;border-radius:50%;background:var(--approve);flex-shrink:0;box-shadow:0 0 0 3px #e6f6ec}
 .focusbar.short .fb-note{color:#9a4b07}
 .focusbar.short .fb-note i{background:#e39b2b;box-shadow:0 0 0 3px #fdf0e3}
+.fb-note b{color:var(--txt);font-weight:800}
+.chip.offfocus{background:var(--paper);color:var(--txt-faint);border:1px dashed #d6d2c9;font-weight:600}
 @media (max-width:760px){.fb-tiles{grid-template-columns:1fr}.focusbar{padding:14px}}
 .proofwrap{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
 .adname{font-size:12px;font-weight:700;color:var(--txt-soft);text-decoration:none;padding:2px 4px;border-radius:6px}
