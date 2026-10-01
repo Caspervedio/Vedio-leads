@@ -634,9 +634,9 @@ function renderHistory() {
 let fuFilter = 'agreed';
 function renderFollowups() {
   const all = S.followups || [];
-  const kinds = { agreed: (l) => !['no-answer', 'ivr'].includes(l.lastAction), retry: (l) => ['no-answer', 'ivr'].includes(l.lastAction), all: () => true };
+  const kinds = { agreed: (l) => !['no-answer', 'ivr', 'email-sent'].includes(l.lastAction), mail: (l) => l.lastAction === 'email-sent', retry: (l) => ['no-answer', 'ivr'].includes(l.lastAction), all: () => true };
   const q = ($('fu-q') && $('fu-q').value.trim()) || '';
-  $('fu-filters').innerHTML = [['agreed', 'Aftalt og mail sendt'], ['retry', 'Ingen svar - prøver igen'], ['all', 'Alle']].map(([k, l]) => `<button class="${fuFilter === k ? 'on' : ''}" onclick="fuFilter='${k}';renderFollowups()">${l}<span class="n">${all.filter(kinds[k]).length}</span></button>`).join('');
+  $('fu-filters').innerHTML = [['agreed', 'Aftalt'], ['mail', 'Mail sendt'], ['retry', 'Ingen svar - prøver igen'], ['all', 'Alle']].map(([k, l]) => `<button class="${fuFilter === k ? 'on' : ''}" onclick="fuFilter='${k}';renderFollowups()">${l}<span class="n">${all.filter(kinds[k]).length}</span></button>`).join('');
   // A search looks through everything - the point is to find it, whatever kind it is.
   const rows = all.filter((l) => (q ? true : kinds[fuFilter](l)) && leadMatches(l, q));
   if (all.length && !rows.length) { $('tb-fu').innerHTML = `<tr class="empty-row"><td colspan="6">${q ? `Ingen opfølgninger matcher "${e(q)}".` : 'Ingen i den gruppe.'}</td></tr>`; return; }
