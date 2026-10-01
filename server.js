@@ -13615,7 +13615,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40 };
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -14623,6 +14623,17 @@ function sdrFollowupMine(l, userId) {
 // StoreLeads' estimated yearly sales - we have no headcounts) and who we'd
 // reach. The list tops up from the focus first and from the rest when it
 // runs dry, so there are always fresh leads.
+// Casper: October 2026 is a learning / onboarding month for the sales team -
+// four demos a day isn't realistic yet. While it runs, the coach and the
+// weekly summary judge progress, and the apps say so.
+function sdrOnboarding(settings, now) {
+  const until = String((settings || {}).onboarding_until || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return null;
+  const end = new Date(until + "T23:59:59");
+  if ((now || Date.now()) > end.getTime()) return null;
+  return { until, label: end.toLocaleDateString("da-DK", { day: "numeric", month: "long" }) };
+}
+const SDR_ONBOARDING_LINE = (o) => `Oplæring: Salgsteamet er i en lære- og onboardingperiode (til og med ${o.label}). 4 demoer om dagen er ikke realistisk endnu, og det er ikke målet. Vurder fremgang - bedre samtaler, flere ja'er, flere der tager telefonen og bliver i samtalen - og ros den konkret. Pres ikke på tal, de ikke kan nå endnu, og sammenlign ikke med et fuldt indkørt team.`;
 const SDR_DUE_SLOTS = 3; // callbacks due that may sit on the 10-lead list at once
 const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem (1-5 mio. kr/år)", large: "Store (over 5 mio. kr/år)" };
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
@@ -15031,6 +15042,7 @@ function buildSdrState(userId, d) {
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
     settings: settingsOut, stats, commission,
+    onboarding: sdrOnboarding(settings, now),
     list: { date: L.date, items: items.map((l) => ({ ...sdrSlim(l, nameById), in_focus: L.focus ? sdrFocusMatch(l, L.focus) : null })), doneCount: (L.done || []).length, target: Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size) },
     focus,
     current: current ? sdrSlim(current, nameById) : null,
@@ -16091,7 +16103,7 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
     const talksToday = perUser.reduce((a, u) => a + (u.talksToday || 0), 0), talksWeek = perUser.reduce((a, u) => a + (u.talksWeek || 0), 0);
     const talks30 = perUser.reduce((a, u) => a + (u.talks30 || 0), 0);
     res.json({
-      ok: true, me: base.me, settings: base.settings, commission: base.commission, perUser, followups: base.followups,
+      ok: true, me: base.me, settings: base.settings, commission: base.commission, onboarding: base.onboarding, perUser, followups: base.followups,
       demos: (() => { const ledger = loadTwentyLedger(); const byCvr = new Map(leads.map((l) => [l.cvr, l])); return (base.demos || []).map((x) => ({ ...x, twenty: twentyDemoState(ledger, byCvr.get(x.cvr) || x) })); })(),
       days: days.map((k) => ({ day: k, ...byDay[k] })), intakeBySource,
       pool: {
@@ -16797,6 +16809,7 @@ app.post("/api/sdr/admin/digest", authMiddleware, async (req, res) => {
     if (!items.length && !Object.keys(outcomes).length) return res.status(400).json({ error: "Ingen opkald eller debriefs i denne uge endnu" });
     const prompt = [
       "Du er salgscoach for Vedio (video-annoncer til Meta/TikTok; produktet 'Vee' laver nye annoncer løbende så de ikke bliver trætte). Målgruppe: danske webshops der kører Meta-annoncer.",
+      (() => { const o = sdrOnboarding(sdrSettings(d)); return o ? SDR_ONBOARDING_LINE(o) : ""; })(),
       `Ugen der gik (fra ${wk}): udfald ${JSON.stringify(outcomes)}; pr. SDR ${JSON.stringify(Object.fromEntries(Object.entries(bySdr).map(([k, v]) => [nameById[k] || k, v])))}.`,
       items.length ? `SDR'ernes egne debriefs (${items.length}):\n${items.slice(0, 60).map((x) => `- [${x.sdr} · ${x.lead}${x.ads ? " · " + x.ads + " ads" : ""} · ${x.outcome || "?"}] ${x.summary}${x.next ? " | Næste: " + x.next : ""}${x.coaching ? " | Coach: " + x.coaching : ""}`).join("\n")}` : "Ingen debriefs endnu - brug kun udfaldene.",
       "Svar KUN som JSON på dansk, kort og konkret, ingen floskler:",
@@ -17155,6 +17168,7 @@ function sdrChatSystemPrompt(d, userId, lead) {
     `Lige nu er det ${new Date().toLocaleString("da-DK", { timeZone: "Europe/Copenhagen", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })} (dansk tid). Regn "i dag", "i går" og "denne uge" ud fra det.`,
     `Filer: SDR'en kan vedhæfte billeder, skærmbilleder, PDF'er, Word/PowerPoint/Excel, lyd og video. Se grundigt på dem og svar konkret ud fra indholdet (fx "i 0:12 siger hun …", "på slide 3 står der …"). Kan en fil ikke læses, så sig det i stedet for at gætte.`,
     `Artefakter: Med create_artifact laver du et selvstændigt stykke indhold, der vises stort, kan downloades og deles med et link - fx en one-pager til et lead, et mailudkast, et opkaldsscript, et oplæg, en tjekliste eller en side, der kan sendes til en kunde. Brug det, når SDR'en beder om noget, der skal bruges videre eller sendes til andre, eller nævner artefakt, dokument eller side. Almindelige svar og korte råd er IKKE artefakter. Type "dokument" = markdown (overskrifter, punkter, tabeller). Type "side" = én komplet, selvstændig HTML-fil med al CSS inline (ingen eksterne scripts; Google Fonts er ok), mobilvenlig og i Vedios stil: baggrund #F4F2EE, tekst #0E0E0C, lilla accent #7C3AED, fonten Inter. Skriv på dansk, medmindre andet ønskes. Ret et eksisterende artefakt med update_artifact i stedet for at lave et nyt. Efter et artefakt svarer du kort (1-2 sætninger) og gentager ikke indholdet. Artefakter kan blive delt med kunder: skriv aldrig interne noter, provision, telefonnumre eller andre leads' data ind i dem, medmindre SDR'en beder om det.`,
+    (() => { const o = sdrOnboarding(settings); return o ? SDR_ONBOARDING_LINE(o) : ""; })(),
     `Data fra platformen: Du har værktøjer, der slår op i Vedio Ring - search_leads (alle leads på navn/website/by/person/nummer), get_lead (alt om ét lead), my_list (SDR'ens ringeliste i rækkefølge), my_followups, my_stats (dagens/ugens tal, provision) og recent_calls (seneste udfald og noter). Brug dem, så snart et spørgsmål handler om konkrete leads, personer, numre, tal eller lister - gæt aldrig på data, og find aldrig selv på firmaer eller tal. Til rene sparringsspørgsmål (replikker, indvendinger, scripts) behøver du ikke slå op. Nævn gerne kort hvad du slog op ("Jeg kiggede på din liste…"). Tidspunkter i data er UTC - dansk tid er 2 timer foran om sommeren.`,
     `Om Vedio: Vedio laver videoannoncer til virksomheder, der annoncerer på Meta (Facebook/Instagram). Kernen i pitchen: annoncer bliver trætte ("ad fatigue") og mister effekt, så der skal hele tiden nye varianter til - Vedio leverer dem hurtigt og billigt ud fra kundens eget materiale, så kunden slipper for selv at producere. SDR'ens mål er at booke en 20-minutters demo (ikke at sælge i telefonen). Lov aldrig konkrete resultater (fx "20 % billigere klik") - hold dig til det, pitchen og scripts siger.`,
     pitch ? `SDR'ens pitch (den de faktisk bruger):\n${pitch}` : "",
@@ -18176,6 +18190,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
+      if (typeof b.onboarding_until === "string" && (b.onboarding_until === "" || /^\d{4}-\d{2}-\d{2}$/.test(b.onboarding_until))) d.sdr_settings.onboarding_until = b.onboarding_until;
       if (Number.isFinite(Number(b.no_answer_park_after)) && Number(b.no_answer_park_after) >= 2) d.sdr_settings.no_answer_park_after = Math.min(10, Math.round(Number(b.no_answer_park_after)));
       if (Number.isFinite(Number(b.no_answer_park_days)) && Number(b.no_answer_park_days) >= 7) d.sdr_settings.no_answer_park_days = Math.min(365, Math.round(Number(b.no_answer_park_days)));
       if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);

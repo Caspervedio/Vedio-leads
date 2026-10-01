@@ -154,6 +154,7 @@
   </section>
 
   <section id="view-results" class="view">
+    <div class="onboard" id="onboard" hidden></div>
     <div class="pay" id="pay" hidden></div>
     <div class="tiles" id="tiles"></div>
     <div class="tablewrap" id="coachwrap" hidden>
@@ -735,6 +736,10 @@ function renderCoaching() {
 }
 function renderResults() {
   const st = S.stats || {};
+  // October is a learning month: say it where the numbers are, so nobody
+  // reads them against a fully run-in team.
+  const ob = S.onboarding; const obx = $('onboard');
+  if (obx) { obx.hidden = !ob; if (ob) obx.innerHTML = `<span class="ob-ic">🌱</span><div><b>Oplæringsperiode til og med ${e(ob.label)}</b><span>Oktober er stadig en lære- og onboardingmåned. 4 demoer om dagen er ikke målet endnu - fokus er at blive god til samtalen: flere ja'er, bedre åbninger, flere der bliver i røret. Tallene her er til at se fremgang, ikke til at blive målt på.</span></div>`; }
   // Primary: what matters today. Anton, big, tooltips only.
   const primary = [['callsToday', 'opkald i dag', true], ['demosToday', 'demoer i dag', true], ['callsWeek', 'opkald denne uge'], ['demosWeek', 'demoer denne uge'], ['callsPerDemo30', 'opkald pr. demo · 30 dage']];
   $('tiles').className = 'tiles five';
