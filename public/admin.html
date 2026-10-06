@@ -39,6 +39,8 @@
 #drill table{width:100%}
 #drill .nowrap{white-space:nowrap}
 #drill .drillnote{max-width:280px;color:var(--txt-soft);font-size:13px}
+#cmp-card .cmp-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:0 24px 14px;border-bottom:1px solid var(--line)}
+#cmp-card .cmp-head p{font-size:13px;color:var(--txt-soft);max-width:640px}
 #cmp-card .cmp-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
 #cmp-card select,#cmp-card input[type=date]{border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;font:inherit;font-size:13px;background:var(--white)}
 #cmp-card .funnels{display:grid;gap:12px;padding:18px 24px}
@@ -299,8 +301,9 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
       <div class="trend" id="trend"></div>
     </div>
-    <div class="tablewrap" id="cmp-card">
-      <div class="thead"><div><h3>Sammenlign SDR'er</h3><p id="cmp-sub">Hvem når flest, og hvem gør samtalerne til demoer. Klik på et tal for at se rækkerne bag det.</p></div>
+    <details class="deeper" id="cmp-card" ontoggle="cmpToggle(this.open)">
+      <summary><span>Sammenlign SDR'er</span><span class="sub">Tragt, nøgletal og hvordan opkaldene ender - side om side for en periode.</span></summary>
+      <div class="cmp-head"><p id="cmp-sub">Hvem når flest, og hvem gør samtalerne til demoer. Klik på et tal for at se rækkerne bag det.</p>
         <div class="cmp-tools">
           <select id="cmp-period" onchange="cmpSetPeriod(this.value)">
             <option value="week">Denne uge</option><option value="7">Sidste 7 dage</option><option value="30">Sidste 30 dage</option><option value="month">Denne måned</option><option value="lastmonth">Sidste måned</option><option value="custom">Vælg datoer…</option>
@@ -308,7 +311,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
           <span id="cmp-custom" hidden><input type="date" id="cmp-from"> - <input type="date" id="cmp-to"> <button class="pill sm" onclick="cmpLoad()">Vis</button></span>
         </div></div>
       <div id="cmp-body"><p class="sub" style="padding:18px 24px">Henter…</p></div>
-    </div>
+    </details>
     <details class="deeper" open>
       <summary><span>Puljens tilstand</span><span class="sub">Hvad SDR'erne kan ringe til lige nu, og hvad der venter.</span></summary>
       <div class="subtiles" id="pooltiles"></div>
@@ -464,7 +467,9 @@ async function loadOverview() {
   try { O = await get('/api/sdr/admin/overview'); } catch (ex) { if (/Kun admin/.test(ex.message)) { location.replace('/'); return; } toast(ex.message, 4000); return; }
   me = O.me; $('me-name').textContent = me.name;
   renderOverview(); renderIntake(); renderDemos(); fillSources();
-  if (!CMP.at || Date.now() - CMP.at > 5 * 60e3) cmpLoad();
+  // Open again if this admin left it open; opening fires the toggle that loads it.
+  if (!CMP.init) { CMP.init = true; try { if (localStorage.getItem('vl_cmp_open') === '1') $('cmp-card').open = true; } catch {} }
+  else if ($('cmp-card').open && (!CMP.at || Date.now() - CMP.at > 5 * 60e3)) cmpLoad();
 }
 /* Health colours on the SDR table. The benchmarks are the daily goal (their
    own number) plus talk time and calls-per-demo from ⚙. Green = at or past it,
@@ -531,6 +536,11 @@ function renderDrill() {
    never "best" - three calls say nothing about a person. */
 const CMP = { data: null, at: 0, seq: 0 };
 let cmpPeriod = (() => { try { return localStorage.getItem('vl_cmp_period') || '30'; } catch { return '30'; } })();
+// Folded away by default - Overblik has enough on it. Opening it fetches.
+function cmpToggle(open) {
+  try { localStorage.setItem('vl_cmp_open', open ? '1' : '0'); } catch {}
+  if (open && (!CMP.at || Date.now() - CMP.at > 5 * 60e3)) cmpLoad();
+}
 function cmpKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function cmpRange(p) {
   const today = new Date(drillToday() + 'T12:00:00'); const t = cmpKey(today);

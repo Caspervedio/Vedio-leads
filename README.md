@@ -119,7 +119,8 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   hvilke leads, hvornår, udfald, note og varighed - for demoer også hvor demoen
   står nu. For nye leads deles der op pr. kilde. Tallene lægges sammen præcis
   som i stripen.
-- **Sammenlign SDR'er** (under 14-dages stripen) — for en valgt periode (denne
+- **Sammenlign SDR'er** (fold-ud under 14-dages stripen, lukket som standard;
+  henter først tal, når den åbnes, og husker om man lod den stå åben) — for en valgt periode (denne
   uge, 7/30 dage, denne/sidste måned eller egne datoer): en tragt pr. SDR
   (opkald → samtaler → demoer → kvalificerede, med andelen der går videre),
   nøgletal side om side (kontaktrate, demo pr. samtale, demo pr. opkald, opkald
