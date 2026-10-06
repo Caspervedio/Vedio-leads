@@ -119,6 +119,14 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   hvilke leads, hvornår, udfald, note og varighed - for demoer også hvor demoen
   står nu. For nye leads deles der op pr. kilde. Tallene lægges sammen præcis
   som i stripen.
+- **Sammenlign SDR'er** (under 14-dages stripen) — for en valgt periode (denne
+  uge, 7/30 dage, denne/sidste måned eller egne datoer): en tragt pr. SDR
+  (opkald → samtaler → demoer → kvalificerede, med andelen der går videre),
+  nøgletal side om side (kontaktrate, demo pr. samtale, demo pr. opkald, opkald
+  pr. demo, kvalificeringsrate, opkald pr. dag, provision, research, fjernet) og
+  hvordan opkaldene ender. Grønt = bedst blandt SDR'erne; gråt = for lidt bag
+  tallet (fx under 30 opkald eller 15 samtaler) til at sammenligne. Samme tal
+  som Excel-eksporten - de regnes ét sted (`sdrPeriodStats`).
 - **Eksportér resultater** (knap på Per SDR-kortet i Overblik) — et Excel-ark (.xlsx) for en valgt periode,
   evt. én SDR: Oversigt med nøgletal pr. SDR, Per dag, Demoer, alle Opkald,
   Nye leads pr. kilde og Definitioner. Samme tælleregler som Overblik.

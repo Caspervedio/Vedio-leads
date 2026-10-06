@@ -16183,7 +16183,8 @@ function sdrAdminGuard(req, res) { if (!sdrIsAdmin(req.userId)) { res.status(403
 // which leads. Counted exactly as the overview and the 14-day strip count
 // (calls[] by day, sdrIsTalk, duration_s, addedAt), so the rows always add up
 // to the number that was clicked.
-const SDR_DRILL = { calls: "Opkald", talks: "Samtaler", demos: "Demoer", talk: "Taletid", new: "Nye leads" };
+// "booked" is the export's and Resultater's demo: stands as booked now, booked in the period.
+const SDR_DRILL = { calls: "Opkald", talks: "Samtaler", demos: "Demoer", booked: "Demoer", talk: "Taletid", new: "Nye leads" };
 app.get("/api/sdr/admin/drill", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
@@ -16200,6 +16201,13 @@ app.get("/api/sdr/admin/drill", authMiddleware, (req, res) => {
     for (const l of d.leads || []) {
       const p = sdrPrimaryContact(l) || {};
       const lead = { cvr: l.cvr, name: l.name || "", city: l.city || "", phone: sdrPhone(l).phone, contact: p.name || "", contact_title: p.title || "" };
+      if (metric === "booked") {
+        if (l.lastAction !== "demo-booked" || !inRange(l.demo_booked_at) || (sdr && l.demo_booked_by !== sdr)) continue;
+        const c = (Array.isArray(l.calls) ? l.calls : []).filter((x) => x && x.action === "demo-booked").pop() || {};
+        add(l.demo_booked_by, nameById[l.demo_booked_by] || l.demo_booked_by, 0);
+        rows.push({ ...lead, at: l.demo_booked_at, group: l.demo_booked_by, by_name: nameById[l.demo_booked_by] || l.demo_booked_by, action: "demo-booked", note: c.note || "", duration_s: null, demo_status: l.demo_status || "pending" });
+        continue;
+      }
       if (metric === "new") {
         if (!inRange(l.addedAt)) continue;
         const src = sdrSourceLabel(l) || "ukendt";
@@ -16365,7 +16373,10 @@ const SDR_EXPORT_OUTCOMES = [["demo-booked", "Demo booket"], ["follow-up", "Føl
 const SDR_EXPORT_WEEKDAYS = ["søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"];
 // Everything the sheet says, for [fromKey, toKey] (local dates, inclusive),
 // optionally one SDR. Counts use the same rules as the admin overview.
-function sdrExportSheets(d, { fromKey, toKey, sdr }) {
+// The numbers for [fromKey, toKey] (local dates, inclusive), optionally one
+// SDR - shared by the Excel export and "Sammenlign SDR'er" on Overblik, so
+// the sheet and the screen can never disagree.
+function sdrPeriodStats(d, { fromKey, toKey, sdr }) {
   const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
   const who = (id) => nameById[id] || id || "";
   const settings = sdrSettings(d); const rate = Number(settings.commission_dkk || 0);
@@ -16406,6 +16417,10 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   for (const l of approved) { const r = demoCommissionRate(l, settings); for (const m of [tot, per[l.demo_booked_by]]) { if (!m) continue; m.approved++; m.commission += r; } }
   const newLeads = leads.filter((l) => l.addedAt && inP(l.addedAt));
   for (const l of newLeads) { const bd = byDay[sdrDayKey(l.addedAt)]; if (bd) bd.newLeads++; }
+  return { users, nameById, who, settings, rate, leads, dayKeys, calls, demos, research, screens, approved, ids, tot, per, byDay, newLeads };
+}
+function sdrExportSheets(d, { fromKey, toKey, sdr }) {
+  const { who, settings, rate, dayKeys, calls, demos, ids, tot, per, byDay, newLeads } = sdrPeriodStats(d, { fromKey, toKey, sdr });
 
   const ratio = (a, b) => (b > 0 ? a / b : null);
   const fmtD = (k) => { const [y, m, dd] = k.split("-"); return `${dd}-${m}-${y}`; };
@@ -16496,6 +16511,23 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
   ];
 }
+// "Sammenlign SDR'er" on Overblik: the export's numbers for a period, one
+// column per SDR - every SDR, also one with nothing in the period.
+app.get("/api/sdr/admin/compare", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    const toKey = re.test(String(req.query.to || "")) ? String(req.query.to) : sdrDayKey();
+    const fromKey = re.test(String(req.query.from || "")) ? String(req.query.from) : toKey;
+    if (fromKey > toKey) return res.status(400).json({ error: "Startdatoen ligger efter slutdatoen" });
+    if ((new Date(toKey) - new Date(fromKey)) / 864e5 > 800) return res.status(400).json({ error: "Højst to år ad gangen" });
+    const st = sdrPeriodStats(loadPool(), { fromKey, toKey, sdr: null });
+    const sdrIds = st.users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled).map((u) => u.id);
+    const slim = (m) => m ? { calls: m.calls, talks: m.talks, demos: m.demos, qual: m.qual, unqual: m.unqual, pending: m.pending, approved: m.approved, commission: m.commission, out: m.out, secs: m.secs, timed: m.timed, research: m.research, screened: m.screened, days: m.days.size }
+      : { calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, approved: 0, commission: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: 0 };
+    res.json({ ok: true, from: fromKey, to: toKey, sdrs: [...new Set([...sdrIds, ...st.ids])].filter((id) => !sdrIsAdmin(id)).map((id) => ({ id, name: st.who(id), ...slim(st.per[id]) })), team: slim(st.tot) });
+  } catch (e) { sdrFail(res, e, "admin/compare"); }
+});
 app.get("/api/sdr/admin/export", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;

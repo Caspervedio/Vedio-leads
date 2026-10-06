@@ -39,6 +39,38 @@
 #drill table{width:100%}
 #drill .nowrap{white-space:nowrap}
 #drill .drillnote{max-width:280px;color:var(--txt-soft);font-size:13px}
+#cmp-card .cmp-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+#cmp-card select,#cmp-card input[type=date]{border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;font:inherit;font-size:13px;background:var(--white)}
+#cmp-card .funnels{display:grid;gap:12px;padding:18px 24px}
+#cmp-card .funnel{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;background:var(--white)}
+#cmp-card .funnel.team{background:var(--paper)}
+#cmp-card .funnel h4{font-size:14px;font-weight:800;margin-bottom:10px}
+#cmp-card .fs{display:flex;align-items:baseline;gap:8px;border-radius:8px;padding:2px 6px;margin:0 -6px}
+#cmp-card .fs b{font-size:24px;font-weight:800;letter-spacing:-.02em}
+#cmp-card .fs span{font-size:12.5px;color:var(--txt-soft)}
+#cmp-card .fs.click{cursor:pointer}
+#cmp-card .fs.click:hover{background:var(--violet-soft)}
+#cmp-card .fr{font-size:12px;font-weight:800;color:var(--violet);padding:2px 0 4px 10px;border-left:2px solid var(--violet-soft);margin:2px 0 4px 6px}
+#cmp-card .fr span{font-weight:500;color:var(--txt-soft)}
+#cmp-card table.cmp{width:100%}
+#cmp-card table.cmp th.team,#cmp-card table.cmp td.team{background:var(--paper)}
+#cmp-card table.cmp td.cmp-l{color:var(--txt-soft);font-size:13.5px}
+#cmp-card table.cmp td.cmp-l .q{display:inline-block;width:15px;height:15px;line-height:15px;text-align:center;border-radius:50%;background:var(--paper);font-size:10px;font-weight:800;color:var(--txt-faint);cursor:help}
+#cmp-card table.cmp tr.cmp-grp td{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);padding-top:18px;background:transparent}
+#cmp-card table.cmp td.best{color:var(--approve);font-weight:800;background:#e6f6ec}
+#cmp-card table.cmp td.thin{color:var(--txt-faint)}
+#cmp-card table.cmp td.click{cursor:pointer}
+#cmp-card table.cmp td.click:hover{background:var(--violet-soft)}
+#cmp-card .mix{padding:18px 24px 22px;border-top:1px solid var(--line)}
+#cmp-card .mix h4{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
+#cmp-card .mixrow{display:grid;grid-template-columns:110px 1fr;gap:12px;align-items:center;margin-bottom:8px}
+#cmp-card .mixname{font-size:13px;font-weight:700}
+#cmp-card .mixbar{display:flex;height:18px;border-radius:6px;overflow:hidden;background:var(--paper)}
+#cmp-card .mixbar i{display:block;height:100%}
+#cmp-card .mixbar em{font-size:12px;color:var(--txt-faint);padding:0 8px;line-height:18px;font-style:normal}
+#cmp-card .mixlegend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:12px;color:var(--txt-soft)}
+#cmp-card .mixlegend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+@media (max-width:760px){#cmp-card .funnels{grid-template-columns:1fr 1fr !important}#cmp-card table.cmp{font-size:12.5px}}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -267,6 +299,16 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
       <div class="trend" id="trend"></div>
     </div>
+    <div class="tablewrap" id="cmp-card">
+      <div class="thead"><div><h3>Sammenlign SDR'er</h3><p id="cmp-sub">Hvem når flest, og hvem gør samtalerne til demoer. Klik på et tal for at se rækkerne bag det.</p></div>
+        <div class="cmp-tools">
+          <select id="cmp-period" onchange="cmpSetPeriod(this.value)">
+            <option value="week">Denne uge</option><option value="7">Sidste 7 dage</option><option value="30">Sidste 30 dage</option><option value="month">Denne måned</option><option value="lastmonth">Sidste måned</option><option value="custom">Vælg datoer…</option>
+          </select>
+          <span id="cmp-custom" hidden><input type="date" id="cmp-from"> - <input type="date" id="cmp-to"> <button class="pill sm" onclick="cmpLoad()">Vis</button></span>
+        </div></div>
+      <div id="cmp-body"><p class="sub" style="padding:18px 24px">Henter…</p></div>
+    </div>
     <details class="deeper" open>
       <summary><span>Puljens tilstand</span><span class="sub">Hvad SDR'erne kan ringe til lige nu, og hvad der venter.</span></summary>
       <div class="subtiles" id="pooltiles"></div>
@@ -422,6 +464,7 @@ async function loadOverview() {
   try { O = await get('/api/sdr/admin/overview'); } catch (ex) { if (/Kun admin/.test(ex.message)) { location.replace('/'); return; } toast(ex.message, 4000); return; }
   me = O.me; $('me-name').textContent = me.name;
   renderOverview(); renderIntake(); renderDemos(); fillSources();
+  if (!CMP.at || Date.now() - CMP.at > 5 * 60e3) cmpLoad();
 }
 /* Health colours on the SDR table. The benchmarks are the daily goal (their
    own number) plus talk time and calls-per-demo from ⚙. Green = at or past it,
@@ -448,7 +491,7 @@ async function drill(metric, from, to, sdr) {
 const DEMO_ST = { pending: ['Afventer', ''], qualified: ['Kvalificeret', 'ok'], unqualified: ['Ikke kval.', 'no'], changed: ['Ændret siden', ''] };
 function renderDrill() {
   const D = DRILL; if (!D || !$('drill')) return;
-  const isNew = D.metric === 'new', isTalk = D.metric === 'talk';
+  const isNew = D.metric === 'new', isTalk = D.metric === 'talk', isDemo = D.metric === 'demos' || D.metric === 'booked';
   const rows = D.rows.filter((r) => !drillGroup || r.group === drillGroup);
   const head = `${e(D.label)}${D.sdr_name ? ' · ' + e(D.sdr_name) : ''} · ${e(drillSpan(D.from, D.to))}`;
   const sum = isTalk ? `${fmtDur(D.secs)} på ${D.total} opkald` : `${D.total} i alt`;
@@ -458,7 +501,7 @@ function renderDrill() {
       ${D.groups.map((g) => `<button class="${drillGroup === g.key ? 'on' : ''}" onclick="drillGroup='${e(g.key)}';renderDrill()">${e(g.name)}<span class="n">${isTalk ? fmtDur(g.secs) : g.n}</span></button>`).join('')}
     </div>` : '';
   const th = isNew ? '<th>Tilføjet</th><th>Virksomhed</th><th>Kilde</th><th>Kontakt</th><th>Status</th>'
-    : `<th>Tid</th><th>SDR</th><th>Virksomhed</th><th>Kontakt</th><th>${D.metric === 'demos' ? 'Demo nu' : 'Udfald'}</th><th>Note</th>${isTalk || D.metric !== 'demos' ? '<th class="num">Varighed</th>' : ''}`;
+    : `<th>Tid</th><th>SDR</th><th>Virksomhed</th><th>Kontakt</th><th>${isDemo ? 'Demo nu' : 'Udfald'}</th><th>Note</th>${isDemo ? '' : '<th class="num">Varighed</th>'}`;
   const tr = (r) => isNew ? `<tr class="rowlink" onclick="openLead('${e(r.cvr)}')">
       <td class="nowrap">${e(fmtWhen(r.at))}</td>
       <td><b>${e(r.name)}</b><span class="sub">${e(r.city || '')}${r.web ? (r.city ? ' · ' : '') + e(r.web) : ''}</span></td>
@@ -472,7 +515,7 @@ function renderDrill() {
       <td>${r.contact ? `<b>${e(r.contact)}</b><span class="sub">${e(r.contact_title || '')}</span>` : '<span class="sub">Omstilling</span>'}</td>
       <td>${r.demo_status ? `<span class="tag ${DEMO_ST[r.demo_status][1]}">${DEMO_ST[r.demo_status][0]}</span>` : `<span class="tag">${e(ACTION_LABEL[r.action] || r.action)}</span>`}</td>
       <td class="drillnote">${e(r.note || '')}</td>
-      ${isTalk || D.metric !== 'demos' ? `<td class="num nowrap">${r.duration_s ? e(fmtDur(r.duration_s)) : '-'}</td>` : ''}
+      ${isDemo ? '' : `<td class="num nowrap">${r.duration_s ? e(fmtDur(r.duration_s)) : '-'}</td>`}
     </tr>`;
   $('drill').innerHTML = `<div class="modal drillbox">
     <div class="drillhead"><div><h3>${head}</h3><p>${sum}${D.rows.length < D.total ? ` - viser de ${D.rows.length} nyeste` : ''}. Klik på en række for at åbne leadet.</p></div>
@@ -480,6 +523,107 @@ function renderDrill() {
     ${chips}
     <div class="drillscroll"><table><thead><tr>${th}</tr></thead><tbody>${rows.map(tr).join('') || `<tr class="empty-row"><td colspan="7">Ingen.</td></tr>`}</tbody></table></div>
   </div>`;
+}
+/* ─── Sammenlign SDR'er ─────────────────────────────────────────────────────
+   The export's numbers for a period, side by side: the funnel (opkald →
+   samtaler → demoer → kvalificeret), the key rates with the best one marked,
+   and how each SDR's calls end. A rate resting on too little is grey and
+   never "best" - three calls say nothing about a person. */
+const CMP = { data: null, at: 0, seq: 0 };
+let cmpPeriod = (() => { try { return localStorage.getItem('vl_cmp_period') || '30'; } catch { return '30'; } })();
+function cmpKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function cmpRange(p) {
+  const today = new Date(drillToday() + 'T12:00:00'); const t = cmpKey(today);
+  const back = (n) => { const x = new Date(today); x.setDate(x.getDate() - n); return cmpKey(x); };
+  if (p === 'week') return [drillMonday(), t];
+  if (p === '7') return [back(6), t];
+  if (p === 'month') return [t.slice(0, 8) + '01', t];
+  if (p === 'lastmonth') { const a = new Date(today.getFullYear(), today.getMonth() - 1, 1), b = new Date(today.getFullYear(), today.getMonth(), 0); return [cmpKey(a), cmpKey(b)]; }
+  if (p === 'custom') return [$('cmp-from').value || back(29), $('cmp-to').value || t];
+  return [back(29), t];
+}
+function cmpSetPeriod(p) {
+  cmpPeriod = p; try { localStorage.setItem('vl_cmp_period', p); } catch {}
+  $('cmp-custom').hidden = p !== 'custom';
+  if (p === 'custom') { const [f, t] = CMP.data ? [CMP.data.from, CMP.data.to] : cmpRange('30'); if (!$('cmp-from').value) $('cmp-from').value = f; if (!$('cmp-to').value) $('cmp-to').value = t; return; }
+  cmpLoad();
+}
+async function cmpLoad() {
+  if ($('cmp-period') && $('cmp-period').value !== cmpPeriod) $('cmp-period').value = cmpPeriod;
+  $('cmp-custom').hidden = cmpPeriod !== 'custom';
+  const [from, to] = cmpRange(cmpPeriod); const seq = ++CMP.seq;
+  try { const d = await get(`/api/sdr/admin/compare?from=${from}&to=${to}`); if (seq !== CMP.seq) return; CMP.data = d; CMP.at = Date.now(); renderCmp(); }
+  catch (ex) { if (seq === CMP.seq) $('cmp-body').innerHTML = `<p class="sub" style="padding:18px 24px">Kunne ikke hente: ${e(ex.message)}</p>`; }
+}
+const CMP_OUT = [['demo-booked', 'Demo booket', '#1FA160'], ['follow-up', 'Følg op', '#7C3AED'], ['email-sent', 'Mail sendt', '#1b6b8a'], ['not-now', 'Ikke nu', '#C9974F'], ['not-relevant', 'Ikke relevant', '#d9826f'], ['no-answer', 'Ingen svar', '#cfcbc2'], ['ivr', 'Telefonmenu', '#e2ded6'], ['wrong-number', 'Forkert nummer', '#b9a99f']];
+function renderCmp() {
+  const D = CMP.data; if (!D || !$('cmp-body')) return;
+  const people = D.sdrs; const cols = [...people, { id: '', name: 'Team', team: true, ...D.team }];
+  // Raw ratios - rounding happens on screen, so "best" is decided on the real numbers.
+  const pct = (a, b) => (b > 0 ? 100 * a / b : null);
+  const one = (a, b) => (b > 0 ? a / b : null);
+  // Small rates get a decimal: 3,9% and 5,9% are not the same as "4%" and "6%".
+  const pf = (v) => v == null ? '-' : (v < 10 && v > 0 ? v.toFixed(1).replace('.', ',') : String(Math.round(v))) + '%';
+  // [label, value, format, better ('hi' | 'lo' | ''), thin (too little to compare), drill metric, title]
+  const M = [
+    ['Aktivitet'],
+    ['Opkald', (m) => m.calls, 'n', '', () => false, 'calls'],
+    ['Dage med opkald', (m) => m.days, 'n', '', () => false],
+    ['Opkald pr. dag med opkald', (m) => one(m.calls, m.days), 'd', 'hi', (m) => m.days < 2, null, 'Opkald delt med de dage, SDR\'en har ringet - så en fridag ikke trækker ned.'],
+    ['Samtaler', (m) => m.talks, 'n', '', () => false, 'talks', 'Opkald hvor de fik fat i nogen: Demo, Følg op, Ikke nu, Mail sendt - og Ikke relevant på mindst 20 sek.'],
+    ['Kontaktrate', (m) => pct(m.talks, m.calls), '%', 'hi', (m) => m.calls < 30, null, 'Samtaler delt med opkald. Grå under 30 opkald.'],
+    ['Konvertering'],
+    ['Demoer booket', (m) => m.demos, 'n', '', () => false, 'booked', 'Står som booket demo nu og blev booket i perioden - samme tal som Resultater og provisionen.'],
+    ['Demo pr. samtale', (m) => pct(m.demos, m.talks), '%', 'hi', (m) => m.talks < 15, null, 'Den vigtigste: hvor mange af samtalerne der bliver til en demo. Grå under 15 samtaler.'],
+    ['Demo pr. opkald', (m) => pct(m.demos, m.calls), '%', 'hi', (m) => m.calls < 50, null, 'Grå under 50 opkald.'],
+    ['Opkald pr. demo', (m) => one(m.calls, m.demos), 'd', 'lo', (m) => m.demos < 2, null, 'Hvor mange opkald en demo koster. Grå under 2 demoer.'],
+    ['Kvalitet'],
+    ['Kvalificeret', (m) => m.qual, 'n', '', () => false, 'booked', 'Af demoerne booket i perioden: godkendt som kvalificeret.'],
+    ['Ikke kvalificeret', (m) => m.unqual, 'n', '', () => false, 'booked'],
+    ['Afventer vurdering', (m) => m.pending, 'n', '', () => false, 'booked'],
+    ['Kvalificeringsrate', (m) => pct(m.qual, m.qual + m.unqual), '%', 'hi', (m) => m.qual + m.unqual < 3, null, 'Kvalificeret delt med de vurderede (afventende tæller ikke). Grå under 3 vurderede.'],
+    ['Provision, godkendt i perioden', (m) => m.commission, 'kr', '', () => false, null, 'Møder godkendt i perioden gange satsen - lønnen følger lønperioden (29.-28.).'],
+    ['Indsats'],
+    ['Snit tid pr. lead', (m) => (m.timed ? Math.round(m.secs / m.timed) : null), 't', '', (m) => m.timed < 5, null, 'Tid med kortet fremme pr. lead (research + opkald + note), kun opkald ringet fra værktøjet.'],
+    ['Beriget i Research', (m) => m.research, 'n', '', () => false],
+    ['Fjernet uden opkald', (m) => m.screened, 'n', '', () => false],
+  ];
+  const fmt = (v, f) => v == null ? '-' : f === '%' ? pf(v) : f === 'kr' ? fmtKr(v) : f === 't' ? fmtDur(v) : f === 'd' ? (Math.round(v * 10) / 10).toString().replace('.', ',') : String(v);
+  const [from, to] = [D.from, D.to];
+  const body = M.map((r) => {
+    if (r.length === 1) return `<tr class="cmp-grp"><td colspan="${cols.length + 1}">${e(r[0])}</td></tr>`;
+    const [label, fn, f, better, thin, metric, title] = r;
+    const vals = cols.map((m) => fn(m));
+    // Best = highest (or lowest) among the SDRs with enough behind the number.
+    let best = null;
+    if (better) {
+      const ok = people.map((m, i) => ({ v: vals[i], i, thin: thin(m) })).filter((x) => x.v != null && !x.thin);
+      if (ok.length >= 2) { const pick = ok.reduce((a, b) => (better === 'hi' ? b.v > a.v : b.v < a.v) ? b : a); if (ok.some((x) => x.v !== pick.v)) best = pick.i; }
+    }
+    return `<tr><td class="cmp-l"${title ? ` title="${e(title)}"` : ''}>${e(label)}${title ? ' <span class="q">?</span>' : ''}</td>${cols.map((m, i) => {
+      const v = vals[i]; const cls = [m.team ? 'team' : '', i === best ? 'best' : '', better && thin(m) && v != null ? 'thin' : '', metric && v ? 'click' : ''].filter(Boolean).join(' ');
+      const click = metric && v ? ` onclick="drill('${metric}','${from}','${to}'${m.id ? `,'${e(m.id)}'` : ''})"` : '';
+      const tip = better && thin(m) && v != null ? ` title="For lidt at sammenligne på endnu"` : '';
+      return `<td class="num ${cls}"${click}${tip}>${e(fmt(v, f))}</td>`;
+    }).join('')}</tr>`;
+  }).join('');
+  // The funnel, one card per SDR: each step and how many make it to the next.
+  const step = (n, label, rate, rateLabel, metric, m) => `<div class="fs${metric && n ? ' click' : ''}"${metric && n ? ` onclick="drill('${metric}','${from}','${to}'${m.id ? `,'${e(m.id)}'` : ''})"` : ''}><b>${n}</b><span>${label}</span></div>${rate !== undefined ? `<div class="fr">${pf(rate)} <span>${rateLabel}</span></div>` : ''}`;
+  const funnel = cols.map((m) => `<div class="funnel${m.team ? ' team' : ''}"><h4>${e(m.name)}</h4>
+      ${step(m.calls, 'opkald', pct(m.talks, m.calls), 'fik fat i nogen', 'calls', m)}
+      ${step(m.talks, 'samtaler', pct(m.demos, m.talks), 'blev til demo', 'talks', m)}
+      ${step(m.demos, 'demoer', pct(m.qual, m.qual + m.unqual), 'kvalificeret' + (m.pending ? ` · ${m.pending} afventer` : ''), 'booked', m)}
+      ${step(m.qual, 'kvalificerede', undefined, '', 'booked', m)}
+    </div>`).join('');
+  // How the calls end - the share of each outcome.
+  const mix = cols.map((m) => { const n = m.calls || 0;
+    return `<div class="mixrow"><span class="mixname">${e(m.name)}</span><div class="mixbar">${n ? CMP_OUT.map(([a, l, c]) => { const k = (m.out || {})[a] || 0; return k ? `<i style="width:${100 * k / n}%;background:${c}" title="${e(l)}: ${k} (${Math.round(100 * k / n)}%)"></i>` : ''; }).join('') : '<em>ingen opkald</em>'}</div></div>`; }).join('');
+  const legend = CMP_OUT.map(([, l, c]) => `<span><i style="background:${c}"></i>${e(l)}</span>`).join('');
+  const days = Math.round((new Date(to) - new Date(from)) / 864e5) + 1;
+  $('cmp-sub').innerHTML = `${e(drillSpan(from, to))} (${days} ${days === 1 ? 'dag' : 'dage'}). Grønt = bedst blandt SDR'erne; gråt = for lidt bag tallet til at sammenligne. Klik på et tal for at se rækkerne bag det.${O && O.onboarding ? ` <b>Oplæringsperiode til ${e(O.onboarding.label)}.</b>` : ''}`;
+  $('cmp-body').innerHTML = `<div class="funnels" style="grid-template-columns:repeat(${cols.length},1fr)">${funnel}</div>
+    <table class="cmp"><thead><tr><th></th>${cols.map((m) => `<th class="num${m.team ? ' team' : ''}">${e(m.name)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+    <div class="mix"><h4>Sådan ender opkaldene</h4>${mix}<div class="mixlegend">${legend}</div></div>`;
 }
 function benchTone(value, bench, lowerIsBetter) {
   if (value == null || !bench || !isFinite(bench)) return '';
