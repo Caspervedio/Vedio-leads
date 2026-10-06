@@ -114,6 +114,11 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 - **Overblik** — tal for i dag og ugen, opkald pr. bookede demo over 30 dage,
   per SDR med opkald, taletid og manuelt berigede leads, provision, puljens
   tilstand, 14-dages strip og Gemini-opsummering af ugen.
+  Klik på et tal (14-dages strip, Opkald/Demoer/Samtaler-felterne øverst,
+  opkald og demoer i Per SDR) for at se rækkerne bag det, delt op pr. SDR:
+  hvilke leads, hvornår, udfald, note og varighed - for demoer også hvor demoen
+  står nu. For nye leads deles der op pr. kilde. Tallene lægges sammen præcis
+  som i stripen.
 - **Eksportér resultater** (knap på Per SDR-kortet i Overblik) — et Excel-ark (.xlsx) for en valgt periode,
   evt. én SDR: Oversigt med nøgletal pr. SDR, Per dag, Demoer, alle Opkald,
   Nye leads pr. kilde og Definitioner. Samme tælleregler som Overblik.

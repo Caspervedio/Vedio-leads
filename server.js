@@ -16179,6 +16179,54 @@ app.post("/api/sdr/debrief", authMiddleware, async (req, res) => {
 });
 // ── Admin (founders) - overview, pool quality, intake, fine-tune ─────────────
 function sdrAdminGuard(req, res) { if (!sdrIsAdmin(req.userId)) { res.status(403).json({ error: "Kun admin" }); return false; } return true; }
+// What a number on Overblik is made of - "4 demoer" → who booked them and on
+// which leads. Counted exactly as the overview and the 14-day strip count
+// (calls[] by day, sdrIsTalk, duration_s, addedAt), so the rows always add up
+// to the number that was clicked.
+const SDR_DRILL = { calls: "Opkald", talks: "Samtaler", demos: "Demoer", talk: "Taletid", new: "Nye leads" };
+app.get("/api/sdr/admin/drill", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const metric = SDR_DRILL[req.query.metric] ? String(req.query.metric) : "calls";
+    const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+    const to = isDay(req.query.to) ? String(req.query.to) : sdrDayKey();
+    const from = isDay(req.query.from) ? String(req.query.from) : to;
+    if (from > to) return res.status(400).json({ error: "Fra-datoen ligger efter til-datoen" });
+    const sdr = metric === "new" ? "" : String(req.query.sdr || "");
+    const d = loadPool(); const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const inRange = (at) => { if (!at) return false; const k = sdrDayKey(at); return k >= from && k <= to; };
+    const rows = []; const groups = {};
+    const add = (key, name, secs) => { const g = groups[key] || (groups[key] = { key, name, n: 0, secs: 0 }); g.n++; g.secs += secs; };
+    for (const l of d.leads || []) {
+      const p = sdrPrimaryContact(l) || {};
+      const lead = { cvr: l.cvr, name: l.name || "", city: l.city || "", phone: sdrPhone(l).phone, contact: p.name || "", contact_title: p.title || "" };
+      if (metric === "new") {
+        if (!inRange(l.addedAt)) continue;
+        const src = sdrSourceLabel(l) || "ukendt";
+        add(src, src, 0);
+        rows.push({ ...lead, at: l.addedAt, group: src, web: String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/$/, ""), callable: sdrCallable(l), status: l.lastAction || null, archived: l.lastAction === "not-relevant" });
+        continue;
+      }
+      for (const c of Array.isArray(l.calls) ? l.calls : []) {
+        if (!c || !inRange(c.at) || (sdr && c.by !== sdr)) continue;
+        const secs = Number(c.duration_s) > 0 ? Number(c.duration_s) : 0;
+        if ((metric === "demos" && c.action !== "demo-booked") || (metric === "talks" && !sdrIsTalk(c)) || (metric === "talk" && !secs)) continue;
+        add(c.by, nameById[c.by] || c.by, secs);
+        rows.push({
+          ...lead, at: c.at, group: c.by, by_name: nameById[c.by] || c.by, action: c.action, note: c.note || "", duration_s: secs || null,
+          // Where the demo stands now - or that the lead has moved on since.
+          demo_status: c.action === "demo-booked" ? (l.lastAction === "demo-booked" ? (l.demo_status || "pending") : "changed") : null,
+        });
+      }
+    }
+    rows.sort((a, b) => new Date(b.at) - new Date(a.at));
+    res.json({
+      ok: true, metric, label: SDR_DRILL[metric], from, to, sdr, sdr_name: sdr ? (nameById[sdr] || sdr) : "",
+      total: rows.length, secs: rows.reduce((a, r) => a + (r.duration_s || 0), 0),
+      groups: Object.values(groups).sort((a, b) => b.n - a.n), rows: rows.slice(0, 2000),
+    });
+  } catch (e) { sdrFail(res, e, "admin/drill"); }
+});
 function sdrDayKeys(n, now) { const out = []; for (let i = n - 1; i >= 0; i--) { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); out.push(sdrDayKey(d)); } return out; }
 const sdrIsActive = (l) => l.lastAction !== "not-relevant" && !l.twenty_opportunity_id;
 app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
