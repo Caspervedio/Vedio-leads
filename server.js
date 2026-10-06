@@ -15682,6 +15682,85 @@ app.post("/api/sdr/research/note", authMiddleware, (req, res) => {
 // the leads themselves - no new storage, so it also covers everything that
 // happened before this existed.
 const SDR_DECLINED = { "not-relevant": "Ikke relevant", "not-now": "Ikke nu", "wrong-number": "Forkert nummer" };
+// A no from one of us: the last call carries it, or "Fjern fra listen"
+// archived it without a call. lastAction still matching is what says the no
+// is in force - a lead taken back keeps the call in its history but drops
+// out. The pool's own clean-ups (Apollo, ICP caps, non-advertisers) have
+// neither and aren't ours to take back.
+function sdrDeclinedOf(l) {
+  if (!l || !SDR_DECLINED[l.lastAction]) return null;
+  const calls = Array.isArray(l.calls) ? l.calls : [];
+  const last = calls.length ? calls[calls.length - 1] : null;
+  if (last && last.by && last.action === l.lastAction) return { by: last.by, at: last.at, action: l.lastAction, label: SDR_DECLINED[l.lastAction], note: last.note || "" };
+  if (l.lastAction === "not-relevant" && l.archived_by) {
+    const scr = (Array.isArray(l.screen_log) ? l.screen_log : []).filter((s) => s && s.by === l.archived_by).pop();
+    const n = (Array.isArray(l.note_log) ? l.note_log : []).find((x) => x && x.at === l.archived_at && x.by === l.archived_by);
+    return {
+      by: l.archived_by, at: l.archived_at || (scr && scr.at) || null, action: "not-relevant",
+      label: scr && SDR_SCREEN[scr.reason] ? SDR_SCREEN[scr.reason].label : SDR_DECLINED["not-relevant"],
+      note: n ? String(n.text || "").replace(/^Fjernet fra listen uden opkald: [^-]*(- )?/, "").trim() : "",
+    };
+  }
+  return null;
+}
+// What stops a no from going back on a list - shown on the row instead of the button.
+function sdrReopenBlock(l) {
+  if (l.twenty_opportunity_id) return "Ligger i Twenty";
+  if (l.retry_pool) return "Ligger i Genopring hos admin";
+  if (sdrIsCurrentCustomer(l)) return "Er kunde hos os";
+  return null;
+}
+function sdrDeclinedRow(l, no, userId, nameById) {
+  const c = sdrPrimaryContact(l) || {};
+  return {
+    cvr: l.cvr, name: l.name || "", renamed_from: l.renamed_from || "", city: l.city || "", niche: l.ind || l.industry || l.niche || "",
+    web: String(l.web || l.website || "").replace(/^https?:\/\//, "").replace(/\/$/, ""),
+    phone: sdrPhone(l).phone, contact: c.name || "", contact_email: c.email || "",
+    action: no.action, label: no.label, at: no.at, note: no.note,
+    by: no.by, by_name: nameById[no.by] || no.by, mine: no.by === userId,
+    // "Ikke nu" comes back on its own; it can still be pulled forward.
+    returns_at: l.resurface_at || l.deferred_until || null,
+    blocked: sdrReopenBlock(l), callable: sdrCallable(l),
+  };
+}
+// Everything a person might remember a lead by: the company, the person, a
+// number, or something written in a note ("rune@…" sat only in a note).
+function sdrLeadHit(l, q, qd) {
+  const has = (s) => { const t = String(s || "").toLowerCase(); return !!t && (t.includes(q) || (qd.length >= 4 && t.replace(/[^0-9a-zæøå@.]/g, "").includes(qd))); };
+  const contacts = Array.isArray(l.contacts) ? l.contacts : [];
+  if ([l.name, l.renamed_from, l.cvr, l.city, l.web, l.website, l.phone, l.ph, l.ind].some(has)) return { where: "lead" };
+  // The primary contact's name is already on the row - no need to say it twice.
+  const primary = sdrPrimaryContact(l);
+  for (const c of contacts) if (c && [c.name, c.title, c.email, c.phone].some(has)) {
+    if (c === primary && !has(c.email) && !has(c.phone)) return { where: "lead" };
+    return { where: "contact", text: [c.name, c.email].filter(Boolean).join(" · ") };
+  }
+  if (has(l.email_to)) return { where: "mail", text: l.email_to };
+  const texts = [...(Array.isArray(l.note_log) ? l.note_log : []).map((n) => n && n.text), ...(Array.isArray(l.calls) ? l.calls : []).map((c) => c && c.note), l.last_note];
+  for (const t of texts.reverse()) if (has(t)) return { where: "note", text: String(t).slice(0, 160) };
+  return null;
+}
+// "Sagt nej til": my own nos by default, the whole team's on request, and a
+// search through all of them - name, person, number, email or a note.
+app.get("/api/sdr/declined", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const team = req.query.scope === "team" || sdrIsAdmin(req.userId);
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const qd = q.replace(/[^0-9a-zæøå@.]/g, "");
+    const rows = []; let mine = 0, all = 0;
+    for (const l of d.leads || []) {
+      const no = sdrDeclinedOf(l); if (!no) continue;
+      all++; if (no.by === req.userId) mine++;
+      if (!team && no.by !== req.userId) continue;
+      let hit = null;
+      if (q.length >= 2) { hit = sdrLeadHit(l, q, qd); if (!hit) continue; }
+      rows.push({ ...sdrDeclinedRow(l, no, req.userId, nameById), ...(hit && hit.where !== "lead" ? { hit } : {}) });
+    }
+    rows.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+    res.json({ ok: true, rows: rows.slice(0, 300), total: rows.length, counts: { mine, team: all }, team });
+  } catch (e) { sdrFail(res, e, "declined"); }
+});
 app.get("/api/sdr/history", authMiddleware, (req, res) => {
   try {
     const d = loadPool(); const now = Date.now();
@@ -15701,19 +15780,9 @@ app.get("/api/sdr/history", authMiddleware, (req, res) => {
       }
       if (mine(l.research_by) && l.research_at) activity.push({ at: l.research_at, kind: "research", ...lead });
       if (mine(l.email_sent_by) && l.email_sent_at) activity.push({ at: l.email_sent_at, kind: "mail", to: l.email_to || "", template: l.email_template || "", ...lead });
-      // Turned down: the last outcome on the lead is mine and it was a no.
-      const last = calls.length ? calls[calls.length - 1] : null;
-      // lastAction still matching is what says the no is still in force -
-      // a lead taken back keeps the call in its history but leaves this list.
-      if (last && mine(last.by) && SDR_DECLINED[last.action] && l.lastAction === last.action) {
-        declined.push({
-          ...lead, action: last.action, label: SDR_DECLINED[last.action], at: last.at, note: last.note || "",
-          // "Ikke nu" comes back on its own; the other two need a hand.
-          returns_at: l.resurface_at || l.deferred_until || null,
-          reopenable: last.action !== "not-now",
-          archived_by_name: l.archived_by ? (nameById[l.archived_by] || l.archived_by) : "",
-        });
-      }
+      // Turned down by me - kept here for older clients; the tab reads /api/sdr/declined.
+      const no = sdrDeclinedOf(l);
+      if (no && mine(no.by)) declined.push({ ...sdrDeclinedRow(l, no, req.userId, nameById), reopenable: !sdrReopenBlock(l) });
       void now;
     }
     activity.sort((a, b) => new Date(b.at) - new Date(a.at));
@@ -15721,24 +15790,62 @@ app.get("/api/sdr/history", authMiddleware, (req, res) => {
     res.json({ ok: true, activity: activity.slice(0, 200), declined: declined.slice(0, 300), declinedTotal: declined.length });
   } catch (e) { sdrFail(res, e, "history"); }
 });
-// Take back a lead I turned down. Scoped to my own calls: an SDR cannot undo
-// the other's decision, and admin keeps the wider reopen under Leads.
+// Open a no again. Anyone on the team may - a lead Marcus said no to can be
+// the one Christian wants; the thread says whose no it was. It follows the
+// person who opened it:
+//   now   - first on my list, ready to ring
+//   later - a follow-up of mine on a date (Opfølgning)
+//   pool  - back in the pool for anyone (older clients)
+// Without a Danish number it can't be rung: it goes to Research, still mine.
 app.post("/api/sdr/reopen", authMiddleware, (req, res) => {
   try {
-    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
+    const b = req.body || {};
+    const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
+    const lead = (d.leads || []).find((l) => l.cvr === b.cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
-    const calls = Array.isArray(lead.calls) ? lead.calls : [];
-    const last = calls.length ? calls[calls.length - 1] : null;
-    if (!last || !SDR_DECLINED[last.action]) return res.status(400).json({ error: "Leadet er ikke sagt nej til" });
-    if (last.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Det var ikke dig, der sagde nej til det lead" });
+    const no = sdrDeclinedOf(lead);
+    if (!no) return res.status(400).json({ error: "Leadet er ikke sagt nej til" });
+    const block = sdrReopenBlock(lead); if (block) return res.status(400).json({ error: block });
+    const mode = ["now", "later"].includes(b.mode) ? b.mode : "pool";
+    let when = null;
+    if (mode === "later") {
+      when = b.callback_at ? new Date(b.callback_at) : null;
+      if (!when || isNaN(when.getTime()) || when.getTime() < now - 60000) return res.status(400).json({ error: "Vælg en dato fremme i tiden" });
+    }
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    // Admin has no list: they open it for an SDR, as that SDR's follow-up.
+    const admin = sdrIsAdmin(req.userId);
+    const owner = !admin ? req.userId : mode === "pool" ? null : (users.find((u) => u.id === String(b.for_user || "") && !sdrIsAdmin(u.id)) || {}).id;
+    if (mode !== "pool" && !owner) return res.status(400).json({ error: "Vælg hvilken SDR leadet skal til" });
+    const research = mode !== "pool" && !sdrCallable(lead);
+    // A no takes the lead off its list, so a claim still on it is left over -
+    // unless it really sits on someone's list.
+    const holder = lead.claimed_by && lead.claimed_by !== owner ? lead.claimed_by : null;
+    if (holder && (((d.sdr_lists || {})[holder] || {}).cvrs || []).includes(lead.cvr) && sdrClaimedByOther(lead, owner, now)) return res.status(409).json({ error: `${nameById[holder] || "En anden SDR"} har det lead på sin liste` });
+    if (holder) sdrUnclaim(lead);
     lead.lastAction = null; lead.archived_at = null; lead.archived_by = null;
     lead.resurface_at = null; lead.deferred_until = null; lead.callback_at = null; lead.needs_enrichment = false;
-    sdrAppendNote(lead, req.userId, "Taget tilbage fra \"" + SDR_DECLINED[last.action] + "\"", "list");
+    lead.parked_at = null; lead.parked_reason = null;
+    if (owner) { lead.owner_override = owner; lead.owner_override_at = nowIso; }
+    if (!research && mode === "now") lead.callback_at = nowIso;   // due now: stays on the list whatever the rules say
+    if (!research && mode === "later") lead.callback_at = when.toISOString();
+    const day = (t, wd) => new Date(t).toLocaleDateString("da-DK", { ...(wd ? { weekday: "short" } : {}), day: "numeric", month: "short" });
+    const whose = no.by !== req.userId ? ` - nej fra ${nameById[no.by] || no.by} ${day(no.at || now)}` : "";
+    const to = owner && owner !== req.userId ? ` - til ${nameById[owner] || owner}` : "";
+    const next = research ? " - mangler dansk nummer, ligger i Research" : mode === "later" ? " - ring " + day(when, true) : "";
+    // Into the thread only - last_note stays the SDR's own note (Opfølgning shows it).
+    lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+    lead.note_log.push({ at: nowIso, by: req.userId, where: admin ? "admin" : "list", text: `Taget tilbage fra "${no.label}"${whose}${to}${next}` });
+    if (!research && mode === "now" && !admin) {
+      const { list: L } = sdrEnsureList(d, owner, now, sdrSettings(d));
+      L.cvrs = [lead.cvr, ...L.cvrs.filter((x) => x !== lead.cvr)];
+      L.done = (L.done || []).filter((x) => x !== lead.cvr);
+      sdrClaim(lead, owner, now);
+    }
     sdrTouch(lead);
     savePool(d);
-    const users = loadUsers(); const meUser = users.find((u) => u.id === req.userId);
-    logActivity("sdr-reopen", `${meUser ? meUser.name : req.userId} tog ${lead.name} tilbage`, { cvr: lead.cvr, userId: req.userId });
-    sdrRespond(res, req.userId, d);
+    logActivity("sdr-reopen", `${nameById[req.userId] || req.userId} tog ${lead.name} tilbage (${mode}${to}${research ? ", research" : ""})`, { cvr: lead.cvr, userId: req.userId, mode, from: no.by, owner });
+    sdrRespond(res, req.userId, d, { mode, research });
   } catch (e) { sdrFail(res, e, "reopen"); }
 });
 app.post("/api/sdr/research/skip", authMiddleware, (req, res) => {
@@ -16431,13 +16538,16 @@ app.get("/api/sdr/admin/leads", authMiddleware, (req, res) => {
     };
     let rows = (d.leads || []).filter(preds[f] || preds.all);
     if (src) rows = rows.filter((l) => (sdrSourceLabel(l) || "ukendt") === src);
-    if (q) rows = rows.filter((l) => [l.name, l.cvr, l.city, l.web, l.ind, l.phone, ...(l.contacts || []).map((c) => c && c.name)].filter(Boolean).join(" ").toLowerCase().includes(q));
+    // Same search as "Sagt nej til": also mails and notes ("rune@…" sat only in a note).
+    const hits = new Map();
+    if (q) { const qd = q.replace(/[^0-9a-zæøå@.]/g, ""); rows = rows.filter((l) => { const h = sdrLeadHit(l, q, qd); if (h && h.where !== "lead") hits.set(l.cvr, h); return !!h; }); }
     rows.sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
     const total = rows.length;
     const out = rows.slice((page - 1) * per, page * per).map((l) => ({
       ...sdrSlim(l, nameById), source: sdrSourceLabel(l) || "ukendt", addedAt: l.addedAt || null, ads: Number(l.adsMatched || 0),
       callable: sdrCallable(l), passesRules: sdrPassesRules(l, settings), claimed_by_name: sdrClaimActive(l, now) ? (nameById[l.claimed_by] || l.claimed_by) : "",
       calls_count: l.calls_count || 0, employees: l.employees || null, archived_at: l.archived_at || null,
+      ...(hits.has(l.cvr) ? { hit: hits.get(l.cvr) } : {}),
     }));
     // Was `rows` - the raw, unpaged pool leads. They carry `contacts` but no
     // `contact`/`callable`, so every row in the browser rendered as "Mangler

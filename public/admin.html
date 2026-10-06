@@ -667,7 +667,7 @@ function renderLeads(rows) {
   if (typeof rowToolsOff === 'function') rowToolsOff();
   $('tb-leads').innerHTML = rows.length ? rows.map((l) => `<tr class="rowlink ${SEL.has(l.cvr) ? 'sel' : ''}" data-cvr="${e(l.cvr)}" data-name="${e(l.name)}" data-arch="${l.lastAction === 'not-relevant' ? 1 : 0}" onclick="openLead('${e(l.cvr)}')">
       <td onclick="event.stopPropagation()"><input type="checkbox" ${SEL.has(l.cvr) ? 'checked' : ''} onchange="selOne('${e(l.cvr)}',this.checked)"></td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span></td>
+      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span>${l.hit ? `<span class="sub hit">${{ note: 'Fundet i en note', contact: 'Kontakt', mail: 'Mail sendt til' }[l.hit.where] || 'Fundet'}: ${e(l.hit.text)}</span>` : ''}</td>
       <td class="niche" title="${e(l.niche || '')}">${e(shortNiche(l.niche))}</td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contacts_count > 1 ? ' · +' + (l.contacts_count - 1) : ''}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone)) || '-'}${l.phone_label ? `<span class="sub">${e(l.phone_label)}</span>` : ''}</td>

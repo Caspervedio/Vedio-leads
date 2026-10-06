@@ -81,6 +81,16 @@ Trykkes "Ikke relevant" eller "Følg op" uden "Ring op", spørger kortet om det 
 et opkald. Tallet "fjernet" står ved "ringet i dag", i admins Per SDR og i Excel.
 Tasterne følger nu etiketterne på knapperne.
 
+**Sagt nej til** (ved siden af Din liste): alle leads med *Ikke relevant*, *Ikke
+nu*, *Forkert nummer* eller *Ikke vores målgruppe* - ens egne, eller *Hele
+teamet*. Søgefeltet øverst søger i navn, kontakt, nummer, mail og noter (en mail
+der kun står i en note, findes også). **Åbn igen**: *Ring nu* (øverst på ens
+egen liste) eller *Følg op* på en dag (i Opfølgning). Leadet følger den, der
+åbner det; tråden siger hvis nej det var. Uden dansk nummer går det til
+Research og kommer tilbage til en, når nummeret er fundet. Puljens egne
+oprydninger (Apollo, ICP-grænser m.m.) er ikke med - de ligger under admins
+Leads → Arkiveret.
+
 **Ingen svar gang på gang:** efter 3 opkald i træk uden svar (siden sidste
 samtale) parkeres leadet i 60 dage og kommer tilbage nederst i puljen — begge
 tal sættes under ⚙.
@@ -107,8 +117,8 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 - **Eksportér resultater** (knap på Per SDR-kortet i Overblik) — et Excel-ark (.xlsx) for en valgt periode,
   evt. én SDR: Oversigt med nøgletal pr. SDR, Per dag, Demoer, alle Opkald,
   Nye leads pr. kilde og Definitioner. Samme tælleregler som Overblik.
-- **Leads** — hele puljen med filtre. Ret et lead, arkivér det, eller slet
-  det permanent. "Se som Christian / Marcus" åbner SDR-appen som dem.
+- **Leads** — hele puljen med filtre. Søgningen leder også i kontakters
+  mails og i noter. Ret et lead, arkivér det, eller slet det permanent. "Se som Christian / Marcus" åbner SDR-appen som dem.
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
   som er den første flaskehals), integrationernes status, CSV-import og
   referencekundelisten.

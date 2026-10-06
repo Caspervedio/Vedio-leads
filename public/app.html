@@ -85,7 +85,7 @@
     <div class="subnav">
       <button data-sub="list" class="on" onclick="listSub('list')">Din liste<span class="n" id="sn-list">0</span></button>
       <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
-      <div class="search listsearch"><input id="list-q" placeholder="Søg firma, person, nummer…" oninput="renderList()"></div>
+      <div class="search listsearch"><input id="list-q" placeholder="Søg firma, person, nummer…" oninput="listSearch()"></div>
       <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - oprettes som nyt lead">+ Nyt lead</button>
     </div>
     <div id="sub-list">
@@ -99,10 +99,13 @@
     </div>
     <div id="sub-declined" hidden>
       <div class="tablewrap">
-        <div class="thead"><div><h3>Leads du har sagt nej til</h3><p id="dec-sub">Dine egne udfald. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.</p></div>
-          <select id="dec-filter" onchange="renderDeclined()" style="border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px;font:inherit;font-size:13.5px;background:var(--white)">
-            <option value="all">Alle udfald</option><option value="not-relevant">Ikke relevant</option><option value="not-now">Ikke nu</option><option value="wrong-number">Forkert nummer</option>
-          </select></div>
+        <div class="thead"><div><h3>Sagt nej til</h3><p id="dec-sub">Henter…</p></div>
+          <div class="dec-tools">
+            <div class="filters" id="dec-scope"></div>
+            <select id="dec-filter" onchange="renderDeclined()">
+              <option value="all">Alle udfald</option><option value="not-relevant">Ikke relevant</option><option value="not-now">Ikke nu</option><option value="wrong-number">Forkert nummer</option>
+            </select>
+          </div></div>
         <table>
           <thead><tr><th>Hvornår</th><th>Virksomhed</th><th>Kontakt</th><th>Udfald</th><th>Note</th><th></th></tr></thead>
           <tbody id="tb-declined"></tbody>
@@ -462,7 +465,7 @@ function renderList() {
   // While searching, rows keep their real position; moving is off because the
   // neighbours on screen aren't the neighbours on the list.
   const items = all.map((l, i) => ({ l, i })).filter((x) => leadMatches(x.l, q));
-  if (q && all.length && !items.length) { $('tb-list').innerHTML = `<tr class="empty-row"><td colspan="7">Ingen på din liste matcher "${e(q)}". Er det en opfølgning, så kig under <b>Opfølgning</b> - dér kan du også søge.</td></tr>`; return; }
+  if (q && all.length && !items.length) { $('tb-list').innerHTML = `<tr class="empty-row"><td colspan="7">Ingen på din liste matcher "${e(q)}". Er det en opfølgning, så kig under <b>Opfølgning</b> - eller <button class="linkbtn" onclick="listSub('declined')">søg i dem, I har sagt nej til</button>.</td></tr>`; return; }
   $('tb-list').innerHTML = all.length ? items.map(({ l, i }) => `
     <tr class="rowlink" draggable="true" data-cvr="${e(l.cvr)}" ondragstart="dragStart(event,'${e(l.cvr)}')" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="drop(event,'${e(l.cvr)}')" ondragend="dragEnd(event)" onclick="jumpTo('${e(l.cvr)}')">
       <td class="handle" onclick="event.stopPropagation()">⋮⋮</td>
@@ -1557,23 +1560,56 @@ async function histLoad() {
 /* Niche paths come as 'Home & Garden/Kitchen' - the leaf is the useful half. */
 function shortNiche(x) { const t = String(x || '').trim(); const parts = t.split('/').map((y) => y.trim()).filter(Boolean); return parts.length ? parts[parts.length - 1] : t; }
 const ACT_ICON = { call: '📞', note: '📝', mail: '✉', research: '🔍' };
+/* "Sagt nej til": my own nos, or the whole team's, searched on the server -
+   through names, people, numbers, mails and notes. The search box at the top
+   of Ringeliste searches whichever of the two views is open. */
+const DEC = { scope: 'mine', rows: [], total: 0, counts: { mine: 0, team: 0 }, team: false, loaded: false, seq: 0, q: '' };
+let decTimer = null;
+async function decLoad() {
+  const seq = ++DEC.seq; const q = (($('list-q') && $('list-q').value) || '').trim();
+  try {
+    const d = await get(`/api/sdr/declined?scope=${DEC.scope}&q=${encodeURIComponent(q)}`);
+    if (seq !== DEC.seq) return;
+    Object.assign(DEC, { rows: d.rows || [], total: d.total || 0, counts: d.counts || DEC.counts, team: !!d.team, loaded: true, q });
+  } catch (ex) { if (seq === DEC.seq) toast('Kunne ikke hente: ' + ex.message, 4000); }
+  renderDeclined();
+}
+function listSearch() {
+  if (listSubView === 'declined') { clearTimeout(decTimer); decTimer = setTimeout(decLoad, 220); }
+  else renderList();
+}
+function decScope(s) { DEC.scope = s; DEC.loaded = false; renderDeclined(); decLoad(); }
+/* The words that matched, marked - so a hit in a note shows why it's there. */
+function decMark(text, q) {
+  const t = String(text || ''); if (!q) return e(t);
+  const i = t.toLowerCase().indexOf(q.toLowerCase()); if (i < 0) return e(t);
+  return e(t.slice(0, i)) + '<mark>' + e(t.slice(i, i + q.length)) + '</mark>' + e(t.slice(i + q.length));
+}
 function renderDeclined() {
   const f = $('dec-filter') ? $('dec-filter').value : 'all';
-  const rows = HIST.declined.filter((x) => f === 'all' || x.action === f);
-  const cnt = $('sn-dec'); if (cnt) cnt.textContent = HIST.loaded ? HIST.total : 0;
-  const sub = $('dec-sub');
-  if (sub) sub.textContent = HIST.loaded
-    ? `${HIST.total} lead${HIST.total === 1 ? '' : 's'} i alt. "Ikke nu" kommer selv tilbage - de andre bliver liggende, til du tager dem tilbage.`
-    : 'Henter…';
-  $('tb-declined').innerHTML = rows.length ? rows.map((l) => `<tr>
-    <td><span class="sub">${e(fmtWhen(l.at))}</span></td>
-    <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(shortNiche(l.niche)) : ''}</span></td>
-    <td>${l.contact ? `<b>${e(l.contact)}</b>` : '<span class="sub">-</span>'}<span class="sub">${e(fmtPhone(l.phone))}</span></td>
-    <td><span class="chip ${l.action === 'not-now' ? 'retry' : ''} sm">${e(l.label)}</span>${l.returns_at ? `<span class="sub">tilbage ${e(fmtWhen(l.returns_at))}</span>` : ''}</td>
-    <td style="max-width:280px;color:var(--txt-soft)">${e(l.note || '')}</td>
-    <td style="text-align:right">${l.reopenable ? `<button class="pill sm" onclick="histReopen('${e(l.cvr)}')">Tag tilbage</button>` : '<span class="sub">kommer selv</span>'}</td>
-  </tr>`).join('') : `<tr class="empty-row"><td colspan="6">${HIST.loaded ? 'Du har ikke sagt nej til nogen endnu.' : 'Henter…'}</td></tr>`;
-
+  const rows = DEC.rows.filter((x) => f === 'all' || x.action === f);
+  const team = DEC.team || DEC.scope === 'team'; const q = DEC.q;
+  const cnt = $('sn-dec'); if (cnt) cnt.textContent = DEC.loaded ? (DEC.team ? DEC.counts.team : DEC.counts.mine) : (HIST.loaded ? HIST.total : 0);
+  $('dec-scope').innerHTML = [['mine', 'Mine', DEC.counts.mine], ['team', 'Hele teamet', DEC.counts.team]]
+    .map(([k, l, n]) => `<button class="${DEC.scope === k ? 'on' : ''}" onclick="decScope('${k}')">${l}<span class="n">${DEC.loaded ? n : ''}</span></button>`).join('');
+  $('dec-sub').textContent = !DEC.loaded ? 'Henter…'
+    : q ? `${DEC.total} match${DEC.total === 1 ? '' : 'er'} på "${q}" - i navn, kontakt, nummer, mail og noter.`
+    : team ? `Alle leads, nogen på teamet har sagt nej til. Find et og åbn det igen - det kommer til dig.`
+    : `Dine egne nej. Søg øverst - også i noter og mails. Åbn igen sender det tilbage på din liste eller i Opfølgning.`;
+  const empty = !DEC.loaded ? 'Henter…' : q ? `Intet nej matcher "${e(q)}"${!team ? ` hos dig. <button class="linkbtn" onclick="decScope('team')">Søg i hele teamets nej</button>` : '.'}` : 'Ingen nej endnu.';
+  $('tb-declined').innerHTML = rows.length ? rows.map((l) => {
+    const who = l.mine ? (team ? 'dig' : '') : l.by_name;
+    const hit = l.hit ? `<span class="dec-hit">${{ note: 'Fundet i en note', contact: 'Kontakt', mail: 'Mail sendt til' }[l.hit.where] || 'Fundet'}: ${decMark(l.hit.text, q)}</span>` : '';
+    const act = l.blocked ? `<span class="sub">${e(l.blocked)}</span>`
+      : `<button class="pill sm" onclick="decOpen('${e(l.cvr)}')">Åbn igen</button>${l.returns_at ? `<span class="sub">kommer selv ${e(fmtWhen(l.returns_at))}</span>` : ''}`;
+    return `<tr>
+    <td><span class="sub">${e(fmtWhen(l.at))}</span>${who ? `<span class="sub">af ${e(who)}</span>` : ''}</td>
+    <td><b>${decMark(l.name, q)}</b><span class="sub">${e(l.city || '')}${l.niche ? ' · ' + e(shortNiche(l.niche)) : ''}${l.renamed_from ? ' · tidl. ' + decMark(l.renamed_from, q) : ''}</span></td>
+    <td>${l.contact ? `<b>${decMark(l.contact, q)}</b>` : '<span class="sub">-</span>'}<span class="sub">${e(fmtPhone(l.phone))}</span></td>
+    <td><span class="chip ${l.action === 'not-now' ? 'retry' : ''} sm">${e(l.label)}</span></td>
+    <td style="max-width:300px;color:var(--txt-soft)">${hit}${l.note ? `<span class="dec-note">${decMark(l.note, q)}</span>` : ''}</td>
+    <td style="text-align:right;white-space:nowrap">${act}</td>
+  </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">${empty}</td></tr>`;
 }
 /* The activity log lives behind the clock icon in the header, not in a tab. */
 function renderActivity() {
@@ -1591,10 +1627,48 @@ function renderActivity() {
     </div>`;
   }).join('') : `<p class="sub" style="padding:16px 24px">${HIST.loaded ? 'Ingen handlinger endnu.' : 'Henter…'}</p>`;
 }
-async function histReopen(cvr) {
-  if (!confirm('Tag leadet tilbage? Det ryger i puljen igen og kan komme på din liste.')) return;
-  try { apply(await post('/api/sdr/reopen', { cvr })); toast('✓ Taget tilbage'); await histLoad(); }
-  catch (ex) { toast('Fejl: ' + ex.message, 4000); }
+/* Open a no again: first on my list right now, or a follow-up on a day. */
+function decOpen(cvr) {
+  const l = DEC.rows.find((x) => x.cvr === cvr); if (!l) return;
+  const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'decopen';
+  bg.innerHTML = `<div class="modal">
+    <h3>Åbn ${e(l.name)} igen</h3>
+    <p>${e(l.label)} - sagt af ${l.mine ? 'dig' : e(l.by_name)} ${e(fmtWhen(l.at))}.${l.note ? ` "${e(l.note)}"` : ''}</p>
+    ${l.callable ? `
+      <button class="pill primary ro-now" onclick="decReopen('${e(cvr)}','now')">Ring nu - øverst på din liste</button>
+      <label>Eller følg op</label>
+      <div class="ro-later">
+        <button class="pill sm" onclick="decReopen('${e(cvr)}','later','${at(1, 9)}')">I morgen 09:00</button>
+        <button class="pill sm" onclick="decReopen('${e(cvr)}','later','${at(3, 9)}')">Om 3 dage</button>
+        <button class="pill sm" onclick="decReopen('${e(cvr)}','later','${at(7, 9)}')">Næste uge</button>
+        <button class="pill sm" onclick="decReopen('${e(cvr)}','later','${at(14, 9)}')">Om 2 uger</button>
+        <span class="ro-date"><input type="date" id="ro-date" min="${new Date().toISOString().slice(0, 10)}"><button class="pill sm" onclick="decReopenDate('${e(cvr)}')">Vælg dag</button></span>
+      </div>
+      <p class="sub" style="margin:10px 0 0">Følg op lægger det i Opfølgning, og på listen den dag.</p>`
+    : `<p class="warn">Leadet har ikke noget dansk nummer. Det går til <b>Research</b>, og når nummeret er fundet, kommer det til dig.</p>
+      <button class="pill primary ro-now" onclick="decReopen('${e(cvr)}','now')">Åbn igen</button>`}
+    <div class="row" style="margin-top:18px"><button class="pill tertiary" onclick="$('decopen').remove()">Annullér</button></div></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+function decReopenDate(cvr) {
+  const v = $('ro-date') && $('ro-date').value; if (!v) { toast('Vælg en dag'); return; }
+  const d = new Date(v + 'T09:00:00'); decReopen(cvr, 'later', d.toISOString());
+}
+async function decReopen(cvr, mode, when) {
+  if (busy) return; busy = true;
+  const l = DEC.rows.find((x) => x.cvr === cvr) || {};
+  try {
+    const r = await post('/api/sdr/reopen', { cvr, mode, callback_at: when || null });
+    if ($('decopen')) $('decopen').remove();
+    apply(r); HIST.loaded = false;
+    if (r.research) toast(`${l.name} er åbnet igen og ligger i Research - det mangler et dansk nummer`, 6000);
+    else if (mode === 'later') toast(`✓ ${l.name} ligger i din Opfølgning ${fmtWhen(when)}`, 5000);
+    else { toast(`✓ ${l.name} er åbnet igen`); showTab('ring'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    decLoad();
+  } catch (ex) { toast('Fejl: ' + ex.message, 5000); }
+  finally { busy = false; }
 }
 /* Ringeliste has two views: the list they call, and the ones they said no to. */
 let listSubView = 'list';
@@ -1603,7 +1677,9 @@ function listSub(which) {
   document.querySelectorAll('.subnav button').forEach((b) => b.classList.toggle('on', b.dataset.sub === which));
   $('sub-list').hidden = which !== 'list';
   $('sub-declined').hidden = which !== 'declined';
-  if (which === 'declined' && !HIST.loaded) histLoad();
+  // One search box for both: the list filters as you type, the nos are searched on the server.
+  $('list-q').placeholder = which === 'declined' ? 'Søg i nej - firma, person, nummer, mail, note…' : 'Søg firma, person, nummer…';
+  if (which === 'declined') decLoad(); else renderList();
 }
 /* A company the SDR found themselves. It lands on top of their own list; if
    it is already in the pool the server hands it over or says where it is. */
