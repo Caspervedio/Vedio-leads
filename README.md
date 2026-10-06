@@ -129,13 +129,16 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   som i stripen.
 - **Sammenlign SDR'er** (fold-ud under 14-dages stripen, lukket som standard;
   henter først tal, når den åbnes, og husker om man lod den stå åben) — for en valgt periode (denne
-  uge, 7/30 dage, denne/sidste måned eller egne datoer): en tragt pr. SDR
-  (opkald → samtaler → demoer → kvalificerede, med andelen der går videre),
-  nøgletal side om side (kontaktrate, demo pr. samtale, demo pr. opkald, opkald
-  pr. demo, kvalificeringsrate, opkald pr. dag, provision, research, fjernet) og
-  hvordan opkaldene ender. Grønt = bedst blandt SDR'erne; gråt = for lidt bag
-  tallet (fx under 30 opkald eller 15 samtaler) til at sammenligne. Samme tal
-  som Excel-eksporten - de regnes ét sted (`sdrPeriodStats`).
+  uge, 7/30 dage, denne/sidste måned eller egne datoer): øverst AI's vurdering,
+  så et kort pr. SDR med en status (På sporet / Hold øje / Under forventning /
+  For lidt data), bookede demoer og fire tal - opkald pr. dag, kontaktrate,
+  demo pr. samtale, kvalificeret - med mål eller team ved siden af og
+  begrundelsen under et tal, der er flaget. Under kortene teamet på én linje.
+  "Vis alle tal" folder hele tabellen (aktivitet, konvertering, kvalitet,
+  indsats) og hvordan opkaldene ender ud. Grønt = klart bedst (10% foran den
+  næste); gråt = for lidt bag tallet (fx under 30 opkald, 15 samtaler, eller en
+  SDR med under 50 opkald / 2 hele dage). Samme tal som Excel-eksporten - de
+  regnes ét sted (`sdrPeriodStats`).
   **Flag** øverst: under forventning (rød) / hold øje (gul) / afviger (grå) -
   mod målene under ⚙ (opkald pr. dag, opkald pr. demo, andel kvalificerede),
   mod resten af teamet og mod perioden før, kun når forskellen er for stor til

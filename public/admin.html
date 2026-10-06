@@ -39,43 +39,78 @@
 #drill table{width:100%}
 #drill .nowrap{white-space:nowrap}
 #drill .drillnote{max-width:280px;color:var(--txt-soft);font-size:13px}
-#cmp-card .cmp-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:0 24px 14px;border-bottom:1px solid var(--line)}
-#cmp-card .cmp-head p{font-size:13px;color:var(--txt-soft);max-width:640px}
-#cmp-card .cmp-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
-#cmp-card select,#cmp-card input[type=date]{border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;font:inherit;font-size:13px;background:var(--white)}
 #cmp-card .cmp-badges{margin-left:auto;display:inline-flex;gap:6px}
-#cmp-card .cb{font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:var(--pill);letter-spacing:0}
+#cmp-card .cb{font-size:11.5px;font-weight:800;padding:3px 10px;border-radius:var(--pill)}
 #cmp-card .cb.bad{background:#fdecec;color:#B3352B}
 #cmp-card .cb.warn{background:#fdf3dc;color:#A9761E}
 #cmp-card .cb.ok{background:#e6f6ec;color:var(--approve)}
-#cmp-card .cmp-flags{padding:16px 24px 6px}
-#cmp-card .cmp-flags h4,#cmp-card .cmp-note .ai-h{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
-#cmp-card .cmp-flags h4 .sub,#cmp-card .cmp-note .ai-h .sub{text-transform:none;letter-spacing:0;font-weight:500;font-size:12px}
-#cmp-card .fl{display:grid;grid-template-columns:128px 90px 1fr;gap:10px;align-items:baseline;padding:8px 10px;border-radius:8px;margin-bottom:4px;font-size:13.5px;cursor:pointer}
-#cmp-card .fl:hover{background:var(--paper)}
-#cmp-card .fl .lv{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
-#cmp-card .fl.bad .lv{color:#B3352B}#cmp-card .fl.warn .lv{color:#A9761E}#cmp-card .fl.info .lv{color:var(--txt-faint)}
-#cmp-card .fl .tx{color:var(--txt-soft)}
-#cmp-card .cmp-note{margin:10px 24px 4px;padding:14px 16px;border-radius:var(--radius);background:var(--violet-soft);font-size:13.5px;line-height:1.5}
-#cmp-card .cmp-note .ai-h{color:var(--violet)}
-#cmp-card .cmp-note .ai-head{font-weight:700;margin-bottom:6px}
-#cmp-card .cmp-note ul{margin:0 0 6px 18px}
-#cmp-card .cmp-note .ai-act{margin-top:6px}
-#cmp-card .cmp-note .linkbtn{padding:0;font-size:12px;color:var(--violet);text-decoration:underline}
-#cmp-card table.cmp td.flag-bad{background:#fdecec;color:#B3352B;font-weight:800}
-#cmp-card table.cmp td.flag-warn{background:#fdf3dc;color:#A9761E;font-weight:800}
-@media (max-width:760px){#cmp-card .fl{grid-template-columns:1fr}#cmp-card .cmp-badges{display:none}}
-#cmp-card .funnels{display:grid;gap:12px;padding:18px 24px}
-#cmp-card .funnel{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;background:var(--white)}
-#cmp-card .funnel.team{background:var(--paper)}
-#cmp-card .funnel h4{font-size:14px;font-weight:800;margin-bottom:10px}
-#cmp-card .fs{display:flex;align-items:baseline;gap:8px;border-radius:8px;padding:2px 6px;margin:0 -6px}
-#cmp-card .fs b{font-size:24px;font-weight:800;letter-spacing:-.02em}
-#cmp-card .fs span{font-size:12.5px;color:var(--txt-soft)}
-#cmp-card .fs.click{cursor:pointer}
-#cmp-card .fs.click:hover{background:var(--violet-soft)}
-#cmp-card .fr{font-size:12px;font-weight:800;color:var(--violet);padding:2px 0 4px 10px;border-left:2px solid var(--violet-soft);margin:2px 0 4px 6px}
-#cmp-card .fr span{font-weight:500;color:var(--txt-soft)}
+#cmp-card .cmp-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:2px 24px 18px}
+#cmp-card .cmp-when{display:flex;align-items:baseline;gap:10px;font-size:13px;color:var(--txt-soft)}
+#cmp-card .cmp-when b{font-size:15px;color:var(--txt);font-weight:800}
+#cmp-card .cmp-when .onb{font-size:11.5px;font-weight:700;color:#1b7a46;background:#effaf3;border-radius:var(--pill);padding:2px 9px}
+#cmp-card .cmp-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+#cmp-card .seg{display:inline-flex;background:var(--paper);border-radius:var(--pill);padding:3px;gap:2px}
+#cmp-card .seg button{border:0;background:transparent;padding:6px 12px;border-radius:var(--pill);font:inherit;font-size:12.5px;font-weight:700;color:var(--txt-soft);cursor:pointer}
+#cmp-card .seg button:hover{color:var(--txt)}
+#cmp-card .seg button.on{background:var(--white);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+#cmp-card input[type=date]{border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;font:inherit;font-size:13px;background:var(--white)}
+#cmp-card .cmp-note{margin:0 24px 18px;padding:18px 20px;border-radius:14px;background:linear-gradient(135deg,#f3eefe 0%,#faf8ff 70%);border:1px solid #e6dcfb}
+#cmp-card .ai-h{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--violet);margin-bottom:8px}
+#cmp-card .ai-star{font-size:13px}
+#cmp-card .ai-meta{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500;font-size:12px;color:var(--txt-faint)}
+#cmp-card .ai-meta .linkbtn{padding:0;font-size:12px;color:var(--violet)}
+#cmp-card .ai-head{font-size:16px;font-weight:800;letter-spacing:-.01em;line-height:1.35;color:var(--txt);margin-bottom:8px}
+#cmp-card .cmp-note ul{margin:0 0 0 18px;font-size:13.5px;line-height:1.55;color:var(--txt-soft)}
+#cmp-card .cmp-note li{margin-bottom:3px}
+#cmp-card .ai-act{margin-top:12px;padding-top:12px;border-top:1px solid #e6dcfb;font-size:13.5px;line-height:1.5;color:var(--txt)}
+#cmp-card .ai-act span{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--white);background:var(--violet);border-radius:var(--pill);padding:2px 9px;margin-right:8px}
+#cmp-card .ai-wait{font-size:13.5px;color:var(--txt-soft)}
+#cmp-card .scards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;padding:0 24px}
+#cmp-card .sc{border:1px solid var(--line);border-radius:14px;background:var(--white);padding:18px 18px 14px;display:flex;flex-direction:column}
+#cmp-card .sc-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+#cmp-card .sc-top h4{font-size:15px;font-weight:800}
+#cmp-card .st{font-size:11px;font-weight:800;padding:3px 9px;border-radius:var(--pill);white-space:nowrap}
+#cmp-card .st.ok{background:#e6f6ec;color:var(--approve)}
+#cmp-card .st.warn{background:#fdf3dc;color:#A9761E}
+#cmp-card .st.bad{background:#fdecec;color:#B3352B}
+#cmp-card .st.thin{background:var(--paper);color:var(--txt-faint)}
+#cmp-card .sc-hero{margin:14px 0 12px;cursor:pointer}
+#cmp-card .sc-hero b{font-family:Anton,Inter,sans-serif;font-size:46px;font-weight:400;line-height:1;letter-spacing:.01em}
+#cmp-card .sc-hero span{font-size:13px;font-weight:700;margin-left:6px}
+#cmp-card .sc-hero em{display:block;font-style:normal;font-size:12px;color:var(--txt-faint);margin-top:6px}
+#cmp-card .sc-rows{border-top:1px solid var(--line)}
+#cmp-card .sc-row{display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:10px;padding:10px 6px;margin:0 -6px;border-bottom:1px solid var(--line);border-radius:6px;cursor:pointer}
+#cmp-card .sc-row:last-child{border-bottom:0}
+#cmp-card .sc-row:hover{background:var(--paper)}
+#cmp-card .sc-row .l{font-size:13px;color:var(--txt-soft)}
+#cmp-card .sc-row b{font-size:16px;font-weight:800;text-align:right}
+#cmp-card .sc-row .s{grid-column:1/-1;font-size:11.5px;color:var(--txt-faint);margin-top:2px}
+#cmp-card .sc-bar{grid-column:1/-1;height:4px;border-radius:4px;background:var(--paper);margin-top:6px;overflow:hidden}
+#cmp-card .sc-bar i{display:block;height:100%;background:var(--txt-faint);border-radius:4px}
+#cmp-card .sc-row.best b{color:var(--approve)}
+#cmp-card .sc-row.best .sc-bar i{background:var(--approve)}
+#cmp-card .sc-row.warn b,#cmp-card .sc-row.warn .s{color:#A9761E}
+#cmp-card .sc-row.warn .sc-bar i{background:#E0A93B}
+#cmp-card .sc-row.bad b,#cmp-card .sc-row.bad .s{color:#B3352B}
+#cmp-card .sc-row.bad .sc-bar i{background:#D9534F}
+#cmp-card .sc-row.thin b{color:var(--txt-faint)}
+#cmp-card .sc-notes{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+#cmp-card .sc-notes .n{font-size:12px;line-height:1.45;padding:7px 10px;border-radius:8px;background:var(--paper);color:var(--txt-soft);cursor:pointer}
+#cmp-card .sc-notes .n.warn{background:#fdf6e6;color:#8a6116}
+#cmp-card .sc-notes .n.bad{background:#fdf0ef;color:#9b2c22}
+#cmp-card .cmp-team{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;margin:14px 24px 0;padding:12px 16px;border-radius:12px;background:var(--paper);font-size:13px;color:var(--txt-soft)}
+#cmp-card .cmp-team .t{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint)}
+#cmp-card .cmp-team b{color:var(--txt)}
+#cmp-card .cmp-team .tf{font-size:12px;font-weight:600}
+#cmp-card .cmp-team .tf.warn{color:#A9761E}#cmp-card .cmp-team .tf.bad{color:#B3352B}
+#cmp-card .cmp-empty{padding:6px 24px 22px;color:var(--txt-soft);font-size:13.5px}
+#cmp-card details.cmp-more{margin:16px 0 0;border-top:1px solid var(--line)}
+#cmp-card details.cmp-more>summary{list-style:none;cursor:pointer;padding:14px 24px;font-size:13px;font-weight:700;color:var(--txt-soft)}
+#cmp-card details.cmp-more>summary::-webkit-details-marker{display:none}
+#cmp-card details.cmp-more>summary::before{content:none}
+#cmp-card details.cmp-more>summary::after{content:" ▾"}
+#cmp-card details.cmp-more[open]>summary::after{content:" ▴"}
+#cmp-card .cmp-more-sub{padding:0 24px 12px;font-size:12.5px;color:var(--txt-faint);max-width:860px}
 #cmp-card table.cmp{width:100%}
 #cmp-card table.cmp th.team,#cmp-card table.cmp td.team{background:var(--paper)}
 #cmp-card table.cmp td.cmp-l{color:var(--txt-soft);font-size:13.5px}
@@ -85,16 +120,18 @@
 #cmp-card table.cmp td.thin{color:var(--txt-faint)}
 #cmp-card table.cmp td.click{cursor:pointer}
 #cmp-card table.cmp td.click:hover{background:var(--violet-soft)}
+#cmp-card table.cmp td.flag-bad{background:#fdecec;color:#B3352B;font-weight:800}
+#cmp-card table.cmp td.flag-warn{background:#fdf3dc;color:#A9761E;font-weight:800}
 #cmp-card .mix{padding:18px 24px 22px;border-top:1px solid var(--line)}
 #cmp-card .mix h4{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
 #cmp-card .mixrow{display:grid;grid-template-columns:110px 1fr;gap:12px;align-items:center;margin-bottom:8px}
 #cmp-card .mixname{font-size:13px;font-weight:700}
-#cmp-card .mixbar{display:flex;height:18px;border-radius:6px;overflow:hidden;background:var(--paper)}
+#cmp-card .mixbar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--paper)}
 #cmp-card .mixbar i{display:block;height:100%}
-#cmp-card .mixbar em{font-size:12px;color:var(--txt-faint);padding:0 8px;line-height:18px;font-style:normal}
+#cmp-card .mixbar em{font-size:12px;color:var(--txt-faint);padding:0 8px;line-height:14px;font-style:normal}
 #cmp-card .mixlegend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:12px;color:var(--txt-soft)}
 #cmp-card .mixlegend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-@media (max-width:760px){#cmp-card .funnels{grid-template-columns:1fr 1fr !important}#cmp-card table.cmp{font-size:12.5px}}
+@media (max-width:760px){#cmp-card .cmp-badges{display:none}#cmp-card .cmp-tools{max-width:100%}#cmp-card .seg{max-width:100%;overflow-x:auto}#cmp-card .seg button{white-space:nowrap}#cmp-card table.cmp{font-size:12.5px}}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -325,11 +362,10 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
     <details class="deeper" id="cmp-card" ontoggle="cmpToggle(this.open)">
       <summary><span>Sammenlign SDR'er</span><span class="sub">Tragt, nøgletal og hvordan opkaldene ender - side om side for en periode.</span><span class="cmp-badges" id="cmp-badges"></span></summary>
-      <div class="cmp-head"><p id="cmp-sub">Hvem når flest, og hvem gør samtalerne til demoer. Klik på et tal for at se rækkerne bag det.</p>
+      <div class="cmp-head">
+        <div class="cmp-when" id="cmp-sub"></div>
         <div class="cmp-tools">
-          <select id="cmp-period" onchange="cmpSetPeriod(this.value)">
-            <option value="week">Denne uge</option><option value="7">Sidste 7 dage</option><option value="30">Sidste 30 dage</option><option value="month">Denne måned</option><option value="lastmonth">Sidste måned</option><option value="custom">Vælg datoer…</option>
-          </select>
+          <div class="seg" id="cmp-seg"></div>
           <span id="cmp-custom" hidden><input type="date" id="cmp-from"> - <input type="date" id="cmp-to"> <button class="pill sm" onclick="cmpLoad()">Vis</button></span>
         </div></div>
       <div id="cmp-body"><p class="sub" style="padding:18px 24px">Henter…</p></div>
@@ -579,13 +615,14 @@ async function cmpNote(force) {
 function renderCmpNote() {
   const box = $('cmp-note'); const D = CMP.data; if (!box || !D) return;
   const n = D.note;
-  if (CMP.noteBusy && !n) { box.innerHTML = `<div class="ai-h">✦ AI's vurdering</div><p class="sub">Læser tallene…</p>`; return; }
-  if (!n) { box.innerHTML = D.noteError ? `<div class="ai-h">✦ AI's vurdering</div><p class="sub">Kunne ikke skrive en vurdering: ${e(D.noteError)} <button class="linkbtn" onclick="cmpNote(true)">Prøv igen</button></p>` : ''; box.hidden = !D.noteError; return; }
+  const head = (right) => `<div class="ai-h"><span class="ai-star">✦</span> AI's vurdering<span class="ai-meta">${right}</span></div>`;
+  if (CMP.noteBusy && !n) { box.hidden = false; box.innerHTML = head('') + `<p class="ai-wait">Læser tallene…</p>`; return; }
+  if (!n) { box.hidden = !D.noteError; box.innerHTML = D.noteError ? head('') + `<p class="ai-wait">Kunne ikke skrive en vurdering. <button class="linkbtn" onclick="cmpNote(true)">Prøv igen</button></p>` : ''; return; }
   box.hidden = false;
-  box.innerHTML = `<div class="ai-h">✦ AI's vurdering <span class="sub">${e(fmtWhen(n.at))}${CMP.noteBusy ? ' · skriver ny…' : ` · <button class="linkbtn" onclick="cmpNote(true)">Skriv ny</button>`}</span></div>
-    <p class="ai-head">${e(n.headline)}</p>
-    ${n.points.length ? `<ul>${n.points.map((x) => `<li>${e(x)}</li>`).join('')}</ul>` : ''}
-    ${n.action ? `<p class="ai-act"><b>Gør dette:</b> ${e(n.action)}</p>` : ''}`;
+  box.innerHTML = head(`${e(fmtWhen(n.at))} · ${CMP.noteBusy ? 'skriver ny…' : '<button class="linkbtn" onclick="cmpNote(true)">Skriv ny</button>'}`)
+    + `<p class="ai-head">${e(n.headline)}</p>`
+    + (n.points.length ? `<ul>${n.points.slice(0, 3).map((x) => `<li>${e(x)}</li>`).join('')}</ul>` : '')
+    + (n.action ? `<p class="ai-act"><span>Gør dette</span>${e(n.action)}</p>` : '');
 }
 function cmpKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function cmpRange(p) {
@@ -600,12 +637,14 @@ function cmpRange(p) {
 }
 function cmpSetPeriod(p) {
   cmpPeriod = p; try { localStorage.setItem('vl_cmp_period', p); } catch {}
-  $('cmp-custom').hidden = p !== 'custom';
+  cmpSeg(); $('cmp-custom').hidden = p !== 'custom';
   if (p === 'custom') { const [f, t] = CMP.data ? [CMP.data.from, CMP.data.to] : cmpRange('30'); if (!$('cmp-from').value) $('cmp-from').value = f; if (!$('cmp-to').value) $('cmp-to').value = t; return; }
   cmpLoad();
 }
+const CMP_PERIODS = [['week', 'Denne uge'], ['7', '7 dage'], ['30', '30 dage'], ['month', 'Denne måned'], ['lastmonth', 'Sidste måned'], ['custom', 'Datoer']];
+function cmpSeg() { $('cmp-seg').innerHTML = CMP_PERIODS.map(([k, l]) => `<button class="${cmpPeriod === k ? 'on' : ''}" onclick="cmpSetPeriod('${k}')">${l}</button>`).join(''); }
 async function cmpLoad() {
-  if ($('cmp-period') && $('cmp-period').value !== cmpPeriod) $('cmp-period').value = cmpPeriod;
+  cmpSeg();
   $('cmp-custom').hidden = cmpPeriod !== 'custom';
   const [from, to] = cmpRange(cmpPeriod); const seq = ++CMP.seq;
   try { const d = await get(`/api/sdr/admin/compare?from=${from}&to=${to}`); if (seq !== CMP.seq) return; d.calls_any = d.team && d.team.calls > 0; CMP.data = d; CMP.at = Date.now(); renderCmp(); cmpNote(false); }
@@ -653,8 +692,9 @@ function renderCmp() {
     // Best = highest (or lowest) among the SDRs with enough behind the number.
     let best = null;
     if (better) {
-      const ok = people.map((m, i) => ({ v: vals[i], i, thin: thin(m) })).filter((x) => x.v != null && !x.thin);
-      if (ok.length >= 2) { const pick = ok.reduce((a, b) => (better === 'hi' ? b.v > a.v : b.v < a.v) ? b : a); if (ok.some((x) => x.v !== pick.v)) best = pick.i; }
+      const ok = people.map((m, i) => ({ v: vals[i], i, thin: thin(m) || m.calls < 50 || m.days_full < 2 })).filter((x) => x.v != null && !x.thin);
+      // Green only for a clear lead (10% ahead of the next) - 47,4% vs 47,1% is a tie.
+      if (ok.length >= 2) { const sorted = [...ok].sort((a, b) => better === 'hi' ? b.v - a.v : a.v - b.v); const [p1, p2] = sorted; if (better === 'hi' ? p1.v >= p2.v * 1.1 : p1.v * 1.1 <= p2.v) best = p1.i; }
     }
     return `<tr><td class="cmp-l"${title ? ` title="${e(title)}"` : ''}>${e(label)}${title ? ' <span class="q">?</span>' : ''}</td>${cols.map((m, i) => {
       // A flagged number is tinted (red / amber) and says why; a flag beats "best".
@@ -665,32 +705,66 @@ function renderCmp() {
       return `<td class="num ${cls}"${click}${tip}>${e(fmt(v, f))}</td>`;
     }).join('')}</tr>`;
   }).join('');
-  // The funnel, one card per SDR: each step and how many make it to the next.
-  const step = (n, label, rate, rateLabel, metric, m) => `<div class="fs${metric && n ? ' click' : ''}"${metric && n ? ` onclick="drill('${metric}','${from}','${to}'${m.id ? `,'${e(m.id)}'` : ''})"` : ''}><b>${n}</b><span>${label}</span></div>${rate !== undefined ? `<div class="fr">${pf(rate)} <span>${rateLabel}</span></div>` : ''}`;
-  const funnel = cols.map((m) => `<div class="funnel${m.team ? ' team' : ''}"><h4>${e(m.name)}</h4>
-      ${step(m.calls, 'opkald', pct(m.talks, m.calls), 'fik fat i nogen', 'calls', m)}
-      ${step(m.talks, 'samtaler', pct(m.demos, m.talks), 'blev til demo', 'talks', m)}
-      ${step(m.demos, 'demoer', pct(m.qual, m.qual + m.unqual), 'kvalificeret' + (m.pending ? ` · ${m.pending} afventer` : ''), 'booked', m)}
-      ${step(m.qual, 'kvalificerede', undefined, '', 'booked', m)}
-    </div>`).join('');
-  // How the calls end - the share of each outcome.
+  // How the calls end - the share of each outcome (under "Vis alle tal").
   const mix = cols.map((m) => { const n = m.calls || 0;
     return `<div class="mixrow"><span class="mixname">${e(m.name)}</span><div class="mixbar">${n ? CMP_OUT.map(([a, l, c]) => { const k = (m.out || {})[a] || 0; return k ? `<i style="width:${100 * k / n}%;background:${c}" title="${e(l)}: ${k} (${Math.round(100 * k / n)}%)"></i>` : ''; }).join('') : '<em>ingen opkald</em>'}</div></div>`; }).join('');
   const legend = CMP_OUT.map(([, l, c]) => `<span><i style="background:${c}"></i>${e(l)}</span>`).join('');
   const days = Math.round((new Date(to) - new Date(from)) / 864e5) + 1;
-  $('cmp-sub').innerHTML = `${e(drillSpan(from, to))} (${days} ${days === 1 ? 'dag' : 'dage'}). Grønt = bedst blandt SDR'erne; gråt = for lidt bag tallet til at sammenligne. Klik på et tal for at se rækkerne bag det.${O && O.onboarding ? ` <b>Oplæringsperiode til ${e(O.onboarding.label)}.</b>` : ''}`;
-  // What needs an eye on it - worst first. Click one to see the rows behind it.
-  const FL = { bad: ['Under forventning', '●'], warn: ['Hold øje', '●'], info: ['Afviger', '●'] };
+  $('cmp-sub').innerHTML = `<b>${e(drillSpan(from, to))}</b><span>${days} ${days === 1 ? 'dag' : 'dage'}</span>${D.soft ? '<span class="onb">Oplæringsperiode</span>' : ''}`;
   const flags = D.flags || [];
   const cnt = (lv) => flags.filter((x) => x.level === lv).length;
-  $('cmp-badges').innerHTML = (cnt('bad') ? `<b class="cb bad">${cnt('bad')} under forventning</b>` : '') + (cnt('warn') ? `<b class="cb warn">${cnt('warn')} hold øje</b>` : '') + (!flags.length && D.calls_any ? '<b class="cb ok">Ingen flag</b>' : '');
-  const flagHtml = `<div class="cmp-flags"><h4>Værd at holde øje med <span class="sub">mod jeres mål (⚙), mod resten af teamet og mod ${e(D.prev_label)} - kun når forskellen er for stor til at være tilfældig${D.soft ? '. Oplæringsperiode: et mål der ikke er nået, er gult, ikke rødt' : ''}.</span></h4>
-    ${flags.length ? flags.map((x) => `<div class="fl ${x.level}"${x.drill ? ` onclick="drill('${x.drill}','${from}','${to}'${x.sdr ? `,'${e(x.sdr)}'` : ''})"` : ''}><span class="lv">${FL[x.level][0]}</span><b>${e(x.name)}</b><span class="tx">${e(x.text)}</span></div>`).join('')
-      : `<p class="sub">${D.calls_any ? 'Intet at bemærke i perioden - tallene ligger inden for målene og på linje med resten af teamet.' : 'Ingen opkald i perioden.'}</p>`}
-  </div><div class="cmp-note" id="cmp-note" hidden></div>`;
-  $('cmp-body').innerHTML = `${flagHtml}<div class="funnels" style="grid-template-columns:repeat(${cols.length},1fr)">${funnel}</div>
-    <table class="cmp"><thead><tr><th></th>${cols.map((m) => `<th class="num${m.team ? ' team' : ''}">${e(m.name)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
-    <div class="mix"><h4>Sådan ender opkaldene</h4>${mix}<div class="mixlegend">${legend}</div></div>`;
+  $('cmp-badges').innerHTML = (cnt('bad') ? `<b class="cb bad">${cnt('bad')} under forventning</b>` : '') + (cnt('warn') ? `<b class="cb warn">${cnt('warn')} hold øje</b>` : '') + (!flags.length && D.calls_any ? '<b class="cb ok">Alt ser fint ud</b>' : '');
+  // One card per SDR: a verdict, the demos, and four numbers that say how
+  // they get there. A flagged number turns red/amber and says why right under
+  // it; the flags with no number on the card sit at the bottom.
+  const target = Number((O && O.settings && O.settings.daily_target) || 0);
+  const qualTarget = Number((O && O.settings && O.settings.bench && O.settings.bench.qual_rate_pct) || 70);
+  const flagOf = (m, key) => flags.find((x) => x.sdr === (m.id || '') && x.metric === key && x.level !== 'info');
+  const STATUS = { bad: ['Under forventning', 'bad'], warn: ['Hold øje', 'warn'], ok: ['På sporet', 'ok'], thin: ['For lidt data', 'thin'] };
+  const ROWS = [
+    ['callsPerDay', 'Opkald pr. dag', (m) => one(m.calls_full, m.days_full), (v) => fmt(v, 'd'), (m) => m.days_full < 2, 'hi', () => target ? `mål ${target}` : '', 'calls'],
+    ['contact', 'Kontaktrate', (m) => pct(m.talks, m.calls), pf, (m) => m.calls < 30, 'hi', () => `team ${pf(pct(D.team.talks, D.team.calls))}`, 'calls'],
+    ['demoTalk', 'Demo pr. samtale', (m) => pct(m.demos, m.talks), pf, (m) => m.talks < 15, 'hi', () => `team ${pf(pct(D.team.demos, D.team.talks))}`, 'talks'],
+    ['qual', 'Kvalificeret', (m) => pct(m.qual, m.qual + m.unqual), pf, (m) => m.qual + m.unqual < 3, 'hi', (m) => `${m.qual} af ${m.qual + m.unqual} vurderede · mål ${qualTarget}%`, 'booked'],
+  ];
+  // Best on a row = highest among the SDRs with enough behind it.
+  // One busy day or a handful of calls says nothing about a person yet.
+  const thinCard = (m) => m.calls < 50 || m.days_full < 2;
+  const bestOf = (row) => { const [, , fn, , thin] = row; const ok = people.filter((m) => !thinCard(m) && !thin(m) && fn(m) != null).sort((a, b) => fn(b) - fn(a)); return ok.length >= 2 && fn(ok[0]) >= fn(ok[1]) * 1.1 ? ok[0].id : null; };
+  const bests = Object.fromEntries(ROWS.map((r) => [r[0], bestOf(r)]));
+  const dr = (metric, m) => `drill('${metric}','${from}','${to}'${m.id ? `,'${e(m.id)}'` : ''})`;
+  const card = (m) => {
+    const mine = flags.filter((x) => x.sdr === m.id);
+    const thinAll = thinCard(m);
+    const st = thinAll ? STATUS.thin : mine.some((x) => x.level === 'bad') ? STATUS.bad : mine.some((x) => x.level === 'warn') ? STATUS.warn : STATUS.ok;
+    const rows = ROWS.map(([key, label, fn, f, thin, , ref, metric]) => {
+      const v = fn(m); const fl = flagOf(m, key); const t = thin(m);
+      const cls = fl ? fl.level : bests[key] === m.id ? 'best' : t ? 'thin' : '';
+      const sub = fl ? fl.vs.join(' · ') : t && v != null ? 'for lidt data endnu' : ref(m);
+      const bar = key === 'callsPerDay' && target && v != null ? `<div class="sc-bar"><i style="width:${Math.min(100, 100 * v / target)}%"></i></div>` : '';
+      return `<div class="sc-row ${cls}" onclick="${dr(metric, m)}"${fl ? ` title="${e(fl.text)}"` : ''}><span class="l">${label}</span><b>${v == null ? '-' : e(f(v))}</b>${bar}<span class="s">${e(sub)}</span></div>`;
+    }).join('');
+    const rest = mine.filter((x) => !ROWS.some((r) => r[0] === x.metric));
+    return `<div class="sc">
+      <div class="sc-top"><h4>${e(m.name)}</h4><span class="st ${st[1]}">${st[0]}</span></div>
+      <div class="sc-hero" onclick="${dr('booked', m)}"><b>${m.demos}</b><span>${m.demos === 1 ? 'demo' : 'demoer'} booket</span><em>${m.calls} opkald · ${m.talks} samtaler${m.pending ? ` · ${m.pending} afventer vurdering` : ''}</em></div>
+      <div class="sc-rows">${rows}</div>
+      ${rest.length ? `<div class="sc-notes">${rest.map((x) => `<div class="n ${x.level}"${x.drill ? ` onclick="${dr(x.drill, m)}"` : ''}>${e(x.text)}</div>`).join('')}</div>` : ''}
+    </div>`;
+  };
+  const teamFlags = flags.filter((x) => !x.sdr);
+  const teamLine = `<div class="cmp-team"><span class="t">Teamet</span>
+      <span><b>${D.team.demos}</b> demoer</span><span><b>${pf(pct(D.team.demos, D.team.talks))}</b> demo pr. samtale</span><span><b>${fmt(one(D.team.calls, D.team.demos), 'd')}</b> opkald pr. demo</span><span><b>${pf(pct(D.team.qual, D.team.qual + D.team.unqual))}</b> kvalificeret</span>
+      ${teamFlags.map((x) => `<span class="tf ${x.level}" title="${e(x.text)}">${e(x.text)}</span>`).join('')}</div>`;
+  $('cmp-body').innerHTML = !D.calls_any ? `<p class="cmp-empty">Ingen opkald i perioden.</p>` : `
+    <div class="cmp-note" id="cmp-note" hidden></div>
+    <div class="scards">${people.map(card).join('')}</div>
+    ${teamLine}
+    <details class="cmp-more"><summary>Vis alle tal</summary>
+      <p class="cmp-more-sub">Grønt = bedst blandt SDR'erne, rødt/gult = flag (hold musen over), gråt = for lidt bag tallet. Flag sættes mod målene under ⚙, mod resten af teamet og mod ${e(D.prev_label)} - og kun når forskellen er for stor til at være tilfældig${D.soft ? '. I oplæringsperioden er et mål, der ikke er nået, gult - ikke rødt' : ''}. Klik på et tal for at se rækkerne bag det.</p>
+      <table class="cmp"><thead><tr><th></th>${cols.map((m) => `<th class="num${m.team ? ' team' : ''}">${e(m.name)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+      <div class="mix"><h4>Sådan ender opkaldene</h4>${mix}<div class="mixlegend">${legend}</div></div>
+    </details>`;
   renderCmpNote();
 }
 function benchTone(value, bench, lowerIsBetter) {
