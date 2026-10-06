@@ -77,8 +77,9 @@ først og fra resten, når fokus er tomt.
 **Fjern fra listen** (uden at ringe — tæller ikke som et opkald): *Ikke vores
 målgruppe* (arkiveres), *For svag lige nu* (hviler 90 dage og kommer tilbage
 nederst i puljen) eller *Ring senere* (en dato; bliver SDR'ens opfølgning).
-Trykkes "Ikke relevant" eller "Følg op" uden "Ring op", spørger kortet om det var
-et opkald. Tallet "fjernet" står ved "ringet i dag", i admins Per SDR og i Excel.
+Trykkes "Ikke relevant" uden "Ring op", spørger kortet om det var et opkald. Ved
+"Følg op" står "Jeg har ringet" altid tændt (de fleste ringer fra egen telefon);
+slå den fra for at flytte leadet uden at det tæller. Tallet "fjernet" står ved "ringet i dag", i admins Per SDR og i Excel.
 Tasterne følger nu etiketterne på knapperne.
 
 **Sagt nej til** (ved siden af Din liste): alle leads med *Ikke relevant*, *Ikke
@@ -90,6 +91,13 @@ egen liste) eller *Følg op* på en dag (i Opfølgning). Leadet følger den, der
 Research og kommer tilbage til en, når nummeret er fundet. Puljens egne
 oprydninger (Apollo, ICP-grænser m.m.) er ikke med - de ligger under admins
 Leads → Arkiveret.
+
+**Et nej gælder firmaet, ikke kun leadet:** samme firma ligger tit flere gange
+med samme telefonnummer (StoreLeads' landebutikker, LAURIE DK/NO/FI, eller
+CVR-registeret oveni). Står ét af dem som *Ikke relevant* (eller *Ikke nu*, til
+det kommer tilbage) fra en af os, serveres de andre med samme nummer ikke.
+Intet skrives på søskendene - åbnes nej'et igen, er de tilbage. En aftalt
+opfølgning eller en ejer sat efter nej'et (Åbn igen, admin-flyt) går forud.
 
 **Ingen svar gang på gang:** efter 3 opkald i træk uden svar (siden sidste
 samtale) parkeres leadet i 60 dage og kommer tilbage nederst i puljen — begge
@@ -128,6 +136,12 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   hvordan opkaldene ender. Grønt = bedst blandt SDR'erne; gråt = for lidt bag
   tallet (fx under 30 opkald eller 15 samtaler) til at sammenligne. Samme tal
   som Excel-eksporten - de regnes ét sted (`sdrPeriodStats`).
+  **Flag** øverst: under forventning (rød) / hold øje (gul) / afviger (grå) -
+  mod målene under ⚙ (opkald pr. dag, opkald pr. demo, andel kvalificerede),
+  mod resten af teamet og mod perioden før, kun når forskellen er for stor til
+  at være tilfældig (z-test). I oplæringsperioden er et ikke-nået mål gult.
+  **AI's vurdering** (Gemini) skrives ud fra tal og flag, gemmes pr. periode i
+  `sdr_perf_notes.json` (ikke i puljen) og genbruges i 3 timer.
 - **Eksportér resultater** (knap på Per SDR-kortet i Overblik) — et Excel-ark (.xlsx) for en valgt periode,
   evt. én SDR: Oversigt med nøgletal pr. SDR, Per dag, Demoer, alle Opkald,
   Nye leads pr. kilde og Definitioner. Samme tælleregler som Overblik.

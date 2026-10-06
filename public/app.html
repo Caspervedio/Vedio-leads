@@ -842,9 +842,10 @@ function toggleChooser() {
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
   const dflt = new Date(); dflt.setDate(dflt.getDate() + 1); dflt.setHours(9, 0, 0, 0);
   const local = new Date(dflt.getTime() - dflt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  // No "Ring op" on this lead: most likely a reschedule without a call - which
-  // must not count as one. One switch, preset from what the tool saw.
-  const dialed = calledCvr === (S.current && S.current.cvr);
+  // Følg op is nearly always agreed on a call - and most calls are dialled from
+  // the SDR's own phone, without "Ring op". So the switch starts on; turned
+  // off it moves the lead without counting a call. (Preset from "Ring op" it
+  // was off for 80 real follow-ups in a week, which then never counted.)
   c.innerHTML = `<div class="chooser">
     <span class="kicker">Følg op</span>
     ${new Date().getHours() < 15 ? `<button class="pill" onclick="fuPick('${at(0, 15)}')">I dag 15:00</button>` : ''}
@@ -854,7 +855,7 @@ function toggleChooser() {
     <button class="pill" onclick="fuPick('${at(14, 9)}')">Om 2 uger</button>
     <input type="datetime-local" id="fu-dt" value="${local}">
     <button class="pill violet" onclick="fuPick(new Date($('fu-dt').value).toISOString())">Planlæg</button>
-    <label class="fu-called" title="Slå fra, hvis du flytter leadet uden at have ringet - så tæller det ikke som et opkald"><span class="switch sm"><input type="checkbox" id="fu-called" ${dialed ? 'checked' : ''}><i></i></span> Jeg har ringet</label>
+    <label class="fu-called" title="Slå fra, hvis du flytter leadet uden at have ringet - så tæller det ikke som et opkald"><span class="switch sm"><input type="checkbox" id="fu-called" checked><i></i></span> Jeg har ringet</label>
   </div>`;
 }
 function fuPick(iso) {

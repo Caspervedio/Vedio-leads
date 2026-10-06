@@ -13611,7 +13611,7 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
 ];
 // Benchmarks the admin table colours against. Starting points, not gospel -
 // Casper tunes them under ⚙ once the team has a few weeks of its own numbers.
-const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40 };
+const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 70 };
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533 };
@@ -14232,12 +14232,14 @@ async function sdrGeminiJson(prompt, audio) {
   const txt = j.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
   try { return JSON.parse(txt); } catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error("Gemini svarede ikke med JSON"); }
 }
-function loadPool() { return loadUserData(POOL_ID); }
+// The latest pool and a change counter, for the "a no covers the company" index (sdrNoIndex).
+let SDR_NO_LEADS = null, SDR_NO_VER = 0, SDR_NO_CACHE = null;
+function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) SDR_NO_LEADS = d.leads; return d; }
 // Every SDR/admin save also stamps the meta (lists + settings) as freshest.
 function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(POOL_ID, d); }
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
-function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; }
+function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; SDR_NO_VER++; }
 const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
@@ -14331,7 +14333,48 @@ function sdrEligible(l, now) {
   if (l.resurface_at && new Date(l.resurface_at).getTime() > now) return false;
   if (l.deferred_until && new Date(l.deferred_until).getTime() > now) return false;
   if (l.callback_at && new Date(l.callback_at).getTime() > now) return false;
+  if (sdrSiblingNo(l, now)) return false; // the company said no on another record
   return sdrCallable(l);
+}
+// ─── A no covers the company, not just the record ─────────────────────────
+// StoreLeads lists every country shop of a webshop on its own (LAURIE DK / NO
+// / FI, Betterfelt DK / DE) and the CVR register adds the company once more -
+// all with the same phone number. A no on one of them left the others in the
+// pool, and the SDRs rang the same number again. So a lead isn't served while
+// another lead with the same number stands as a no from one of us: "Ikke
+// relevant" for good, "Ikke nu" until it comes back. Nothing is written to the
+// siblings - open the no again and they are back. An agreed follow-up on the
+// sibling itself, or an owner set after the no (Åbn igen, admin move), wins.
+function sdrPhoneKeys(l) {
+  const ks = new Set();
+  for (const p of [sdrPhone(l).phone, l.phone, l.ph]) { const x = String(p || "").replace(/\D/g, ""); if (x.length >= 8) ks.add(x.slice(-8)); }
+  return ks;
+}
+function sdrNoIndex() {
+  const leads = SDR_NO_LEADS; if (!leads) return null;
+  if (SDR_NO_CACHE && SDR_NO_CACHE.leads === leads && SDR_NO_CACHE.ver === SDR_NO_VER) return SDR_NO_CACHE.idx;
+  const idx = new Map();
+  for (const l of leads) {
+    const no = sdrDeclinedOf(l);
+    if (!no || no.action === "wrong-number") continue; // a wrong number may since have been fixed
+    const until = no.action === "not-now" ? (l.resurface_at || l.deferred_until || null) : null;
+    if (no.action === "not-now" && !until) continue;
+    for (const k of sdrPhoneKeys(l)) { const cur = idx.get(k); if (!cur || (cur.until && !until)) idx.set(k, { cvr: l.cvr, name: l.name || "", at: no.at || null, by: no.by, label: no.label, until }); }
+  }
+  SDR_NO_CACHE = { leads, ver: SDR_NO_VER, idx };
+  return idx;
+}
+function sdrSiblingNo(l, now) {
+  if (!l || l.callback_at) return null;
+  const idx = sdrNoIndex(); if (!idx || !idx.size) return null;
+  for (const k of sdrPhoneKeys(l)) {
+    const n = idx.get(k);
+    if (!n || n.cvr === l.cvr) continue;
+    if (n.until && new Date(n.until).getTime() <= (now || Date.now())) continue;
+    if (l.owner_override && l.owner_override_at && n.at && l.owner_override_at > n.at) continue;
+    return n;
+  }
+  return null;
 }
 function sdrIsDue(l, now) { return !!(l.callback_at && new Date(l.callback_at).getTime() <= now); }
 // `days` weekdays ahead at `hour` (default: the next weekday).
@@ -16511,22 +16554,176 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
   ];
 }
+// What needs an eye on it, for "Sammenlign SDR'er". Three yardsticks:
+//   mål      - the targets under ⚙ (calls a day, calls per demo, approval rate)
+//   teamet   - the rest of the team, pooled
+//   udvikling - the same SDR in the previous period of the same length
+// A flag needs enough behind the number (the same "thin" limits the table
+// greys out) and, against people, a gap too big to be chance (a two-proportion
+// z-test) - 10 demoer of 256 vs 18 of 304 is not yet a difference. In the
+// onboarding period a missed target is "hold øje", never red.
+const SDR_FLAG_MIN = { contact: 30, demoTalk: 15, demoCall: 50, qual: 5, days: 2, mix: 50 };
+function sdrPerfFlags({ people, team, prev, settings, soft, prevLabel }) {
+  const bench = { ...SDR_DEFAULT_BENCH, ...(settings.bench || {}) };
+  const target = Number(settings.daily_target) || 0;
+  const pctTxt = (v) => (v < 0.1 && v > 0 ? (100 * v).toFixed(1).replace(".", ",") : String(Math.round(100 * v))) + "%";
+  const numTxt = (v) => (Math.round(v * 10) / 10).toString().replace(".", ",");
+  // One-sided z for "a is below b" on proportions a1/n1 vs a2/n2 (negative = below).
+  const z = (a1, n1, a2, n2) => { const p = (a1 + a2) / (n1 + n2); const se = Math.sqrt(p * (1 - p) * (1 / n1 + 1 / n2)); return se > 0 ? (a1 / n1 - a2 / n2) / se : 0; };
+  // One line per SDR and metric: the worst level wins, every yardstick that
+  // tripped is named ("- målet er 70% · resten af teamet 100%").
+  const byKey = new Map();
+  const add = (m, level, metric, head, vs, drill, hint) => {
+    const k = (m.id || "") + "|" + metric + (metric === "mix" ? "|" + head : "");
+    const f = byKey.get(k) || { sdr: m.id || "", name: m.name, level, metric, head, vs: [], drill: drill || null, hint: hint || "" };
+    if ({ bad: 0, warn: 1, info: 2 }[level] < { bad: 0, warn: 1, info: 2 }[f.level]) f.level = level;
+    f.vs.push(vs); byKey.set(k, f);
+  };
+  const PROP = [
+    ["contact", "Kontaktrate", (m) => [m.talks, m.calls], "calls"],
+    ["demoTalk", "Demo pr. samtale", (m) => [m.demos, m.talks], "talks"],
+    ["demoCall", "Demo pr. opkald", (m) => [m.demos, m.calls], "booked"],
+    ["qual", "Kvalificeringsrate", (m) => [m.qual, m.qual + m.unqual], "booked"],
+  ];
+  // Calls a day on finished days only (calls_full / days_full).
+  const cpd1 = (m) => m.days_full ? m.calls_full / m.days_full : 0;
+  const head = { callsPerDay: (m) => `${numTxt(cpd1(m))} opkald pr. dag med opkald` };
+  const sum = (list) => list.reduce((a, m) => { for (const k of ["calls", "talks", "demos", "qual", "unqual", "days", "calls_full", "days_full"]) a[k] += m[k] || 0; for (const [k, v] of Object.entries(m.out || {})) a.out[k] = (a.out[k] || 0) + v; return a; }, { calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, days: 0, calls_full: 0, days_full: 0, out: {} });
+  for (const m of [...people, { ...team, id: "", name: "Teamet", team: true }]) {
+    const rev = m.qual + m.unqual;
+    const propHead = (key, label, v) => key === "qual" ? `${label} ${pctTxt(v)} (${m.unqual} af ${rev} vurderede ikke kvalificeret)` : `${label} ${pctTxt(v)}`;
+    // Against the targets.
+    if (m.days_full >= SDR_FLAG_MIN.days && target && !m.team) {
+      const r = cpd1(m) / target;
+      if (r < 0.9) add(m, r < 0.6 && !soft ? "bad" : "warn", "callsPerDay", head.callsPerDay(m), `målet er ${target}`, "calls");
+    }
+    const cpd = Number(bench.calls_per_demo) || 0;
+    if (cpd && m.demos >= 2) { const v = m.calls / m.demos; if (v > cpd) add(m, v > cpd * 1.5 && !soft ? "bad" : "warn", "callsPerDemo", `${numTxt(v)} opkald pr. demo`, `målet er ${cpd}`, "booked"); }
+    else if (cpd && !m.demos && m.calls >= cpd * 2) add(m, soft ? "warn" : "bad", "callsPerDemo", `Ingen demoer på ${m.calls} opkald`, `målet er én pr. ${cpd}`, "calls");
+    const qr = Number(bench.qual_rate_pct) || 0;
+    if (qr && rev >= SDR_FLAG_MIN.qual) { const v = m.qual / rev; if (v * 100 < qr) add(m, v * 100 < qr * 0.7 && !soft ? "bad" : "warn", "qual", propHead("qual", "Kvalificeringsrate", v), `målet er ${qr}%`, "booked"); }
+    // Against the rest of the team (needs someone to compare with).
+    const others = people.filter((x) => x.id !== m.id && x.calls > 0);
+    if (!m.team && others.length && m.calls > 0) {
+      const rest = sum(others);
+      for (const [key, label, fn, drill] of PROP) {
+        const [a1, n1] = fn(m), [a2, n2] = fn(rest);
+        if (n1 < SDR_FLAG_MIN[key] || n2 < SDR_FLAG_MIN[key]) continue;
+        const v = a1 / n1, w = a2 / n2, zz = z(a1, n1, a2, n2);
+        if (w <= 0 || v >= w) continue;
+        const level = v / w <= 0.7 && zz <= -1.96 ? "bad" : v / w <= 0.8 && zz <= -1.28 ? "warn" : null;
+        if (level) add(m, level, key, propHead(key, label, v), `resten af teamet ${pctTxt(w)}`, drill);
+      }
+      if (m.days_full >= SDR_FLAG_MIN.days && rest.days_full >= SDR_FLAG_MIN.days) {
+        const w = cpd1(rest);
+        if (w > 0 && cpd1(m) / w <= 0.6) add(m, "warn", "callsPerDay", head.callsPerDay(m), `resten af teamet ${numTxt(w)}`, "calls");
+      }
+      // Outcomes used far more often than by the others: not worse as such,
+      // but worth a look - the same call should get the same outcome.
+      if (m.calls >= SDR_FLAG_MIN.mix && rest.calls >= SDR_FLAG_MIN.mix) {
+        for (const [a, label] of [["not-relevant", "Ikke relevant"], ["not-now", "Ikke nu"], ["wrong-number", "Forkert nummer"], ["no-answer", "Ingen svar"]]) {
+          const k1 = (m.out || {})[a] || 0, k2 = rest.out[a] || 0, v = k1 / m.calls, w = k2 / rest.calls;
+          if (v - w >= 0.08 && (w === 0 || v / w >= 2) && z(k1, m.calls, k2, rest.calls) >= 2.58) add(m, "info", "mix", `Bruger "${label}" på ${pctTxt(v)} af opkaldene`, `resten af teamet ${pctTxt(w)}`, "calls", "Tjek at udfaldene bruges ens.");
+        }
+      }
+    }
+    // Against themselves, the period before.
+    const p = prev[m.team ? "" : m.id];
+    if (p && p.calls > 0) {
+      for (const [key, label, fn, drill] of PROP) {
+        const [a1, n1] = fn(m), [a2, n2] = fn(p);
+        if (n1 < SDR_FLAG_MIN[key] || n2 < SDR_FLAG_MIN[key]) continue;
+        const v = a1 / n1, w = a2 / n2;
+        if (w > 0 && v / w <= 0.7 && z(a1, n1, a2, n2) <= -1.96) add(m, "warn", key, propHead(key, label, v), `faldet fra ${pctTxt(w)} (${prevLabel})`, drill);
+      }
+      if (m.days_full >= SDR_FLAG_MIN.days && p.days_full >= SDR_FLAG_MIN.days) {
+        const w = cpd1(p);
+        if (w > 0 && cpd1(m) / w <= 0.7) add(m, "warn", "callsPerDay", head.callsPerDay(m), `faldet fra ${numTxt(w)} (${prevLabel})`, "calls");
+      }
+    }
+  }
+  const rank = { bad: 0, warn: 1, info: 2 };
+  return [...byKey.values()].map((f) => ({ ...f, text: `${f.head} - ${f.vs.join(" · ")}${f.hint ? ". " + f.hint : ""}` })).sort((a, b) => rank[a.level] - rank[b.level]);
+}
 // "Sammenlign SDR'er" on Overblik: the export's numbers for a period, one
-// column per SDR - every SDR, also one with nothing in the period.
+// column per SDR - every SDR, also one with nothing in the period - plus the
+// same numbers for the period before and the flags.
+function sdrCompare(d, fromKey, toKey) {
+  const st = sdrPeriodStats(d, { fromKey, toKey, sdr: null });
+  // The period just before, same length - "is it getting better or worse".
+  const len = Math.round((new Date(toKey + "T12:00:00") - new Date(fromKey + "T12:00:00")) / 864e5) + 1;
+  const pe = new Date(fromKey + "T12:00:00"); pe.setDate(pe.getDate() - 1); const ps = new Date(pe); ps.setDate(ps.getDate() - (len - 1));
+  const pst = sdrPeriodStats(d, { fromKey: sdrDayKey(ps), toKey: sdrDayKey(pe), sdr: null });
+  // Calls a day counts finished days only: at 10 o'clock today is not a slow day.
+  const today = sdrDayKey();
+  const slim = (m, todayCalls) => m ? { calls: m.calls, talks: m.talks, demos: m.demos, qual: m.qual, unqual: m.unqual, pending: m.pending, approved: m.approved, commission: m.commission, out: m.out, secs: m.secs, timed: m.timed, research: m.research, screened: m.screened, days: m.days.size,
+      calls_full: m.calls - (todayCalls || 0), days_full: [...m.days].filter((k) => k !== today).length }
+    : { calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, approved: 0, commission: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: 0, calls_full: 0, days_full: 0 };
+  const td = st.byDay[today];
+  const sdrIds = st.users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled).map((u) => u.id);
+  const sdrs = [...new Set([...sdrIds, ...st.ids])].filter((id) => !sdrIsAdmin(id)).map((id) => ({ id, name: st.who(id), ...slim(st.per[id], td && td.sdr[id] ? td.sdr[id].calls : 0) }));
+  const team = slim(st.tot, td ? td.calls : 0);
+  const prev = { "": slim(pst.tot), ...Object.fromEntries(sdrs.map((m) => [m.id, slim(pst.per[m.id])])) };
+  const until = String(st.settings.onboarding_until || "");
+  const soft = /^\d{4}-\d{2}-\d{2}$/.test(until) && fromKey <= until;
+  const prevLabel = `forrige ${len === 7 ? "uge" : len + " dage"}`;
+  const flags = sdrPerfFlags({ people: sdrs, team, prev, settings: st.settings, soft, prevLabel });
+  return { from: fromKey, to: toKey, prev_from: sdrDayKey(ps), prev_to: sdrDayKey(pe), prev_label: prevLabel, soft, onboarding_until: until, sdrs, team, prev, flags, settings: st.settings };
+}
+function sdrCompareRange(q) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  const toKey = re.test(String(q.to || "")) ? String(q.to) : sdrDayKey();
+  const fromKey = re.test(String(q.from || "")) ? String(q.from) : toKey;
+  if (fromKey > toKey) return { error: "Startdatoen ligger efter slutdatoen" };
+  if ((new Date(toKey) - new Date(fromKey)) / 864e5 > 800) return { error: "Højst to år ad gangen" };
+  return { fromKey, toKey };
+}
 app.get("/api/sdr/admin/compare", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
-    const re = /^\d{4}-\d{2}-\d{2}$/;
-    const toKey = re.test(String(req.query.to || "")) ? String(req.query.to) : sdrDayKey();
-    const fromKey = re.test(String(req.query.from || "")) ? String(req.query.from) : toKey;
-    if (fromKey > toKey) return res.status(400).json({ error: "Startdatoen ligger efter slutdatoen" });
-    if ((new Date(toKey) - new Date(fromKey)) / 864e5 > 800) return res.status(400).json({ error: "Højst to år ad gangen" });
-    const st = sdrPeriodStats(loadPool(), { fromKey, toKey, sdr: null });
-    const sdrIds = st.users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled).map((u) => u.id);
-    const slim = (m) => m ? { calls: m.calls, talks: m.talks, demos: m.demos, qual: m.qual, unqual: m.unqual, pending: m.pending, approved: m.approved, commission: m.commission, out: m.out, secs: m.secs, timed: m.timed, research: m.research, screened: m.screened, days: m.days.size }
-      : { calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, approved: 0, commission: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: 0 };
-    res.json({ ok: true, from: fromKey, to: toKey, sdrs: [...new Set([...sdrIds, ...st.ids])].filter((id) => !sdrIsAdmin(id)).map((id) => ({ id, name: st.who(id), ...slim(st.per[id]) })), team: slim(st.tot) });
+    const r = sdrCompareRange(req.query); if (r.error) return res.status(400).json({ error: r.error });
+    const c = sdrCompare(loadPool(), r.fromKey, r.toKey);
+    const note = (loadPerfNotes()[r.fromKey + "|" + r.toKey]) || null;
+    res.json({ ok: true, ...c, settings: undefined, note });
   } catch (e) { sdrFail(res, e, "admin/compare"); }
+});
+// A short judgement from Gemini on top of the numbers and flags - what is
+// fine, what to watch, one thing to do. Kept per period in its own small
+// file (never in the pool) and reused for 3 hours unless asked for a new one.
+const PERF_NOTES_FILE = path.join(DATA_DIR, "sdr_perf_notes.json");
+const PERF_NOTE_TTL_MS = 3 * 3600e3;
+function loadPerfNotes() { try { return JSON.parse(fs.readFileSync(PERF_NOTES_FILE, "utf8")) || {}; } catch { return {}; } }
+app.post("/api/sdr/admin/compare/note", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const b = req.body || {};
+    const r = sdrCompareRange(b); if (r.error) return res.status(400).json({ error: r.error });
+    const key = r.fromKey + "|" + r.toKey;
+    const cached = loadPerfNotes()[key];
+    if (cached && !b.force && Date.now() - new Date(cached.at).getTime() < PERF_NOTE_TTL_MS) return res.json({ ok: true, note: cached });
+    const c = sdrCompare(loadPool(), r.fromKey, r.toKey);
+    const bench = { ...SDR_DEFAULT_BENCH, ...(c.settings.bench || {}) };
+    const nums = (m) => ({ opkald: m.calls, dage_med_opkald: m.days, opkald_pr_hel_dag: m.days_full ? Math.round(10 * m.calls_full / m.days_full) / 10 : null, samtaler: m.talks, demoer: m.demos, kvalificeret: m.qual, ikke_kvalificeret: m.unqual, afventer: m.pending, udfald: m.out });
+    const prompt = [
+      "Du er salgschef-sparringspartner for Vedio (video-annoncer til Meta/TikTok). Founderen Casper vil vide, hvordan hans SDR'er (telefonsælgere der booker demoer med danske webshops) klarer sig - mod målene, mod hinanden og mod perioden før.",
+      c.soft ? `Perioden ligger i oplæringsperioden (til og med ${c.onboarding_until}): holdet er nyt. Vær fair: læg vægt på retning og læring, ikke på fulde mål.` : "",
+      "Vigtigt om data: Før 28. september var tast 5 mærket 'Ikke nu' men gemte 'Ikke relevant', så fordelingen mellem de to udfald før den dato siger mere om knappen end om sælgeren. Små tal er usikre - en forskel på få demoer kan være tilfældig; sig det, når det er tilfældet. Samtale = de fik fat i nogen. Victor er medstifter og ringer kun lidt.",
+      `Periode: ${r.fromKey} til ${r.toKey}. Forrige periode (${c.prev_label}): ${c.prev_from} til ${c.prev_to}.`,
+      `Mål: ${c.settings.daily_target} opkald pr. dag, højst ${bench.calls_per_demo} opkald pr. demo, mindst ${bench.qual_rate_pct}% kvalificerede demoer.`,
+      `Tal pr. SDR: ${JSON.stringify(Object.fromEntries(c.sdrs.map((m) => [m.name, nums(m)])))}`,
+      `Teamet: ${JSON.stringify(nums(c.team))}. Forrige periode: ${JSON.stringify(Object.fromEntries([["Teamet", nums(c.prev[""])], ...c.sdrs.map((m) => [m.name, nums(c.prev[m.id])])]))}`,
+      `Flag systemet har sat (bad = under forventning, warn = hold øje, info = afviger): ${JSON.stringify(c.flags.map((f) => ({ niveau: f.level, hvem: f.name, tekst: f.text })))}`,
+      "Skriv på dansk, kort, konkret og ærligt - ingen floskler, ingen overdrivelser, ingen markdown. Nævn navne. Svar KUN som JSON:",
+      '{"headline": "<én sætning: den samlede vurdering>", "points": ["<2-4 korte punkter: hvad går godt, hvad skal holdes øje med, hvem - og om det er sikkert eller for tidligt at sige>"], "action": "<én konkret ting Casper bør gøre denne uge>"}',
+    ].filter(Boolean).join("\n\n");
+    const out = await sdrGeminiJson(prompt, null);
+    const plain = (x) => String(x || "").replace(/\*\*?|__/g, "").trim().slice(0, 400); // shown as text, not markdown
+    const note = { at: new Date().toISOString(), headline: plain(out.headline), points: (Array.isArray(out.points) ? out.points : []).map(plain).filter(Boolean).slice(0, 5), action: plain(out.action) };
+    const all = loadPerfNotes(); all[key] = note;
+    for (const k of Object.keys(all).sort((x, y) => new Date(all[x].at) - new Date(all[y].at)).slice(0, Math.max(0, Object.keys(all).length - 40))) delete all[k];
+    fs.writeFileSync(PERF_NOTES_FILE, JSON.stringify(all));
+    res.json({ ok: true, note });
+  } catch (e) { sdrFail(res, e, "admin/compare/note"); }
 });
 app.get("/api/sdr/admin/export", authMiddleware, (req, res) => {
   try {
@@ -18376,6 +18573,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         const cur = { ...SDR_DEFAULT_BENCH, ...(d.sdr_settings.bench || {}) };
         if (Number.isFinite(Number(b.bench.talk_avg_s)) && Number(b.bench.talk_avg_s) > 0) cur.talk_avg_s = Math.min(3600, Math.round(Number(b.bench.talk_avg_s)));
         if (Number.isFinite(Number(b.bench.calls_per_demo)) && Number(b.bench.calls_per_demo) > 0) cur.calls_per_demo = Math.min(1000, Math.round(Number(b.bench.calls_per_demo)));
+        if (Number.isFinite(Number(b.bench.qual_rate_pct)) && Number(b.bench.qual_rate_pct) > 0) cur.qual_rate_pct = Math.min(100, Math.round(Number(b.bench.qual_rate_pct)));
         d.sdr_settings.bench = cur;
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));

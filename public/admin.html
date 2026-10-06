@@ -43,6 +43,28 @@
 #cmp-card .cmp-head p{font-size:13px;color:var(--txt-soft);max-width:640px}
 #cmp-card .cmp-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
 #cmp-card select,#cmp-card input[type=date]{border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;font:inherit;font-size:13px;background:var(--white)}
+#cmp-card .cmp-badges{margin-left:auto;display:inline-flex;gap:6px}
+#cmp-card .cb{font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:var(--pill);letter-spacing:0}
+#cmp-card .cb.bad{background:#fdecec;color:#B3352B}
+#cmp-card .cb.warn{background:#fdf3dc;color:#A9761E}
+#cmp-card .cb.ok{background:#e6f6ec;color:var(--approve)}
+#cmp-card .cmp-flags{padding:16px 24px 6px}
+#cmp-card .cmp-flags h4,#cmp-card .cmp-note .ai-h{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
+#cmp-card .cmp-flags h4 .sub,#cmp-card .cmp-note .ai-h .sub{text-transform:none;letter-spacing:0;font-weight:500;font-size:12px}
+#cmp-card .fl{display:grid;grid-template-columns:128px 90px 1fr;gap:10px;align-items:baseline;padding:8px 10px;border-radius:8px;margin-bottom:4px;font-size:13.5px;cursor:pointer}
+#cmp-card .fl:hover{background:var(--paper)}
+#cmp-card .fl .lv{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+#cmp-card .fl.bad .lv{color:#B3352B}#cmp-card .fl.warn .lv{color:#A9761E}#cmp-card .fl.info .lv{color:var(--txt-faint)}
+#cmp-card .fl .tx{color:var(--txt-soft)}
+#cmp-card .cmp-note{margin:10px 24px 4px;padding:14px 16px;border-radius:var(--radius);background:var(--violet-soft);font-size:13.5px;line-height:1.5}
+#cmp-card .cmp-note .ai-h{color:var(--violet)}
+#cmp-card .cmp-note .ai-head{font-weight:700;margin-bottom:6px}
+#cmp-card .cmp-note ul{margin:0 0 6px 18px}
+#cmp-card .cmp-note .ai-act{margin-top:6px}
+#cmp-card .cmp-note .linkbtn{padding:0;font-size:12px;color:var(--violet);text-decoration:underline}
+#cmp-card table.cmp td.flag-bad{background:#fdecec;color:#B3352B;font-weight:800}
+#cmp-card table.cmp td.flag-warn{background:#fdf3dc;color:#A9761E;font-weight:800}
+@media (max-width:760px){#cmp-card .fl{grid-template-columns:1fr}#cmp-card .cmp-badges{display:none}}
 #cmp-card .funnels{display:grid;gap:12px;padding:18px 24px}
 #cmp-card .funnel{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;background:var(--white)}
 #cmp-card .funnel.team{background:var(--paper)}
@@ -302,7 +324,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <div class="trend" id="trend"></div>
     </div>
     <details class="deeper" id="cmp-card" ontoggle="cmpToggle(this.open)">
-      <summary><span>Sammenlign SDR'er</span><span class="sub">Tragt, nøgletal og hvordan opkaldene ender - side om side for en periode.</span></summary>
+      <summary><span>Sammenlign SDR'er</span><span class="sub">Tragt, nøgletal og hvordan opkaldene ender - side om side for en periode.</span><span class="cmp-badges" id="cmp-badges"></span></summary>
       <div class="cmp-head"><p id="cmp-sub">Hvem når flest, og hvem gør samtalerne til demoer. Klik på et tal for at se rækkerne bag det.</p>
         <div class="cmp-tools">
           <select id="cmp-period" onchange="cmpSetPeriod(this.value)">
@@ -468,8 +490,9 @@ async function loadOverview() {
   me = O.me; $('me-name').textContent = me.name;
   renderOverview(); renderIntake(); renderDemos(); fillSources();
   // Open again if this admin left it open; opening fires the toggle that loads it.
+  // Loaded even while folded: the flag count sits on the heading.
   if (!CMP.init) { CMP.init = true; try { if (localStorage.getItem('vl_cmp_open') === '1') $('cmp-card').open = true; } catch {} }
-  else if ($('cmp-card').open && (!CMP.at || Date.now() - CMP.at > 5 * 60e3)) cmpLoad();
+  if (!CMP.at || Date.now() - CMP.at > 5 * 60e3) cmpLoad();
 }
 /* Health colours on the SDR table. The benchmarks are the daily goal (their
    own number) plus talk time and calls-per-demo from ⚙. Green = at or past it,
@@ -539,7 +562,30 @@ let cmpPeriod = (() => { try { return localStorage.getItem('vl_cmp_period') || '
 // Folded away by default - Overblik has enough on it. Opening it fetches.
 function cmpToggle(open) {
   try { localStorage.setItem('vl_cmp_open', open ? '1' : '0'); } catch {}
-  if (open && (!CMP.at || Date.now() - CMP.at > 5 * 60e3)) cmpLoad();
+  if (open && CMP.data) cmpNote(false);
+}
+/* The AI's judgement: written when the section is open and there is none for
+   the period yet (or it is over 3 hours old). "Skriv ny" forces a new one. */
+async function cmpNote(force) {
+  const D = CMP.data; if (!D || !$('cmp-card').open || CMP.noteBusy) return;
+  const fresh = D.note && Date.now() - new Date(D.note.at).getTime() < 3 * 3600e3;
+  if (fresh && !force) return;
+  if (!D.calls_any) return;
+  CMP.noteBusy = true; renderCmpNote();
+  try { const r = await post('/api/sdr/admin/compare/note', { from: D.from, to: D.to, force: !!force }); if (CMP.data === D) D.note = r.note; }
+  catch (ex) { if (CMP.data === D) D.noteError = ex.message; }
+  CMP.noteBusy = false; renderCmpNote();
+}
+function renderCmpNote() {
+  const box = $('cmp-note'); const D = CMP.data; if (!box || !D) return;
+  const n = D.note;
+  if (CMP.noteBusy && !n) { box.innerHTML = `<div class="ai-h">✦ AI's vurdering</div><p class="sub">Læser tallene…</p>`; return; }
+  if (!n) { box.innerHTML = D.noteError ? `<div class="ai-h">✦ AI's vurdering</div><p class="sub">Kunne ikke skrive en vurdering: ${e(D.noteError)} <button class="linkbtn" onclick="cmpNote(true)">Prøv igen</button></p>` : ''; box.hidden = !D.noteError; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="ai-h">✦ AI's vurdering <span class="sub">${e(fmtWhen(n.at))}${CMP.noteBusy ? ' · skriver ny…' : ` · <button class="linkbtn" onclick="cmpNote(true)">Skriv ny</button>`}</span></div>
+    <p class="ai-head">${e(n.headline)}</p>
+    ${n.points.length ? `<ul>${n.points.map((x) => `<li>${e(x)}</li>`).join('')}</ul>` : ''}
+    ${n.action ? `<p class="ai-act"><b>Gør dette:</b> ${e(n.action)}</p>` : ''}`;
 }
 function cmpKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function cmpRange(p) {
@@ -562,7 +608,7 @@ async function cmpLoad() {
   if ($('cmp-period') && $('cmp-period').value !== cmpPeriod) $('cmp-period').value = cmpPeriod;
   $('cmp-custom').hidden = cmpPeriod !== 'custom';
   const [from, to] = cmpRange(cmpPeriod); const seq = ++CMP.seq;
-  try { const d = await get(`/api/sdr/admin/compare?from=${from}&to=${to}`); if (seq !== CMP.seq) return; CMP.data = d; CMP.at = Date.now(); renderCmp(); }
+  try { const d = await get(`/api/sdr/admin/compare?from=${from}&to=${to}`); if (seq !== CMP.seq) return; d.calls_any = d.team && d.team.calls > 0; CMP.data = d; CMP.at = Date.now(); renderCmp(); cmpNote(false); }
   catch (ex) { if (seq === CMP.seq) $('cmp-body').innerHTML = `<p class="sub" style="padding:18px 24px">Kunne ikke hente: ${e(ex.message)}</p>`; }
 }
 const CMP_OUT = [['demo-booked', 'Demo booket', '#1FA160'], ['follow-up', 'Følg op', '#7C3AED'], ['email-sent', 'Mail sendt', '#1b6b8a'], ['not-now', 'Ikke nu', '#C9974F'], ['not-relevant', 'Ikke relevant', '#d9826f'], ['no-answer', 'Ingen svar', '#cfcbc2'], ['ivr', 'Telefonmenu', '#e2ded6'], ['wrong-number', 'Forkert nummer', '#b9a99f']];
@@ -579,19 +625,19 @@ function renderCmp() {
     ['Aktivitet'],
     ['Opkald', (m) => m.calls, 'n', '', () => false, 'calls'],
     ['Dage med opkald', (m) => m.days, 'n', '', () => false],
-    ['Opkald pr. dag med opkald', (m) => one(m.calls, m.days), 'd', 'hi', (m) => m.days < 2, null, 'Opkald delt med de dage, SDR\'en har ringet - så en fridag ikke trækker ned.'],
+    ['Opkald pr. dag med opkald', (m) => one(m.calls_full, m.days_full), 'd', 'hi', (m) => m.days_full < 2, null, 'Opkald delt med de dage, SDR\'en har ringet - så en fridag ikke trækker ned. I dag tæller først med, når dagen er omme.', 'callsPerDay'],
     ['Samtaler', (m) => m.talks, 'n', '', () => false, 'talks', 'Opkald hvor de fik fat i nogen: Demo, Følg op, Ikke nu, Mail sendt - og Ikke relevant på mindst 20 sek.'],
-    ['Kontaktrate', (m) => pct(m.talks, m.calls), '%', 'hi', (m) => m.calls < 30, null, 'Samtaler delt med opkald. Grå under 30 opkald.'],
+    ['Kontaktrate', (m) => pct(m.talks, m.calls), '%', 'hi', (m) => m.calls < 30, null, 'Samtaler delt med opkald. Grå under 30 opkald.', 'contact'],
     ['Konvertering'],
     ['Demoer booket', (m) => m.demos, 'n', '', () => false, 'booked', 'Står som booket demo nu og blev booket i perioden - samme tal som Resultater og provisionen.'],
-    ['Demo pr. samtale', (m) => pct(m.demos, m.talks), '%', 'hi', (m) => m.talks < 15, null, 'Den vigtigste: hvor mange af samtalerne der bliver til en demo. Grå under 15 samtaler.'],
-    ['Demo pr. opkald', (m) => pct(m.demos, m.calls), '%', 'hi', (m) => m.calls < 50, null, 'Grå under 50 opkald.'],
-    ['Opkald pr. demo', (m) => one(m.calls, m.demos), 'd', 'lo', (m) => m.demos < 2, null, 'Hvor mange opkald en demo koster. Grå under 2 demoer.'],
+    ['Demo pr. samtale', (m) => pct(m.demos, m.talks), '%', 'hi', (m) => m.talks < 15, null, 'Den vigtigste: hvor mange af samtalerne der bliver til en demo. Grå under 15 samtaler.', 'demoTalk'],
+    ['Demo pr. opkald', (m) => pct(m.demos, m.calls), '%', 'hi', (m) => m.calls < 50, null, 'Grå under 50 opkald.', 'demoCall'],
+    ['Opkald pr. demo', (m) => one(m.calls, m.demos), 'd', 'lo', (m) => m.demos < 2, null, 'Hvor mange opkald en demo koster. Grå under 2 demoer.', 'callsPerDemo'],
     ['Kvalitet'],
     ['Kvalificeret', (m) => m.qual, 'n', '', () => false, 'booked', 'Af demoerne booket i perioden: godkendt som kvalificeret.'],
     ['Ikke kvalificeret', (m) => m.unqual, 'n', '', () => false, 'booked'],
     ['Afventer vurdering', (m) => m.pending, 'n', '', () => false, 'booked'],
-    ['Kvalificeringsrate', (m) => pct(m.qual, m.qual + m.unqual), '%', 'hi', (m) => m.qual + m.unqual < 3, null, 'Kvalificeret delt med de vurderede (afventende tæller ikke). Grå under 3 vurderede.'],
+    ['Kvalificeringsrate', (m) => pct(m.qual, m.qual + m.unqual), '%', 'hi', (m) => m.qual + m.unqual < 3, null, 'Kvalificeret delt med de vurderede (afventende tæller ikke). Grå under 3 vurderede.', 'qual'],
     ['Provision, godkendt i perioden', (m) => m.commission, 'kr', '', () => false, null, 'Møder godkendt i perioden gange satsen - lønnen følger lønperioden (29.-28.).'],
     ['Indsats'],
     ['Snit tid pr. lead', (m) => (m.timed ? Math.round(m.secs / m.timed) : null), 't', '', (m) => m.timed < 5, null, 'Tid med kortet fremme pr. lead (research + opkald + note), kun opkald ringet fra værktøjet.'],
@@ -602,7 +648,7 @@ function renderCmp() {
   const [from, to] = [D.from, D.to];
   const body = M.map((r) => {
     if (r.length === 1) return `<tr class="cmp-grp"><td colspan="${cols.length + 1}">${e(r[0])}</td></tr>`;
-    const [label, fn, f, better, thin, metric, title] = r;
+    const [label, fn, f, better, thin, metric, title, fkey] = r;
     const vals = cols.map((m) => fn(m));
     // Best = highest (or lowest) among the SDRs with enough behind the number.
     let best = null;
@@ -611,9 +657,11 @@ function renderCmp() {
       if (ok.length >= 2) { const pick = ok.reduce((a, b) => (better === 'hi' ? b.v > a.v : b.v < a.v) ? b : a); if (ok.some((x) => x.v !== pick.v)) best = pick.i; }
     }
     return `<tr><td class="cmp-l"${title ? ` title="${e(title)}"` : ''}>${e(label)}${title ? ' <span class="q">?</span>' : ''}</td>${cols.map((m, i) => {
-      const v = vals[i]; const cls = [m.team ? 'team' : '', i === best ? 'best' : '', better && thin(m) && v != null ? 'thin' : '', metric && v ? 'click' : ''].filter(Boolean).join(' ');
+      // A flagged number is tinted (red / amber) and says why; a flag beats "best".
+      const fl = fkey ? (D.flags || []).find((x) => x.metric === fkey && x.sdr === (m.id || '') && x.level !== 'info') : null;
+      const v = vals[i]; const cls = [m.team ? 'team' : '', fl ? 'flag-' + fl.level : i === best ? 'best' : '', better && thin(m) && v != null ? 'thin' : '', metric && v ? 'click' : ''].filter(Boolean).join(' ');
       const click = metric && v ? ` onclick="drill('${metric}','${from}','${to}'${m.id ? `,'${e(m.id)}'` : ''})"` : '';
-      const tip = better && thin(m) && v != null ? ` title="For lidt at sammenligne på endnu"` : '';
+      const tip = fl ? ` title="${e(fl.text)}"` : better && thin(m) && v != null ? ` title="For lidt at sammenligne på endnu"` : '';
       return `<td class="num ${cls}"${click}${tip}>${e(fmt(v, f))}</td>`;
     }).join('')}</tr>`;
   }).join('');
@@ -631,9 +679,19 @@ function renderCmp() {
   const legend = CMP_OUT.map(([, l, c]) => `<span><i style="background:${c}"></i>${e(l)}</span>`).join('');
   const days = Math.round((new Date(to) - new Date(from)) / 864e5) + 1;
   $('cmp-sub').innerHTML = `${e(drillSpan(from, to))} (${days} ${days === 1 ? 'dag' : 'dage'}). Grønt = bedst blandt SDR'erne; gråt = for lidt bag tallet til at sammenligne. Klik på et tal for at se rækkerne bag det.${O && O.onboarding ? ` <b>Oplæringsperiode til ${e(O.onboarding.label)}.</b>` : ''}`;
-  $('cmp-body').innerHTML = `<div class="funnels" style="grid-template-columns:repeat(${cols.length},1fr)">${funnel}</div>
+  // What needs an eye on it - worst first. Click one to see the rows behind it.
+  const FL = { bad: ['Under forventning', '●'], warn: ['Hold øje', '●'], info: ['Afviger', '●'] };
+  const flags = D.flags || [];
+  const cnt = (lv) => flags.filter((x) => x.level === lv).length;
+  $('cmp-badges').innerHTML = (cnt('bad') ? `<b class="cb bad">${cnt('bad')} under forventning</b>` : '') + (cnt('warn') ? `<b class="cb warn">${cnt('warn')} hold øje</b>` : '') + (!flags.length && D.calls_any ? '<b class="cb ok">Ingen flag</b>' : '');
+  const flagHtml = `<div class="cmp-flags"><h4>Værd at holde øje med <span class="sub">mod jeres mål (⚙), mod resten af teamet og mod ${e(D.prev_label)} - kun når forskellen er for stor til at være tilfældig${D.soft ? '. Oplæringsperiode: et mål der ikke er nået, er gult, ikke rødt' : ''}.</span></h4>
+    ${flags.length ? flags.map((x) => `<div class="fl ${x.level}"${x.drill ? ` onclick="drill('${x.drill}','${from}','${to}'${x.sdr ? `,'${e(x.sdr)}'` : ''})"` : ''}><span class="lv">${FL[x.level][0]}</span><b>${e(x.name)}</b><span class="tx">${e(x.text)}</span></div>`).join('')
+      : `<p class="sub">${D.calls_any ? 'Intet at bemærke i perioden - tallene ligger inden for målene og på linje med resten af teamet.' : 'Ingen opkald i perioden.'}</p>`}
+  </div><div class="cmp-note" id="cmp-note" hidden></div>`;
+  $('cmp-body').innerHTML = `${flagHtml}<div class="funnels" style="grid-template-columns:repeat(${cols.length},1fr)">${funnel}</div>
     <table class="cmp"><thead><tr><th></th>${cols.map((m) => `<th class="num${m.team ? ' team' : ''}">${e(m.name)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
     <div class="mix"><h4>Sådan ender opkaldene</h4>${mix}<div class="mixlegend">${legend}</div></div>`;
+  renderCmpNote();
 }
 function benchTone(value, bench, lowerIsBetter) {
   if (value == null || !bench || !isFinite(bench)) return '';
@@ -1183,6 +1241,7 @@ function openSettings() {
     <div><label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}"></div>
     <div><label>Benchmark: gennemsnitlig tid pr. lead (sekunder) - tid med kortet fremme, fra de åbner det til udfaldet er valgt. Farver "Snit pr. lead" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 180)}"></div>
     <div><label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}"></div>
+    <div><label>Mål: andel kvalificerede demoer (%) - af de vurderede. Bruges til flag under "Sammenlign SDR'er"</label><input id="st-bqual" type="number" min="1" max="100" value="${e((s.bench || {}).qual_rate_pct ?? 70)}"></div>
     <div><label>Leads på hver SDR's liste ad gangen (fyldes op efter hvert opkald; op til 3 forfaldne opfølgninger øverst, resten venter i Opfølgning)</label><input id="st-size" type="number" min="3" max="100" value="${e(s.list_size || 10)}"></div>
     <div><label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}"></div>
     <div><label>Friske leads der skal ligge klar (aldrig ringet, med navn + nummer). Under tallet flyttes nye butikker ind fra StoreLeads-reserven og der købes telefonnumre - over det venter de betalte opslag (0 = altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.fresh_target ?? 450)}"></div>
@@ -1227,7 +1286,7 @@ async function saveSettings() {
     email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
     fresh_target: Number($('st-cap').value) || 0,
     tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0 },
-    bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40 },
+    bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
