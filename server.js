@@ -14240,7 +14240,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; SDR_NO_VER++; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14635,6 +14635,8 @@ function sdrSlim(l, nameById) {
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
     demo_status: l.demo_status || (l.lastAction === "demo-booked" ? "pending" : null), demo_review_reason: l.demo_review_reason || "",
+    demo_qualified_at: l.demo_qualified_at || null,
+    sale_status: l.sale_status || null, sale_at: l.sale_at || null, sale_value_dkk: l.sale_value_dkk ?? null, sale_reason: l.sale_reason || "", sale_note: l.sale_note || "",
     undo_until: l._undo && l._undo.at ? new Date(new Date(l._undo.at).getTime() + SDR_UNDO_WINDOW_MS).toISOString() : null,
     last_debrief: Array.isArray(l.debriefs) && l.debriefs.length ? l.debriefs[l.debriefs.length - 1] : null,
     claimed_by: l.claimed_by || null,
@@ -16182,6 +16184,42 @@ app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "demo-review"); }
 });
+// Admin: did the demo become a sale? The step after "kvalificeret" - the
+// founders take the demo, then mark it Solgt (date, optional value) or Ikke
+// solgt (a reason). Tracking only: commission still follows the approval.
+const SALE_REASONS = { price: "Pris", timing: "Timing - ikke nu", competitor: "Valgte en anden", need: "Intet behov", silent: "Svarer ikke", other: "Andet" };
+app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const b = req.body || {};
+    if (!["won", "lost", "pending"].includes(b.status)) return res.status(400).json({ error: "Ugyldig status" });
+    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === b.cvr);
+    if (!lead || lead.lastAction !== "demo-booked") return res.status(404).json({ error: "Ingen booket demo på det lead" });
+    const nowIso = new Date().toISOString();
+    let at = nowIso;
+    if (b.at) { const t = new Date(b.at); if (isNaN(t.getTime()) || t.getTime() > Date.now() + 864e5) return res.status(400).json({ error: "Ugyldig dato" }); at = t.toISOString(); }
+    const value = b.value === "" || b.value == null ? null : Number(b.value);
+    if (value != null && !(Number.isFinite(value) && value >= 0 && value < 1e8)) return res.status(400).json({ error: "Ugyldig værdi" });
+    if (b.status === "lost" && b.reason && !SALE_REASONS[b.reason]) return res.status(400).json({ error: "Ugyldig grund" });
+    const users = loadUsers(); const adminName = (users.find((u) => u.id === req.userId) || {}).name || "admin";
+    if (b.status === "pending") { lead.sale_status = null; lead.sale_at = null; lead.sale_by = null; lead.sale_value_dkk = null; lead.sale_reason = ""; lead.sale_note = ""; }
+    else {
+      lead.sale_status = b.status; lead.sale_at = at; lead.sale_by = req.userId;
+      lead.sale_value_dkk = b.status === "won" ? value : null;
+      lead.sale_reason = b.status === "lost" ? String(b.reason || "other") : "";
+      lead.sale_note = String(b.note || "").trim().slice(0, 500);
+    }
+    // Into the thread, so the SDR who booked it sees how it ended.
+    const text = b.status === "won" ? `Solgt efter demoen${value != null ? ` (${value.toLocaleString("da-DK")} kr)` : ""}${lead.sale_note ? " - " + lead.sale_note : ""}`
+      : b.status === "lost" ? `Ikke solgt efter demoen: ${SALE_REASONS[lead.sale_reason] || "Andet"}${lead.sale_note ? " - " + lead.sale_note : ""}` : "Salg sat tilbage til afventer";
+    lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+    lead.note_log.push({ at: nowIso, by: req.userId, where: "admin", text });
+    sdrTouch(lead);
+    savePool(d);
+    logActivity("sdr-sale", `${adminName}: ${lead.name} ${b.status === "won" ? "solgt" : b.status === "lost" ? "ikke solgt" : "afventer salg"}`, { cvr: lead.cvr, userId: req.userId, status: b.status });
+    sdrRespond(res, req.userId, d);
+  } catch (e) { sdrFail(res, e, "admin/sale"); }
+});
 // Post-call debrief: voice memo (base64 audio) OR pasted transcript text →
 // Gemini → {summary, next_step, coaching}. Summary lands in the note field;
 // everything is kept on lead.debriefs[] for the weekly digest.
@@ -16442,7 +16480,7 @@ function sdrPeriodStats(d, { fromKey, toKey, sdr }) {
   const order = new Map(users.map((u, i) => [u.id, i]));
   const ids = [...new Set([...calls.map((x) => x.c.by), ...demos.map((l) => l.demo_booked_by), ...research.map((l) => l.research_by), ...screens.map((x) => x.by), ...approved.map((l) => l.demo_booked_by)].filter(Boolean))]
     .sort((a, b) => (order.has(a) ? order.get(a) : 999) - (order.has(b) ? order.get(b) : 999));
-  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, approved: 0, commission: 0, days: new Set() });
+  const blank = () => ({ calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, won: 0, lost: 0, value: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, approved: 0, commission: 0, days: new Set() });
   const tot = blank(); const per = Object.fromEntries(ids.map((id) => [id, blank()]));
   const byDay = Object.fromEntries(dayKeys.map((k) => [k, { ...blank(), newLeads: 0, sdr: Object.fromEntries(ids.map((id) => [id, { calls: 0, demos: 0 }])) }]));
   for (const { c } of calls) {
@@ -16452,7 +16490,7 @@ function sdrPeriodStats(d, { fromKey, toKey, sdr }) {
   }
   for (const l of demos) {
     const st = l.demo_status || "pending"; const k = sdrDayKey(l.demo_booked_at);
-    for (const m of [tot, per[l.demo_booked_by]]) { if (!m) continue; m.demos++; if (st === "qualified") m.qual++; else if (st === "unqualified") m.unqual++; else m.pending++; }
+    for (const m of [tot, per[l.demo_booked_by]]) { if (!m) continue; m.demos++; if (st === "qualified") m.qual++; else if (st === "unqualified") m.unqual++; else m.pending++; if (l.sale_status === "won") { m.won++; m.value += Number(l.sale_value_dkk) || 0; } else if (l.sale_status === "lost") m.lost++; }
     const bd = byDay[k]; if (bd) { bd.demos++; if (bd.sdr[l.demo_booked_by]) bd.sdr[l.demo_booked_by].demos++; }
   }
   for (const l of research) { tot.research++; if (per[l.research_by]) per[l.research_by].research++; }
@@ -16489,6 +16527,9 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     line("Kvalificerede demoer", (m) => m.qual),
     line("Ikke kvalificerede", (m) => m.unqual),
     line("Afventer vurdering", (m) => m.pending),
+    line("Solgt (af demoerne i perioden)", (m) => m.won),
+    line("Ikke solgt", (m) => m.lost),
+    line("Salgsrate (af afgjorte)", (m) => ratio(m.won, m.won + m.lost), "pct"),
     line("Godkendt (kvalificeret) i perioden", (m) => m.approved),
     line("Provision for godkendte i perioden (kr)", (m) => m.commission, "kr"),
     [],
@@ -16521,7 +16562,9 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     const c = sdrPrimaryContact(l) || {}; const st = l.demo_status || "pending"; const tw = twentyDemoState(ledger, l);
     const q = st === "qualified" ? demoQualifiedAt(l) : null;
     return [{ v: new Date(l.demo_booked_at), s: "dt" }, who(l.demo_booked_by), l.name || "", String(l.web || l.website || "").replace(/^https?:\/\//, ""), l.city || "", c.name || "", c.title || "", c.email || "", sdrPhone(l).phone || "",
-      ST[st] || st, l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "", tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
+      ST[st] || st, l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "",
+      l.sale_status === "won" ? "Solgt" : l.sale_status === "lost" ? `Ikke solgt${l.sale_reason ? " - " + (SALE_REASONS[l.sale_reason] || l.sale_reason) : ""}` : st === "qualified" ? "Afventer" : "", l.sale_at ? { v: new Date(l.sale_at), s: "dt" } : "", l.sale_status === "won" && l.sale_value_dkk != null ? { v: Number(l.sale_value_dkk), s: "kr" } : "",
+      tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
   });
   const LABEL = Object.fromEntries(SDR_EXPORT_OUTCOMES);
   const callRows = calls.map(({ c, l }) => [{ v: new Date(c.at), s: "dt" }, who(c.by), l.name || "", (sdrPrimaryContact(l) || {}).name || "", sdrPhone(l).phone || "", LABEL[c.action] || c.action || "", sdrIsTalk(c) ? "Ja" : "Nej",
@@ -16538,6 +16581,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     ["Samtaler", "Opkald hvor de fik fat i nogen: Demo booket, Følg op, Ikke nu, Mail sendt - og Ikke relevant, når opkaldet varede mindst 20 sekunder."],
     ["Kontaktrate", "Samtaler delt med opkald."],
     ["Demoer", "Leads der står som booket demo nu, og som blev booket i perioden. Samme liste som Resultater og provisionen. En fortrudt booking tæller ikke."],
+    ["Salg", "Om demoen blev til et salg - markeret af admin efter demoen (Solgt / Ikke solgt). Salgsrate = solgt delt med de afgjorte; demoer der endnu ikke er afgjort, tæller ikke med."],
     ["Provision", `Møder godkendt (kvalificeret) i perioden gange satsen på godkendelsesdagen (nu ${rate} kr). Lønnen følger lønperioden: godkendt til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, godkendt fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
     ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
     ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
@@ -16548,7 +16592,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   return [
     { name: "Oversigt", cols: [34, 12, ...ids.map(() => 13)], rows: overview, head: headRow, freeze: headRow + 1 },
     { name: "Per dag", cols: [12, 10, 9, 10, 12, 9, 17, 10, ...ids.flatMap(() => [15, 15])], rows: [dayHead, ...dayRows], head: 0, freeze: 1 },
-    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 17, 16, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Godkendt", "Lønperiode", "Provision (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
+    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Godkendt", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
     { name: "Opkald", cols: [17, 12, 28, 20, 16, 16, 9, 12, 17, 60, 18, 14, 22], rows: [["Tidspunkt", "SDR", "Virksomhed", "Kontakt", "Telefon", "Udfald", "Samtale", "Tid (min)", "Følg op", "Note", "Kilde", "By", "ID"], ...callRows], head: 0, freeze: 1, filter: true },
     { name: "Nye leads", cols: [24, 12, 17, 12, 12, 12, 14], rows: [["Kilde", "Nye leads", "Kan ringes til nu", "Andel klar", "Ringet til", "Samtaler", "Demoer booket"], ...srcRows], head: 0, freeze: 1 },
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
@@ -16656,9 +16700,9 @@ function sdrCompare(d, fromKey, toKey) {
   const pst = sdrPeriodStats(d, { fromKey: sdrDayKey(ps), toKey: sdrDayKey(pe), sdr: null });
   // Calls a day counts finished days only: at 10 o'clock today is not a slow day.
   const today = sdrDayKey();
-  const slim = (m, todayCalls) => m ? { calls: m.calls, talks: m.talks, demos: m.demos, qual: m.qual, unqual: m.unqual, pending: m.pending, approved: m.approved, commission: m.commission, out: m.out, secs: m.secs, timed: m.timed, research: m.research, screened: m.screened, days: m.days.size,
+  const slim = (m, todayCalls) => m ? { calls: m.calls, talks: m.talks, demos: m.demos, qual: m.qual, unqual: m.unqual, pending: m.pending, won: m.won, lost: m.lost, value: m.value, approved: m.approved, commission: m.commission, out: m.out, secs: m.secs, timed: m.timed, research: m.research, screened: m.screened, days: m.days.size,
       calls_full: m.calls - (todayCalls || 0), days_full: [...m.days].filter((k) => k !== today).length }
-    : { calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, approved: 0, commission: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: 0, calls_full: 0, days_full: 0 };
+    : { calls: 0, talks: 0, demos: 0, qual: 0, unqual: 0, pending: 0, won: 0, lost: 0, value: 0, approved: 0, commission: 0, out: {}, secs: 0, timed: 0, research: 0, screened: 0, days: 0, calls_full: 0, days_full: 0 };
   const td = st.byDay[today];
   const sdrIds = st.users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled).map((u) => u.id);
   const sdrs = [...new Set([...sdrIds, ...st.ids])].filter((id) => !sdrIsAdmin(id)).map((id) => ({ id, name: st.who(id), ...slim(st.per[id], td && td.sdr[id] ? td.sdr[id].calls : 0) }));
@@ -16703,11 +16747,11 @@ app.post("/api/sdr/admin/compare/note", authMiddleware, async (req, res) => {
     if (cached && !b.force && Date.now() - new Date(cached.at).getTime() < PERF_NOTE_TTL_MS) return res.json({ ok: true, note: cached });
     const c = sdrCompare(loadPool(), r.fromKey, r.toKey);
     const bench = { ...SDR_DEFAULT_BENCH, ...(c.settings.bench || {}) };
-    const nums = (m) => ({ opkald: m.calls, dage_med_opkald: m.days, opkald_pr_hel_dag: m.days_full ? Math.round(10 * m.calls_full / m.days_full) / 10 : null, samtaler: m.talks, demoer: m.demos, kvalificeret: m.qual, ikke_kvalificeret: m.unqual, afventer: m.pending, udfald: m.out });
+    const nums = (m) => ({ opkald: m.calls, dage_med_opkald: m.days, opkald_pr_hel_dag: m.days_full ? Math.round(10 * m.calls_full / m.days_full) / 10 : null, samtaler: m.talks, demoer: m.demos, kvalificeret: m.qual, ikke_kvalificeret: m.unqual, afventer: m.pending, solgt: m.won, ikke_solgt: m.lost, udfald: m.out });
     const prompt = [
       "Du er salgschef-sparringspartner for Vedio (video-annoncer til Meta/TikTok). Founderen Casper vil vide, hvordan hans SDR'er (telefonsælgere der booker demoer med danske webshops) klarer sig - mod målene, mod hinanden og mod perioden før.",
       c.soft ? `Perioden ligger i oplæringsperioden (til og med ${c.onboarding_until}): holdet er nyt. Vær fair: læg vægt på retning og læring, ikke på fulde mål.` : "",
-      "Vigtigt om data: Før 28. september var tast 5 mærket 'Ikke nu' men gemte 'Ikke relevant', så fordelingen mellem de to udfald før den dato siger mere om knappen end om sælgeren. Små tal er usikre - en forskel på få demoer kan være tilfældig; sig det, når det er tilfældet. Samtale = de fik fat i nogen. Victor er medstifter og ringer kun lidt.",
+      "Solgt/ikke solgt er founderens vurdering efter demoen (som founderne tager) - det siger mest om leadets kvalitet, mindre om SDR'en, og mange demoer er endnu ikke afgjort. Vigtigt om data: Før 28. september var tast 5 mærket 'Ikke nu' men gemte 'Ikke relevant', så fordelingen mellem de to udfald før den dato siger mere om knappen end om sælgeren. Små tal er usikre - en forskel på få demoer kan være tilfældig; sig det, når det er tilfældet. Samtale = de fik fat i nogen. Victor er medstifter og ringer kun lidt.",
       `Periode: ${r.fromKey} til ${r.toKey}. Forrige periode (${c.prev_label}): ${c.prev_from} til ${c.prev_to}.`,
       `Mål: ${c.settings.daily_target} opkald pr. dag, højst ${bench.calls_per_demo} opkald pr. demo, mindst ${bench.qual_rate_pct}% kvalificerede demoer.`,
       `Tal pr. SDR: ${JSON.stringify(Object.fromEntries(c.sdrs.map((m) => [m.name, nums(m)])))}`,

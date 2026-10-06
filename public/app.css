@@ -263,6 +263,7 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .chip.st-pending{background:#fdf3e2;color:#9a5b00}
 .chip.st-qualified{background:#e6f6ec;color:var(--approve)}
 .chip.st-unqualified{background:#fdecec;color:#b42318}
+.chip.sold{background:#1FA160;color:#fff}
 .review{display:inline-flex;gap:6px;flex-wrap:wrap}
 .review button{white-space:nowrap;padding:6px 10px;border-radius:var(--pill);border:1px solid var(--line);background:var(--white);font-size:12px;font-weight:700;color:var(--txt-soft)}
 .review button:hover{color:var(--txt);border-color:#cfcbc2}

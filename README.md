@@ -162,6 +162,14 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
   betales to gange. Hvert møde beholder satsen fra godkendelsesdagen.
   Et godkendt møde i en åben periode kan flyttes til næste måneds løn ("→
   <måned>" i møde-listen) og tilbage igen, så længe perioden ikke er låst.
+  **Fra demo til salg** (under møde-listen): kvalificerede demoer venter, til
+  de markeres *Solgt* (dato, valgfri værdi og note) eller *Ikke solgt* (grund:
+  pris, timing, valgte en anden, intet behov, svarer ikke, andet). Fortryd
+  sender den tilbage til Venter. Står firmaet allerede som betalende i
+  kundelisten, står det på rækken. Øverst salgsrate (solgt af afgjorte), antal
+  solgt og værdi, hvor mange der venter (og hvor længe) og pr. SDR. SDR'en ser
+  "Solgt" på sin demo og i tråden. Kun opfølgning - provisionen følger stadig
+  godkendelsen. Tallene står også i Sammenlign SDR'er og i Excel-eksporten.
 - **⚙** — Calendly-link, dagligt mål, listestørrelse, provision, pitch,
   mailskabeloner, Slack-webhook og reglerne for hvad puljen må servere.
 
