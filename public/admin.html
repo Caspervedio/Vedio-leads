@@ -141,6 +141,8 @@
 #sale-card .k.per span{margin:0 0 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint)}
 #sale-card .k.per em{color:var(--txt-soft);font-size:12.5px;margin-top:3px}
 #sale-card .k.per em b{display:inline;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--txt)}
+#sale-card td.sale-act{text-align:right}
+#sale-card td.sale-act .review{justify-content:flex-end;flex-wrap:nowrap}
 #sale-card .sale-hint{display:block;font-size:11.5px;font-weight:700;color:var(--approve);margin-top:3px}
 #sale-card .age{display:inline-block;min-width:30px;text-align:center;font-weight:800;padding:2px 8px;border-radius:var(--pill);background:var(--paper)}
 #sale-card .age.mid{background:#fdf3dc;color:#A9761E}
@@ -1035,10 +1037,10 @@ function renderSales() {
     const hint = l.customer && l.customer.current && !l.sale_status ? `<span class="sale-hint">✓ Står som betalende kunde i kundelisten</span>` : '';
     const tail = saleFilter === 'open'
       ? `<td class="num"><span class="age ${d >= 21 ? 'old' : d >= 10 ? 'mid' : ''}">${d}</span></td>
-         <td class="review" onclick="event.stopPropagation()" style="text-align:right;white-space:nowrap"><button class="ok" onclick="saleWon('${e(l.cvr)}')">Solgt</button> <button class="no" onclick="saleLost('${e(l.cvr)}')">Ikke solgt</button></td>`
+         <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button class="ok" onclick="saleWon('${e(l.cvr)}')">Solgt</button><button class="no" onclick="saleLost('${e(l.cvr)}')">Ikke solgt</button></div></td>`
       : `<td>${e(fmtDate(l.sale_at))}</td>
          <td>${saleFilter === 'won' ? (l.sale_value_dkk != null ? e(fmtKr(l.sale_value_dkk)) : '<span class="sub">-</span>') : e(RL[l.sale_reason] || 'Andet')}${l.sale_note ? `<span class="sub">${e(l.sale_note)}</span>` : ''}</td>
-         <td class="review" onclick="event.stopPropagation()" style="text-align:right"><button onclick="saleSet('${e(l.cvr)}','pending')" title="Tilbage til Venter">Fortryd</button></td>`;
+         <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button onclick="saleSet('${e(l.cvr)}','pending')" title="Tilbage til Venter">Fortryd</button></div></td>`;
     return `<tr class="rowlink" onclick="openLead('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtDate(l.demo_booked_at))}</span></td>
       <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? (l.city ? ' · ' : '') + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span>${hint}</td>
