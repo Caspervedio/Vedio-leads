@@ -1133,18 +1133,80 @@ function historyHtml(L) {
 }
 /* Reference customers in the same line of business - something concrete to
    name on the call. Only real customers appear here (see sdrRefCustomers). */
+/* A customer's logo from our own server (cached there), else their initials. */
+function custLogo(x, cls) {
+  const ini = String(x.name || '?').replace(/[^A-Za-zÆØÅæøå0-9 ]/g, '').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+  const fb = `<span class="${cls || 'clogo'} ini">${e(ini)}</span>`;
+  return x.logo ? `<img class="${cls || 'clogo'}" src="/api/sdr/logo/${e(x.logo)}" alt="" loading="lazy" onerror="this.outerHTML=this.dataset.fb" data-fb="${e(fb)}">` : fb;
+}
+/* Up to three customers to name on the call - same niche first, never a
+   customer from another niche. "Se alle" opens every customer, by niche. */
 function refsHtml(L) {
   const r = (L && L.refs) || [];
-  if (!r.length) return '';
+  const n = (L && L.ref_niche) || {};
+  const WHY = { niche: (x) => `Samme niche: ${x.niche_label}`, tag: (x) => `Matcher "${x.why}"`, category: (x) => `Samme branche: ${x.cat_label}` };
   const chip = (x) => {
-    const logo = x.domain ? `<img src="https://www.google.com/s2/favicons?domain=${e(x.domain)}&sz=64" alt="" loading="lazy" onerror="this.remove()">` : '';
     const st = x.status || (x.current ? 'current' : 'former');
-    const tip = [x.blurb || x.name, x.why ? `Samme niche: ${x.why}` : (x.cat_label || ''), st === 'current' ? 'Kunde nu' : st === 'former' ? 'Tidligere kunde' : "Kunde ifølge SDR'ernes liste", x.note].filter(Boolean).join(' · ');
+    const tip = [x.blurb || x.name, (WHY[x.match] || WHY.category)(x), st === 'current' ? 'Kunde nu' : st === 'former' ? 'Tidligere kunde' : "Kunde ifølge SDR'ernes liste", x.note].filter(Boolean).join(' · ');
     // A former customer says "we HAVE made videos for …" - the chip must show it.
-    return `<span class="ref${x.why ? ' niche' : ''}" title="${e(tip)}">${logo}<b>${e(x.name)}</b>${st === 'former' ? '<i class="tidl">tidl. kunde</i>' : ''}</span>`;
+    return `<span class="ref${x.match === 'niche' ? ' niche' : ''}" title="${e(tip)}">${custLogo(x, 'rlogo')}<b>${e(x.name)}</b>${st === 'former' ? '<i class="tidl">tidl. kunde</i>' : ''}</span>`;
   };
-  const label = r[0].cat_label ? `Vores kunder i ${r[0].cat_label.toLowerCase()}` : 'Nævn en af vores kunder';
-  return `<div class="refs"><span class="k">${e(label)}</span>${r.map(chip).join('')}</div>`;
+  const where = (n.niche_label || n.cat_label || '').toLowerCase();
+  const label = r.length ? (r[0].match === 'niche' ? `Vores kunder i ${e(r[0].niche_label.toLowerCase())}` : `Vores kunder i ${e((r[0].cat_label || '').toLowerCase())}`)
+    : n.cat && n.cat !== 'andet' ? `Ingen kunder i ${e(where)} endnu` : 'Ingen oplagt reference';
+  return `<div class="refs${r.length ? '' : ' none'}"><span class="k">${label}</span>${r.map(chip).join('')}<button class="refs-all" onclick="openCustomers()">Se alle kunder →</button></div>`;
+}
+/* ─── Alle kunder ─────────────────────────────────────────────────────────
+   Every customer, current and former, grouped by category and niche - opens
+   on the lead's own category with its niche first. ✓ = may be named as a
+   reference; a former customer without it is for knowing, not for naming. */
+const CUST = { data: null, at: 0, cat: '', who: 'all', q: '' };
+async function openCustomers() {
+  const L = S && S.current; const n = (L && L.ref_niche) || {};
+  if (!CUST.data || Date.now() - CUST.at > 10 * 60e3) {
+    try { CUST.data = await get('/api/sdr/customers'); CUST.at = Date.now(); } catch (ex) { toast('Kunne ikke hente kunderne: ' + ex.message, 4000); return; }
+  }
+  const has = (cat) => CUST.data.items.some((x) => x.cat === cat);
+  CUST.cat = n.cat && n.cat !== 'andet' && has(n.cat) ? n.cat : ''; CUST.who = 'all'; CUST.q = ''; CUST.lead = n;
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'custall';
+  bg.innerHTML = `<div class="modal custall">
+    <div class="ca-head"><div><h3>Alle vores kunder</h3><p id="ca-sub"></p></div><button class="iconbtn" title="Luk" onclick="$('custall').remove()">✕</button></div>
+    <div class="ca-tools"><div class="search"><input id="ca-q" placeholder="Søg kunde…" oninput="CUST.q=this.value.trim().toLowerCase();renderCustomers()"></div><div class="filters" id="ca-who"></div></div>
+    <div class="ca-cats" id="ca-cats"></div>
+    <div class="ca-body" id="ca-body"></div></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  renderCustomers();
+  setTimeout(() => $('ca-q') && $('ca-q').focus(), 50);
+}
+function renderCustomers() {
+  const D = CUST.data; if (!D || !$('ca-body')) return;
+  const lead = CUST.lead || {};
+  const base = D.items.filter((x) => (CUST.who === 'all' || (CUST.who === 'current' ? x.current : !x.current))
+    && (!CUST.q || (x.name + ' ' + x.domain + ' ' + x.blurb + ' ' + x.niche_label).toLowerCase().includes(CUST.q)));
+  const cur = D.items.filter((x) => x.current).length;
+  $('ca-sub').innerHTML = `${D.items.length} kunder · ${cur} nuværende · ${D.items.length - cur} tidligere. <b>✓</b> = må nævnes som reference.`;
+  $('ca-who').innerHTML = [['all', 'Alle'], ['current', 'Nuværende'], ['former', 'Tidligere']].map(([k, l]) => `<button class="${CUST.who === k ? 'on' : ''}" onclick="CUST.who='${k}';renderCustomers()">${l}</button>`).join('');
+  // Categories with customers in them, biggest first; the lead's own first of all.
+  const counts = {}; for (const x of base) counts[x.cat] = (counts[x.cat] || 0) + 1;
+  const cats = D.cats.filter((c) => counts[c.key]).sort((a, b) => (b.key === lead.cat) - (a.key === lead.cat) || (a.key === 'andet') - (b.key === 'andet') || counts[b.key] - counts[a.key]);
+  if (CUST.cat && !counts[CUST.cat]) CUST.cat = '';
+  $('ca-cats').innerHTML = `<button class="${CUST.cat ? '' : 'on'}" onclick="CUST.cat='';renderCustomers()">Alle brancher<span class="n">${base.length}</span></button>`
+    + cats.map((c) => `<button class="${CUST.cat === c.key ? 'on' : ''}${c.key === lead.cat ? ' lead' : ''}" onclick="CUST.cat='${c.key}';renderCustomers()">${e(c.label)}<span class="n">${counts[c.key]}</span></button>`).join('');
+  const shown = cats.filter((c) => !CUST.cat || c.key === CUST.cat);
+  const tile = (x) => `<div class="ct${x.current ? '' : ' former'}" title="${e([x.name, x.blurb, x.domain, x.note].filter(Boolean).join(' · '))}">
+      ${custLogo(x, 'clogo')}
+      <div class="ctx"><b>${e(x.name)}${x.mention ? ' <i class="ok" title="Må nævnes som reference">✓</i>' : ''}</b><span>${e(x.blurb || x.domain || '')}</span></div>
+      <em class="${x.current ? 'now' : ''}">${x.current ? 'Kunde' : 'Tidl.'}</em></div>`;
+  $('ca-body').innerHTML = shown.length ? shown.map((c) => {
+    const inCat = base.filter((x) => x.cat === c.key);
+    const nicheOrder = c.niches.map((n) => n.key);
+    const groups = {}; for (const x of inCat) (groups[x.niche] = groups[x.niche] || []).push(x);
+    const keys = Object.keys(groups).sort((a, b) => (b === lead.niche) - (a === lead.niche) || (a === nicheOrder[0]) - (b === nicheOrder[0]) || groups[b].length - groups[a].length);
+    return `<section class="ca-cat"><h4>${e(c.label)} <span>${inCat.length}</span></h4>${keys.map((k) => `
+      <div class="ca-niche${k === lead.niche ? ' lead' : ''}"><h5>${e(groups[k][0].niche_label)}${k === lead.niche ? '<i>samme niche som leadet</i>' : ''}<span>${groups[k].length}</span></h5>
+      <div class="ca-grid">${groups[k].map(tile).join('')}</div></div>`).join('')}</section>`;
+  }).join('') : `<p class="ca-empty">Ingen kunder matcher.</p>`;
 }
 /* Takes the thread itself, so the call card and the Research tab can render
    the same history from their own payloads. */

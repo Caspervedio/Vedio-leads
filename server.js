@@ -14443,6 +14443,9 @@ const CAT_LABEL = {
 // our jewellery customers.
 const W = (s) => `(?<![a-zæøå0-9])(?:${s})(?![a-zæøå0-9])`;
 const CAT_RULES = [
+  // Estate agents before everything: they write "bolig" all over, and the
+  // home-shop rule below filed them with the curtain and furniture shops.
+  ["ejendom-bolig", /ejendomsmægl|ejendomsmaegl|mæglerfirma|realmægler|real estate agent|køb og salg af bolig|boligsalg|boligformidl/i],
   ["webshop-mode", new RegExp(`apparel|fashion|cloth|footwear|outerwear|undergarment|herret[øo]j|damet[øo]j|${W("t[øo]j|mode|sko|shoes?")}`, "i")],
   ["webshop-smykker", new RegExp(`jewel|smykke|guld|s[øo]lv|${W("ure|ur|watch|watches")}`, "i")],
   ["webshop-bolig", new RegExp(`garden|furnish|m[øo]bl|interi[øo]r|belysning|keramik|kitchen|dining|decor|blomst|florist|flower|visual art|art print|kunsttryk|plakat|poster|${W("home|bolig|lampe|lamper|glas|planter|plante")}`, "i")],
@@ -14491,6 +14494,69 @@ function catFromText(niche, about, name) {
   // party and tent rentals stay under experiences.
   if (/^gifts?\s*&\s*special events$/i.test(leaf)) { const x = catMatch(about) || catMatch(name); return x && /^webshop-/.test(x) ? x : catMatch(leaf) || x || ""; }
   return catMatch(leaf) || catMatch(niche) || catMatch(about) || catMatch(name) || "";
+}
+// ─── Niches: one level finer than the category ─────────────────────────────
+// "Bolig og interiør" put a lamp shop next to a garden centre. Each category
+// is split into niches; customers get one (Gemini, once - from their name,
+// site and description, editable under Tilgang) and leads get one from these
+// keyword rules (instant, no model call per lead). The first key of each list
+// is the category's broad niche: it has no rule and is what a customer gets
+// when nothing finer fits. Order matters: the first rule that matches wins.
+const NICHES = {
+  "webshop-mode": [["mode", "Tøj og mode"], ["sko", "Sko", `footwear|sneaker|${W("sko|støvler|shoes?|boots")}`], ["tasker", "Tasker, briller og accessories", `clothing accessor|handbag|headwear|eyewear|solbrille|sunglass|${W("tasker?|bags?|hats?|caps?|bælter?|accessories")}`], ["undertoj", "Undertøj og badetøj", `undergarment|lingerie|underwear|undertøj|swimwear|badetøj|bikini`], ["sportstoj", "Sports- og træningstøj", `athletic apparel|activewear|sportstøj|træningstøj`], ["bornetoj", "Børnetøj", `children's clothing|børnetøj|kids wear`], ["herretoj", "Herretøj", `men's clothing|herretøj|herremode`], ["dametoj", "Dametøj", `women's clothing|dametøj|damemode|${W("kjoler?|dresses?")}`]],
+  "webshop-smykker": [["smykker", "Smykker"], ["ure", "Ure", W("ur|ure|watch|watches")]],
+  "webshop-bolig": [["indretning", "Boligindretning og design"], ["belysning", "Belysning", `lamps|lighting|belysning|${W("lamper?|lys")}`], ["mobler", "Møbler", `furnish|furniture|møbl|${W("sofaer?|stole?|borde?")}`], ["tekstil", "Tekstiler og sengetøj", `bed & bath|bedding|sengetøj|tekstil|håndklæd|gardin|curtain|${W("tæpper?|rugs?|puder?")}`], ["kokken", "Køkken og bordækning", `kitchen|dining|cookware|diningware|køkken|bordækning|${W("service|glas")}`], ["kunst", "Kunst og plakater", `visual art|art print|kunsttryk|plakat|poster|maleri|keramik|${W("kunst|art")}`], ["blomster", "Blomster og planter", `flower|florist|blomst|${W("planter?|plants?")}`], ["have", "Have og udeliv", `garden|landscap|yard|patio|haveartik|udendørs|terrasse|${W("have|grill")}`], ["renovering", "Gulve, bad og renovering", `flooring|bathroom|home improvement|${W("gulve?|bad|maling")}`], ["hvidevarer", "Hvidevarer og apparater", `home appliance|hvidevare|appliances|støvsuger`]],
+  "webshop-skonhed": [["pleje", "Skønhed og pleje"], ["klinik", "Skønhedsklinik", `cosmetic procedure|skønhedsklinik|aesthetic|botox|filler|laserbehandl`], ["negle", "Negle og vipper", `nail|negle|vippe|eyelash|${W("lash|lashes|brows?")}`], ["har", "Hår og frisør", `hair|hårpleje|frisør|frisor|barber|${W("hår")}`], ["makeup", "Makeup", `make-?up|kosmetik|cosmetics`], ["parfume", "Parfume", `perfume|fragrance|parfume`], ["spa", "Spa, wellness og massage", `${W("spa")}|wellness|massage`], ["hudpleje", "Hudpleje", `skin|hudpleje|face & body|serum|${W("hud|creme|cremer")}`]],
+  "webshop-sport": [["sportsudstyr", "Sportsudstyr"], ["cykel", "Cykler", `cycl|cykel|knallert|${W("bikes?")}`], ["fiskeri", "Fiskeri og jagt", `fishing|lystfisk|fiskegrej|hunting|${W("jagt")}`], ["outdoor", "Outdoor og camping", `hiking|camping|outdoor|vandre|${W("telte?")}`], ["fitness", "Fitness og træning", `fitness|træningsudstyr|crossfit|pilates|weight|${W("gym|yoga")}`], ["ketsjer", "Golf, padel og ketsjer", `golf|padel|tennis|badminton|squash`], ["vintersport", "Ski og vintersport", `skiing|snowboard|vintersport|${W("ski")}`], ["vandsport", "Vandsport og dykning", `water sport|surf|swimming|kajak|kano|dykning|${W("dive|diving|sup")}`], ["motorsport", "Motorsport", `motor sport|motocross|karting`]],
+  "webshop-mad-drikke": [["mad", "Mad og drikke"], ["kaffe", "Kaffe og te", `coffee|kaffe|espresso|${W("tea|te|the")}`], ["vin", "Vin, øl og spiritus", `alcoholic|wine|spiritus|whisky|bryggeri|bryghus|${W("vin|vine|gin|rom|beer|øl|cider")}`], ["slik", "Chokolade, slik og is", `candy|sweets|chokolade|lakrids|romkugl|ishus|${W("slik|is|ice cream")}`], ["bagvaerk", "Kager og bagværk", `baked goods|dessert|bageri|${W("kager?|brød")}`], ["kod", "Kød og fisk", `meat|seafood|slagter|wagyu|${W("kød|fisk")}`], ["madkasser", "Måltidskasser og catering", `madkasse|måltidskasse|meal kit|catering`], ["helse", "Kosttilskud og helsekost", `supplement|vitamin|kosttilskud|helsekost|${W("protein")}`], ["delikatesser", "Delikatesser og gourmet", `delikates|gourmet|krydderi|spice|oliven|${W("ost|olie")}`]],
+  "webshop-elektronik": [["elektronik", "Elektronik og gadgets"], ["computer", "Computer og gaming", `computer|laptop|notebook|hardware|gaming|${W("pc")}`], ["lyd", "Lyd, billede og foto", `audio|hifi|speaker|høretelefon|camera|photo|music & audio|${W("tv|video|foto")}`], ["mobil", "Mobil og tilbehør", `mobile|mobiltelefon|smartphone|${W("mobil|tablets?")}`], ["strom", "Batterier, strøm og tilbehør", `power suppl|batteri|oplader|${W("gps|kabler?")}`]],
+  "webshop-boern": [["boern", "Børn og baby"], ["legetoj", "Legetøj", `toys?|legetøj|dolls?|dukke`], ["baby", "Baby og barsel", `baby|barsel|gravid|maternity|ammet|barnevogn`], ["bornetoj", "Børnetøj", `children's clothing|børnetøj`]],
+  "webshop-dyr": [["dyr", "Dyr og kæledyr"], ["hund", "Hund", `dogs?|hundefoder|${W("hunde?")}`], ["kat", "Kat", `cats?|${W("katte?")}`], ["hest", "Hest", `horses?|ridning|${W("heste?")}`]],
+  "webshop-hobby": [["hobby", "Hobby og fritid"], ["musik", "Musik og instrumenter", `music|musik|instrument|guitar|klaver`], ["boger", "Bøger og papir", `books?|bøger|literature|notebook|planner|calendar|papir`], ["spil", "Spil og samlekort", `games?|card game|puzzle|wargam|miniature|${W("spil")}`], ["kreativ", "Kreativ hobby, garn og syning", `arts & crafts|craft|garn|strik|syning|fiber|textile|perler`], ["baade", "Både og marine", `boats?|watercraft|marine|${W("både?")}`]],
+  "byggeri-haandvaerk": [["byggeri", "Byggeri og håndværk"], ["rens", "Rens og vedligehold", `facaderens|tagrens|fliserens|vinduespuds|vinduespol|${W("rens")}`], ["have-anlaeg", "Have og anlæg", `haveservice|anlægsgartner|robotplæne|træpleje|${W("hæk|plæne|træfældning")}`], ["materialer", "Byggematerialer", `byggemateria|isolering|puds|cement|træfiber|membran`], ["raadgivning", "Entreprenør og rådgivning", `entrepren|ingeniør|statiker|byggerådgiv|screening`], ["haandvaerker", "Håndværkere", `tømrer|murer|maler|elektriker|snedker|tagdæk|${W("vvs")}`]],
+  "ejendom-bolig": [["ejendom", "Ejendom og bolig"], ["maegler", "Ejendomsmægler", `mægler|maegler|real estate|valuar|bolighandel`], ["udlejning", "Udlejning og administration", `udlejning|udlejer|ejendomsadministr|lejebolig|property manag`], ["erhverv", "Erhvervslokaler og kontor", `erhvervslokal|kontorplads|kontorlokal|${W("kontorer?")}`]],
+  "sundhed-klinik": [["sundhed", "Sundhed og behandling"], ["optik", "Optik og øjne", `optik|briller|øjen|eye|kontaktlinse`], ["tand", "Tandlæge", `tandlæge|dental|${W("tand")}`], ["fysio", "Fysioterapi og træning", `fysio|physical therapy|kiroprakt|genoptræning|holdtræning`], ["terapi", "Psykolog og terapi", `psykolog|psykoterapi|terapi|misbrug|familierådgiv|mistrivsel`], ["pleje", "Pleje og omsorg", `hjemmepleje|social services|omsorg|${W("pleje")}`], ["produkter", "Sundhedsprodukter", `vitamin|supplement|medical device|hjertestarter|førstehjælp|indlægssål`], ["laege", "Læge og speciallæge", `lægeklinik|speciallæge|hospital|medical services|${W("læge")}`]],
+  "finans-forsikring": [["finans", "Finans"], ["forsikring", "Forsikring", `forsikring|insurance`], ["revisor", "Revisor og regnskab", `revisor|regnskab|accounting|bogføring|bogholderi`], ["advokat", "Advokat og jura", `advokat|juridisk|legal|${W("jura")}`], ["bank", "Bank, lån og investering", `investering|pension|${W("bank|lån|finance|financial")}`]],
+  "rejser-oplevelser": [["oplevelser", "Rejser og oplevelser"], ["rejser", "Rejsebureau", `rejsebureau|travel|cruise|charter|pakkerejse|${W("rejser?|tours?")}`], ["hotel", "Hotel og overnatning", `hotel|overnatning|accommodation|${W("b&b|kro")}`], ["feriebolig", "Ferieboliger", `feriebolig|sommerhus|ferielejlighed|holiday home`], ["events", "Events, fester og billetter", `event|festival|koncert|billet|mobildiskotek|${W("fest|fester")}`], ["forlystelser", "Oplevelser og forlystelser", `forlystelse|escape|museum|oplevelsescent|zoo|tivoli|bytur`]],
+  "restauration": [["restauration", "Restauration"], ["cafe", "Café og bageri", `bageri|bakery|kaffebar|${W("café|cafe|caféer")}`], ["takeaway", "Takeaway og street food", `take-?away|pizza|burger|street ?food|grill|kebab|shawarma|gyros`], ["catering", "Catering", `catering`], ["restaurant", "Restaurant", `restaurant`]],
+  "bureau-marketing": [["marketing", "Bureau og marketing"], ["content", "Content, video og SoMe", `content|video|film|ugc|influencer|${W("foto|some")}`], ["medie", "Medier og forlag", `medie|forlag|nyheder|magasin|podcast|radio|platform for annonc`], ["pr", "PR og kommunikation", `kommunikationsbureau|omdømme|presse|${W("pr")}`], ["web", "Web og design", `webbureau|hjemmeside|webdesign|grafisk|${W("web")}`], ["performance", "Marketingbureau", `marketing|performance|annonc|seo|bureau|leadgen`]],
+  "it-software": [["it", "IT og software"], ["saas", "Software og platforme", `software|saas|platform|system|${W("crm|erp")}`], ["apps", "Apps og udvikling", `app-?udvikling|apps?|developer|webudvikling`], ["it-service", "IT-service og support", `it-support|it-hjælp|hosting|it-løsning|it-drift`]],
+  "produktion-industri": [["produktion", "Produktion og industri"], ["maskiner", "Maskiner og udstyr", `machinery|maskin|equipment|værktøj`], ["energi", "Energi og miljø", `energi|solcelle|renewable|vindmøl`], ["landbrug", "Landbrug og skov", `agri|landbrug|forestry|livestock|skovbrug`], ["emballage", "Emballage", `packaging|emballage`], ["engros", "Engros og distribution", `engros|wholesale|distribution|grossist`]],
+  "b2b-service": [["b2b", "B2B-service"], ["hr", "HR og rekruttering", `rekrutter|recruit|vikarbureau|outplacement|${W("hr")}`], ["kurser", "Kurser, coaching og ledelse", `kursus|kurser|coaching|ledertræning|lederskab|workshop|foredrag`], ["rengoring", "Rengøring og facility", `rengøring|cleaning|facility`], ["kontor", "Kontor- og erhvervsudstyr", `office suppl|kontorartikler|erhvervsudstyr|${W("udstyr")}`], ["konsulent", "Rådgivning og konsulenter", `konsulent|consult|rådgivning|sourcing`]],
+  "uddannelse": [["uddannelse", "Uddannelse"], ["skole", "Skoler", `skole|gymnasium|efterskole|realskole|${W("school")}`], ["kurser", "Kurser og online læring", `kursus|kurser|online|bootcamp|akademi|academy`], ["forening", "Foreninger og fritid", `forening|fritid|klub|organisation`]],
+  "transport-bil": [["transport", "Transport og bil"], ["koreskole", "Køreskole", `køreskole|kørekort|driving school`], ["vaerksted", "Værksted, dæk og bilpleje", `værksted|dæk|repair|bilpleje|reservedel|parts|${W("auto ?service")}`], ["mc", "MC og motocross", `motorcycle|scooter|motocross|off-road|${W("mc")}`], ["bil", "Biler og forhandlere", `bilforhandl|autos|vehicles|trucks|varevogn|autocamper|camper|${W("vans?|biler")}`], ["logistik", "Transport og logistik", `logistik|fragt|vognmand|shipping|transport`]],
+  "andet": [["andet", "Andet"]],
+};
+for (const k of VEDIO_CATS) if (!NICHES[k]) NICHES[k] = [[k, CAT_LABEL[k] || k]];
+const NICHE_RE = Object.fromEntries(Object.entries(NICHES).map(([cat, list]) => [cat, list.slice(1).filter((n) => n[2]).map(([key, , rx]) => [key, new RegExp(rx, "i")])]));
+// Keys repeat across categories ("pleje" is beauty in one, care in another) -
+// a label is always looked up within its category.
+const nicheLabel = (cat, key) => ((NICHES[cat] || []).find(([k]) => k === key) || [])[1] || "";
+const nicheBroad = (cat) => ((NICHES[cat] || [])[0] || [])[0] || "";
+// The lead's niche inside its category - strongest source first, as for the
+// category: the niche leaf, the whole path, the site's description, the name.
+// A description that names several niches ("tøj, sko og accessories") is a
+// general shop: it gets the category's broad niche, not whichever word came
+// first - that filed every streetwear shop under shoes.
+function nicheOf(cat, niche, about, name) {
+  const rules = NICHE_RE[cat]; if (!rules || !rules.length) return "";
+  const path = String(niche || "").split("/").map((x) => x.trim()).filter(Boolean);
+  // StoreLeads' top-level labels ("Home & Garden", "Food & Drink") name the
+  // department, not the shop - "Garden" put every home store among the
+  // garden centres. Read the description instead.
+  const generic = /^(home & garden|food & drink|food|beverages|apparel|beauty & fitness|sports|sporting goods|health|shopping|hobbies & leisure|arts & entertainment|home & interior decor)$/i.test(path[path.length - 1] || "");
+  const sources = generic ? [[about, true], [name, true]] : [[path[path.length - 1], false], [niche, false], [about, true], [name, true]];
+  for (const [src, prose] of sources) {
+    const t = String(src || "").toLowerCase(); if (!t.trim()) continue;
+    const hits = rules.filter(([, re]) => re.test(t)).map(([key]) => key);
+    if (!hits.length) continue;
+    return prose && hits.length > 1 ? nicheBroad(cat) : hits[0];
+  }
+  return "";
+}
+function sdrLeadNiche(l) {
+  const cat = catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet";
+  return { cat, niche: nicheOf(cat, l.ind || l.industry || l.niche, l.about, l.name) };
 }
 function loadCustomers() { try { return JSON.parse(fs.readFileSync(CUSTOMERS_FILE, "utf8")); } catch { return { updated_at: null, include_former: false, items: [] }; } }
 function saveCustomers(c) { c.updated_at = new Date().toISOString(); fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(c, null, 2)); }
@@ -14543,34 +14609,45 @@ function customerIndex() {
 // centre and a foot clinic because both sit under "clinic". Same category or
 // nothing.
 const CAT_NEIGHBOURS = {};
-// Up to 3 customers to name on the call - only from the lead's own category,
-// or one of the neighbours above. Casper: "don't force it if they are not
-// similar, then it's better to leave it blank." A ski shop handed a wine
-// merchant helps nobody, so there is no broader fallback: no genuine match
-// means no badges.
+// Up to 3 customers to name on the call. Casper: "don't force it if they are
+// not similar, then it's better to leave it blank." Within the lead's own
+// category, in this order:
+//   1. the same niche (a lamp shop gets lamp shops)
+//   2. a customer whose tags name something in the lead's text
+//   3. a broad customer of the category (no finer niche known on their side)
+// A customer in a DIFFERENT niche of the same category is never shown - that
+// was the garden centre offered to a lamp shop. "Se alle" on the card lists
+// every customer for the SDR to pick from by hand.
 function sdrRefCustomers(l) {
   const idx = customerIndex();
   if (!idx.all.length) return [];
-  const cat = catFromText(l.ind || l.industry || l.niche, l.about, l.name);
+  const { cat, niche } = sdrLeadNiche(l);
   if (!cat || cat === "andet") return [];
   const self = sdrCustomerOf(l);
-  // Within the category, the closest niche first: a coffee roaster before a
-  // wine shop for a coffee lead. "strict" customers only appear on a niche
-  // match (a nail clinic only for clinics, a furniture brand only for
-  // furniture shops).
+  const broad = nicheBroad(cat);
+  // "strict" customers only appear on a niche or tag match (a nail clinic only
+  // for clinics, a furniture brand only for furniture shops).
   const text = [l.ind, l.industry, l.niche, l.about, l.name].filter(Boolean).join(" ").toLowerCase();
   const tagHit = (x) => (x.tags || []).find((t) => { const k = String(t || "").toLowerCase().trim(); return k.length >= 3 && new RegExp(`(^|[^a-zæøå0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(text); }) || "";
-  const pool = (idx.byCat[cat] || []).filter((x) => x !== self)
-    .map((x) => { const hit = tagHit(x); return { x, hit, score: (hit ? 100 : 0) + (x.subscribed ? 10 : 0) + (x.domain ? 1 : 0) }; })
-    .filter((r) => !(r.x.strict && !r.hit))
-    .sort((a, b) => b.score - a.score);
-  return pool.slice(0, 3).map(({ x, hit }) => ({
-    name: x.name, domain: x.domain || "", blurb: x.blurb || "",
+  const pool = (idx.byCat[cat] || []).filter((x) => x !== self).map((x) => {
+    const xn = x.niche || broad; const hit = tagHit(x);
+    const same = !!niche && xn === niche;
+    const general = xn === broad;
+    if (!same && !hit && !(general && !x.strict)) return null; // another niche: not similar enough
+    return { x, hit, same, score: (same ? 1000 : 0) + (hit ? 100 : 0) + (x.subscribed ? 10 : 0) + (x.domain ? 1 : 0) };
+  }).filter(Boolean).sort((a, b) => b.score - a.score);
+  return pool.slice(0, 3).map(({ x, hit, same }) => ({
+    name: x.name, domain: x.domain || "", logo: custLogoId(x.domain), blurb: x.blurb || "",
     current: !!x.subscribed, status: x.subscribed ? "current" : x.source === "sdr-list" ? "list" : "former",
-    cat: x.cat || "", cat_label: CAT_LABEL[x.cat] || "", note: x.note || "", why: hit,
+    cat: x.cat || "", cat_label: CAT_LABEL[x.cat] || "", niche: x.niche || broad, niche_label: nicheLabel(cat, x.niche || broad),
+    note: x.note || "", why: hit,
+    match: same ? "niche" : hit ? "tag" : "category",
     same_cat: true,
   }));
 }
+// Logos: an unguessable id per domain, so the image URL needs no login token
+// and doesn't show which domains are customers.
+function custLogoId(domain) { const d = custDomain(domain); return d ? crypto.createHmac("sha256", String(process.env.SESSION_SECRET || "vedio")).update("logo:" + d).digest("hex").slice(0, 20) : ""; }
 // Notes as one running thread per lead: everything anyone has written, oldest
 // first, like a conversation. Three sources, merged and de-duplicated:
 //   • note_log  - notes saved from the card without ending the call
@@ -14626,6 +14703,7 @@ function sdrSlim(l, nameById) {
     last_note: l.last_note || "", note_saved_at: l.note_saved_at || null,
     note_thread: sdrNoteThread(l, nameById),
     refs: sdrRefCustomers(l),
+    ref_niche: (() => { const { cat, niche } = sdrLeadNiche(l); return { cat, cat_label: CAT_LABEL[cat] || "", niche, niche_label: niche ? nicheLabel(cat, niche) : "" }; })(),
     history: l.retry && Array.isArray(l.retry.badges) && l.retry.badges.length ? l.retry.badges : null,
     customer: (() => { const c = sdrCustomerOf(l); return c ? { current: !!c.subscribed, name: c.name, list: c.source === "sdr-list" } : null; })(),
     research_by: l.research_by || null,
@@ -18595,7 +18673,8 @@ app.get("/api/sdr/admin/customers", authMiddleware, (req, res) => {
       unclassified: (c.items || []).filter((x) => !x.cat).length,
       unverified_current: (c.items || []).filter((x) => x.subscribed && !x.verified && !x.hidden).length,
       recheckable: (c.items || []).filter((x) => x.subscribed && !x.verified && !x.hidden && x.verified_via !== "admin" && !x.rechecked_at).length,
-      byCat, cats: VEDIO_CATS.map((k) => ({ key: k, label: CAT_LABEL[k] })),
+      byCat, cats: VEDIO_CATS.map((k) => ({ key: k, label: CAT_LABEL[k], niches: (NICHES[k] || []).map(([key, label]) => ({ key, label })) })),
+      unniched: (c.items || []).filter((x) => x.cat && x.cat !== "andet" && !x.niche && !x.hidden).length,
       items: (c.items || []).slice().sort((a, b) => (b.subscribed - a.subscribed) || String(a.name).localeCompare(b.name, "da")),
     });
   } catch (e) { sdrFail(res, e, "customers"); }
@@ -18614,12 +18693,93 @@ app.post("/api/sdr/admin/customers/update", authMiddleware, (req, res) => {
       for (const f of ["strict", "ref_ok"]) if (typeof b[f] === "boolean") x[f] = b[f];
       if (typeof b.auto_ref === "boolean") { if (b.auto_ref) delete x.auto_ref; else x.auto_ref = false; }
       // The admin knows the customer: their category counts as checked.
-      if (typeof b.cat === "string" && VEDIO_CATS.includes(b.cat)) { x.cat = b.cat; x.verified = b.cat !== "andet"; x.verified_via = "admin"; }
+      if (typeof b.cat === "string" && VEDIO_CATS.includes(b.cat)) { if (x.cat !== b.cat) x.niche = ""; x.cat = b.cat; x.verified = b.cat !== "andet"; x.verified_via = "admin"; }
+      if (typeof b.niche === "string") { const ok = (NICHES[x.cat || "andet"] || []).some(([k]) => k === b.niche); if (b.niche && !ok) return res.status(400).json({ error: "Nichen hører ikke til kategorien" }); x.niche = b.niche; x.niche_via = "admin"; }
       if (typeof b.blurb === "string") x.blurb = b.blurb.trim().slice(0, 120);
+      // A corrected website (the CSV had the e-mail domain, or none at all) -
+      // it drives the logo and spotting leads that already are this customer.
+      if (typeof b.domain === "string") { const dom = custDomain(b.domain); if (dom && !/^[a-z0-9æøå.-]+\.[a-z]{2,}$/i.test(dom)) return res.status(400).json({ error: "Ugyldigt domæne" }); x.domain = dom; }
     }
     saveCustomers(c);
     res.json({ ok: true });
   } catch (e) { sdrFail(res, e, "customers/update"); }
+});
+// Sort customers into niches: Gemini picks one of the category's niches from
+// the name, site and description - 30 at a time, the ones without a niche
+// (force: all, except niches the admin set by hand). Call until done.
+app.post("/api/sdr/admin/customers/niches", authMiddleware, async (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    if (!process.env.GEMINI_API_KEY) return res.status(503).json({ error: "Gemini ikke konfigureret" });
+    const force = !!(req.body || {}).force;
+    const c = loadCustomers();
+    const want = (x) => x && x.name && x.cat && x.cat !== "andet" && !x.hidden && x.niche_via !== "admin" && (force ? !x.niche_run_at || x.niche_run_at < String((req.body || {}).since || "") : !x.niche);
+    const todo = (c.items || []).filter(want).slice(0, 30);
+    if (!todo.length) return res.json({ ok: true, done: true, sorted: 0, remaining: 0 });
+    const list = todo.map((x, i) => `${i + 1}. ${x.name}${x.domain ? ` (${x.domain})` : ""} | kategori: ${x.cat} | ${x.blurb || "-"}${(x.tags || []).length ? " | tags: " + x.tags.join(", ") : ""}`).join("\n");
+    const menu = [...new Set(todo.map((x) => x.cat))].map((cat) => `${cat}: ${(NICHES[cat] || []).map(([k, l]) => `${k} (${l})`).join(", ")}`).join("\n");
+    // Gemini now and then answers with broken JSON - one more try before giving up.
+    const ask = (p) => callGemini(p).catch(() => callGemini(p));
+    const out = await ask(`Placér hver dansk virksomhed i den mest præcise niche INDEN FOR dens kategori. Brug kun de niche-nøgler, der står ved kategorien. Passer ingen af de specifikke, så brug kategoriens første (brede) nøgle - gæt ikke.
+
+Nicher pr. kategori:
+${menu}
+
+Virksomheder:
+${list}
+
+Svar KUN som JSON: {"items":[{"n":1,"niche":"<nøgle>"}]}`);
+    const byN = new Map((out && Array.isArray(out.items) ? out.items : []).map((r) => [Number(r.n), String(r.niche || "")]));
+    let sorted = 0; const runAt = new Date().toISOString();
+    todo.forEach((x, i) => {
+      const k = byN.get(i + 1); const ok = (NICHES[x.cat] || []).some(([key]) => key === k);
+      x.niche = ok ? k : nicheBroad(x.cat); x.niche_run_at = runAt; if (ok) sorted++;
+    });
+    saveCustomers(c);
+    const remaining = (c.items || []).filter(want).length;
+    res.json({ ok: true, sorted, tried: todo.length, remaining, done: remaining === 0 });
+  } catch (e) { sdrFail(res, e, "customers/niches"); }
+});
+// "Se alle" on the call card: every customer, current and former, grouped by
+// category and niche on the client. Hidden ones stay out. "mention" says who
+// may be named as a reference (the same rule as the suggestions).
+app.get("/api/sdr/customers", authMiddleware, (req, res) => {
+  try {
+    const c = loadCustomers();
+    const items = (c.items || []).filter((x) => x && x.name && !x.hidden && !x.pending_demo).map((x) => {
+      const cat = x.cat || "andet"; const niche = x.niche || nicheBroad(cat);
+      return {
+        name: x.name, domain: custDomain(x.domain), logo: custLogoId(x.domain), blurb: x.blurb || "",
+        current: !!x.subscribed, cat, cat_label: CAT_LABEL[cat] || "Andet", niche, niche_label: nicheLabel(cat, niche) || CAT_LABEL[cat] || "Andet",
+        mention: !!(x.verified && x.auto_ref !== false && (x.subscribed || x.ref_ok || (c.include_former && x.paid))),
+        checked: !!x.verified, note: x.note || "",
+      };
+    }).sort((a, b) => (b.current - a.current) || a.name.localeCompare(b.name, "da"));
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, items, cats: VEDIO_CATS.map((k) => ({ key: k, label: CAT_LABEL[k], niches: (NICHES[k] || []).map(([key, label]) => ({ key, label })) })) });
+  } catch (e) { sdrFail(res, e, "customers"); }
+});
+// A customer's logo: their site's icon, fetched once and kept in DATA_DIR/logos.
+// Looked up by an unguessable id (custLogoId), so it needs no login.
+const LOGO_DIR = path.join(DATA_DIR, "logos");
+app.get("/api/sdr/logo/:id", async (req, res) => {
+  try {
+    const id = String(req.params.id || "");
+    if (!/^[0-9a-f]{20}$/.test(id)) return res.status(404).end();
+    const file = path.join(LOGO_DIR, id + ".png"), none = path.join(LOGO_DIR, id + ".none");
+    const send = () => { res.set("Cache-Control", "public, max-age=604800"); res.type("png"); return res.sendFile(file); };
+    if (fs.existsSync(file)) return send();
+    if (fs.existsSync(none) && Date.now() - fs.statSync(none).mtimeMs < 14 * 864e5) return res.status(404).end();
+    const dom = (loadCustomers().items || []).map((x) => custDomain(x && x.domain)).find((d) => d && custLogoId(d) === id);
+    if (!dom) return res.status(404).end();
+    fs.mkdirSync(LOGO_DIR, { recursive: true });
+    const r = await fetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(dom)}&sz=64`, { signal: AbortSignal.timeout(6000) }).catch(() => null);
+    const buf = r && r.ok ? Buffer.from(await r.arrayBuffer()) : null;
+    // Google answers an unknown site with its grey globe and a 404 - no logo then.
+    if (!buf || buf.length < 100) { fs.writeFileSync(none, ""); return res.status(404).end(); }
+    fs.writeFileSync(file, buf);
+    return send();
+  } catch (e) { res.status(404).end(); }
 });
 // Admin debug: run a Datafordeler GraphQL query from prod (the only IP on
 // the registry's allow-list). Used to probe entities / match rules.

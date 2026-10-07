@@ -49,7 +49,15 @@ annoncer lige nu" kommer fra deres Facebook-side, ikke fra et gæt.
 Er leadet selv Vedio-kunde (samme website eller firmanavn i kundelisten), står
 det på kortet og i listen: en *nuværende* kunde ringes aldrig op koldt og
 kommer ikke på listerne; en *tidligere* kunde får mærket "Tidl. kunde".
-Referencekunder vises kun fra leadets egen branche. Kunder vi ikke kunne læse
+Referencekunder vises kun fra leadets egen branche - og nu også kun fra samme
+**niche** (fx belysning, møbler, have under Bolig): samme niche først, så kunder
+hvis tags matcher leadet, så brede kunder i branchen; en kunde fra en anden
+niche vises aldrig. Hver kunde har en niche (Gemini sorterer dem én gang under
+Tilgang → "Sortér i nicher med AI"; kan rettes pr. kunde), leads får deres fra
+nøgleord. **Se alle kunder** på kortet åbner alle nuværende og tidligere
+kunder med logo, delt i branche og niche, med søgning - leadets egen niche
+øverst. ✓ = må nævnes som reference. Logoer hentes én gang via serveren og
+gemmes i `logos/`. Kunder vi ikke kunne læse
 hjemmesiden på, kan admin finde via Google (kun svar hvor en af kildernes egne
 sider bekræfter firmaet) eller give en kategori i listen under Tilgang.
 Inden for branchen kommer den tætteste niche først (en kafferister til et
