@@ -303,14 +303,22 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 #pay-card .paywarn{padding:12px 24px;border-top:1px solid var(--line);font-size:13px;color:#8A5A12;background:#FBF4E6;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 #view-demos td,#view-demos th{padding-left:12px;padding-right:12px}
 #view-demos td:first-child,#view-demos th:first-child{padding-left:24px}
-#view-demos td.demost{min-width:230px}
-#view-demos td.demonote{min-width:150px;max-width:240px;color:var(--txt-soft)}
+#view-demos td.demost{min-width:212px;max-width:250px;white-space:normal}
+#view-demos td.democo{min-width:140px}
+#view-demos td.democo .sub{overflow-wrap:anywhere}
+#view-demos td.demost .chips{display:flex;flex-wrap:wrap;gap:6px}
+#view-demos td.demost .review{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#view-demos td.democ{min-width:130px;max-width:210px}
+#view-demos td.democ .sub{overflow-wrap:anywhere}
+@media (max-width:1180px){#view-demos table.demotbl th:nth-child(4),#view-demos td.demonote{display:none}}
+#view-demos td.demonote{min-width:110px;max-width:220px;color:var(--txt-soft)}
+#view-demos td.demonote .nt{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 #view-demos td.demost .why{display:block;margin-top:5px;font-size:12px;color:var(--txt-soft);white-space:normal;max-width:260px}
-.twl{display:inline-block;margin-top:6px;font-size:12.5px;font-weight:700;color:var(--violet);text-decoration:none}
+.twl{display:block;margin-top:6px;font-size:12.5px;font-weight:700;color:var(--violet);text-decoration:none;width:max-content}
 .twl:hover{text-decoration:underline}
 .twn{display:block;margin-top:5px;font-size:12px;color:var(--txt-faint)}
 .twn.bad{color:#B3352B}
-.twl + .twn{display:inline;margin-left:6px}
+.twl + .twn{margin-top:1px}
 .integ{display:flex;flex-direction:column}
 .integ .ic{background:var(--white);padding:13px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line)}
 .integ .ic:last-child{border-bottom:0}
@@ -505,7 +513,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     <div class="tablewrap" id="pay-card" hidden></div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Bookede demoer</h3><p>Godkend efter mødet: kvalificeret = ICP, interesseret og mødt op. Kun godkendte udløser provision.</p></div><div class="demo-ctl"><select id="demo-month" onchange="setDemoMonth(this.value)" title="Vis møderne i en lønperiode (og dem der afventer, mens perioden er åben)"></select><select id="demo-sdr" onchange="setDemoSdr(this.value)" title="Vis kun én SDR's demoer"></select><div class="filters" id="demo-filters"></div></div></div>
-      <table><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
+      <table class="demotbl"><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
     <div class="tablewrap" id="sale-card">
       <div class="thead"><div><h3>Fra demo til salg</h3><p>Kvalificerede demoer, indtil de er afgjort. Markér <b>Solgt</b> eller <b>Ikke solgt</b> efter mødet - SDR'en, der bookede demoen, ser det på sin demo.</p></div><div class="filters" id="sale-filters"></div></div>
@@ -977,22 +985,21 @@ function renderDemos() {
   $('demo-filters').innerHTML = [['pending', 'Afventer'], ['qualified', 'Kvalificeret'], ['unqualified', 'Ikke kval.'], ['all', 'Alle']].map(([k, l]) => `<button class="${demoFilter === k ? 'on' : ''}" onclick="demoFilter='${k}';renderDemos()">${l}<span class="n">${k === 'all' ? inMonth.length : counts[k]}</span></button>`).join('');
   const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending'; return `<tr class="rowlink" onclick="openLead('${e(l.cvr)}')">
-      <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
-      <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '-'}</td>
-      <td class="num">${e(fmtPhone(l.phone))}</td>
-      <td class="demonote">${e(l.last_note || '')}</td>
+      <td><span class="chip ok">${e(fmtDate(l.demo_booked_at))}</span><span class="sub">kl. ${e(new Date(l.demo_booked_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }))}</span></td>
+      <td class="democo"><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
+      <td class="democ">${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>${l.contact.email ? `<span class="sub">${e(l.contact.email)}</span>` : ''}` : '<b>-</b>'}<span class="sub">${e(fmtPhone(l.phone))}</span></td>
+      <td class="demonote"><div class="nt" title="${e(l.last_note || '')}">${e(l.last_note || '')}</div></td>
       <td>${e(l.demo_booked_by_name || '')}</td>
-      <td class="demost" onclick="event.stopPropagation()"><span class="chip st-${st}">${ST[st]}</span>${l.sale_status === 'won' ? ' <span class="chip sold">Solgt</span>' : l.sale_status === 'lost' ? ' <span class="chip">Ikke solgt</span>' : ''}${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
+      <td class="demost" onclick="event.stopPropagation()"><div class="chips"><span class="chip st-${st}">${ST[st]}</span>${l.sale_status === 'won' ? '<span class="chip sold">Solgt</span>' : l.sale_status === 'lost' ? '<span class="chip">Ikke solgt</span>' : ''}</div>${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
         ${twentyCell(l.twenty)}
-        <div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
-    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer ${demoFilter === 'all' ? (listPeriod || demoSdr ? 'med de valg' : 'endnu') : 'i den kategori' + (listPeriod || demoSdr ? ' med de valg' : '')}.</td></tr>`;
+        <div class="review">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">Ingen demoer ${demoFilter === 'all' ? (listPeriod || demoSdr ? 'med de valg' : 'endnu') : 'i den kategori' + (listPeriod || demoSdr ? ' med de valg' : '')}.</td></tr>`;
   renderSales();
 }
 // Where the demo stands in Victor's Twenty pipeline (pushed ~10 min after booking).
 function twentyCell(t) {
   if (!t) return '';
-  if (t.url) return `<a class="twl" href="${e(t.url)}" target="_blank" rel="noopener">I Twenty ↗</a>${t.reused ? '<span class="twn">eksisterende opportunity</span>' : ''}`;
+  if (t.url) return `<a class="twl" href="${e(t.url)}" target="_blank" rel="noopener">I Twenty ↗</a>${t.reused ? '<span class="twn">fandtes allerede i Twenty</span>' : ''}`;
   if (t.pending) return '<span class="twn">Sendes til Twenty om lidt</span>';
   return `<span class="twn bad" title="${e(t.error || '')}">${t.gaveUp ? 'Twenty afviste den - se fejl' : 'Twenty: prøver igen'}</span>`;
 }
