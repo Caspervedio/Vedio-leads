@@ -153,7 +153,15 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
   som er den første flaskehals), integrationernes status, CSV-import og
   referencekundelisten.
-- **Demoer** — godkend eller afvis bookede demoer. Provision følger
+- **Resultater** (hed før Demoer) — åbner med status for måneden indtil nu
+  (demoer booket, demo pr. samtale, kvalificeret, solgt, provision i den åbne
+  løn - pilene er mod samme antal dage før) og hvad der venter på dig. Under
+  det tre faner: **Demoer** (godkend), **Løn** (lønperioden + **sygdom**) og
+  **Konvertering** (fra demo til salg). Sygdom registreres pr. SDR som en dag
+  eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
+  som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
+  `sdr_absence.json` (ikke i puljen).
+- **Demoer** (fanen under Resultater) — godkend eller afvis bookede demoer. Provision følger
   **lønperioden**: et møde godkendt til og med d. 28. kommer med i den
   måneds løn, godkendt fra d. 29. i næste måneds. Vælg "Løn <måned>" for at se
   hvad hver SDR skal have, møde for møde. En lønperiode låses automatisk efter

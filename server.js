@@ -16502,6 +16502,10 @@ function sdrPeriodStats(d, { fromKey, toKey, sdr }) {
 }
 function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   const { who, settings, rate, dayKeys, calls, demos, ids, tot, per, byDay, newLeads } = sdrPeriodStats(d, { fromKey, toKey, sdr });
+  // Sick days next to the numbers - a week with two sick days reads differently.
+  const sick = absenceIn(fromKey, toKey).days;
+  for (const id of ids) per[id].sick = sick[id] || 0;
+  tot.sick = sdr ? (sick[sdr] || 0) : Object.values(sick).reduce((a, n) => a + n, 0);
 
   const ratio = (a, b) => (b > 0 ? a / b : null);
   const fmtD = (k) => { const [y, m, dd] = k.split("-"); return `${dd}-${m}-${y}`; };
@@ -16544,6 +16548,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     line("Beriget i Research", (m) => m.research),
     line("Fjernet fra listen uden opkald", (m) => m.screened),
     line("Dage med opkald", (m) => m.days.size),
+    line("Sygedage (hverdage)", (m) => m.sick || 0),
     line("Opkald pr. dag med opkald", (m) => (m.days.size ? Math.round(m.calls / m.days.size * 10) / 10 : null), "dec1"),
     [],
     [{ v: "Puljen (alle SDR'er)", s: "bold" }],
@@ -16817,6 +16822,66 @@ app.post("/api/sdr/admin/commission/move", authMiddleware, (req, res) => {
 });
 // Payroll: one salary period - who gets what, meeting by meeting, and what is
 // still waiting for approval. Closed periods come from the ledger, unchanged.
+// Sick days, registered by admin under Resultater → Løn. Kept in their own
+// small file (never in the pool). Counted in weekdays per salary period and
+// shown next to the pay; they don't change any amount by themselves.
+const ABSENCE_FILE = path.join(DATA_DIR, "sdr_absence.json");
+function loadAbsence() { try { const j = JSON.parse(fs.readFileSync(ABSENCE_FILE, "utf8")); return Array.isArray(j.items) ? j : { items: [] }; } catch { return { items: [] }; } }
+function absenceWeekdays(a, fromKey, toKey) {
+  const from = a.from > fromKey ? a.from : fromKey, to = a.to < toKey ? a.to : toKey;
+  let n = 0;
+  for (const x = new Date(from + "T12:00:00"); sdrDayKey(x) <= to; x.setDate(x.getDate() + 1)) { const wd = x.getDay(); if (wd !== 0 && wd !== 6) n++; }
+  return n;
+}
+// Weekdays off sick per SDR in [fromKey, toKey], plus the entries behind it.
+function absenceIn(fromKey, toKey) {
+  const items = loadAbsence().items.filter((a) => a.from <= toKey && a.to >= fromKey);
+  const days = {}; for (const a of items) days[a.sdr] = (days[a.sdr] || 0) + absenceWeekdays(a, fromKey, toKey);
+  return { items, days };
+}
+app.get("/api/sdr/admin/absence", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    const from = String(req.query.from || ""), to = String(req.query.to || "");
+    if (!re.test(from) || !re.test(to) || from > to) return res.status(400).json({ error: "Vælg en periode" });
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const { items, days } = absenceIn(from, to);
+    res.json({ ok: true, from, to, days,
+      items: items.sort((a, b) => a.from.localeCompare(b.from)).map((a) => ({ ...a, name: nameById[a.sdr] || a.sdr, weekdays: absenceWeekdays(a, from, to) })),
+      sdrs: users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled).map((u) => ({ id: u.id, name: u.name })) });
+  } catch (e) { sdrFail(res, e, "admin/absence"); }
+});
+app.post("/api/sdr/admin/absence", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const b = req.body || {}; const re = /^\d{4}-\d{2}-\d{2}$/;
+    const users = loadUsers(); const who = users.find((u) => u.id === String(b.sdr || "") && !sdrIsAdmin(u.id));
+    if (!who) return res.status(400).json({ error: "Vælg en SDR" });
+    const from = String(b.from || ""), to = String(b.to || b.from || "");
+    if (!re.test(from) || !re.test(to) || isNaN(new Date(from)) || isNaN(new Date(to))) return res.status(400).json({ error: "Vælg datoer" });
+    if (from > to) return res.status(400).json({ error: "Slutdatoen ligger før startdatoen" });
+    if ((new Date(to) - new Date(from)) / 864e5 > 92) return res.status(400).json({ error: "Højst tre måneder ad gangen" });
+    const all = loadAbsence();
+    if (all.items.some((a) => a.sdr === who.id && a.from <= to && a.to >= from)) return res.status(409).json({ error: `${who.name} er allerede registreret syg i en del af perioden` });
+    const item = { id: crypto.randomBytes(6).toString("hex"), sdr: who.id, kind: "sick", from, to, note: String(b.note || "").trim().slice(0, 200), by: req.userId, at: new Date().toISOString() };
+    all.items.push(item);
+    fs.writeFileSync(ABSENCE_FILE, JSON.stringify(all, null, 1));
+    logActivity("sdr-absence", `Sygdom registreret: ${who.name} ${from}${to !== from ? " - " + to : ""}`, { userId: req.userId, sdr: who.id, from, to });
+    res.json({ ok: true, item });
+  } catch (e) { sdrFail(res, e, "admin/absence"); }
+});
+app.delete("/api/sdr/admin/absence/:id", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const all = loadAbsence(); const a = all.items.find((x) => x.id === req.params.id);
+    if (!a) return res.status(404).json({ error: "Findes ikke" });
+    all.items = all.items.filter((x) => x !== a);
+    fs.writeFileSync(ABSENCE_FILE, JSON.stringify(all, null, 1));
+    logActivity("sdr-absence", `Sygdom slettet: ${a.sdr} ${a.from}${a.to !== a.from ? " - " + a.to : ""}`, { userId: req.userId, sdr: a.sdr });
+    res.json({ ok: true });
+  } catch (e) { sdrFail(res, e, "admin/absence"); }
+});
 app.get("/api/sdr/admin/commission", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
