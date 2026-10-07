@@ -238,6 +238,11 @@ try {
 let token = (impersonating ? sessionStorage.getItem('vl_imp_token') : '') || localStorage.getItem('vl_token') || '';
 let me = null;
 let S = null;                 // last server state
+// Bumped every time a state is applied. A background refresh that was already
+// on its way when the SDR acted (Fjern fra listen, an outcome, Spring over)
+// carries the list from before - landing after the action's answer, it put the
+// removed lead back on screen until the next refresh. It is dropped instead.
+let STATE_GEN = 0;
 let calling = false;
 let calledCvr = null; // the lead "Ring op" was pressed on - an outcome without it was probably not a call
 let chooserOpen = false;
@@ -275,12 +280,15 @@ function logout() {
 
 /* ─── State ────────────────────────────────────────────────────────────── */
 async function loadState({ keepCurrent = false } = {}) {
+  const gen = STATE_GEN;
   let r;
   try { r = await fetch('/api/sdr/state', { headers: ah() }); }
   catch (_) { if (!S) toast('Ingen forbindelse - prøver igen…', 3000); return; } // offline / server restart: keep what we have
   if (r.status === 401) { logout(); return; }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { toast(d.error || 'Kunne ikke hente listen'); return; }
+  if (gen !== STATE_GEN || busy) return; // an action answered meanwhile - its state is the newer one
+  STATE_GEN++;
   const prevCvr = S && S.current ? S.current.cvr : null;
   const prevNote = prevCvr && $('note') ? $('note').value : '';
   S = d; me = d.me || me;
@@ -310,7 +318,7 @@ async function post(path, body) {
   if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
   return d;
 }
-function apply(d, opts) { if (d && d.state) { S = d.state; renderAll(opts || {}); } }
+function apply(d, opts) { if (d && d.state) { STATE_GEN++; S = d.state; renderAll(opts || {}); } }
 
 /* ─── Helpers ──────────────────────────────────────────────────────────── */
 function fmtPhone(p) {

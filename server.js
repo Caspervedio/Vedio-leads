@@ -15942,7 +15942,7 @@ app.post("/api/sdr/skip", authMiddleware, (req, res) => {
     const d = loadPool(); const now = Date.now(); const { cvr, note } = req.body || {};
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
-    if (note && String(note).trim()) lead.last_note = String(note).trim().slice(0, 2000);
+    if (note && String(note).trim()) { lead.last_note = String(note).trim().slice(0, 2000); sdrTouch(lead); }
     const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
     if (L.cvrs.includes(cvr)) L.cvrs = [...L.cvrs.filter((x) => x !== cvr), cvr];
@@ -15976,6 +15976,7 @@ app.post("/api/sdr/list/remove", authMiddleware, (req, res) => {
     if (lead.claimed_by === req.userId) sdrUnclaim(lead);
     const tmr = new Date(); tmr.setHours(24, 0, 0, 0);
     lead.deferred_until = tmr.toISOString();
+    sdrTouch(lead); // or a background job's older copy puts it straight back
     savePool(d); sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "list/remove"); }
 });
