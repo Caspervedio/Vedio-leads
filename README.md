@@ -156,7 +156,7 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 - **Resultater** (hed før Demoer) — åbner med status for måneden indtil nu
   (demoer booket, demo pr. samtale, kvalificeret, solgt, provision i den åbne
   løn - pilene er mod samme antal dage før) og hvad der venter på dig. Under
-  det tre faner: **Demoer** (godkend), **Løn** (lønperioden + **sygdom**) og
+  det tre faner: **Demoer** (godkend), **Løn + fravær** (lønperioden + **sygdom**) og
   **Konvertering** (fra demo til salg). Sygdom registreres pr. SDR som en dag
   eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
   som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
