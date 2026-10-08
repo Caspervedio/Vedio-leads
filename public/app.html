@@ -756,7 +756,7 @@ async function saveDemoEdit(cvr, prevName) {
 /* Resultater - tiles + explainers */
 const EXPLAIN = {
   callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag - også "Ingen svar". Leads du fravælger uden opkald tæller ikke.', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
-  demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald - filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
+  demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald - filtreret på udfald. Selve demoen bookes i Calendly under opkaldet.' },
   callsWeek:    { t: 'Opkald denne uge', w: 'Dine udfald fra mandag 00:00 til nu.', s: 'Samme opkalds-log som "Opkald i dag", bare en længere periode.' },
   demosWeek:    { t: 'Demoer denne uge', w: 'Dine "Demo booket" fra mandag til nu.', s: 'Samme opkalds-log, filtreret på udfald.' },
   callsPerDemo30:{ t: 'Opkald pr. demo', w: 'Hvor mange opkald der i gennemsnit ligger bag én booket demo, målt på dine sidste 30 dage. Står der "-", har du ikke booket en demo endnu i perioden.', s: 'Dine opkald de sidste 30 dage delt med dine "Demo booket" i samme periode. 30 dage, fordi tallet kun rykker sig når en demo lander - en enkelt stille uge ville ellers se ud som et fald. Det er ikke et mål, men et pejlemærke: bliver tallet mindre, virker samtalerne bedre.' },
@@ -766,7 +766,7 @@ const EXPLAIN = {
   poolNeedsEnrich:{ t: 'Mangler kontakt/nummer', w: 'Leads i puljen uden dansk nummer eller uden navngivet kontakt. De vises ikke for SDR\'er før de er beriget.', s: 'Berigelsen kører automatisk når den er tændt. Kender du selv personen, kan du rette den på kortet under Opkald ("✎ Ret lead").' },
   poolArchived: { t: 'Arkiveret', w: 'Leads markeret "Ikke relevant". De kommer aldrig tilbage i køen.', s: 'Sat af en SDR via udfaldet Ikke relevant - inkl. historik fra det gamle værktøj.' },
   poolTotal:    { t: 'Leads i alt', w: 'Alle leads i puljen uanset status.', s: 'Én fælles pulje for alle SDR\'er. Den vokser når intake kører.' },
-  udfald:       { t: 'Udfald', w: 'Demo booket = mødet er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Telefonmenu = hovednummeret svarer med "tryk 1 for…" - tæller som et opkald, leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage. Ikke nu = rigtig kunde, forkert timing - kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
+  udfald:       { t: 'Udfald', w: 'Demo booket = demoen er booket i Calendly. Følg op = du vælger et tidspunkt, leadet dukker op på listen igen. Ingen svar = prøver igen automatisk. Telefonmenu = hovednummeret svarer med "tryk 1 for…" - tæller som et opkald, leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage. Ikke nu = rigtig kunde, forkert timing - kommer tilbage om 90 dage. Ikke relevant = arkiveres for altid.', s: 'Udfaldet gemmes på leadet og styrer hvornår (om nogensinde) det kommer tilbage på en ringeliste.' },
   demos:        { t: 'Bookede demoer', w: 'Alle leads med udfaldet "Demo booket", nyeste øverst.', s: 'Founders tager demoen fra Calendly-bookingen. Leadet forlader ringelisterne.' },
 };
 const tip = (k) => { const x = EXPLAIN[k]; return x ? `${x.t} - ${x.w}` : ''; };
@@ -799,11 +799,11 @@ function renderResults() {
     pay.innerHTML = `
       <div><div class="big">${e(fmtKr(sum('commissionMonth')))}</div><div class="lbl">Provision i alt · ${e(mName)}</div></div>
       <div class="side">
-        <div><b>${sum('demosQualMonth')}</b><span>kvalificerede møder</span></div>
-        <div><b style="color:#c4b5fd">${sum('demosPendingMonth')}</b><span>afventer din godkendelse</span></div>
+        <div><b>${sum('demosQualMonth')}</b><span>kvalificerede demoer</span></div>
+        <div><b style="color:#c4b5fd">${sum('demosPendingMonth')}</b><span>venter på din vurdering</span></div>
         <div><b>${e(fmtKr(sum('commissionLastMonth')))}</b><span>${e(lName)}</span></div>
       </div>
-      <div class="rule">${e(fmtKr(c.rate))} pr. godkendt møde i ${e(mName)}-lønnen: godkendt fra ${e(fmtDay(c.period_from))} til og med ${e(fmtDay(c.period_to))}. Godkender du efter d. 28., kommer det med i næste måneds løn. Se hele lønperioden under Admin → Demoer.</div>`;
+      <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret demo i ${e(mName)}-lønnen: kvalificeret fra ${e(fmtDay(c.period_from))} til og med ${e(fmtDay(c.period_to))}. Kvalificerer du efter d. 28., kommer den med i næste måneds løn. Se hele lønperioden under Admin → Resultater → Løn + fravær.</div>`;
     pay.hidden = false; return;
   }
   // One money figure: what the founders have approved for this salary. Pending
@@ -2334,7 +2334,7 @@ function openSettings() {
         </section>
         ${isAdmin ? `<section class="set-card">
           <div class="set-k">Admin</div>
-          <label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
+          <label>Provision pr. kvalificeret demo (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
           <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
         </section>` : ''}
       </div>

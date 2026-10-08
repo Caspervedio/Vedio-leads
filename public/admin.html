@@ -180,6 +180,21 @@
 #sickmodal .sk-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:1100px){#view-demos .res-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){#view-demos .res-kpis{grid-template-columns:1fr 1fr}}
+#settings .modal{padding-top:22px}
+#settings .st-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:12px -28px 16px;padding:0 28px}
+#settings .st-tabs button{border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:700;color:var(--txt-soft);padding:10px 12px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
+#settings .st-tabs button:hover{color:var(--txt)}
+#settings .st-tabs button.on{color:var(--violet);border-bottom-color:var(--violet)}
+#settings .st-lead{font-size:13px;color:var(--txt-soft);margin:0 0 6px}
+#sdr-card .sdr-head{align-items:center}
+#sdr-card .sdr-tabs{display:inline-flex;background:var(--paper);border-radius:var(--pill);padding:3px;gap:2px;margin-left:auto}
+#sdr-card .sdr-tabs button{border:0;background:transparent;padding:7px 14px;border-radius:var(--pill);font:inherit;font-size:13px;font-weight:700;color:var(--txt-soft);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+#sdr-card .sdr-tabs button.on{background:var(--white);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+#sdr-card .sdr-tabs .cmp-badges{margin:0}
+#sdr-card .sdr-tabs .cb{font-size:10.5px;padding:1px 7px}
+#sdr-card .pane-lead{font-size:13px;color:var(--txt-soft);padding:14px 24px 10px;margin:0;max-width:900px}
+#sdr-card .pane-lead.row-between{display:flex;justify-content:space-between;align-items:center;gap:14px;max-width:none}
+#sdr-card #cmp-card .cmp-head{padding-top:16px}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -389,6 +404,8 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <button data-tab="leads" onclick="showTab('leads')">Leads</button>
       <button data-tab="intake" onclick="showTab('intake')">Tilgang</button>
       <button data-tab="demos" onclick="showTab('demos')">Resultater<span class="n" id="n-demos">0</span></button>
+      <button data-tab="customers" onclick="showTab('customers')">Kunder</button>
+      <button data-tab="ops" onclick="showTab('ops')">Drift</button>
     </nav>
     <div class="hright">
       <span id="imp-links" class="row" style="gap:6px"></span>
@@ -404,20 +421,20 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <section id="view-overview" class="view active">
     <div class="alerts" id="alerts"></div>
     <div class="tiles" id="tiles" style="grid-template-columns:repeat(4,1fr)"></div>
-    <div class="tablewrap" id="digest-card">
-      <div class="thead"><div><h3>Ugens læring</h3><p id="digest-sub">Hvad virkede, hvad skal ændres - skrevet ud fra SDR'ernes debriefs og udfald.</p></div><button class="pill sm violet" id="digest-btn" onclick="genDigest()">Generér for denne uge</button></div>
-      <div id="digest-body" style="padding:18px 24px;font-size:14px;color:var(--txt-soft)">Ingen opsummering endnu.</div>
-    </div>
-    <div class="tablewrap" id="sdr-table">
-      <div class="thead"><div><h3>Per SDR</h3><p>Hver SDR har sin egen liste, der altid fyldes op fra den fælles pulje. I dag · denne uge · denne måned. Provision tæller kun kvalificerede møder. Kolonner med ◦ er farvet mod benchmark: <b style="color:var(--approve)">grøn</b> er i mål, <b style="color:#A9761E">gul</b> er på vej, <b style="color:#B3352B">rød</b> er langt fra. Sæt benchmarks under ⚙.</p></div><button class="pill sm violet" onclick="openExport()" title="Hent et Excel-ark med resultaterne for en valgt periode" style="flex-shrink:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Eksportér resultater</button></div>
-      <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num bench" title="Udfald registreret i dag. Farven måler mod det daglige mål, fordelt over arbejdsdagen 08-16 - så kl. 10 forventes en fjerdedel.">Opkald</th><th class="num" title="Samlet tid med kortet fremme i dag. Uret tæller kun, mens Opkald-fanen er den de kigger på, og stopper når de skifter fane eller vindue. Det er research + opkald + notat, ikke ren taletid. Loft på 20 minutter pr. lead.">Tid på leads</th><th class="num bench" title="Gennemsnitlig tid med kortet fremme pr. lead - tallet under viser hvor mange af dagens opkald der er målt. Farves først ved mindst 5 målte. Benchmark sættes under ⚙.">Snit pr. lead</th><th class="num" title="Leads SDR'en har beriget manuelt i Research-fanen i dag.">Beriget</th><th class="num" title="Leads fravalgt uden opkald i dag (ikke vores målgruppe, for svag, ring senere). Tæller ikke som opkald.">Fravalgt</th><th class="num" title="Demoer booket i dag.">Demoer</th><th class="num bench" title="Udfald fra mandag til nu. Farven måler mod det daglige mål gange de hverdage, der er gået.">Opkald uge</th><th class="num">Demoer uge</th><th class="num bench" title="Opkald pr. bookede demo, målt på de sidste 30 dage. Står der - er der ingen demo i perioden at regne på.">Opk./demo</th><th class="num" title="Møder godkendt i den åbne lønperiode (fra d. 29. til og med d. 28.). Tallet i parentes afventer din godkendelse - godkendt inden d. 28. kommer de med.">Kval. møder</th><th class="num" title="Provision i den åbne lønperiode: godkendt til og med d. 28. = denne måneds løn, fra d. 29. = næste måneds.">Provision</th></tr></thead><tbody id="tb-sdr"></tbody></table>
-    </div>
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
-      <div class="trend" id="trend"></div>
-    </div>
-    <details class="deeper" id="cmp-card" ontoggle="cmpToggle(this.open)">
-      <summary><span>Sammenlign SDR'er</span><span class="sub">Tragt, nøgletal og hvordan opkaldene ender - side om side for en periode.</span><span class="cmp-badges" id="cmp-badges"></span></summary>
+    <div class="tablewrap sdrcard" id="sdr-card">
+      <div class="thead sdr-head"><div><h3>SDR'erne</h3><p id="sdr-card-sub"></p></div>
+        <div class="sdr-tabs" id="sdr-tabs">
+          <button data-k="today" onclick="sdrTab('today')">I dag</button>
+          <button data-k="cmp" onclick="sdrTab('cmp')">Sammenlign<span class="cmp-badges" id="cmp-badges"></span></button>
+          <button data-k="digest" onclick="sdrTab('digest')">Ugens læring</button>
+        </div>
+        <button class="pill sm violet" onclick="openExport()" title="Hent et Excel-ark med resultaterne for en valgt periode" style="flex-shrink:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Eksportér resultater</button>
+      </div>
+      <div class="sdr-pane" data-k="today" id="sdr-table">
+        <p class="pane-lead">Hver SDR har sin egen liste, der altid fyldes op fra den fælles pulje. I dag · denne uge · denne måned. Provision tæller kun kvalificerede demoer. Kolonner med ◦ er farvet mod benchmark: <b style="color:var(--approve)">grøn</b> er i mål, <b style="color:#A9761E">gul</b> er på vej, <b style="color:#B3352B">rød</b> er langt fra. Sæt benchmarks under ⚙.</p>
+        <table><thead><tr><th>SDR</th><th class="num">På listen</th><th class="num bench" title="Udfald registreret i dag. Farven måler mod det daglige mål, fordelt over arbejdsdagen 08-16 - så kl. 10 forventes en fjerdedel.">Opkald</th><th class="num" title="Samlet tid med kortet fremme i dag. Uret tæller kun, mens Opkald-fanen er den de kigger på, og stopper når de skifter fane eller vindue. Det er research + opkald + notat, ikke ren taletid. Loft på 20 minutter pr. lead.">Tid på leads</th><th class="num bench" title="Gennemsnitlig tid med kortet fremme pr. lead - tallet under viser hvor mange af dagens opkald der er målt. Farves først ved mindst 5 målte. Benchmark sættes under ⚙.">Snit pr. lead</th><th class="num" title="Leads SDR'en har beriget manuelt i Research-fanen i dag.">Beriget</th><th class="num" title="Leads fravalgt uden opkald i dag (ikke vores målgruppe, for svag, ring senere). Tæller ikke som opkald.">Fravalgt</th><th class="num" title="Demoer booket i dag.">Demoer</th><th class="num bench" title="Udfald fra mandag til nu. Farven måler mod det daglige mål gange de hverdage, der er gået.">Opkald uge</th><th class="num">Demoer uge</th><th class="num bench" title="Opkald pr. bookede demo, målt på de sidste 30 dage. Står der - er der ingen demo i perioden at regne på.">Opk./demo</th><th class="num" title="Demoer kvalificeret i den åbne lønperiode (fra d. 29. til og med d. 28.). Tallet i parentes venter på din vurdering - kvalificeret inden d. 28. kommer de med.">Kval. demoer</th><th class="num" title="Provision i den åbne lønperiode: godkendt til og med d. 28. = denne måneds løn, fra d. 29. = næste måneds.">Provision</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      </div>
+      <div class="sdr-pane" data-k="cmp" id="cmp-card" hidden>
       <div class="cmp-head">
         <div class="cmp-when" id="cmp-sub"></div>
         <div class="cmp-tools">
@@ -425,7 +442,16 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
           <span id="cmp-custom" hidden><input type="date" id="cmp-from"> - <input type="date" id="cmp-to"> <button class="pill sm" onclick="cmpLoad()">Vis</button></span>
         </div></div>
       <div id="cmp-body"><p class="sub" style="padding:18px 24px">Henter…</p></div>
-    </details>
+      </div>
+      <div class="sdr-pane" data-k="digest" id="digest-card" hidden>
+        <div class="pane-lead row-between"><p id="digest-sub">Hvad virkede, hvad skal ændres - skrevet ud fra SDR'ernes debriefs og udfald.</p><button class="pill sm violet" id="digest-btn" onclick="genDigest()">Generér for denne uge</button></div>
+        <div id="digest-body" style="padding:18px 24px;font-size:14px;color:var(--txt-soft)">Ingen opsummering endnu.</div>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Sidste 14 dage</h3><p>Opkald og demoer på tværs af SDR'er, og nye leads ind i puljen.</p></div></div>
+      <div class="trend" id="trend"></div>
+    </div>
     <details class="deeper" open>
       <summary><span>Puljens tilstand</span><span class="sub">Hvad SDR'erne kan ringe til lige nu, og hvad der venter.</span></summary>
       <div class="subtiles" id="pooltiles"></div>
@@ -504,23 +530,6 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <!-- TILGANG -->
   <section id="view-intake" class="view">
     <div class="tiles" id="intake-tiles" style="grid-template-columns:repeat(4,1fr)"></div>
-    <div class="tablewrap" id="subs-table">
-      <div class="thead"><div><h3>Abonnementer denne måned</h3><p>Faste abonnementer er betalt uanset hvad - her ser du, om vi får værdien ud af dem. Værktøjer der koster pr. brug skal kun bruges på leads, der snart bliver ringet til. Priserne rettes under ⚙.</p></div><button class="pill sm" onclick="loadSubs(true)">Opdatér</button></div>
-      <table><thead><tr><th>Værktøj</th><th>Brugt</th><th>Status</th></tr></thead><tbody id="tb-subs"><tr class="empty-row"><td colspan="3">Henter…</td></tr></tbody></table>
-      <div id="subs-foot" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft);border-top:1px solid var(--line)"></div>
-    </div>
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Integrationer</h3><p>Om nøglerne accepteres lige nu - tjek her når du har gen-abonneret, før vi tænder cron-jobs.</p></div><button class="pill sm" onclick="loadIntegrations(true)">Test igen</button></div>
-      <div class="integ" id="integ">Tester…</div>
-    </div>
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Importér leads (CSV)</h3><p>Kolonner genkendes automatisk (navn, CVR, telefon, email, website). CVR-numre slås op i CVR-registret. Max 5.000 rækker.</p></div><label class="pill sm violet" style="cursor:pointer">Vælg CSV-fil<input type="file" id="csvfile" accept=".csv,text/csv" hidden onchange="csvPick(this)"></label></div>
-      <div id="csv-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Ingen fil valgt.</div>
-    </div>
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Referencekunder</h3><p>Vedio-kundelisten. SDR'erne får op til tre kunder i samme branche på lead-kortet, så de har noget konkret at nævne. Kun rigtige kunder - gratis prøver kommer aldrig med.</p></div><label class="pill sm violet" style="cursor:pointer">Importér kunde-CSV<input type="file" id="custfile" accept=".csv,text/csv" hidden onchange="custPick(this)"></label></div>
-      <div id="cust-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Henter…</div>
-    </div>
     <div class="tablewrap">
       <div class="thead"><div><h3>Nye leads pr. dag</h3><p>Tilgangen er den første flaskehals. Øverste tal er alt nyt; det violette er dem, der faktisk kan ringes til - det er det tal, der skal følge med forbruget.</p></div><div id="intake-rate" style="text-align:right;font-size:13px;color:var(--txt-soft)"></div></div>
       <div class="trend" id="intake-trend"></div>
@@ -539,6 +548,31 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
   </section>
 
+  <!-- KUNDER - the reference customers the SDRs name on the call card -->
+  <section id="view-customers" class="view">
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Referencekunder</h3><p>Vedio-kundelisten. SDR'erne får op til tre kunder i samme branche på lead-kortet, så de har noget konkret at nævne. Kun rigtige kunder - gratis prøver kommer aldrig med.</p></div><label class="pill sm violet" style="cursor:pointer">Importér kunde-CSV<input type="file" id="custfile" accept=".csv,text/csv" hidden onchange="custPick(this)"></label></div>
+      <div id="cust-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Henter…</div>
+    </div>
+  </section>
+
+  <!-- DRIFT - what the tools cost, whether the keys work, imports -->
+  <section id="view-ops" class="view">
+    <div class="tablewrap" id="subs-table">
+      <div class="thead"><div><h3>Abonnementer denne måned</h3><p>Faste abonnementer er betalt uanset hvad - her ser du, om vi får værdien ud af dem. Værktøjer der koster pr. brug skal kun bruges på leads, der snart bliver ringet til. Priserne rettes under ⚙.</p></div><button class="pill sm" onclick="loadSubs(true)">Opdatér</button></div>
+      <table><thead><tr><th>Værktøj</th><th>Brugt</th><th>Status</th></tr></thead><tbody id="tb-subs"><tr class="empty-row"><td colspan="3">Henter…</td></tr></tbody></table>
+      <div id="subs-foot" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft);border-top:1px solid var(--line)"></div>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Integrationer</h3><p>Om nøglerne accepteres lige nu - tjek her når du har gen-abonneret, før vi tænder cron-jobs.</p></div><button class="pill sm" onclick="loadIntegrations(true)">Test igen</button></div>
+      <div class="integ" id="integ">Tester…</div>
+    </div>
+    <div class="tablewrap">
+      <div class="thead"><div><h3>Importér leads (CSV)</h3><p>Kolonner genkendes automatisk (navn, CVR, telefon, email, website). CVR-numre slås op i CVR-registret. Max 5.000 rækker.</p></div><label class="pill sm violet" style="cursor:pointer">Vælg CSV-fil<input type="file" id="csvfile" accept=".csv,text/csv" hidden onchange="csvPick(this)"></label></div>
+      <div id="csv-body" style="padding:14px 24px;font-size:13.5px;color:var(--txt-soft)">Ingen fil valgt.</div>
+    </div>
+  </section>
+
   <!-- DEMOER -->
   <section id="view-demos" class="view">
     <div class="res-head">
@@ -552,7 +586,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
     <div id="res-demos">
     <div class="tablewrap">
-      <div class="thead"><div><h3>Bookede demoer</h3><p>Godkend efter mødet: kvalificeret = ICP, interesseret og mødt op. Kun godkendte udløser provision.</p></div><div class="demo-ctl"><select id="demo-month" onchange="setDemoMonth(this.value)" title="Vis møderne i en lønperiode (og dem der afventer, mens perioden er åben)"></select><select id="demo-sdr" onchange="setDemoSdr(this.value)" title="Vis kun én SDR's demoer"></select><div class="filters" id="demo-filters"></div></div></div>
+      <div class="thead"><div><h3>Bookede demoer</h3><p>Vurdér efter demoen: kvalificeret = ICP, interesseret og mødt op. Kun kvalificerede demoer giver provision.</p></div><div class="demo-ctl"><select id="demo-month" onchange="setDemoMonth(this.value)" title="Vis møderne i en lønperiode (og dem der afventer, mens perioden er åben)"></select><select id="demo-sdr" onchange="setDemoSdr(this.value)" title="Vis kun én SDR's demoer"></select><div class="filters" id="demo-filters"></div></div></div>
       <table class="demotbl"><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
     </div>
@@ -562,7 +596,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
     <div id="res-conv" hidden>
     <div class="tablewrap" id="sale-card">
-      <div class="thead"><div><h3>Fra demo til salg</h3><p>Kvalificerede demoer, indtil de er afgjort. Markér <b>Solgt</b> eller <b>Ikke solgt</b> efter mødet - SDR'en, der bookede demoen, ser det på sin demo.</p></div><div class="filters" id="sale-filters"></div></div>
+      <div class="thead"><div><h3>Fra demo til salg</h3><p>Kvalificerede demoer, indtil de er afgjort. Markér <b>Solgt</b> eller <b>Ikke solgt</b> efter demoen - SDR'en, der bookede demoen, ser det på sin demo.</p></div><div class="filters" id="sale-filters"></div></div>
       <div class="sale-kpis" id="sale-kpis"></div>
       <table><thead id="sale-head"></thead><tbody id="tb-sale"></tbody></table>
     </div>
@@ -604,7 +638,7 @@ async function loadOverview() {
   renderOverview(); renderIntake(); renderDemos(); fillSources(); renderRes();
   // Open again if this admin left it open; opening fires the toggle that loads it.
   // Loaded even while folded: the flag count sits on the heading.
-  if (!CMP.init) { CMP.init = true; try { if (localStorage.getItem('vl_cmp_open') === '1') $('cmp-card').open = true; } catch {} }
+  if (!CMP.init) { CMP.init = true; let k = 'today'; try { k = localStorage.getItem('vl_sdr_tab') || 'today'; } catch {} sdrTab(k); }
   if (!CMP.at || Date.now() - CMP.at > 5 * 60e3) cmpLoad();
 }
 /* Health colours on the SDR table. The benchmarks are the daily goal (their
@@ -673,14 +707,26 @@ function renderDrill() {
 const CMP = { data: null, at: 0, seq: 0 };
 let cmpPeriod = (() => { try { return localStorage.getItem('vl_cmp_period') || '30'; } catch { return '30'; } })();
 // Folded away by default - Overblik has enough on it. Opening it fetches.
+// "SDR'erne" on Overblik: one card, three tabs - today's live table, the
+// comparison over a period (flags + AI's assessment), and the week's learning
+// from the debriefs. The comparison loads even while hidden: its flag count
+// sits on its tab.
+function sdrTab(k) {
+  if (!['today', 'cmp', 'digest'].includes(k)) k = 'today';
+  try { localStorage.setItem('vl_sdr_tab', k); } catch {}
+  document.querySelectorAll('#sdr-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  document.querySelectorAll('#sdr-card .sdr-pane').forEach((p) => { p.hidden = p.dataset.k !== k; });
+  const SUB = { today: 'Lister, opkald og demoer i dag og denne uge - farvet mod målene under ⚙.', cmp: 'Side om side for en periode: tragt, nøgletal, flag og AI\'s vurdering.', digest: 'Hvad virkede, hvad skal ændres - skrevet ud fra SDR\'ernes debriefs og udfald.' };
+  $('sdr-card-sub').textContent = SUB[k];
+  cmpToggle(k === 'cmp');
+}
 function cmpToggle(open) {
-  try { localStorage.setItem('vl_cmp_open', open ? '1' : '0'); } catch {}
   if (open && CMP.data) cmpNote(false);
 }
 /* The AI's judgement: written when the section is open and there is none for
    the period yet (or it is over 3 hours old). "Skriv ny" forces a new one. */
 async function cmpNote(force) {
-  const D = CMP.data; if (!D || !$('cmp-card').open || CMP.noteBusy) return;
+  const D = CMP.data; if (!D || $('cmp-card').hidden || CMP.noteBusy) return;
   const fresh = D.note && Date.now() - new Date(D.note.at).getTime() < 3 * 3600e3;
   if (fresh && !force) return;
   if (!D.calls_any) return;
@@ -750,13 +796,13 @@ function renderCmp() {
     ['Demo pr. opkald', (m) => pct(m.demos, m.calls), '%', 'hi', (m) => m.calls < 50, null, 'Grå under 50 opkald.', 'demoCall'],
     ['Opkald pr. demo', (m) => one(m.calls, m.demos), 'd', 'lo', (m) => m.demos < 2, null, 'Hvor mange opkald en demo koster. Grå under 2 demoer.', 'callsPerDemo'],
     ['Kvalitet'],
-    ['Kvalificeret', (m) => m.qual, 'n', '', () => false, 'booked', 'Af demoerne booket i perioden: godkendt som kvalificeret.'],
+    ['Kvalificeret', (m) => m.qual, 'n', '', () => false, 'booked', 'Af demoerne booket i perioden: vurderet kvalificeret.'],
     ['Ikke kvalificeret', (m) => m.unqual, 'n', '', () => false, 'booked'],
     ['Afventer vurdering', (m) => m.pending, 'n', '', () => false, 'booked'],
     ['Kvalificeringsrate', (m) => pct(m.qual, m.qual + m.unqual), '%', 'hi', (m) => m.qual + m.unqual < 3, null, 'Kvalificeret delt med de vurderede (afventende tæller ikke). Grå under 3 vurderede.', 'qual'],
     ['Solgt', (m) => m.won, 'n', '', () => false, 'booked', 'Af demoerne booket i perioden: markeret Solgt under Demoer → Fra demo til salg.'],
     ['Salgsrate (af afgjorte)', (m) => pct(m.won, m.won + m.lost), '%', 'hi', (m) => m.won + m.lost < 3, null, 'Solgt delt med de afgjorte (solgt + ikke solgt). Grå under 3 afgjorte.'],
-    ['Provision, godkendt i perioden', (m) => m.commission, 'kr', '', () => false, null, 'Møder godkendt i perioden gange satsen - lønnen følger lønperioden (29.-28.).'],
+    ['Provision, kvalificeret i perioden', (m) => m.commission, 'kr', '', () => false, null, 'Demoer kvalificeret i perioden gange satsen - lønnen følger lønperioden (29.-28.).'],
     ['Indsats'],
     ['Snit tid pr. lead', (m) => (m.timed ? Math.round(m.secs / m.timed) : null), 't', '', (m) => m.timed < 5, null, 'Tid med kortet fremme pr. lead (research + opkald + note), kun opkald ringet fra værktøjet.'],
     ['Beriget i Research', (m) => m.research, 'n', '', () => false],
@@ -792,7 +838,9 @@ function renderCmp() {
   $('cmp-sub').innerHTML = `<b>${e(drillSpan(from, to))}</b><span>${days} ${days === 1 ? 'dag' : 'dage'}</span>${D.soft ? '<span class="onb">Oplæringsperiode</span>' : ''}`;
   const flags = D.flags || [];
   const cnt = (lv) => flags.filter((x) => x.level === lv).length;
-  $('cmp-badges').innerHTML = (cnt('bad') ? `<b class="cb bad">${cnt('bad')} under forventning</b>` : '') + (cnt('warn') ? `<b class="cb warn">${cnt('warn')} hold øje</b>` : '') + (!flags.length && D.calls_any ? '<b class="cb ok">Alt ser fint ud</b>' : '');
+  // On the tab: one small count, red if anything is under expectation.
+  const nf = cnt('bad') + cnt('warn');
+  $('cmp-badges').innerHTML = nf ? `<b class="cb ${cnt('bad') ? 'bad' : 'warn'}" title="${cnt('bad')} under forventning · ${cnt('warn')} hold øje">${nf}</b>` : '';
   // One card per SDR: a verdict, the demos, and four numbers that say how
   // they get there. A flagged number turns red/amber and says why right under
   // it; the flags with no number on the card sit at the bottom.
@@ -869,7 +917,7 @@ function renderOverview() {
   const target = Number(s.daily_target || 60) * Math.max(1, (O.perUser || []).filter((u) => u.id !== 'admin').length || 2);
   const daysLeft = target ? (p.ready / target).toFixed(1) : '-';
   const alerts = [];
-  if (p.pendingDemos > 0) alerts.push(`<div class="alert act"><span>🎯</span><span><b>${p.pendingDemos} demo${p.pendingDemos === 1 ? '' : 'er'}</b> afventer din godkendelse.</span><button class="pill sm violet" onclick="showTab('demos');resSub('demos')">Gennemgå</button></div>`);
+  if (p.pendingDemos > 0) alerts.push(`<div class="alert act"><span>🎯</span><span><b>${p.pendingDemos} demo${p.pendingDemos === 1 ? '' : 'er'}</b> venter på din vurdering.</span><button class="pill sm violet" onclick="showTab('demos');resSub('demos')">Gennemgå</button></div>`);
   if (O.onboarding) alerts.push(`<div class="alert" style="background:#effaf3;border-color:#cfeedd"><span>🌱</span><span><b>Oplæringsperiode til og med ${e(O.onboarding.label)}.</b> Salgsteamet er stadig i lære- og onboardingmåneden - 4 demoer om dagen er ikke målet endnu. Coachen og ugens opsummering ved det. Ændres under ⚙.</span></div>`);
   if (p.newLast7 === 0) alerts.push(`<div class="alert warn"><span>⏸</span><span><b>Ingen nye leads de sidste 7 dage.</b> Intake (StoreLeads / berigelse) kører ikke - puljen rækker ca. <b>${daysLeft} dage</b> ved fuldt tempo.</span></div>`);
   else if (p.ready < target * 2) alerts.push(`<div class="alert warn"><span>⚠</span><span>Kun <b>${p.ready} leads klar</b> - ca. ${daysLeft} dages opkald ved ${target}/dag.</span></div>`);
@@ -879,7 +927,7 @@ function renderOverview() {
   const sumQ = (O.perUser || []).reduce((a, u) => a + (u.demosQualMonth || 0), 0);
   const today = drillToday(), monday = drillMonday();
   $('tiles').innerHTML = [
-    ['Opkald i dag', t.callsToday, true, ['calls', today, today]], ['Demoer i dag', t.demosToday, true, ['demos', today, today]], ['Samtaler i dag', `${t.talksToday ?? 0}`, false, ['talks', today, today]], ['Opkald denne uge', t.callsWeek, false, ['calls', monday, today]], ['Demo pr. samtale · 30 dage', t.demoPerTalk30Pct == null ? '-' : t.demoPerTalk30Pct + '%'], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. møder · md', sumQ], [`Provision · ${(O.commission && O.commission.period_label) || 'lønperiode'}`, fmtKr(sumC)],
+    ['Opkald i dag', t.callsToday, true, ['calls', today, today]], ['Demoer i dag', t.demosToday, true, ['demos', today, today]], ['Samtaler i dag', `${t.talksToday ?? 0}`, false, ['talks', today, today]], ['Opkald denne uge', t.callsWeek, false, ['calls', monday, today]], ['Demo pr. samtale · 30 dage', t.demoPerTalk30Pct == null ? '-' : t.demoPerTalk30Pct + '%'], ['Opkald pr. demo · 30 dage', t.callsPerDemo30 == null ? '-' : t.callsPerDemo30], ['Kval. demoer · md', sumQ], [`Provision · ${(O.commission && O.commission.period_label) || 'lønperiode'}`, fmtKr(sumC)],
   ].map(([l, v, hi, dr]) => `<div class="tile${dr && Number(v) ? ' click' : ''}"${dr && Number(v) ? ` onclick="drill('${dr[0]}','${dr[1]}','${dr[2]}')" title="Se hvad tallet består af"` : ''}><b class="${hi ? 'v' : ''}" style="font-size:40px">${e(v)}</b><span>${l}</span></div>`).join('');
   const goal = Number(s.daily_target || 60);
   const bench = s.bench || {};
@@ -1090,19 +1138,19 @@ function renderPay() {
   if (!PAY || !PAY.period) { card.hidden = true; card.innerHTML = ''; return; }
   const P = PAY.period; const label = P.label.charAt(0).toUpperCase() + P.label.slice(1);
   const lockAt = new Date(P.to);
-  const status = P.locked ? `<span class="chip ok" title="Låst ${e(new Date(P.locked_at).toLocaleString('da-DK'))} - ændres ikke mere">Låst</span>` : P.future ? '<span class="chip">Kommende</span>' : `<span class="chip due" title="Alt, du godkender inden da, kommer med i denne periode">Åben · låses ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59</span>`;
+  const status = P.locked ? `<span class="chip ok" title="Låst ${e(new Date(P.locked_at).toLocaleString('da-DK'))} - ændres ikke mere">Låst</span>` : P.future ? '<span class="chip">Kommende</span>' : `<span class="chip due" title="Alt, du kvalificerer inden da, kommer med i denne periode">Åben · låses ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59</span>`;
   const rows = PAY.per || [];
   const byName = {}; for (const x of PAY.entries || []) (byName[x.by_name] = byName[x.by_name] || []).push(x);
-  card.innerHTML = `<div class="thead"><div><h3>Løn · ${e(label)} ${status}</h3><p>Møder godkendt (kvalificeret) fra ${e(dShort(P.from))} til og med ${e(dShort(P.to))} - godkendt efter d. 28. ryger med i næste måneds løn. Hvert møde har satsen fra den dag, det blev godkendt. Grundløn er ikke med.</p></div><div class="payctl"><select id="pay-period" onchange="setPayPeriod(this.value)" title="Vælg lønperiode">${PERIODS.map((p) => `<option value="${p.key}" ${p.key === P.key ? 'selected' : ''}>${e(p.label.charAt(0).toUpperCase() + p.label.slice(1))}${p.open ? ' · åben' : p.locked ? ' · låst' : ' · kommende'}</option>`).join('')}</select><button class="pill sm" onclick="downloadExport('${dKey(P.from)}','${dKey(P.to)}','',this)" title="Hele resultatarket for lønperioden - fanen Demoer har godkendelsesdato og lønperiode pr. møde">Hent perioden som Excel</button></div></div>
-    <table><thead><tr><th>SDR</th><th class="num">Godkendte møder</th><th class="num" title="Møder der var betalt i en låst periode, men siden er afvist - trækkes fra her">Modregnet</th><th class="num">Til udbetaling</th></tr></thead><tbody>
+  card.innerHTML = `<div class="thead"><div><h3>Løn · ${e(label)} ${status}</h3><p>Demoer kvalificeret fra ${e(dShort(P.from))} til og med ${e(dShort(P.to))} - kvalificeret efter d. 28. ryger med i næste måneds løn. Hver demo har satsen fra den dag, den blev kvalificeret. Grundløn er ikke med.</p></div><div class="payctl"><select id="pay-period" onchange="setPayPeriod(this.value)" title="Vælg lønperiode">${PERIODS.map((p) => `<option value="${p.key}" ${p.key === P.key ? 'selected' : ''}>${e(p.label.charAt(0).toUpperCase() + p.label.slice(1))}${p.open ? ' · åben' : p.locked ? ' · låst' : ' · kommende'}</option>`).join('')}</select><button class="pill sm" onclick="downloadExport('${dKey(P.from)}','${dKey(P.to)}','',this)" title="Hele resultatarket for lønperioden - fanen Demoer har godkendelsesdato og lønperiode pr. møde">Hent perioden som Excel</button></div></div>
+    <table><thead><tr><th>SDR</th><th class="num">Kvalificerede demoer</th><th class="num" title="Demoer der var betalt i en låst periode, men siden er vurderet ikke kvalificeret - trækkes fra her">Modregnet</th><th class="num">Til udbetaling</th></tr></thead><tbody>
       ${rows.length ? rows.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.n}</td><td class="num">${u.rev ? '−' + u.rev : '-'}</td><td class="num"><b>${kr(u.amount)}</b></td></tr>`).join('')
         + `<tr class="total"><td>I alt</td><td class="num">${rows.reduce((a, u) => a + u.n, 0)}</td><td class="num">${rows.reduce((a, u) => a + u.rev, 0) ? '−' + rows.reduce((a, u) => a + u.rev, 0) : '-'}</td><td class="num">${kr(PAY.total)}</td></tr>`
-        : `<tr class="empty-row"><td colspan="4">Ingen godkendte møder i perioden${P.locked ? '' : ' endnu'}.</td></tr>`}
-      ${P.future && rows.length ? `<tr><td colspan="4" class="sub" style="font-size:12px">Perioden er ikke startet - her står de møder, der allerede er flyttet hertil. Den åbner ${e(new Date(P.from).toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))}.</td></tr>` : ''}
+        : `<tr class="empty-row"><td colspan="4">Ingen kvalificerede demoer i perioden${P.locked ? '' : ' endnu'}.</td></tr>`}
+      ${P.future && rows.length ? `<tr><td colspan="4" class="sub" style="font-size:12px">Perioden er ikke startet - her står de demoer, der allerede er flyttet hertil. Den åbner ${e(new Date(P.from).toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))}.</td></tr>` : ''}
     </tbody></table>
-    ${(PAY.entries || []).length ? `<details class="payitems"><summary>Møde for møde (${PAY.entries.length})</summary>${Object.entries(byName).map(([n, xs]) => `<div class="payname">${e(n)}</div>${xs.map((x) => `<div class="payrow ${x.sign < 0 ? 'neg' : ''}"><span>${e(x.name)}</span><span class="sub">${x.sign < 0 ? 'afvist efter udbetaling' : 'godkendt ' + e(dShort(x.qualified_at))}${x.moved_to && x.sign > 0 ? ' · flyttet hertil' : x.approved_period && x.approved_period !== P.key && x.sign > 0 ? ' · overført' : ''}${!P.locked && x.sign > 0 && PAY.next ? ` <button class="linkbtn" onclick="payMove('${e(x.cvr)}','${PAY.next}')" title="Udbetales med ${e(PAY.next_label)}-lønnen i stedet">→ ${e(PAY.next_label.split(' ')[0])}</button>` : ''}</span><b>${x.sign < 0 ? '−' : ''}${kr(x.rate)}</b></div>`).join('')}`).join('')}</details>` : ''}
+    ${(PAY.entries || []).length ? `<details class="payitems"><summary>Demo for demo (${PAY.entries.length})</summary>${Object.entries(byName).map(([n, xs]) => `<div class="payname">${e(n)}</div>${xs.map((x) => `<div class="payrow ${x.sign < 0 ? 'neg' : ''}"><span>${e(x.name)}</span><span class="sub">${x.sign < 0 ? 'ikke kvalificeret efter udbetaling' : 'kvalificeret ' + e(dShort(x.qualified_at))}${x.moved_to && x.sign > 0 ? ' · flyttet hertil' : x.approved_period && x.approved_period !== P.key && x.sign > 0 ? ' · overført' : ''}${!P.locked && x.sign > 0 && PAY.next ? ` <button class="linkbtn" onclick="payMove('${e(x.cvr)}','${PAY.next}')" title="Udbetales med ${e(PAY.next_label)}-lønnen i stedet">→ ${e(PAY.next_label.split(' ')[0])}</button>` : ''}</span><b>${x.sign < 0 ? '−' : ''}${kr(x.rate)}</b></div>`).join('')}`).join('')}</details>` : ''}
     ${(PAY.moved || []).length ? `<div class="paymoved"><b>Flyttet til senere lønperiode</b>${PAY.moved.map((x) => `<div class="payrow"><span>${e(x.name)} <span class="sub">· ${e(x.by_name)}</span></span><span class="sub">udbetales med ${e(x.to_label.split(' ')[0])}-lønnen <button class="linkbtn" onclick="payMove('${e(x.cvr)}','${P.key}')">Flyt tilbage</button></span><b>${kr(x.rate)}</b></div>`).join('')}</div>` : ''}
-    ${(PAY.pending || []).length ? `<div class="paywarn">⚠ ${PAY.pending.length} ${PAY.pending.length === 1 ? 'demo afventer' : 'demoer afventer'} din vurdering. Godkender du ${PAY.pending.length === 1 ? 'den' : 'dem'} inden ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59, kommer ${PAY.pending.length === 1 ? 'den' : 'de'} med i ${e(P.label.split(' ')[0])}-lønnen - ellers i næste.<button class="pill sm" onclick="demoFilter='pending';resSub('demos');renderDemos()">Vis dem</button></div>` : ''}`;
+    ${(PAY.pending || []).length ? `<div class="paywarn">⚠ ${PAY.pending.length} ${PAY.pending.length === 1 ? 'demo afventer' : 'demoer afventer'} din vurdering. Kvalificerer du ${PAY.pending.length === 1 ? 'den' : 'dem'} inden ${e(lockAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long' }))} kl. 23:59, kommer ${PAY.pending.length === 1 ? 'den' : 'de'} med i ${e(P.label.split(' ')[0])}-lønnen - ellers i næste.<button class="pill sm" onclick="demoFilter='pending';resSub('demos');renderDemos()">Vis dem</button></div>` : ''}`;
   card.hidden = false;
   // The sick-day card follows the payroll period on screen.
   if (RES_SUB === 'pay' && SICK.key !== dKey(P.from) + '|' + dKey(P.to)) sickLoad();
@@ -1544,7 +1592,10 @@ function openSettings() {
   const s = O.settings || {}; const r = s.rules || {}; const sources = Object.keys(O.sources || {}).sort();
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'settings';
   bg.innerHTML = `<div class="modal wide" style="max-height:92vh;overflow-y:auto">
-    <h3>Indstillinger &amp; regler</h3><p>Fælles for alle SDR'er. Reglerne styrer hvad puljen må servere.</p>
+    <div class="st-head"><div><h3>Indstillinger</h3><p>Fælles for alle SDR'er. Ét Gem gemmer alle faner.</p></div></div>
+    <div class="st-tabs" id="st-tabs">${[['pool', 'Pulje & regler'], ['goals', 'Mål'], ['pay', 'Løn'], ['flow', 'Arbejdsgang'], ['pitch', 'Pitch & mails'], ['int', 'Integrationer']].map(([k, l], i) => `<button class="${i ? '' : 'on'}" onclick="stTab('${k}')" data-k="${k}">${l}</button>`).join('')}</div>
+    <div class="st-pane" data-k="pool">
+    <p class="st-lead">Hvad puljen må servere til SDR'erne, og hvornår et lead hviler.</p>
     <label>Regler - hvad SDR'erne må få</label>
     <div class="rules">
       <label class="chk"><input type="checkbox" id="r-meta" ${r.require_meta ? 'checked' : ''}> Kun leads der kører Meta-annoncer</label>
@@ -1553,36 +1604,63 @@ function openSettings() {
       <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk nicher (kommasepareret, matcher på del af ordet)</div><input id="r-niches" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}"></div>
     </div>
     <div class="setgrid">
+    <div><label>Friske leads der skal ligge klar (aldrig ringet, med navn + nummer). Under tallet flyttes nye butikker ind fra StoreLeads-reserven og der købes telefonnumre - over det venter de betalte opslag (0 = altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.fresh_target ?? 450)}"></div>
+    <div><label>Parkér et lead efter så mange opkald i træk uden svar</label><input id="st-park-after" type="number" min="2" max="10" value="${e(s.no_answer_park_after ?? 3)}"></div>
+    <div><label>… og lad det hvile i så mange dage (så nederst i puljen)</label><input id="st-park-days" type="number" min="7" max="365" value="${e(s.no_answer_park_days ?? 60)}"></div>
+    </div>
+    </div>
+    <div class="st-pane" data-k="goals" hidden>
+    <p class="st-lead">Målene farver tallene i Overblik og sætter flagene under Sammenlign SDR'er.</p>
+    <div class="setgrid">
     <div><label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}"></div>
     <div><label>Benchmark: gennemsnitlig tid pr. lead (sekunder) - tid med kortet fremme, fra de åbner det til udfaldet er valgt. Farver "Snit pr. lead" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 180)}"></div>
     <div><label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}"></div>
     <div><label>Mål: andel kvalificerede demoer (%) - af de vurderede. Bruges til flag under "Sammenlign SDR'er"</label><input id="st-bqual" type="number" min="1" max="100" value="${e((s.bench || {}).qual_rate_pct ?? 70)}"></div>
-    <div><label>Leads på hver SDR's liste ad gangen (fyldes op efter hvert opkald; op til 3 forfaldne opfølgninger øverst, resten venter i Opfølgning)</label><input id="st-size" type="number" min="3" max="100" value="${e(s.list_size || 10)}"></div>
-    <div><label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}"></div>
-    <div><label>Friske leads der skal ligge klar (aldrig ringet, med navn + nummer). Under tallet flyttes nye butikker ind fra StoreLeads-reserven og der købes telefonnumre - over det venter de betalte opslag (0 = altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.fresh_target ?? 450)}"></div>
-    <div><label>Provision pr. kvalificeret møde (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
-    <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
-    <div><label>Parkér et lead efter så mange opkald i træk uden svar</label><input id="st-park-after" type="number" min="2" max="10" value="${e(s.no_answer_park_after ?? 3)}"></div>
     <div><label>Oplæringsperiode til og med (coachen og ugens opsummering vurderer fremgang, ikke fulde mål; tom = slået fra)</label><input id="st-onboard" type="date" value="${e(s.onboarding_until || '')}"></div>
-    <div><label>… og lad det hvile i så mange dage (så nederst i puljen)</label><input id="st-park-days" type="number" min="7" max="365" value="${e(s.no_answer_park_days ?? 60)}"></div>
-    <div style="grid-column:1/-1"><div class="kicker" style="margin:10px 0 0">Abonnementer - bruges til "pris pr. demo" under Tilgang</div></div>
+    </div>
+    </div>
+    <div class="st-pane" data-k="pay" hidden>
+    <p class="st-lead">Provision følger lønperioden (29.-28.). Satsen gælder fra den dag, en demo bliver kvalificeret.</p>
+    <div class="setgrid">
+    <div><label>Provision pr. kvalificeret demo (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
+    <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
+    </div>
+    </div>
+    <div class="st-pane" data-k="flow" hidden>
+    <p class="st-lead">Sådan arbejder SDR'erne dagen igennem.</p>
+    <div class="setgrid">
+    <div><label>Friske leads på hver SDR's liste ad gangen (fyldes op efter hvert opkald; opfølgninger ligger for sig selv i Opfølgning)</label><input id="st-size" type="number" min="3" max="100" value="${e(s.list_size || 10)}"></div>
+    <div><label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}"></div>
+    </div>
+    <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
+    </div>
+    <div class="st-pane" data-k="pitch" hidden>
+    <label>Holdets pitch ({fornavn} {firma} {annoncer} {sdr} {måned}) - det nye SDR'er starter med. Har en SDR lavet sin egen, beholder de deres.</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
+    <label>Mailskabeloner - SDR'en vælger én når et lead beder om en mail ({fornavn} {firma} {sdr} {calendly} {note} {om}). Links skrives som [tekst](https://…)</label>
+    <div id="st-mails"></div>
+    <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button>
+    </div>
+    <div class="st-pane" data-k="int" hidden>
+    <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
+    <div class="kicker" style="margin:18px 0 0">Abonnementer - bruges til "pris pr. demo" under Drift</div>
+    <div class="setgrid">
     <div><label>StoreLeads pr. måned ($)</label><input id="tl-sl" type="number" min="0" value="${e((s.tools || {}).storeleads_usd ?? 250)}"></div>
     <div><label>Apollo pr. måned ($)</label><input id="tl-ap" type="number" min="0" value="${e((s.tools || {}).apollo_usd ?? 65)}"></div>
     <div><label>Apollo credits pr. måned (se Apollo → Settings → Usage; 0 = ukendt)</label><input id="tl-apc" type="number" min="0" value="${e((s.tools || {}).apollo_credits ?? 0)}"></div>
     <div><label>Full Enrich pris pr. credit ($) - et fundet nummer koster 10 credits</label><input id="tl-fe" type="number" min="0" step="0.0001" value="${e((s.tools || {}).fe_usd_per_credit ?? 0.0533)}"></div>
     </div>
-    <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
-    <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
-    <label>Holdets pitch ({fornavn} {firma} {annoncer} {sdr} {måned}) - det nye SDR'er starter med. Har en SDR lavet sin egen, beholder de deres.</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
-    <label>Mailskabeloner - SDR'en vælger én når et lead beder om en mail ({fornavn} {firma} {sdr} {calendly} {note} {om}). Links skrives som [tekst](https://…)</label>
-    <div id="st-mails"></div>
-    <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button>
+    </div>
     <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
   mailTpls = JSON.parse(JSON.stringify(s.email_templates || []));
   mailTplRender();
+}
+// Settings live in tabs; every field stays in the page, so one Gem saves all.
+function stTab(k) {
+  document.querySelectorAll('#st-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  document.querySelectorAll('#settings .st-pane').forEach((p) => { p.hidden = p.dataset.k !== k; });
 }
 /* mail templates */
 let mailTpls = [];
@@ -1859,7 +1937,7 @@ async function csvImport() {
 }
 
 /* tabs / boot */
-function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads') leadsSub(LSUB); if (id === 'intake') { loadSubs(false); loadIntegrations(false); custLoad(); } if (id === 'demos') resSub(RES_SUB); }
+function showTab(id) { document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === id)); document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + id)); try { localStorage.setItem('vl_admin_tab', id); } catch {} if (id === 'leads') leadsSub(LSUB); if (id === 'customers') custLoad(); if (id === 'ops') { loadSubs(false); loadIntegrations(false); } if (id === 'demos') resSub(RES_SUB); }
 // Leads has two sub-tabs: the SDRs' pool and Genopring (retry leads admin hands out).
 let LSUB = 'pool'; try { const v = localStorage.getItem('vl_admin_leads_sub'); if (['retry', 'reserve'].includes(v)) LSUB = v; } catch {}
 function leadsSub(sub) {
@@ -1883,7 +1961,7 @@ async function boot() {
   if (tab === 'retry') { tab = 'leads'; LSUB = 'retry'; } // Genopring used to be its own tab
   await loadOverview();
   loadDigest();
-  showTab(['overview', 'leads', 'intake', 'demos'].includes(tab) ? tab : 'overview');
+  showTab(['overview', 'leads', 'intake', 'demos', 'customers', 'ops'].includes(tab) ? tab : 'overview');
   clearInterval(pollTimer); pollTimer = setInterval(() => { if (!document.hidden && !$('settings') && !$('drawer')) loadOverview(); }, 30000);
 }
 boot();

@@ -131,14 +131,21 @@ navn og tidspunkt. Udfaldsnoter ligger i samme strøm.
 
 ## Admin (`/admin`)
 
-- **Overblik** — tal for i dag og ugen, opkald pr. bookede demo over 30 dage,
-  per SDR med opkald, taletid og manuelt berigede leads, provision, puljens
-  tilstand, 14-dages strip og Gemini-opsummering af ugen.
-  Klik på et tal (14-dages strip, Opkald/Demoer/Samtaler-felterne øverst,
-  opkald og demoer i Per SDR) for at se rækkerne bag det, delt op pr. SDR:
-  hvilke leads, hvornår, udfald, note og varighed - for demoer også hvor demoen
-  står nu. For nye leads deles der op pr. kilde. Tallene lægges sammen præcis
-  som i stripen.
+Faner: **Overblik · Leads · Tilgang · Resultater · Kunder · Drift**, og ⚙.
+Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
+**kvalificeret** demo giver provision.
+
+- **Overblik** — tal for i dag og ugen, og ét kort **SDR'erne** med tre faner:
+  *I dag* (lister, opkald, tid på leads, demoer - farvet mod målene),
+  *Sammenlign* (en periode side om side med flag og AI's vurdering; tallet på
+  fanen er antal flag) og *Ugens læring* (AI ud fra debriefs). Derunder de
+  sidste 14 dage og puljens tilstand.
+- **Tilgang** — kun tilgangen af leads: nye pr. dag, tragten, kilder og nicher.
+- **Kunder** — referencekundelisten (kategori, niche, skjul, recheck).
+- **Drift** — hvad værktøjerne koster denne måned, om integrationerne virker,
+  og CSV-import af leads.
+- **⚙ Indstillinger** — i faner: Pulje & regler · Mål · Løn · Arbejdsgang ·
+  Pitch & mails · Integrationer. Ét Gem gemmer alle faner.
 - **Sammenlign SDR'er** (fold-ud under 14-dages stripen, lukket som standard;
   henter først tal, når den åbnes, og husker om man lod den stå åben) — for en valgt periode (denne
   uge, 7/30 dage, denne/sidste måned eller egne datoer): øverst AI's vurdering,

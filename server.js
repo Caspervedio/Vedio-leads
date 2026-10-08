@@ -16237,7 +16237,7 @@ app.post("/api/sdr/undo", authMiddleware, (req, res) => {
 // Admin: qualify / disqualify a booked demo (drives commission).
 app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
   try {
-    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin kan godkende møder" });
+    if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin kan vurdere demoer" });
     const d = loadPool(); const { cvr, status, reason } = req.body || {};
     if (!["pending", "qualified", "unqualified"].includes(status)) return res.status(400).json({ error: "Ugyldig status" });
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
@@ -16604,8 +16604,8 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     line("Solgt (af demoerne i perioden)", (m) => m.won),
     line("Ikke solgt", (m) => m.lost),
     line("Salgsrate (af afgjorte)", (m) => ratio(m.won, m.won + m.lost), "pct"),
-    line("Godkendt (kvalificeret) i perioden", (m) => m.approved),
-    line("Provision for godkendte i perioden (kr)", (m) => m.commission, "kr"),
+    line("Kvalificeret i perioden", (m) => m.approved),
+    line("Provision for kvalificerede i perioden (kr)", (m) => m.commission, "kr"),
     [],
     [{ v: "Udfald", s: "bold" }],
     ...SDR_EXPORT_OUTCOMES.map(([a, label]) => line(label, (m) => m.out[a] || 0)),
@@ -16657,7 +16657,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     ["Kontaktrate", "Samtaler delt med opkald."],
     ["Demoer", "Leads der står som booket demo nu, og som blev booket i perioden. Samme liste som Resultater og provisionen. En fortrudt booking tæller ikke."],
     ["Salg", "Om demoen blev til et salg - markeret af admin efter demoen (Solgt / Ikke solgt). Salgsrate = solgt delt med de afgjorte; demoer der endnu ikke er afgjort, tæller ikke med."],
-    ["Provision", `Møder godkendt (kvalificeret) i perioden gange satsen på godkendelsesdagen (nu ${rate} kr). Lønnen følger lønperioden: godkendt til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, godkendt fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
+    ["Provision", `Demoer kvalificeret i perioden gange satsen den dag, de blev kvalificeret (nu ${rate} kr). Lønnen følger lønperioden: kvalificeret til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, kvalificeret fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
     ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
     ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
     ["Fravalgt uden opkald", "Leads SDR'en fravalgte uden at ringe (ikke vores målgruppe, for svag lige nu, ring senere). Tæller ikke som opkald."],
@@ -16667,7 +16667,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   return [
     { name: "Oversigt", cols: [34, 12, ...ids.map(() => 13)], rows: overview, head: headRow, freeze: headRow + 1 },
     { name: "Per dag", cols: [12, 10, 9, 10, 12, 9, 17, 10, ...ids.flatMap(() => [15, 15])], rows: [dayHead, ...dayRows], head: 0, freeze: 1 },
-    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Godkendt", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
+    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Kvalificeret", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
     { name: "Opkald", cols: [17, 12, 28, 20, 16, 16, 9, 12, 17, 60, 18, 14, 22], rows: [["Tidspunkt", "SDR", "Virksomhed", "Kontakt", "Telefon", "Udfald", "Samtale", "Tid (min)", "Følg op", "Note", "Kilde", "By", "ID"], ...callRows], head: 0, freeze: 1, filter: true },
     { name: "Nye leads", cols: [24, 12, 17, 12, 12, 12, 14], rows: [["Kilde", "Nye leads", "Kan ringes til nu", "Andel klar", "Ringet til", "Samtaler", "Demoer booket"], ...srcRows], head: 0, freeze: 1 },
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
@@ -16875,10 +16875,10 @@ app.post("/api/sdr/admin/commission/move", authMiddleware, (req, res) => {
     const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
     const { cvr, period } = req.body || {};
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
-    if (!lead || lead.lastAction !== "demo-booked" || lead.demo_status !== "qualified") return res.status(404).json({ error: "Kun et godkendt møde kan flyttes" });
+    if (!lead || lead.lastAction !== "demo-booked" || lead.demo_status !== "qualified") return res.status(404).json({ error: "Kun en kvalificeret demo kan flyttes" });
     const { locks, open } = commissionLocks(d, settings, nameById);
     const paid = Object.values(locks.periods || {}).reduce((a, P) => a + (P.entries || []).filter((e) => e.cvr === cvr).reduce((x, e) => x + e.sign, 0), 0);
-    if (paid > 0) return res.status(409).json({ error: "Mødet er allerede med i en låst lønperiode" });
+    if (paid > 0) return res.status(409).json({ error: "Demoen er allerede med i en låst lønperiode" });
     const natural = commissionPeriodOf(demoQualifiedAt(lead));
     const target = /^\d{4}-\d{2}$/.test(String(period || "")) ? String(period) : null;
     if (!target || target < open || target < natural || locks.periods[target]) return res.status(400).json({ error: "Vælg en lønperiode, der ikke er låst" });
