@@ -639,8 +639,8 @@ async function saveContact() {
    no outcome yet), then "Mail sendt", then the "Ingen svar" retries - oldest
    first. "Ring" opens one on top of the list; an outcome moves it on. */
 const DUE_RANK = { agreed: 0, mail: 1, retry: 2 };
-function dueList() {
-  const now = Date.now(); const cur = S.current && S.current.cvr;
+function dueList(keepOpen) {
+  const now = Date.now(); const cur = !keepOpen && S.current && S.current.cvr;
   const kind = (l) => l.lastAction === 'email-sent' ? 'mail' : ['no-answer', 'ivr'].includes(l.lastAction) ? 'retry' : 'agreed';
   return (S.followups || []).filter((l) => l.callback_at && new Date(l.callback_at).getTime() <= now && l.cvr !== cur)
     .map((l) => ({ l, k: kind(l) })).sort((a, b) => DUE_RANK[a.k] - DUE_RANK[b.k] || new Date(a.l.callback_at) - new Date(b.l.callback_at));
@@ -650,24 +650,19 @@ function renderDue() {
   const n = { agreed: 0, mail: 0, retry: 0 }; for (const x of due) n[x.k]++;
   const fu = $('n-fu'); fu.textContent = due.length || total; fu.classList.toggle('due', due.length > 0);
   fu.title = due.length ? `${due.length} venter nu (af ${total} opfølgninger i alt)` : `${total} opfølgninger - ingen venter lige nu`;
-  const parts = [n.agreed && `${n.agreed} aftalt${n.agreed === 1 ? '' : 'e'}`, n.mail && `${n.mail} efter mail`, n.retry && `${n.retry} ingen svar`].filter(Boolean).join(' · ');
-  const row = ({ l }) => { const k = dueKind(l);
-    return `<div class="dl-row" onclick="jumpTo('${e(l.cvr)}')" title="Åbn og ring nu">
-      <span class="chip ${k.cls} sm">${e(k.label)}</span>
-      <div class="dl-who"><b>${e(l.name)}</b><span>${l.contact ? e(l.contact.name) + ' · ' : ''}${e(fmtPhone(l.phone))}</span></div>
-      <div class="dl-note">${e(l.last_note || '')}</div>
-      <time>${e(fmtWhen(l.callback_at))}</time>
-      <button class="pill sm violet" onclick="event.stopPropagation();jumpTo('${e(l.cvr)}')">Ring →</button></div>`; };
-  const lane = $('duelane'); lane.hidden = !due.length;
-  if (due.length) lane.innerHTML = `<div class="dl-head"><div><b>Opfølgninger i dag</b><span class="dl-n">${due.length}</span><span class="sub">${e(parts)} - ligger uden for listen, så de ikke tager pladsen fra nye leads.</span></div>
-      <button class="linkbtn" onclick="fuFilter='all';showTab('followups')">Alle opfølgninger →</button></div>
-    <div class="dl-rows">${due.slice(0, 5).map(row).join('')}</div>
-    ${due.length > 5 ? `<button class="dl-more" onclick="fuFilter='${n.agreed ? 'agreed' : 'all'}';showTab('followups')">+ ${due.length - 5} flere venter - se dem i Opfølgning</button>` : ''}`;
+  // Ringeliste: one slim line, and only for promised follow-ups (agreed or
+  // after a mail) - the "Ingen svar" retries are counted on the tab, not here.
+  // Opfølgning → "Venter nu" is where they are worked through.
+  const promised = n.agreed + n.mail;
+  const lane = $('duelane'); lane.hidden = !promised;
+  if (promised) lane.innerHTML = `<button class="dl-strip" onclick="fuFilter='due';showTab('followups')">
+      <span class="dl-dot">◆</span><b>${promised} ${promised === 1 ? 'aftalt opfølgning venter' : 'aftalte opfølgninger venter'}</b>
+      ${n.retry ? `<span class="sub">· ${n.retry} ingen svar</span>` : ''}<span class="dl-go">Se dem →</span></button>`;
   const box = $('duebox'); box.hidden = !due.length;
   if (due.length) {
     $('due-n').textContent = due.length;
-    $('due-side').innerHTML = due.slice(0, 4).map(({ l }) => `<div class="r" onclick="jumpTo('${e(l.cvr)}')" title="Åbn og ring nu"><div><b>${e(l.name)}</b><span>${e(dueKind(l).label)} · ${e(fmtWhen(l.callback_at))}</span></div></div>`).join('')
-      + (due.length > 4 ? `<div class="r more" onclick="fuFilter='all';showTab('followups')"><span>+ ${due.length - 4} flere i Opfølgning →</span></div>` : '');
+    $('due-side').innerHTML = due.slice(0, 3).map(({ l }) => `<div class="r" onclick="jumpTo('${e(l.cvr)}')" title="Åbn og ring nu"><div><b>${e(l.name)}</b><span>${e(dueKind(l).label)} · ${e(fmtWhen(l.callback_at))}</span></div></div>`).join('')
+      + (due.length > 3 ? `<div class="r more" onclick="fuFilter='due';showTab('followups')"><span>+ ${due.length - 3} flere i Opfølgning →</span></div>` : '');
   }
 }
 function renderUpNext() {
@@ -681,14 +676,18 @@ function renderHistory() {
 }
 /* "Ingen svar" plants a retry on its own, and with ~30 of those in the list
    the calls they actually promised were hard to find. Agreed ones first. */
-let fuFilter = 'agreed';
+let fuFilter = '';  // set on first render: "Venter nu" when something is due, else "Aftalt"
 function renderFollowups() {
   const all = S.followups || [];
-  const kinds = { agreed: (l) => !['no-answer', 'ivr', 'email-sent'].includes(l.lastAction), mail: (l) => l.lastAction === 'email-sent', retry: (l) => ['no-answer', 'ivr'].includes(l.lastAction), all: () => true };
+  const isDue = (l) => new Date(l.callback_at).getTime() <= Date.now();
+  const kinds = { due: isDue, agreed: (l) => !['no-answer', 'ivr', 'email-sent'].includes(l.lastAction), mail: (l) => l.lastAction === 'email-sent', retry: (l) => ['no-answer', 'ivr'].includes(l.lastAction), all: () => true };
+  if (!fuFilter) fuFilter = all.some(isDue) ? 'due' : 'agreed';
   const q = ($('fu-q') && $('fu-q').value.trim()) || '';
-  $('fu-filters').innerHTML = [['agreed', 'Aftalt'], ['mail', 'Mail sendt'], ['retry', 'Ingen svar - prøver igen'], ['all', 'Alle']].map(([k, l]) => `<button class="${fuFilter === k ? 'on' : ''}" onclick="fuFilter='${k}';renderFollowups()">${l}<span class="n">${all.filter(kinds[k]).length}</span></button>`).join('');
+  $('fu-filters').innerHTML = [['due', 'Venter nu'], ['agreed', 'Aftalt'], ['mail', 'Mail sendt'], ['retry', 'Ingen svar - prøver igen'], ['all', 'Alle']].map(([k, l]) => `<button class="${fuFilter === k ? 'on' : ''}" onclick="fuFilter='${k}';renderFollowups()">${l}<span class="n">${all.filter(kinds[k]).length}</span></button>`).join('');
   // A search looks through everything - the point is to find it, whatever kind it is.
-  const rows = all.filter((l) => (q ? true : kinds[fuFilter](l)) && leadMatches(l, q));
+  let rows = all.filter((l) => (q ? true : kinds[fuFilter](l)) && leadMatches(l, q));
+  // "Venter nu": promised ones first, then after a mail, then the retries - oldest first.
+  if (fuFilter === 'due' && !q) rows = dueList(true).map((x) => x.l).filter((l) => rows.includes(l));
   if (all.length && !rows.length) { $('tb-fu').innerHTML = `<tr class="empty-row"><td colspan="6">${q ? `Ingen opfølgninger matcher "${e(q)}".` : 'Ingen i den gruppe.'}</td></tr>`; return; }
   $('tb-fu').innerHTML = rows.length ? rows.map((l) => { const over = new Date(l.callback_at).getTime() <= Date.now();
     return `<tr class="rowlink" onclick="jumpTo('${e(l.cvr)}')">
