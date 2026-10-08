@@ -225,6 +225,9 @@
 #sale-card .cv-split b{color:var(--txt)}
 #sale-card .cv-split .wait b{color:#A9761E}
 #sale-card .cv-split .no b{color:#B3352B}
+#sale-card .cv-split .dim{margin-left:auto;color:var(--txt-faint)}
+#sale-card .cv-split .dim b{color:var(--txt-soft)}
+#sale-card .cv-step.no .cv-bar i{background:#D9534F}
 #sale-card .cv-cost{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 20px;border-top:1px solid var(--line);background:var(--paper)}
 #sale-card .cv-cost h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
 #sale-card .cc-row{display:flex;align-items:baseline;gap:8px;padding:5px 0}
@@ -1258,26 +1261,27 @@ function renderConv() {
   const pct = (a, b) => (b > 0 ? Math.round(100 * a / b) + '%' : '-');
   const bar = (k, label, v, cls) => `<div class="cv-step ${cls || ''}"><div class="cv-bar"><i style="width:${n.booked ? Math.max(2, 100 * v / n.booked) : 0}%"></i></div><b>${v}</b><span>${label}</span><em>${pct(v, n.booked)}</em></div>`;
   const when = `${new Date(D.from + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })} - ${D.to === drillToday() ? 'i dag' : new Date(D.to + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
+  // Rates are out of the QUALIFIED demos. Booked ones still waiting for review are shown, not counted.
+  const base = n.qualified;
+  const pq = (v) => (base > 0 ? Math.round(100 * v / base) + '%' : '-');
+  const qbar = (label, v, cls) => `<div class="cv-step ${cls || ''}"><div class="cv-bar"><i style="width:${base ? Math.max(2, 100 * v / base) : 0}%"></i></div><b>${v}</b><span>${label}</span><em>${pq(v)}</em></div>`;
   box.innerHTML = `
-    <div class="cv-head"><div><h4>Fra booket demo til salg</h4><p>Alle demoer booket ${e(when)}${D.sdr ? ' af ' + e((D.per[0] || {}).name || '') : ''}. Salgsraten er af alle bookede - ikke kun de afgjorte.</p></div>
-      <div class="cv-rate"><b>${pct(n.won, n.booked)}</b><span>solgt af ${n.booked} bookede</span><em>${n.waiting} venter stadig${n.waiting ? ' · op til ' + pct(n.won + n.waiting, n.booked) + ' hvis alle lukker' : ''}</em></div></div>
+    <div class="cv-head"><div><h4>Fra kvalificeret demo til salg</h4><p>Demoer booket ${e(when)}${D.sdr ? ' af ' + e((D.per[0] || {}).name || '') : ''}. Tallene regnes af de <b>kvalificerede</b> demoer - de ${n.pending_review} der venter på din vurdering, er ikke med, før de er vurderet.</p></div>
+      <div class="cv-rate"><b>${pq(n.won)}</b><span>solgt af ${n.qualified} kvalificerede</span><em>${n.pending_sale} venter på salg${n.pending_sale ? ' · op til ' + pq(n.won + n.pending_sale) + ' hvis alle lukker' : ''}</em></div></div>
     <div class="cv-steps">
-      ${bar('booked', 'demoer booket', n.booked)}
-      ${bar('qualified', 'kvalificeret', n.qualified, 'ok')}
-      ${bar('won', 'solgt', n.won, 'won')}
+      ${qbar('kvalificerede demoer', n.qualified)}
+      ${qbar('solgt', n.won, 'won')}
+      ${qbar('ikke solgt', n.lost, 'no')}
     </div>
     <div class="cv-split">
-      <span class="cs wait"><b>${n.pending_review}</b> venter på vurdering</span>
       <span class="cs wait"><b>${n.pending_sale}</b> kvalificeret, venter på salg</span>
-      <span class="cs no"><b>${n.unqualified}</b> ikke kvalificeret</span>
-      <span class="cs no"><b>${n.lost}</b> ikke solgt</span>
       ${n.value ? `<span class="cs"><b>${e(fmtKr(n.value))}</b> solgt for</span>` : ''}
+      <span class="cs dim">Booket i alt: <b>${n.booked}</b> · <b>${n.pending_review}</b> venter på vurdering · <b>${n.unqualified}</b> ikke kvalificeret</span>
     </div>
     <div class="cv-cost">
       <div class="cc-main"><h5>Hvad en demo og et salg koster</h5>
-        <div class="cc-row"><b>${D.per_booked == null ? '-' : e(fmtKr(D.per_booked))}</b><span>pr. booket demo</span></div>
         <div class="cc-row"><b>${D.per_qualified == null ? '-' : e(fmtKr(D.per_qualified))}</b><span>pr. kvalificeret demo</span></div>
-        <div class="cc-row big"><b>${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))}</b><span>pr. salg</span>${n.waiting && D.per_sale_if_all_waiting_close ? `<em>ned til ${e(fmtKr(D.per_sale_if_all_waiting_close))}, hvis alle ${n.waiting} ventende lukker</em>` : n.won ? '' : '<em>ingen salg endnu</em>'}</div>
+        <div class="cc-row big"><b>${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))}</b><span>pr. salg</span>${n.pending_sale && D.per_sale_if_all_waiting_close ? `<em>ned til ${e(fmtKr(D.per_sale_if_all_waiting_close))}, hvis alle ${n.pending_sale} ventende lukker</em>` : n.won ? '' : '<em>ingen salg endnu</em>'}</div>
       </div>
       <div class="cc-basis"><h5>Regnet af</h5>
         <div><span>Grundløn · ${c.sdrs} SDR · ${c.months} md</span><b>${e(fmtKr(c.salary))}</b></div>

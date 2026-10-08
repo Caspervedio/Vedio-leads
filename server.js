@@ -16254,11 +16254,13 @@ app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "demo-review"); }
 });
-// Admin → Resultater → Konvertering: the live funnel over EVERY booked demo
-// and what a sale costs us. Rates are over all booked, not over the decided
-// ones - "2 af 2 afgjorte = 100%" hid that 13 were still open.
-//   booked → waiting (not reviewed yet, or reviewed but no sales outcome yet)
-//          → sold / not sold / not qualified
+// Admin → Resultater → Konvertering: the live funnel from QUALIFIED demo to
+// sale, and what a sale costs us. Casper: count from qualified - a demo that
+// still waits for review may not qualify at all, so it isn't a base for
+// anything yet. "2 af 2 afgjorte = 100%" hid that 13 qualified were still
+// open; the rate is sold out of all qualified, with the open ones shown.
+//   booked → (waiting for review | not qualified | qualified)
+//   qualified → waiting for a sales outcome | sold | not sold
 // Cost = what we paid the SDRs for the demos in the period (base salary for
 // the months the period covers, pro rata + commission for the qualified ones)
 // plus the fixed tools (USD → DKK at the rate under ⚙). Shown per booked
@@ -16307,7 +16309,8 @@ app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
     const cost = { salary, commission, tools: toolsDkk, total: salary + commission + toolsDkk, months: Math.round(months * 100) / 100, sdrs: sdrCount, usd_dkk: usdDkk, base_per_month: base };
     const perX = (x) => (x > 0 ? Math.round(cost.total / x) : null);
     res.json({ ok: true, from: fromKey, to: toKey, sdr, n, per: Object.values(per).sort((a, b) => b.booked - a.booked), cost,
-      per_booked: perX(n.booked), per_qualified: perX(n.qualified), per_sale: perX(n.won), per_sale_if_all_waiting_close: perX(n.won + n.waiting),
+      // Per qualified demo and per sale - never per booked: the ones waiting for review are not a base yet.
+      per_qualified: perX(n.qualified), per_sale: perX(n.won), per_sale_if_all_waiting_close: perX(n.won + n.pending_sale),
       excluded: users.filter((u) => excluded.has(u.id)).map((u) => u.name) });
   } catch (e) { sdrFail(res, e, "admin/conversion"); }
 });
