@@ -249,18 +249,25 @@
 #sale-card .cv-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12.5px;color:var(--txt-soft)}
 #sale-card .cv-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 #sale-card .cv-legend .dim{margin-left:auto;color:var(--txt-faint)}
-#sale-card details.cv-more{border-top:1px solid var(--line)}
-#sale-card details.cv-more>summary{list-style:none;cursor:pointer;padding:11px 24px;font-size:12.5px;font-weight:700;color:var(--txt-soft)}
-#sale-card details.cv-more>summary::-webkit-details-marker{display:none}
-#sale-card details.cv-more>summary::after{content:" ▾"}
-#sale-card details.cv-more[open]>summary::after{content:" ▴"}
-#sale-card .cv-calc{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:4px 24px 20px;background:var(--paper)}
-#sale-card .cv-calc h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:10px 0 8px}
-#sale-card .cv-calc .r{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;color:var(--txt-soft)}
-#sale-card .cv-calc .r b{color:var(--txt)}
-#sale-card .cv-calc .r.tot{border-top:1px solid var(--line);margin-top:4px;padding-top:8px;font-weight:700;color:var(--txt)}
-#sale-card .cv-calc p{font-size:12.5px;color:var(--txt-soft);line-height:1.5;margin:0 0 8px}
-@media (max-width:760px){#sale-card .cv-top,#sale-card .cv-calc{grid-template-columns:1fr}#sale-card .cv-legend .dim{margin-left:0}}
+#sale-card .cv-costbar{border-top:1px solid var(--line);padding:16px 24px 18px;background:var(--paper)}
+#sale-card .cb-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+#sale-card .cb-head h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint)}
+#sale-card .cb-head b{font-size:16px;font-weight:800}
+#sale-card .cb-track{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--white);border:1px solid var(--line)}
+#sale-card .cb-track i{display:block;height:100%}
+#sale-card .cb-track i.sal,#sale-card .cb-legend i.sal{background:#2E2620}
+#sale-card .cb-track i.com,#sale-card .cb-legend i.com{background:var(--violet)}
+#sale-card .cb-track i.tool,#sale-card .cb-legend i.tool{background:#C9974F}
+#sale-card .cb-legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:10px;font-size:12.5px;color:var(--txt-soft);align-items:baseline}
+#sale-card .cb-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+#sale-card .cb-legend b{color:var(--txt);margin-left:4px}
+#sale-card .cb-legend em{display:block;font-style:normal;font-size:11.5px;color:var(--txt-faint);margin-left:15px}
+#sale-card .cb-results{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+#sale-card .cb-res{display:flex;align-items:baseline;gap:8px;padding:8px 14px;border-radius:12px;background:var(--white);border:1px solid var(--line);font-size:12.5px;color:var(--txt-soft)}
+#sale-card .cb-res b{font-size:16px;font-weight:800;color:var(--txt)}
+#sale-card .cb-res em{font-style:normal;font-size:11.5px;color:var(--txt-faint)}
+#sale-card .cb-note{font-size:11.5px;color:var(--txt-faint);margin-top:8px}
+@media (max-width:760px){#sale-card .cv-top{grid-template-columns:1fr}#sale-card .cv-legend .dim{margin-left:0}}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -1299,22 +1306,20 @@ function renderConv() {
       <div class="cv-track">${seg('won', n.won, 'solgt')}${seg('wait', n.pending_sale, 'venter på salg')}${seg('lost', n.lost, 'ikke solgt')}</div>
       <div class="cv-legend"><span><i class="won"></i>${n.won} solgt</span><span><i class="wait"></i>${n.pending_sale} venter</span><span><i class="lost"></i>${n.lost} ikke solgt</span><span class="dim">${n.qualified} kvalificerede af ${n.booked} bookede ${e(when)} · ${n.pending_review} venter på vurdering · ${n.unqualified} ikke kvalificeret</span></div>
     </div>
-    <details class="cv-more"><summary>Vis beregning</summary>
-      <div class="cv-calc">
-        <div><h5>Omkostninger i perioden</h5>
-          <div class="r"><span>Grundløn · ${c.sdrs} SDR · ${c.months} md</span><b>${e(kr(c.salary))}</b></div>
-          <div class="r"><span>Provision · ${n.qualified} kvalificerede</span><b>${e(kr(c.commission))}</b></div>
-          <div class="r"><span>Værktøjer · faste abonnementer (${c.usd_dkk} kr/$)</span><b>${e(kr(c.tools))}</b></div>
-          <div class="r tot"><span>I alt</span><b>${e(kr(c.total))}</b></div>
-          <div class="r"><span>Pr. kvalificeret demo</span><b>${e(kr(D.per_qualified))}</b></div>
-          <div class="r"><span>Pr. salg</span><b>${e(kr(D.per_sale))}</b></div></div>
-        <div><h5>Sådan læses det</h5>
-          <p>Sundhed = kundeværdi (LTV) delt med pris pr. salg. Sundt fra 3×, tyndt 1-3×, under 1× taber vi penge på hver kunde.</p>
-          <p>Kun kvalificerede demoer tæller - de ${n.pending_review}, der venter på vurdering, er ikke en base for noget endnu.</p>
-          <p>Grundløn ${e(kr(c.base_per_month))}/md pr. SDR, LTV og dollarkurs sættes under ⚙. Gemini og Cloud er ikke med.${(D.excluded || []).length ? ` <b>${e(D.excluded.join(', '))}</b> er holdt ude.` : ''}</p>
-          ${n.value ? `<p>Solgt for ${e(kr(n.value))} i alt.</p>` : ''}</div>
+    <div class="cv-costbar">
+      <div class="cb-head"><h5>Omkostninger ${e(when)}</h5><b>${e(kr(c.total))}</b></div>
+      <div class="cb-track">${[['sal', c.salary], ['com', c.commission], ['tool', c.tools]].map(([k, v]) => c.total && v ? `<i class="${k}" style="width:${100 * v / c.total}%"></i>` : '').join('')}</div>
+      <div class="cb-legend">
+        <span><i class="sal"></i>Grundløn <b>${e(kr(c.salary))}</b><em>${c.sdrs} SDR · ${c.months} md</em></span>
+        <span><i class="com"></i>Provision <b>${e(kr(c.commission))}</b><em>${n.qualified} kvalificerede</em></span>
+        <span><i class="tool"></i>Værktøjer <b>${e(kr(c.tools))}</b><em>faste abonnementer</em></span>
       </div>
-    </details>`;
+      <div class="cb-results">
+        <span class="cb-res">÷ ${n.qualified} kvalificerede <b>${e(kr(D.per_qualified))}</b><em>pr. kvalificeret demo</em></span>
+        <span class="cb-res">÷ ${n.won} solgt <b>${e(kr(D.per_sale))}</b><em>pr. salg</em></span>
+      </div>
+      ${(D.excluded || []).length ? `<p class="cb-note">${e(D.excluded.join(', '))} er holdt ude (⚙ → Løn).</p>` : ''}
+    </div>`;
 }
 function renderSales() {
   if (!$('tb-sale')) return;
