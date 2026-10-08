@@ -15061,7 +15061,7 @@ function buildSdrState(userId, d) {
       }
     }
   }
-  // Taken off the list without a call ("Fjern fra listen"), today.
+  // Taken off the list without a call ("Fravælg uden opkald"), today.
   for (const l of leads) for (const x of (Array.isArray(l.screen_log) ? l.screen_log : [])) {
     if (!x || new Date(x.at).getTime() < t0.getTime()) continue;
     const p = per[x.by]; if (p) p.screenedToday = (p.screenedToday || 0) + 1;
@@ -15429,7 +15429,7 @@ app.post("/api/sdr/admin/set-stage", authMiddleware, (req, res) => {
     return sdrDispositionHandler(req, res);
   } catch (e) { sdrFail(res, e, "admin/set-stage"); }
 });
-// "Fjern fra listen" - the SDR decides without calling: not our audience,
+// "Fravælg uden opkald" - the SDR decides without calling: not our audience,
 // too weak right now, or ring later. Not a call: nothing in calls[], so it
 // never counts as a dial. Logged in screen_log (counted as "fjernet") and in
 // the note thread; "Fortryd" works as for an outcome.
@@ -15459,7 +15459,7 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
     lead.deferred_until = null; lead.opened_at = null; lead.opened_by = null; lead.last_call_started_at = null;
     const label = R.label + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : reason === "weak" ? " - tilbage i puljen om 3 måneder" : "");
     lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
-    lead.note_log.push({ at: nowIso, by: req.userId, where: "list", text: `Fjernet fra listen uden opkald: ${label}${cleanNote ? " - " + cleanNote : ""}` });
+    lead.note_log.push({ at: nowIso, by: req.userId, where: "list", text: `Fravalgt uden opkald: ${label}${cleanNote ? " - " + cleanNote : ""}` });
     if (cleanNote) { lead.last_note = cleanNote; lead.note_saved_at = nowIso; lead.note_saved_by = req.userId; }
     lead.screen_log = [...(Array.isArray(lead.screen_log) ? lead.screen_log : []), { at: nowIso, by: req.userId, reason }].slice(-20);
     sdrTouch(lead);
@@ -15468,7 +15468,7 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
     if (reason !== "later") sdrUnclaim(lead);
     savePool(d);
     const users = loadUsers(); const me = users.find((u) => u.id === req.userId);
-    logActivity("sdr-screen", `${me ? me.name : req.userId} · ${lead.name}: fjernet uden opkald (${R.label})`, { cvr, userId: req.userId, reason });
+    logActivity("sdr-screen", `${me ? me.name : req.userId} · ${lead.name}: fravalgt uden opkald (${R.label})`, { cvr, userId: req.userId, reason });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "screen"); }
 });
@@ -15810,7 +15810,7 @@ function sdrDeclinedOf(l) {
     return {
       by: l.archived_by, at: l.archived_at || (scr && scr.at) || null, action: "not-relevant",
       label: scr && SDR_SCREEN[scr.reason] ? SDR_SCREEN[scr.reason].label : SDR_DECLINED["not-relevant"],
-      note: n ? String(n.text || "").replace(/^Fjernet fra listen uden opkald: [^-]*(- )?/, "").trim() : "",
+      note: n ? String(n.text || "").replace(/^(Fjernet fra listen|Fravalgt) uden opkald: [^-]*(- )?/, "").trim() : "",
     };
   }
   return null;
@@ -16616,7 +16616,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     line("Snit pr. lead (min)", (m) => (m.timed ? Math.round(m.secs / m.timed / 6) / 10 : null), "dec1"),
     line("Opkald med målt tid", (m) => m.timed),
     line("Beriget i Research", (m) => m.research),
-    line("Fjernet fra listen uden opkald", (m) => m.screened),
+    line("Fravalgt uden opkald", (m) => m.screened),
     line("Dage med opkald", (m) => m.days.size),
     line("Sygedage (hverdage)", (m) => m.sick || 0),
     line("Opkald pr. dag med opkald", (m) => (m.days.size ? Math.round(m.calls / m.days.size * 10) / 10 : null), "dec1"),
@@ -16660,7 +16660,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     ["Provision", `Møder godkendt (kvalificeret) i perioden gange satsen på godkendelsesdagen (nu ${rate} kr). Lønnen følger lønperioden: godkendt til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, godkendt fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
     ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
     ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
-    ["Fjernet uden opkald", "Leads SDR'en tog af listen med 'Fjern fra listen' (ikke vores målgruppe, for svag lige nu, ring senere). Tæller ikke som opkald."],
+    ["Fravalgt uden opkald", "Leads SDR'en fravalgte uden at ringe (ikke vores målgruppe, for svag lige nu, ring senere). Tæller ikke som opkald."],
     ["Nye leads", "Leads der kom ind i puljen i perioden, uanset SDR. 'Kan ringes til nu' er målt i dag."],
     ["Tider", "Dansk tid."],
   ];

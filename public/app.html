@@ -38,11 +38,11 @@
   <div class="hwrap">
     <div class="wordmark"><img src="/brand/vedio_logo_trim.png" alt="Vedio" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text',textContent:'Vedio'}))"></div>
     <nav class="tabs">
-      <button data-tab="list" class="active" onclick="showTab('list')">Ringeliste<span class="n" id="n-list">0</span></button>
+      <button data-tab="list" class="active" onclick="showTab('list')">Ringeliste</button>
       <button data-tab="ring" onclick="showTab('ring')">Opkald</button>
-      <button data-tab="followups" onclick="showTab('followups')">Opfølgning<span class="n" id="n-fu">0</span></button>
-      <button data-tab="results" onclick="showTab('results')">Resultater<span class="n" id="n-res">0</span></button>
-      <button data-tab="research" onclick="showTab('research')">Research<span class="n" id="n-rsh">0</span></button>
+      <button data-tab="followups" onclick="showTab('followups')">Opfølgning<span class="n due" id="n-fu" hidden>0</span></button>
+      <button data-tab="results" onclick="showTab('results')">Dine tal</button>
+      <button data-tab="research" onclick="showTab('research')">Research</button>
     </nav>
     <div class="hright">
       <a class="pill sm tertiary" id="admin-link" href="/admin" hidden>Admin ↗</a>
@@ -76,7 +76,7 @@
       </div>
       <div class="mini">
         <div><b id="s-remaining">0</b><span>tilbage på listen</span></div>
-        <div title="Leads du har ringet til i dag. Under: dem du har fjernet fra listen uden at ringe - de tæller ikke som opkald."><b id="s-done">0</b><span>ringet i dag<i id="s-screened" class="s-screened" hidden></i></span></div>
+        <div title="Leads du har ringet til i dag. Under: dem du har fravalgt uden at ringe - de tæller ikke som opkald."><b id="s-done">0</b><span>ringet i dag<i id="s-screened" class="s-screened" hidden></i></span></div>
         <div><b id="s-demos">0</b><span>demoer i dag</span></div>
         <div title="Dine opkald pr. bookede demo de sidste 30 dage. Vises når du har booket mindst én."><b id="s-perdemo">-</b><span>opkald pr. demo</span></div>
         <div><b id="s-avail">0</b><span>klar i puljen</span></div>
@@ -167,14 +167,12 @@
       <div id="coachlist" style="padding:6px 24px 10px"></div>
     </div>
     <div class="tablewrap">
-      <div class="thead"><div><h3>Per SDR</h3><p>I dag og denne uge (mandag til nu).</p></div></div>
-      <table><thead><tr><th>SDR</th><th class="num">Opkald i dag</th><th class="num">Demoer i dag</th><th class="num">Opkald uge</th><th class="num">Demoer uge</th><th class="num" title="Godkendt i den åbne lønperiode (29.-28.)">Kval. møder · løn</th><th class="num" title="Provision i den åbne lønperiode: godkendt til og med d. 28. = denne måneds løn">Provision · løn</th></tr></thead><tbody id="tb-sdr"></tbody></table>
+      <div class="thead"><div><h3>Dine demoer</h3><p>Dem du har booket. Founders tager demoen og vurderer den bagefter - kvalificerede demoer giver provision.</p></div></div>
+      <table class="demotbl"><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
-    <div class="tablewrap">
-      <div class="thead">
-        <div><h3>Dagens opkald</h3><p>Begge SDR'er. Klik på en kolonne for at sortere, filtrér på udfald, eller klik på en række for at åbne leadet.</p></div>
-        <div class="filters" id="today-filters"></div>
-      </div>
+    <details class="deeper" id="todaywrap">
+      <summary><span>Dine opkald i dag</span><span class="sub" id="today-sum"></span></summary>
+      <div class="thead" style="border-top:1px solid var(--line)"><div><p>Klik på en kolonne for at sortere, filtrér på udfald, eller klik på en række for at åbne leadet.</p></div><div class="filters" id="today-filters"></div></div>
       <table>
         <thead><tr>
           <th class="sortable" data-k="at" onclick="todaySort('at')">Tid</th>
@@ -182,18 +180,9 @@
           <th>Kontakt</th>
           <th class="sortable" data-k="action" onclick="todaySort('action')">Udfald</th>
           <th>Note</th>
-          <th class="sortable" data-k="by_name" onclick="todaySort('by_name')">SDR</th>
         </tr></thead>
         <tbody id="tb-today"></tbody>
       </table>
-    </div>
-    <div class="tablewrap">
-      <div class="thead"><div><h3>Bookede demoer</h3><p>Booket i Calendly under et opkald. Founders tager demoen.</p></div></div>
-      <table class="demotbl"><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Telefon</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
-    </div>
-    <details class="deeper" id="deeper">
-      <summary><span>Pulje &amp; pipeline</span><span class="sub">Hvor mange leads der er klar, venter på berigelse, eller er arkiveret - hold musen over et tal for forklaring.</span></summary>
-      <div class="subtiles" id="subtiles"></div>
     </details>
   </section>
 </main>
@@ -241,7 +230,7 @@ let token = (impersonating ? sessionStorage.getItem('vl_imp_token') : '') || loc
 let me = null;
 let S = null;                 // last server state
 // Bumped every time a state is applied. A background refresh that was already
-// on its way when the SDR acted (Fjern fra listen, an outcome, Spring over)
+// on its way when the SDR acted (Fravælg, an outcome, Spring over)
 // carries the list from before - landing after the action's answer, it put the
 // removed lead back on screen until the next refresh. It is dropped instead.
 let STATE_GEN = 0;
@@ -400,12 +389,12 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   $('s-calls').textContent = st.callsToday || 0; $('s-target').textContent = target;
   $('s-bar').style.width = Math.min(100, Math.round(100 * (st.callsToday || 0) / target)) + '%';
   $('s-remaining').textContent = st.listRemaining || 0; $('s-done').textContent = st.listDone || 0;
-  if ($('s-screened')) { $('s-screened').hidden = !st.screenedToday; $('s-screened').textContent = st.screenedToday ? ` · ${st.screenedToday} fjernet` : ''; }
+  if ($('s-screened')) { $('s-screened').hidden = !st.screenedToday; $('s-screened').textContent = st.screenedToday ? ` · ${st.screenedToday} fravalgt` : ''; }
   $('s-demos').textContent = st.demosToday || 0; $('s-avail').textContent = st.poolAvailable || 0;
   $('s-perdemo').textContent = st.callsPerDemo30 == null ? '-' : st.callsPerDemo30;
-  $('n-list').textContent = st.listRemaining || 0; if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0;
-  $('n-res').textContent = (S.todayCalls || []).length;
-  if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; const nr = $('n-rsh'); if (nr) nr.textContent = S.research.remaining || 0; }
+  // Top-bar badges only say "something needs you" - Opfølgning, when follow-ups wait (renderDue).
+  if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0;
+  if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; }
   renderList(); renderDue();
   if (!keepCurrent) renderCard(); else if ($('note')) $('note').value = prevNote;
   renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday(); renderFocus();
@@ -486,7 +475,7 @@ function renderList() {
       <td class="acts" onclick="event.stopPropagation()">
         ${q ? '' : `<button title="Flyt op" onclick="moveItem('${e(l.cvr)}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button><button title="Flyt ned" onclick="moveItem('${e(l.cvr)}',1)" ${i === all.length - 1 ? 'disabled' : ''}>↓</button>`}
         <button class="go" onclick="jumpTo('${e(l.cvr)}')">Ring →</button>
-        <button title="Tag ud af dagens liste (arkiverer ikke)" onclick="removeItem('${e(l.cvr)}')">Fjern</button>
+        <button title="Ikke i dag: ud af listen nu, tilbage i puljen i morgen (arkiverer ikke)" onclick="removeItem('${e(l.cvr)}')">Ikke i dag</button>
       </td>
     </tr>`).join('') : `<tr class="empty-row"><td colspan="7">${(S.me && S.me.is_admin) ? 'Admin får ingen ringeliste - SDR\'erne får automatisk fyldt deres lister fra puljen. Log ind som SDR for at se en liste.' : (S.stats && S.stats.poolAvailable) ? 'Listen er tom.' : 'Listen er tom - og puljen er også tom. Nye leads lander når berigelsen kører.'}</td></tr>`;
 }
@@ -516,7 +505,7 @@ async function reorder(cvrs) {
 }
 async function removeItem(cvr) {
   if (busy) return; busy = true;
-  try { apply(await post('/api/sdr/list/remove', { cvr })); toast('Taget ud af dagens liste'); } catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
+  try { apply(await post('/api/sdr/list/remove', { cvr })); toast('Ikke i dag - tilbage i puljen i morgen'); } catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
 }
 /* Opkald card */
 function renderCard() {
@@ -593,7 +582,7 @@ function renderCard() {
       <div class="row">
         <a class="pill primary" id="callbtn" href="${dk ? telHref(L.phone) : '#'}" onclick="onCall(event)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg><span id="calllbl">Ring op</span></a>
         ${S.settings && S.settings.calendly_url ? `<a class="pill primary violet-cta" href="${e(calendlyFor(L))}" target="_blank" rel="noopener" title="Åbner Calendly med kontakten udfyldt og SDR som kilde">Book demo i Calendly ↗</a>` : ''}
-        <button class="pill tertiary screenbtn" onclick="toggleScreen()" title="Tag leadet af listen uden at ringe - fx forkert målgruppe, for svag lige nu eller ring senere. Tæller ikke som et opkald.">Fjern fra listen ▾</button>
+        <button class="pill tertiary screenbtn" onclick="toggleScreen()" title="Fravælg leadet uden at ringe: ikke vores målgruppe, for svag lige nu eller ring senere. Tæller ikke som et opkald.">Fravælg uden opkald ▾</button>
       </div>
       <div class="steplbl two"><i>2</i> Udfald</div>
       <div class="row disp">
@@ -648,7 +637,7 @@ function dueList(keepOpen) {
 function renderDue() {
   const due = dueList(); const total = (S.followups || []).length;
   const n = { agreed: 0, mail: 0, retry: 0 }; for (const x of due) n[x.k]++;
-  const fu = $('n-fu'); fu.textContent = due.length || total; fu.classList.toggle('due', due.length > 0);
+  const fu = $('n-fu'); fu.textContent = due.length; fu.hidden = !due.length;
   fu.title = due.length ? `${due.length} venter nu (af ${total} opfølgninger i alt)` : `${total} opfølgninger - ingen venter lige nu`;
   // Ringeliste: one slim line, and only for promised follow-ups (agreed or
   // after a mail) - the "Ingen svar" retries are counted on the tab, not here.
@@ -700,7 +689,9 @@ function renderFollowups() {
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">Ingen opfølgninger endnu. Vælg <b>Følg op</b> efter et opkald for at planlægge et nyt.</td></tr>`;
 }
 function renderDemos() {
-  const rows = S.demos || []; const admin = !!(me && me.is_admin);
+  const admin = !!(me && me.is_admin);
+  // The SDR's own bookings - the whole team's demos are admin's (Resultater → Demoer).
+  const rows = (S.demos || []).filter((l) => admin || l.demo_booked_by === (me && me.id));
   const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending';
     // How it ended after the founders' demo - the booking's real payoff.
@@ -713,9 +704,8 @@ function renderDemos() {
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}${l.contact.email ? ' · ' + e(l.contact.email) : ''}</span>` : '<span class="sub">-</span>'}</td>
       <td class="num">${e(fmtPhone(l.phone))}</td>
       <td style="max-width:320px;color:var(--txt-soft)">${e(l.last_note || '')}</td>
-      <td>${e(l.demo_booked_by_name || '')}</td>
       <td class="demost" onclick="event.stopPropagation()">${chip}${ctl}<button class="linkbtn" onclick="openDemoEdit('${e(l.cvr)}')">✎ Ret</button></td>
-    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="7">Ingen demoer booket endnu.</td></tr>`;
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">Ingen demoer booket endnu - den første kommer.</td></tr>`;
 }
 /* A booked demo can still be wrong: the company was a distributor, the
    contact's real name came out later, a better number. Anyone may fix it -
@@ -765,7 +755,7 @@ async function saveDemoEdit(cvr, prevName) {
 
 /* Resultater - tiles + explainers */
 const EXPLAIN = {
-  callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag - også "Ingen svar". Leads du fjerner med "Fjern fra listen" tæller ikke.', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
+  callsToday:   { t: 'Opkald i dag', w: 'Antal udfald du selv har registreret i dag - også "Ingen svar". Leads du fravælger uden opkald tæller ikke.', s: 'Hvert udfald gemmes på leadet med tidspunkt, SDR og note. Tallet tælles op fra puljen ved hver opdatering (hvert 20. sekund).' },
   demosToday:   { t: 'Demoer i dag', w: 'Dine opkald i dag med udfaldet "Demo booket".', s: 'Samme kilde som opkald - filtreret på udfald. Selve mødet bookes i Calendly under opkaldet.' },
   callsWeek:    { t: 'Opkald denne uge', w: 'Dine udfald fra mandag 00:00 til nu.', s: 'Samme opkalds-log som "Opkald i dag", bare en længere periode.' },
   demosWeek:    { t: 'Demoer denne uge', w: 'Dine "Demo booket" fra mandag til nu.', s: 'Samme opkalds-log, filtreret på udfald.' },
@@ -795,11 +785,6 @@ function renderResults() {
   const primary = [['callsToday', 'opkald i dag', true], ['demosToday', 'demoer i dag', true], ['callsWeek', 'opkald denne uge'], ['demosWeek', 'demoer denne uge'], ['callsPerDemo30', 'opkald pr. demo · 30 dage']];
   $('tiles').className = 'tiles five';
   $('tiles').innerHTML = primary.map(([k, lbl, v]) => `<div class="tile" title="${e(tip(k))}"><b class="${v ? 'v' : ''}">${st[k] == null ? '-' : st[k]}</b><span>${lbl}</span></div>`).join('');
-  // Deeper: pool & pipeline, collapsed by default.
-  const sub = [['listRemaining', 'tilbage på listen'], ['poolAvailable', 'klar i puljen'], ['followupsOpen', 'opfølgninger åbne'], ['poolNeedsEnrich', 'mangler kontakt/nummer'], ['poolArchived', 'arkiveret'], ['poolTotal', 'leads i alt']];
-  $('subtiles').innerHTML = sub.map(([k, lbl]) => `<div class="subtile" title="${e(tip(k))}"><b>${st[k] ?? 0}</b><span>${lbl}</span></div>`).join('');
-  const per = st.perUser || [];
-  $('tb-sdr').innerHTML = per.length ? per.map((u) => `<tr><td><b>${e(u.name)}</b></td><td class="num">${u.callsToday || 0}</td><td class="num">${u.demosToday || 0}</td><td class="num">${u.callsWeek || 0}</td><td class="num">${u.demosWeek || 0}</td><td class="num">${u.demosQualMonth || 0}${u.demosPendingMonth ? `<span class="sub">+${u.demosPendingMonth} afventer</span>` : ''}</td><td class="num">${fmtKr(u.commissionMonth)}</td></tr>`).join('') : `<tr class="empty-row"><td colspan="7">Ingen opkald endnu.</td></tr>`;
   // Commission panel - the SDR's own money this month. Admin sees the
   // per-SDR table instead (their own row would always be 0).
   const c = S.commission; const pay = $('pay');
@@ -809,6 +794,7 @@ function renderResults() {
   const lName = new Date(c.last_month + '-01').toLocaleDateString('da-DK', { month: 'long' });
   if (me && me.is_admin) {
     // Admin: totals across SDRs this month + pending queue to review.
+    const per = st.perUser || [];
     const sum = (k) => per.reduce((a, u) => a + (Number(u[k]) || 0), 0);
     pay.innerHTML = `
       <div><div class="big">${e(fmtKr(sum('commissionMonth')))}</div><div class="lbl">Provision i alt · ${e(mName)}</div></div>
@@ -820,15 +806,19 @@ function renderResults() {
       <div class="rule">${e(fmtKr(c.rate))} pr. godkendt møde i ${e(mName)}-lønnen: godkendt fra ${e(fmtDay(c.period_from))} til og med ${e(fmtDay(c.period_to))}. Godkender du efter d. 28., kommer det med i næste måneds løn. Se hele lønperioden under Admin → Demoer.</div>`;
     pay.hidden = false; return;
   }
+  // One money figure: what the founders have approved for this salary. Pending
+  // demos are shown as "op til" next to it - never added into the salary,
+  // which read as 33.000 kr when 3.000 kr was approved.
+  const conf = c.confirmed_kr || 0, upTo = (c.pending_n || 0) * (c.rate || 0);
   pay.innerHTML = `
-    <div><div class="big">${e(fmtKr(c.expected_kr ?? c.confirmed_kr))}</div><div class="lbl">Provision · ${e(mName)}</div>
-      ${c.base_kr ? `<div class="salary">${e(fmtKr(c.base_kr))} i grundløn + ${e(fmtKr(c.expected_kr ?? 0))} i provision = <b>${e(fmtKr(c.salary_kr ?? c.base_kr))}</b> i ${e(mName)}</div>` : ''}</div>
+    <div><div class="big">${e(fmtKr(conf))}</div><div class="lbl">Provision · ${e(mName)}-lønnen · kvalificeret</div>
+      ${c.base_kr ? `<div class="salary">${e(fmtKr(c.base_kr))} grundløn + ${e(fmtKr(conf))} provision = <b>${e(fmtKr(c.base_kr + conf))}</b> indtil nu</div>` : ''}</div>
     <div class="side">
-      <div><b>${c.confirmed_n + c.pending_n}</b><span>bookede møder</span></div>
-      <div><b style="color:#c4b5fd">${c.pending_n}</b><span>afventer godkendelse</span></div>
-      <div><b>${e(fmtKr(c.last_kr))}</b><span>${e(lName)} · ${c.last_n} møder</span></div>
+      <div><b>${c.confirmed_n || 0}</b><span>kvalificerede demoer</span></div>
+      <div><b style="color:#c4b5fd">${c.pending_n || 0}</b><span>venter på vurdering${upTo ? ` · op til +${e(fmtKr(upTo))}` : ''}</span></div>
+      <div><b>${e(fmtKr(c.last_kr))}</b><span>${e(lName)} · ${c.last_n} demoer</span></div>
     </div>
-    <div class="rule">${e(fmtKr(c.rate))} pr. møde. Beløbet tæller med fra du booker, og kommer med i ${e(mName)}-lønnen, når founders har godkendt mødet senest ${e(fmtDay(c.period_to))} - godkendt senere, kommer det med i næste måneds løn. Bliver et møde afvist, falder beløbet igen.${c.confirmed_n ? ` ${e(fmtKr(c.confirmed_kr))} er allerede godkendt.` : ''}${c.unqualified_n ? ` ${c.unqualified_n} møde${c.unqualified_n === 1 ? '' : 'r'} i ${e(mName)} blev ikke godkendt.` : ''}</div>`;
+    <div class="rule">${e(fmtKr(c.rate))} pr. kvalificeret demo. Kvalificerer founders demoen senest ${e(fmtDay(c.period_to))}, kommer den med i ${e(mName)}-lønnen - ellers i næste måneds. En demo, der ikke bliver kvalificeret, giver ikke provision.</div>`;
   pay.hidden = false;
 }
 let todaySortKey = 'at', todaySortAsc = false, todayFilter = 'all';
@@ -836,7 +826,9 @@ const TODAY_FILTERS = [['all', 'Alle'], ['demo-booked', 'Demo'], ['follow-up', '
 function todaySort(k) { if (todaySortKey === k) todaySortAsc = !todaySortAsc; else { todaySortKey = k; todaySortAsc = k !== 'at'; } renderToday(); }
 function todayFilterSet(f) { todayFilter = f; renderToday(); }
 function renderToday() {
-  const all = S.todayCalls || [];
+  const admin = !!(me && me.is_admin);
+  const all = (S.todayCalls || []).filter((c) => admin || c.by === (me && me.id));
+  if ($('today-sum')) $('today-sum').textContent = all.length ? `${all.length} opkald - sortér, filtrér og åbn dem igen` : 'Ingen endnu i dag';
   const counts = {}; for (const c of all) counts[c.action] = (counts[c.action] || 0) + 1;
   $('today-filters').innerHTML = TODAY_FILTERS.map(([k, lbl]) => { const n = k === 'all' ? all.length : (counts[k] || 0); return n || k === 'all' ? `<button class="${todayFilter === k ? 'on' : ''}" onclick="todayFilterSet('${k}')">${lbl}<span class="n">${n}</span></button>` : ''; }).join('');
   document.querySelectorAll('#view-results th.sortable').forEach((th) => { th.classList.toggle('on', th.dataset.k === todaySortKey); th.classList.toggle('asc', th.dataset.k === todaySortKey && todaySortAsc); });
@@ -858,8 +850,7 @@ function renderToday() {
       <td>${e(c.contact || '-')}</td>
       <td><span class="chip a-${e(c.action)}">${e(ACTION_LABEL[c.action] || c.action)}${e(extra)}</span></td>
       <td style="max-width:360px;color:var(--txt-soft)">${e(c.note || '')}</td>
-      <td>${e(c.by_name || '')}</td>
-    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">${all.length ? 'Ingen opkald med det udfald i dag.' : 'Ingen opkald endnu i dag. Kom i gang under <b>Ringeliste</b>.'}</td></tr>`;
+    </tr>`; }).join('') : `<tr class="empty-row"><td colspan="5">${all.length ? 'Ingen opkald med det udfald i dag.' : 'Ingen opkald endnu i dag. Kom i gang under <b>Ringeliste</b>.'}</td></tr>`;
 }
 
 /* Time on lead, measured honestly: a second only counts while the call card
@@ -910,14 +901,14 @@ function fuPick(iso) {
   const called = $('fu-called') ? $('fu-called').checked : true;
   if (called) disp('follow-up', iso); else screen('later', iso);
 }
-/* "Fjern fra listen": off the list without a call - it never counts as one. */
+/* "Fravælg uden opkald": off the list without a call - it never counts as one. */
 function toggleScreen(first) {
   const c = $('chooser'); const open = !(chooserOpen && c.dataset.kind === 'screen');
   chooserOpen = open; c.hidden = !open; c.dataset.kind = open ? 'screen' : ''; if (!open) return;
   if (typeof mailOpen !== 'undefined' && mailOpen) { mailOpen = false; $('mailbox').hidden = true; }
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
   c.innerHTML = `<div class="chooser screen">
-    ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fjern fra listen</span>'}
+    ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fravælg uden opkald</span>'}
     <button class="pill" onclick="screen('icp')" title="Arkiveres - kommer ikke igen">Ikke vores målgruppe</button>
     <button class="pill" onclick="screen('weak')" title="Tilbage i puljen om 3 måneder, nederst">For svag lige nu</button>
     <span class="screen-later">Ring senere: <button class="pill sm" onclick="screen('later','${at(7, 9)}')">Om 1 uge</button><button class="pill sm" onclick="screen('later','${at(14, 9)}')">Om 2 uger</button><button class="pill sm" onclick="screen('later','${at(30, 9)}')">Om 1 måned</button></span>
@@ -929,7 +920,7 @@ async function screen(reason, when) {
   const note = ($('note') && $('note').value.trim()) || '';
   try {
     apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note }));
-    const msg = { icp: 'Fjernet - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fjernet - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
+    const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -1136,7 +1127,7 @@ async function mailSend(forceClient) {
 function notRelevant() {
   const L = S.current; if (!L) return;
   if (calledCvr === L.cvr) { disp('not-relevant'); return; }
-  toggleScreen(`Du har ikke trykket <b>Ring op</b> på ${e(L.name)}. Fjern det uden at det tæller som opkald - eller <button class="linkbtn" onclick="calledCvr=S.current.cvr;disp('not-relevant')">jeg har ringet, registrér Ikke relevant</button>`);
+  toggleScreen(`Du har ikke trykket <b>Ring op</b> på ${e(L.name)}. Fravælg det uden at det tæller som opkald - eller <button class="linkbtn" onclick="calledCvr=S.current.cvr;disp('not-relevant')">jeg har ringet, registrér Ikke relevant</button>`);
 }
 async function disp(action, callback_at, extra) {
   const L = S.current; if (!L || busy) return; busy = true;
@@ -2219,7 +2210,7 @@ async function rshLoad() {
   RSH.busy = false; renderResearch();
 }
 function renderResearch() {
-  const n = $('n-rsh'); if (n) n.textContent = RSH.remaining || 0;
+
   const L = RSH.lead;
   if (!L) {
     $('rshwrap').innerHTML = `<div class="card empty"><h3>Alt er beriget.</h3><div>Der er ikke flere leads at researche lige nu. Godt gået${RSH.fixedToday ? ` - du har klaret ${RSH.fixedToday} i dag` : ''}.</div></div>`;

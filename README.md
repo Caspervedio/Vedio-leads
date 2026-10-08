@@ -39,7 +39,7 @@ sorteres først, så omstillingsopkald først dukker op, når de gode er brugt.
 | **Ringeliste** | Dagens 60 leads. Træk i rækkefølgen, fjern et lead for i dag. |
 | **Opkald** | Ét kort ad gangen: firma, kontakt, nummer, pitch, noter, udfald. |
 | **Opfølgning** | Aftalte tilbagekald og sendte mails, kun ens egne. |
-| **Resultater** | Dagens opkald, demoer, provision. En booket demo kan rettes bagefter (✎ Ret): firmanavn, hjemmeside, kontakt, numre og en note - bookingen og status røres ikke. |
+| **Dine tal** | SDR'ens egne tal: kvalificeret provision i lønnen (ventende demoer står som "op til", lægges ikke til lønnen), dagens og ugens opkald og demoer, coachen, egne demoer og egne opkald i dag. En booket demo kan rettes bagefter (✎ Ret). Holdets tal ligger i admin. |
 | **Research** | Opgaven mellem opkaldene: find navn og nummer på leads, automatikken ikke kunne færdiggøre. |
 
 **Kortet** viser to linjer om hvad firmaet laver (Gemini læser deres website),
@@ -86,7 +86,7 @@ over listen: branche, webshop-størrelse (StoreLeads' anslåede omsætning) og
 kontakt (ejer/direktør, marketing/salg, omstilling) - listen fyldes fra fokus
 først og fra resten, når fokus er tomt.
 
-**Fjern fra listen** (uden at ringe — tæller ikke som et opkald): *Ikke vores
+**Fravælg uden opkald** (tæller ikke som et opkald): *Ikke vores
 målgruppe* (arkiveres), *For svag lige nu* (hviler 90 dage og kommer tilbage
 nederst i puljen) eller *Ring senere* (en dato; bliver SDR'ens opfølgning).
 Trykkes "Ikke relevant" uden "Ring op", spørger kortet om det var et opkald. Ved
