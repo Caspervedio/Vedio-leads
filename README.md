@@ -189,6 +189,14 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   betales to gange. Hvert møde beholder satsen fra godkendelsesdagen.
   Et godkendt møde i en åben periode kan flyttes til næste måneds løn ("→
   <måned>" i møde-listen) og tilbage igen, så længe perioden ikke er låst.
+  **Konvertering** starter med den levende tragt over ALLE bookede demoer:
+  booket → kvalificeret → solgt, med hvor mange der venter (på vurdering /
+  på salg), ikke kvalificeret og ikke solgt. Salgsraten er af alle bookede -
+  ikke kun de afgjorte - og "op til X% hvis alle lukker" viser loftet. Under
+  tragten: hvad en booket demo, en kvalificeret demo og et salg koster os
+  (grundløn pro rata for perioden × antal SDR'er + provision for de
+  kvalificerede + faste værktøjsabonnementer i kr via dollarkursen under ⚙),
+  og hvad pris pr. salg falder til, hvis alle ventende lukker.
   **Fra demo til salg** (under møde-listen): kvalificerede demoer venter, til
   de markeres *Solgt* (dato, valgfri værdi og note) eller *Ikke solgt* (grund:
   pris, timing, valgte en anden, intet behov, svarer ikke, andet). Fortryd

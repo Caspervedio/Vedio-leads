@@ -13614,7 +13614,7 @@ const SDR_DEFAULT_EMAIL_TEMPLATES = [
 const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 70 };
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
-const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533 };
+const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533, usd_dkk: 6.9 };
 const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
@@ -16253,6 +16253,61 @@ app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
     logActivity("sdr-demo-review", `Demo ${lead.name}: ${status}${lead.demo_review_reason ? " - " + lead.demo_review_reason : ""}`, { cvr, userId: req.userId, status });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "demo-review"); }
+});
+// Admin → Resultater → Konvertering: the live funnel over EVERY booked demo
+// and what a sale costs us. Rates are over all booked, not over the decided
+// ones - "2 af 2 afgjorte = 100%" hid that 13 were still open.
+//   booked → waiting (not reviewed yet, or reviewed but no sales outcome yet)
+//          → sold / not sold / not qualified
+// Cost = what we paid the SDRs for the demos in the period (base salary for
+// the months the period covers, pro rata + commission for the qualified ones)
+// plus the fixed tools (USD → DKK at the rate under ⚙). Shown per booked
+// demo, per qualified demo and per sale - and what per sale would be if every
+// waiting demo closed, so an early figure isn't read as the final one.
+app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    const d = loadPool(); const settings = sdrSettings(d);
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const sdrs = users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled);
+    const booked = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at);
+    const first = booked.map((l) => l.demo_booked_at).sort()[0] || new Date().toISOString();
+    const toKey = re.test(String(req.query.to || "")) ? String(req.query.to) : sdrDayKey();
+    const fromKey = re.test(String(req.query.from || "")) ? String(req.query.from) : sdrDayKey(first);
+    const sdr = String(req.query.sdr || "");
+    const inP = (iso) => { const k = sdrDayKey(iso); return k >= fromKey && k <= toKey; };
+    const demos = booked.filter((l) => inP(l.demo_booked_at) && (!sdr || l.demo_booked_by === sdr));
+    const st = (l) => l.sale_status === "won" ? "won" : l.sale_status === "lost" ? "lost" : l.demo_status === "unqualified" ? "unqualified" : (l.demo_status || "pending") === "pending" ? "pending_review" : "pending_sale";
+    const n = { booked: demos.length, pending_review: 0, unqualified: 0, qualified: 0, pending_sale: 0, won: 0, lost: 0, value: 0 };
+    const per = {};
+    for (const l of demos) {
+      const k = st(l); n[k]++; if (l.demo_status === "qualified") n.qualified++; if (k === "won") n.value += Number(l.sale_value_dkk) || 0;
+      const p = per[l.demo_booked_by] || (per[l.demo_booked_by] = { id: l.demo_booked_by, name: nameById[l.demo_booked_by] || l.demo_booked_by, booked: 0, qualified: 0, won: 0, lost: 0, waiting: 0 });
+      p.booked++; if (l.demo_status === "qualified") p.qualified++; if (k === "won") p.won++; else if (k === "lost") p.lost++; else if (k !== "unqualified") p.waiting++;
+    }
+    n.waiting = n.pending_review + n.pending_sale;
+    const base = Math.max(0, Number(settings.base_salary_dkk) || 0);
+    const from = new Date(fromKey + "T12:00:00"), to = new Date(toKey + "T12:00:00");
+    let months = 0;
+    for (const x = new Date(from.getFullYear(), from.getMonth(), 1); x <= to; x.setMonth(x.getMonth() + 1)) {
+      const mS = new Date(x.getFullYear(), x.getMonth(), 1, 12), mE = new Date(x.getFullYear(), x.getMonth() + 1, 0, 12);
+      const a = Math.max(mS, from), b = Math.min(mE, to); if (b >= a) months += (Math.round((b - a) / 864e5) + 1) / mE.getDate();
+    }
+    const sdrCount = sdr ? 1 : sdrs.length;
+    const salary = Math.round(base * months * sdrCount);
+    const commission = demos.filter((l) => l.demo_status === "qualified").reduce((a, l) => a + demoCommissionRate(l, settings), 0);
+    const tools = settings.tools || {};
+    const usdDkk = Number(tools.usd_dkk) || 6.9;
+    // The fixed subscriptions (StoreLeads, Apollo, Apify's base) for the same
+    // months. Per-use spend (Apify runs, Full Enrich) is small next to these.
+    const toolsUsd = ((Number(tools.storeleads_usd) || 0) + (Number(tools.apollo_usd) || 0) + 29) * months;
+    const toolsDkk = Math.round(toolsUsd * usdDkk * (sdr ? 1 / Math.max(1, sdrs.length) : 1));
+    const cost = { salary, commission, tools: toolsDkk, total: salary + commission + toolsDkk, months: Math.round(months * 100) / 100, sdrs: sdrCount, usd_dkk: usdDkk, base_per_month: base };
+    const perX = (x) => (x > 0 ? Math.round(cost.total / x) : null);
+    res.json({ ok: true, from: fromKey, to: toKey, sdr, n, per: Object.values(per).sort((a, b) => b.booked - a.booked), cost,
+      per_booked: perX(n.booked), per_qualified: perX(n.qualified), per_sale: perX(n.won), per_sale_if_all_waiting_close: perX(n.won + n.waiting) });
+  } catch (e) { sdrFail(res, e, "admin/conversion"); }
 });
 // Admin: did the demo become a sale? The step after "kvalificeret" - the
 // founders take the demo, then mark it Solgt (date, optional value) or Ikke

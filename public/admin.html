@@ -205,6 +205,39 @@
 .impmenu a:hover{background:var(--paper)}
 .impmenu a .ini{width:24px;height:24px;border-radius:50%;background:var(--violet-soft);color:var(--violet);display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800}
 .impmenu a i{margin-left:auto;font-style:normal;color:var(--txt-faint)}
+#sale-card .conv{border-bottom:1px solid var(--line)}
+#sale-card .cv-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;padding:18px 24px 6px}
+#sale-card .cv-head h4{font-size:15px;font-weight:800}
+#sale-card .cv-head p{font-size:13px;color:var(--txt-soft);margin-top:2px;max-width:560px}
+#sale-card .cv-rate{text-align:right}
+#sale-card .cv-rate b{display:block;font-family:Anton,Inter,sans-serif;font-weight:400;font-size:40px;line-height:1;color:var(--approve)}
+#sale-card .cv-rate span{display:block;font-size:12.5px;font-weight:700;margin-top:4px}
+#sale-card .cv-rate em{display:block;font-style:normal;font-size:12px;color:var(--txt-faint);margin-top:2px}
+#sale-card .cv-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:10px 24px 4px}
+#sale-card .cv-step .cv-bar{height:10px;border-radius:5px;background:var(--paper);overflow:hidden;margin-bottom:8px}
+#sale-card .cv-step .cv-bar i{display:block;height:100%;background:var(--txt-faint);border-radius:5px}
+#sale-card .cv-step.ok .cv-bar i{background:#7CC4A0}
+#sale-card .cv-step.won .cv-bar i{background:var(--approve)}
+#sale-card .cv-step b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:26px;line-height:1.05}
+#sale-card .cv-step span{display:inline-block;font-size:12.5px;font-weight:700;margin-left:6px}
+#sale-card .cv-step em{display:block;font-style:normal;font-size:11.5px;color:var(--txt-faint)}
+#sale-card .cv-split{display:flex;flex-wrap:wrap;gap:8px 18px;padding:8px 24px 16px;font-size:12.5px;color:var(--txt-soft)}
+#sale-card .cv-split b{color:var(--txt)}
+#sale-card .cv-split .wait b{color:#A9761E}
+#sale-card .cv-split .no b{color:#B3352B}
+#sale-card .cv-cost{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 20px;border-top:1px solid var(--line);background:var(--paper)}
+#sale-card .cv-cost h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
+#sale-card .cc-row{display:flex;align-items:baseline;gap:8px;padding:5px 0}
+#sale-card .cc-row b{font-size:17px;font-weight:800;min-width:110px}
+#sale-card .cc-row span{font-size:13px;color:var(--txt-soft)}
+#sale-card .cc-row.big b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:30px;line-height:1}
+#sale-card .cc-row em{display:block;width:100%;font-style:normal;font-size:12px;color:var(--txt-faint)}
+#sale-card .cc-row.big{flex-wrap:wrap;margin-top:4px}
+#sale-card .cc-basis div{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;color:var(--txt-soft)}
+#sale-card .cc-basis div b{color:var(--txt)}
+#sale-card .cc-basis div.tot{border-top:1px solid var(--line);margin-top:4px;padding-top:8px;font-weight:700;color:var(--txt)}
+#sale-card .cc-basis p{font-size:11.5px;color:var(--txt-faint);margin-top:8px}
+@media (max-width:760px){#sale-card .cv-steps,#sale-card .cv-cost{grid-template-columns:1fr}}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -609,6 +642,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     <div id="res-conv" hidden>
     <div class="tablewrap" id="sale-card">
       <div class="thead"><div><h3>Fra demo til salg</h3><p>Kvalificerede demoer, indtil de er afgjort. Markér <b>Solgt</b> eller <b>Ikke solgt</b> efter demoen - SDR'en, der bookede demoen, ser det på sin demo.</p></div><div class="filters" id="sale-filters"></div></div>
+      <div class="conv" id="conv"><p class="sub" style="padding:16px 24px">Henter…</p></div>
       <div class="sale-kpis" id="sale-kpis"></div>
       <table><thead id="sale-head"></thead><tbody id="tb-sale"></tbody></table>
     </div>
@@ -1210,8 +1244,53 @@ function twentyCell(t) {
    above. Tracking only - commission still follows the approval. */
 let saleFilter = 'open';
 const SALE_REASONS = [['price', 'Pris'], ['timing', 'Timing - ikke nu'], ['competitor', 'Valgte en anden'], ['need', 'Intet behov'], ['silent', 'Svarer ikke'], ['other', 'Andet']];
+/* The live funnel over every booked demo, and what a sale costs. Loaded
+   with the sales card; re-fetched when the SDR filter changes. */
+const CONV = { data: null, key: '' };
+async function convLoad() {
+  const key = demoSdr || '';
+  try { CONV.data = await get('/api/sdr/admin/conversion' + (key ? '?sdr=' + encodeURIComponent(key) : '')); CONV.key = key; } catch (ex) { if ($('conv')) $('conv').innerHTML = `<p class="sub" style="padding:16px 24px">Kunne ikke hente: ${e(ex.message)}</p>`; return; }
+  renderConv();
+}
+function renderConv() {
+  const D = CONV.data; const box = $('conv'); if (!D || !box) return;
+  const n = D.n, c = D.cost;
+  const pct = (a, b) => (b > 0 ? Math.round(100 * a / b) + '%' : '-');
+  const bar = (k, label, v, cls) => `<div class="cv-step ${cls || ''}"><div class="cv-bar"><i style="width:${n.booked ? Math.max(2, 100 * v / n.booked) : 0}%"></i></div><b>${v}</b><span>${label}</span><em>${pct(v, n.booked)}</em></div>`;
+  const when = `${new Date(D.from + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })} - ${D.to === drillToday() ? 'i dag' : new Date(D.to + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
+  box.innerHTML = `
+    <div class="cv-head"><div><h4>Fra booket demo til salg</h4><p>Alle demoer booket ${e(when)}${D.sdr ? ' af ' + e((D.per[0] || {}).name || '') : ''}. Salgsraten er af alle bookede - ikke kun de afgjorte.</p></div>
+      <div class="cv-rate"><b>${pct(n.won, n.booked)}</b><span>solgt af ${n.booked} bookede</span><em>${n.waiting} venter stadig${n.waiting ? ' · op til ' + pct(n.won + n.waiting, n.booked) + ' hvis alle lukker' : ''}</em></div></div>
+    <div class="cv-steps">
+      ${bar('booked', 'demoer booket', n.booked)}
+      ${bar('qualified', 'kvalificeret', n.qualified, 'ok')}
+      ${bar('won', 'solgt', n.won, 'won')}
+    </div>
+    <div class="cv-split">
+      <span class="cs wait"><b>${n.pending_review}</b> venter på vurdering</span>
+      <span class="cs wait"><b>${n.pending_sale}</b> kvalificeret, venter på salg</span>
+      <span class="cs no"><b>${n.unqualified}</b> ikke kvalificeret</span>
+      <span class="cs no"><b>${n.lost}</b> ikke solgt</span>
+      ${n.value ? `<span class="cs"><b>${e(fmtKr(n.value))}</b> solgt for</span>` : ''}
+    </div>
+    <div class="cv-cost">
+      <div class="cc-main"><h5>Hvad en demo og et salg koster</h5>
+        <div class="cc-row"><b>${D.per_booked == null ? '-' : e(fmtKr(D.per_booked))}</b><span>pr. booket demo</span></div>
+        <div class="cc-row"><b>${D.per_qualified == null ? '-' : e(fmtKr(D.per_qualified))}</b><span>pr. kvalificeret demo</span></div>
+        <div class="cc-row big"><b>${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))}</b><span>pr. salg</span>${n.waiting && D.per_sale_if_all_waiting_close ? `<em>ned til ${e(fmtKr(D.per_sale_if_all_waiting_close))}, hvis alle ${n.waiting} ventende lukker</em>` : n.won ? '' : '<em>ingen salg endnu</em>'}</div>
+      </div>
+      <div class="cc-basis"><h5>Regnet af</h5>
+        <div><span>Grundløn · ${c.sdrs} SDR · ${c.months} md</span><b>${e(fmtKr(c.salary))}</b></div>
+        <div><span>Provision · ${n.qualified} kvalificerede</span><b>${e(fmtKr(c.commission))}</b></div>
+        <div><span>Værktøjer · faste abonnementer (${c.usd_dkk} kr/$)</span><b>${e(fmtKr(c.tools))}</b></div>
+        <div class="tot"><span>I alt</span><b>${e(fmtKr(c.total))}</b></div>
+        <p>Grundløn ${e(fmtKr(c.base_per_month))}/md pr. SDR og kursen sættes under ⚙ → Løn og Integrationer. Gemini og Cloud er ikke med.</p>
+      </div>
+    </div>`;
+}
 function renderSales() {
   if (!$('tb-sale')) return;
+  if (!CONV.data || CONV.key !== (demoSdr || '')) convLoad();
   const all = (O.demos || []).filter((l) => (!demoSdr || l.demo_booked_by === demoSdr) && (l.demo_status === 'qualified' || l.sale_status));
   const open = all.filter((l) => !l.sale_status), won = all.filter((l) => l.sale_status === 'won'), lost = all.filter((l) => l.sale_status === 'lost');
   const days = (iso) => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 864e5)) : null;
@@ -1221,7 +1300,7 @@ function renderSales() {
   // Per SDR: sold of decided - the demos are the founders', the leads the SDR's.
   const per = {}; for (const l of [...won, ...lost]) { const k = l.demo_booked_by_name || '?'; const p = per[k] || (per[k] = { won: 0, n: 0 }); p.n++; if (l.sale_status === 'won') p.won++; }
   $('sale-kpis').innerHTML = `
-    <div class="k"><b>${pct(won.length, won.length + lost.length)}</b><span>salgsrate</span><em>${won.length} af ${won.length + lost.length} afgjorte</em></div>
+    <div class="k"><b>${pct(won.length, won.length + lost.length)}</b><span>af de afgjorte</span><em>${won.length} solgt · ${lost.length} ikke solgt</em></div>
     <div class="k"><b>${won.length}</b><span>solgt</span><em>${value ? fmtKr(value) + ' i alt' : 'ingen værdi sat'}</em></div>
     <div class="k"><b>${open.length}</b><span>venter på svar</span><em>${open.length ? 'ældste ' + oldest + ' dage' : 'alle afgjort'}</em></div>
     <div class="k per"><span>Pr. SDR</span>${Object.keys(per).length ? Object.entries(per).map(([n, p]) => `<em><b>${e(n)}</b> ${p.won} af ${p.n} solgt</em>`).join('') : '<em>Intet afgjort endnu</em>'}</div>`;
@@ -1247,7 +1326,7 @@ function renderSales() {
   }).join('') : `<tr class="empty-row"><td colspan="7">${saleFilter === 'open' ? 'Ingen kvalificerede demoer venter på svar.' : saleFilter === 'won' ? 'Ingen salg markeret endnu.' : 'Ingen markeret som ikke solgt.'}</td></tr>`;
 }
 async function saleSet(cvr, status, extra) {
-  try { await post('/api/sdr/admin/sale', { cvr, status, ...(extra || {}) }); toast(status === 'won' ? '✓ Markeret som solgt' : status === 'lost' ? 'Markeret som ikke solgt' : 'Tilbage til Venter'); if ($('salemodal')) $('salemodal').remove(); await loadOverview(); }
+  try { await post('/api/sdr/admin/sale', { cvr, status, ...(extra || {}) }); toast(status === 'won' ? '✓ Markeret som solgt' : status === 'lost' ? 'Markeret som ikke solgt' : 'Tilbage til Venter'); if ($('salemodal')) $('salemodal').remove(); CONV.data = null; await loadOverview(); }
   catch (ex) { toast(ex.message, 4000); }
 }
 function saleModal(html) {
@@ -1660,6 +1739,7 @@ function openSettings() {
     <div><label>Apollo pr. måned ($)</label><input id="tl-ap" type="number" min="0" value="${e((s.tools || {}).apollo_usd ?? 65)}"></div>
     <div><label>Apollo credits pr. måned (se Apollo → Settings → Usage; 0 = ukendt)</label><input id="tl-apc" type="number" min="0" value="${e((s.tools || {}).apollo_credits ?? 0)}"></div>
     <div><label>Full Enrich pris pr. credit ($) - et fundet nummer koster 10 credits</label><input id="tl-fe" type="number" min="0" step="0.0001" value="${e((s.tools || {}).fe_usd_per_credit ?? 0.0533)}"></div>
+    <div><label>Dollarkurs (kr pr. $) - bruges til "pris pr. salg" under Konvertering</label><input id="tl-fx" type="number" min="1" step="0.01" value="${e((s.tools || {}).usd_dkk ?? 6.9)}"></div>
     </div>
     </div>
     <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
@@ -1690,7 +1770,7 @@ async function saveSettings() {
   const body = {
     email_followup_days: Number($('st-mdays').value) || 2, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body),
     fresh_target: Number($('st-cap').value) || 0,
-    tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0 },
+    tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0, usd_dkk: Number($('tl-fx').value) || 6.9 },
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
