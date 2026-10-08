@@ -49,10 +49,10 @@
 #cmp-card .cmp-when b{font-size:15px;color:var(--txt);font-weight:800}
 #cmp-card .cmp-when .onb{font-size:11.5px;font-weight:700;color:#1b7a46;background:#effaf3;border-radius:var(--pill);padding:2px 9px}
 #cmp-card .cmp-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
-#cmp-card .seg{display:inline-flex;background:var(--paper);border-radius:var(--pill);padding:3px;gap:2px}
-#cmp-card .seg button{border:0;background:transparent;padding:6px 12px;border-radius:var(--pill);font:inherit;font-size:12.5px;font-weight:700;color:var(--txt-soft);cursor:pointer}
-#cmp-card .seg button:hover{color:var(--txt)}
-#cmp-card .seg button.on{background:var(--white);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.seg{display:inline-flex;background:var(--paper);border-radius:var(--pill);padding:3px;gap:2px}
+.seg button{border:0;background:transparent;padding:6px 12px;border-radius:var(--pill);font:inherit;font-size:12.5px;font-weight:700;color:var(--txt-soft);cursor:pointer}
+.seg button:hover{color:var(--txt)}
+.seg button.on{background:var(--white);color:var(--txt);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 #cmp-card input[type=date]{border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;font:inherit;font-size:13px;background:var(--white)}
 #cmp-card .cmp-note{margin:0 24px 18px;padding:18px 20px;border-radius:14px;background:linear-gradient(135deg,#f3eefe 0%,#faf8ff 70%);border:1px solid #e6dcfb}
 #cmp-card .ai-h{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--violet);margin-bottom:8px}
@@ -132,7 +132,7 @@
 #cmp-card .mixbar em{font-size:12px;color:var(--txt-faint);padding:0 8px;line-height:14px;font-style:normal}
 #cmp-card .mixlegend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:12px;color:var(--txt-soft)}
 #cmp-card .mixlegend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-@media (max-width:760px){#cmp-card .cmp-badges{display:none}#cmp-card .cmp-tools{max-width:100%}#cmp-card .seg{max-width:100%;overflow-x:auto}#cmp-card .seg button{white-space:nowrap}#cmp-card table.cmp{font-size:12.5px}}
+@media (max-width:760px){#cmp-card .cmp-badges{display:none}#cmp-card .cmp-tools{max-width:100%}.seg{max-width:100%;overflow-x:auto}.seg button{white-space:nowrap}#cmp-card table.cmp{font-size:12.5px}}
 #sale-card td.sale-act{text-align:right}
 #sale-card td.sale-act .review{justify-content:flex-end;flex-wrap:nowrap}
 #sale-card .sale-hint{display:block;font-size:11.5px;font-weight:700;color:var(--approve);margin-top:3px}
@@ -150,6 +150,8 @@
 #view-demos .res-head{display:flex;flex-direction:column;gap:14px;margin-bottom:18px}
 #view-demos .res-head h2{font-size:26px;font-weight:800;letter-spacing:-.02em}
 #view-demos .res-head p{font-size:13px;color:var(--txt-soft);margin-top:2px}
+#view-demos .res-top{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap}
+#view-demos .res-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
 #view-demos .res-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) minmax(0,1.3fr);gap:12px}
 #view-demos .rk{background:var(--white);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;min-width:0}
 #view-demos .rk b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:32px;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -639,7 +641,13 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
   <!-- DEMOER -->
   <section id="view-demos" class="view">
     <div class="res-head">
-      <div><h2>Resultater</h2><p id="res-when">Sådan går det</p></div>
+      <div class="res-top">
+        <div><h2>Resultater</h2><p id="res-when">Sådan går det</p></div>
+        <div class="res-tools">
+          <div class="seg" id="res-seg"></div>
+          <span id="res-custom" hidden><input type="date" id="res-from"> - <input type="date" id="res-to"> <button class="pill sm" onclick="resLoad()">Vis</button></span>
+        </div>
+      </div>
       <div class="res-kpis" id="res-kpis"></div>
     </div>
     <div class="subnav res-sub" id="res-sub">
@@ -814,16 +822,18 @@ function renderCmpNote() {
     + (n.action ? `<p class="ai-act"><span>Gør dette</span>${e(n.action)}</p>` : '');
 }
 function cmpKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-function cmpRange(p) {
+function cmpRange(p, pre = 'cmp') {
   const today = new Date(drillToday() + 'T12:00:00'); const t = cmpKey(today);
   const back = (n) => { const x = new Date(today); x.setDate(x.getDate() - n); return cmpKey(x); };
   if (p === 'week') return [drillMonday(), t];
   if (p === '7') return [back(6), t];
   if (p === 'month') return [t.slice(0, 8) + '01', t];
   if (p === 'lastmonth') { const a = new Date(today.getFullYear(), today.getMonth() - 1, 1), b = new Date(today.getFullYear(), today.getMonth(), 0); return [cmpKey(a), cmpKey(b)]; }
-  if (p === 'custom') return [$('cmp-from').value || back(29), $('cmp-to').value || t];
+  if (p === 'all') return ['all', t];
+  if (p === 'custom') return [$(pre + '-from').value || back(29), $(pre + '-to').value || t];
   return [back(29), t];
 }
+// 'all' is resolved by the server to the first day anyone called.
 function cmpSetPeriod(p) {
   cmpPeriod = p; try { localStorage.setItem('vl_cmp_period', p); } catch {}
   cmpSeg(); $('cmp-custom').hidden = p !== 'custom';
@@ -1079,7 +1089,33 @@ function renderIntakeRate() {
    what is waiting for you; below, three tabs: Demoer (review), Løn (pay and
    sick days), Konvertering (demo → sale). */
 let RES_SUB = (() => { try { return localStorage.getItem('vl_admin_res_sub') || 'demos'; } catch { return 'demos'; } })();
-const RES = { data: null, at: 0 };
+const RES = { data: null, at: 0, seq: 0 };
+const RES_PERIODS = [['week', 'Denne uge'], ['30', '30 dage'], ['month', 'Denne måned'], ['lastmonth', 'Sidste måned'], ['all', 'Alt'], ['custom', 'Datoer']];
+let resPeriod = (() => { try { const v = localStorage.getItem('vl_admin_res_period'); return RES_PERIODS.some(([k]) => k === v) ? v : 'month'; } catch { return 'month'; } })();
+function resRange() { return cmpRange(resPeriod, 'res'); }
+function resSeg() {
+  if (!$('res-seg')) return;
+  $('res-seg').innerHTML = RES_PERIODS.map(([k, l]) => `<button class="${resPeriod === k ? 'on' : ''}" onclick="resSetPeriod('${k}')">${l}</button>`).join('');
+  $('res-custom').hidden = resPeriod !== 'custom';
+}
+function resSetPeriod(p) {
+  resPeriod = RES_PERIODS.some(([k]) => k === p) ? p : 'month'; try { localStorage.setItem('vl_admin_res_period', resPeriod); } catch {}
+  resSeg();
+  if (resPeriod === 'custom') { const [f, t] = RES.data ? [RES.data.from, RES.data.to] : cmpRange('30'); if (!$('res-from').value) $('res-from').value = f; if (!$('res-to').value) $('res-to').value = t; return; }
+  resLoad();
+}
+function resWhen(from, to, days) {
+  const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+  const month = (k) => cap(new Date(k + 'T12:00:00').toLocaleDateString('da-DK', { month: 'long' }));
+  const dm = (k) => new Date(k + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' });
+  const n = `${days} ${days === 1 ? 'dag' : 'dage'}`;
+  if (resPeriod === 'week') return `Denne uge (${n})`;
+  if (resPeriod === 'month') return `${month(to)} indtil nu (${n})`;
+  if (resPeriod === 'lastmonth') return `${month(from)} (${n})`;
+  if (resPeriod === 'all') return `Alt siden ${dm(from)} (${n})`;
+  if (resPeriod === 'custom') return `${dm(from)} - ${dm(to)} (${n})`;
+  return `Sidste ${n}`;
+}
 function resSub(which) {
   RES_SUB = ['demos', 'pay', 'conv'].includes(which) ? which : 'demos';
   try { localStorage.setItem('vl_admin_res_sub', RES_SUB); } catch {}
@@ -1089,9 +1125,12 @@ function resSub(which) {
   if (!RES.at || Date.now() - RES.at > 5 * 60e3) resLoad(); else renderRes();
 }
 async function resLoad() {
-  const t = drillToday(); const from = t.slice(0, 8) + '01';
-  try { RES.data = await get(`/api/sdr/admin/compare?from=${from}&to=${t}`); RES.at = Date.now(); } catch (ex) { return; }
+  resSeg();
+  const [from, to] = resRange(); const seq = ++RES.seq;
+  try { const d = await get(`/api/sdr/admin/compare?from=${from}&to=${to}`); if (seq !== RES.seq) return; RES.data = d; RES.at = Date.now(); } catch (ex) { toast('Kunne ikke hente: ' + ex.message); return; }
   renderRes();
+  // Konvertering follows the same period.
+  if (CONV.key && CONV.key !== convKey()) { CONV.data = null; if (RES_SUB === 'conv') convLoad(); }
 }
 function renderRes() {
   const D = RES.data; if (!D || !$('res-kpis')) return;
@@ -1104,9 +1143,8 @@ function renderRes() {
     const diff = now - before; if (Math.abs(diff) < (isPct ? 0.05 : 0.5)) return '<em class="d">som før</em>';
     return `<em class="d ${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'} ${isPct ? pf(Math.abs(diff)).replace('%', ' pt') : Math.abs(Math.round(diff))}</em>`;
   };
-  const month = new Date(D.to + 'T12:00:00').toLocaleDateString('da-DK', { month: 'long' });
   const days = Math.round((new Date(D.to) - new Date(D.from)) / 864e5) + 1;
-  $('res-when').innerHTML = `${e(month.charAt(0).toUpperCase() + month.slice(1))} indtil nu (${days} ${days === 1 ? 'dag' : 'dage'}) - pilene er mod de ${days} dage før.`;
+  $('res-when').innerHTML = `${e(resWhen(D.from, D.to, days))} - pilene er mod de ${days} dage før.`;
   const pending = (O && O.pool && O.pool.pendingDemos) || 0;
   const waitingSale = (O && O.demos || []).filter((l) => l.demo_status === 'qualified' && !l.sale_status).length;
   const openP = PERIODS.find((p) => p.open); const OP = (openP && PAYC[openP.key]) || (PAY && PAY.period && PAY.period.open ? PAY : null);
@@ -1268,10 +1306,11 @@ let saleFilter = 'open';
 const SALE_REASONS = [['price', 'Pris'], ['timing', 'Timing - ikke nu'], ['competitor', 'Valgte en anden'], ['need', 'Intet behov'], ['silent', 'Svarer ikke'], ['other', 'Andet']];
 /* The live funnel over every booked demo, and what a sale costs. Loaded
    with the sales card; re-fetched when the SDR filter changes. */
-const CONV = { data: null, key: '' };
+const CONV = { data: null, key: '', seq: 0 };
+function convKey() { return (demoSdr || '') + '|' + resRange().join('|'); }
 async function convLoad() {
-  const key = demoSdr || '';
-  try { CONV.data = await get('/api/sdr/admin/conversion' + (key ? '?sdr=' + encodeURIComponent(key) : '')); CONV.key = key; } catch (ex) { if ($('conv')) $('conv').innerHTML = `<p class="sub" style="padding:16px 24px">Kunne ikke hente: ${e(ex.message)}</p>`; return; }
+  const key = convKey(); const [from, to] = resRange(); const seq = ++CONV.seq;
+  try { const d = await get(`/api/sdr/admin/conversion?from=${from}&to=${to}` + (demoSdr ? '&sdr=' + encodeURIComponent(demoSdr) : '')); if (seq !== CONV.seq) return; CONV.data = d; CONV.key = key; } catch (ex) { if ($('conv')) $('conv').innerHTML = `<p class="sub" style="padding:16px 24px">Kunne ikke hente: ${e(ex.message)}</p>`; return; }
   renderConv();
 }
 function renderConv() {
@@ -1310,7 +1349,7 @@ function renderConv() {
 }
 function renderSales() {
   if (!$('tb-sale')) return;
-  if (!CONV.data || CONV.key !== (demoSdr || '')) convLoad();
+  if (!CONV.data || CONV.key !== convKey()) convLoad();
   const all = (O.demos || []).filter((l) => (!demoSdr || l.demo_booked_by === demoSdr) && (l.demo_status === 'qualified' || l.sale_status));
   const open = all.filter((l) => !l.sale_status), won = all.filter((l) => l.sale_status === 'won'), lost = all.filter((l) => l.sale_status === 'lost');
   const days = (iso) => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 864e5)) : null;

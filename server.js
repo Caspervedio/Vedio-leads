@@ -16301,7 +16301,7 @@ app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
     const booked = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && !excluded.has(l.demo_booked_by));
     const first = booked.map((l) => l.demo_booked_at).sort()[0] || new Date().toISOString();
     const toKey = re.test(String(req.query.to || "")) ? String(req.query.to) : sdrDayKey();
-    const fromKey = re.test(String(req.query.from || "")) ? String(req.query.from) : sdrDayKey(first);
+    const fromKey = String(req.query.from || "") === "all" ? sdrFirstCallDay(d) : re.test(String(req.query.from || "")) ? String(req.query.from) : sdrDayKey(first);
     const sdr = String(req.query.sdr || "");
     const inP = (iso) => { const k = sdrDayKey(iso); return k >= fromKey && k <= toKey; };
     const demos = booked.filter((l) => inP(l.demo_booked_at) && (!sdr || l.demo_booked_by === sdr));
@@ -16890,10 +16890,20 @@ function sdrCompare(d, fromKey, toKey) {
   const flags = sdrPerfFlags({ people: sdrs, team, prev, settings: st.settings, soft, prevLabel });
   return { from: fromKey, to: toKey, prev_from: sdrDayKey(ps), prev_to: sdrDayKey(pe), prev_label: prevLabel, soft, onboarding_until: until, sdrs, team, prev, flags, settings: st.settings };
 }
-function sdrCompareRange(q) {
+// The first day anyone made a call - what "Alt" means on Resultater.
+function sdrFirstCallDay(d) {
+  let first = "";
+  for (const l of (d.leads || [])) for (const c of (l.calls || [])) if (c && c.at) { const k = sdrDayKey(c.at); if (!first || k < first) first = k; }
+  return first || sdrDayKey();
+}
+function sdrCompareRange(q, d) {
   const re = /^\d{4}-\d{2}-\d{2}$/;
   const toKey = re.test(String(q.to || "")) ? String(q.to) : sdrDayKey();
-  const fromKey = re.test(String(q.from || "")) ? String(q.from) : toKey;
+  let fromKey = re.test(String(q.from || "")) ? String(q.from) : toKey;
+  if (String(q.from || "") === "all") {
+    fromKey = sdrFirstCallDay(d || loadPool());
+    const cap = new Date(toKey + "T12:00:00"); cap.setDate(cap.getDate() - 790); if (fromKey < sdrDayKey(cap)) fromKey = sdrDayKey(cap);
+  }
   if (fromKey > toKey) return { error: "Startdatoen ligger efter slutdatoen" };
   if ((new Date(toKey) - new Date(fromKey)) / 864e5 > 800) return { error: "Højst to år ad gangen" };
   return { fromKey, toKey };
@@ -16901,8 +16911,9 @@ function sdrCompareRange(q) {
 app.get("/api/sdr/admin/compare", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
-    const r = sdrCompareRange(req.query); if (r.error) return res.status(400).json({ error: r.error });
-    const c = sdrCompare(loadPool(), r.fromKey, r.toKey);
+    const d = loadPool();
+    const r = sdrCompareRange(req.query, d); if (r.error) return res.status(400).json({ error: r.error });
+    const c = sdrCompare(d, r.fromKey, r.toKey);
     const note = (loadPerfNotes()[r.fromKey + "|" + r.toKey]) || null;
     res.json({ ok: true, ...c, settings: undefined, note });
   } catch (e) { sdrFail(res, e, "admin/compare"); }

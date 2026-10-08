@@ -172,10 +172,11 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
   som er den første flaskehals), integrationernes status, CSV-import og
   referencekundelisten.
-- **Resultater** (hed før Demoer) — åbner med status for måneden indtil nu
-  (demoer booket, demo pr. samtale, kvalificeret, solgt, provision i den åbne
-  løn - pilene er mod samme antal dage før) og hvad der venter på dig. Under
-  det tre faner: **Demoer** (godkend), **Løn + fravær** (lønperioden + **sygdom**) og
+- **Resultater** (hed før Demoer) — åbner med status for den valgte periode
+  (denne uge · 30 dage · denne måned · sidste måned · alt · egne datoer; valget
+  huskes, og **Konvertering** følger samme periode): demoer booket, demo pr.
+  samtale, kvalificeret, solgt, provision i den åbne løn - pilene er mod samme
+  antal dage før - og hvad der venter på dig. Under det tre faner: **Demoer** (godkend), **Løn + fravær** (lønperioden + **sygdom**) og
   **Konvertering** (fra demo til salg). Sygdom registreres pr. SDR som en dag
   eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
   som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
