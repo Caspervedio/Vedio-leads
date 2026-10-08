@@ -168,7 +168,7 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   evt. én SDR: Oversigt med nøgletal pr. SDR, Per dag, Demoer, alle Opkald,
   Nye leads pr. kilde og Definitioner. Samme tælleregler som Overblik.
 - **Leads** — hele puljen med filtre. Søgningen leder også i kontakters
-  mails og i noter. Ret et lead, arkivér det, eller slet det permanent. "Se som ▾" i toppen åbner SDR-appen som en af SDR'erne.
+  mails og i noter. Ret et lead, arkivér det, eller slet det permanent. Klik på "Admin ▾" i toppen for at åbne SDR-appen som en af SDR'erne.
 - **Tilgang** — nye leads pr. dag (og hvor mange der faktisk kan ringes til,
   som er den første flaskehals), integrationernes status, CSV-import og
   referencekundelisten.
