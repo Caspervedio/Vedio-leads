@@ -195,6 +195,14 @@
 #sdr-card .pane-lead{font-size:13px;color:var(--txt-soft);padding:14px 24px 10px;margin:0;max-width:900px}
 #sdr-card .pane-lead.row-between{display:flex;justify-content:space-between;align-items:center;gap:14px;max-width:none}
 #sdr-card #cmp-card .cmp-head{padding-top:16px}
+.impbtn{display:inline-flex;align-items:center;gap:6px}
+.impbtn .caret{font-size:10px;opacity:.6}
+.impmenu{min-width:200px}
+.impmenu .impk{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);padding:8px 12px 4px}
+.impmenu a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;font-size:14px;font-weight:600;color:var(--txt);text-decoration:none}
+.impmenu a:hover{background:var(--paper)}
+.impmenu a .ini{width:24px;height:24px;border-radius:50%;background:var(--violet-soft);color:var(--violet);display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800}
+.impmenu a i{margin-left:auto;font-style:normal;color:var(--txt-faint)}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -408,7 +416,10 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <button data-tab="ops" onclick="showTab('ops')">Drift</button>
     </nav>
     <div class="hright">
-      <span id="imp-links" class="row" style="gap:6px"></span>
+      <div class="gear" id="impwrap" hidden>
+        <button class="pill sm tertiary impbtn" onclick="impToggle(event)" title="Åbn SDR-appen som en af SDR'erne i en ny fane"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Se som<span class="caret">▾</span></button>
+        <div class="gearmenu impmenu" id="impmenu" hidden></div>
+      </div>
       <div class="me"><span class="dot"></span><span id="me-name">-</span></div>
       <button class="iconbtn" title="Indstillinger" onclick="openSettings()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
       <button class="iconbtn" title="Log ud" onclick="logout()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>
@@ -1950,9 +1961,15 @@ function leadsSub(sub) {
 async function loadImpersonateLinks() {
   try {
     const d = await get('/api/sdr/admin/impersonate-links');
-    $('imp-links').innerHTML = (d.users || []).map((u) => `<a class="pill sm tertiary" href="${e(u.url)}" target="_blank" rel="noopener" title="Åbn SDR-appen som ${e(u.name)} i en ny fane">Se som ${e(u.name)} ↗</a>`).join('');
+    // One "Se som ▾" button with the SDRs in a menu - three links wrapped onto
+    // two lines once the header had six tabs.
+    const users = d.users || [];
+    $('impmenu').innerHTML = `<div class="impk">Åbn SDR-appen som</div>` + users.map((u) => `<a href="${e(u.url)}" target="_blank" rel="noopener" onclick="$('impmenu').hidden=true"><span class="ini">${e(String(u.name || '?').slice(0, 1))}</span>${e(u.name)}<i>↗</i></a>`).join('');
+    $('impwrap').hidden = !users.length;
   } catch {}
 }
+function impToggle(ev) { ev.stopPropagation(); const m = $('impmenu'); m.hidden = !m.hidden; }
+document.addEventListener('click', (ev) => { const m = $('impmenu'); if (m && !m.hidden && !(ev.target.closest && ev.target.closest('#impwrap'))) m.hidden = true; });
 async function boot() {
   if (!token) { $('login').hidden = false; $('app').hidden = true; return; }
   $('login').hidden = true; $('app').hidden = false;
