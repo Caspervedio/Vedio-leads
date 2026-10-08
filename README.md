@@ -189,7 +189,7 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   betales to gange. Hvert møde beholder satsen fra godkendelsesdagen.
   Et godkendt møde i en åben periode kan flyttes til næste måneds løn ("→
   <måned>" i møde-listen) og tilbage igen, så længe perioden ikke er låst.
-  **Konvertering** åbner med tre tal: **sundhed** (kundeværdi/LTV fra ⚙ →
+  **Konvertering** er to kort. Det første, *Konvertering*, åbner med tre tal: **sundhed** (kundeværdi/LTV fra ⚙ →
   Løn delt med pris pr. salg - sundt fra 3×, tyndt 1-3×, under 1× taber vi
   penge pr. kunde), **salgsrate** (solgt af alle kvalificerede, ikke kun de
   afgjorte) og **pris pr. salg**; under hvert tal står, hvad det bliver,
