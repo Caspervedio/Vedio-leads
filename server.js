@@ -13615,7 +13615,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533, usd_dkk: 6.9 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, ltv_dkk: 19000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -16311,6 +16311,10 @@ app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
     res.json({ ok: true, from: fromKey, to: toKey, sdr, n, per: Object.values(per).sort((a, b) => b.booked - a.booked), cost,
       // Per qualified demo and per sale - never per booked: the ones waiting for review are not a base yet.
       per_qualified: perX(n.qualified), per_sale: perX(n.won), per_sale_if_all_waiting_close: perX(n.won + n.pending_sale),
+      // Health = what a customer is worth over their lifetime (⚙ → Løn) against what one costs to win. 3× and up is healthy.
+      ltv: Number(settings.ltv_dkk) || 0,
+      ltv_ratio: n.won > 0 && Number(settings.ltv_dkk) > 0 ? Math.round(10 * Number(settings.ltv_dkk) / (cost.total / n.won)) / 10 : null,
+      ltv_ratio_if_all_waiting_close: n.won + n.pending_sale > 0 && Number(settings.ltv_dkk) > 0 ? Math.round(10 * Number(settings.ltv_dkk) / (cost.total / (n.won + n.pending_sale))) / 10 : null,
       excluded: users.filter((u) => excluded.has(u.id)).map((u) => u.name) });
   } catch (e) { sdrFail(res, e, "admin/conversion"); }
 });
@@ -18914,7 +18918,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
       if (typeof b.onboarding_until === "string" && (b.onboarding_until === "" || /^\d{4}-\d{2}-\d{2}$/.test(b.onboarding_until))) d.sdr_settings.onboarding_until = b.onboarding_until;
       // How long a qualified demo may wait for a sales outcome before it is flagged (amber) and marked hard (red).
-      for (const [k, lo, hi] of [["sale_nudge_days", 1, 365], ["sale_stale_days", 1, 730]]) if (Number.isFinite(Number(b[k])) && Number(b[k]) >= lo && Number(b[k]) <= hi) d.sdr_settings[k] = Math.round(Number(b[k]));
+      for (const [k, lo, hi] of [["sale_nudge_days", 1, 365], ["sale_stale_days", 1, 730], ["ltv_dkk", 0, 1e7]]) if (Number.isFinite(Number(b[k])) && Number(b[k]) >= lo && Number(b[k]) <= hi) d.sdr_settings[k] = Math.round(Number(b[k]));
       // SDRs left out of the cost / conversion figures (a co-founder who calls now and then is not a salaried SDR).
       if (Array.isArray(b.cost_exclude)) d.sdr_settings.cost_exclude = b.cost_exclude.map(String).filter((id) => loadUsers().some((u) => u.id === id)).slice(0, 20);
       if (Number.isFinite(Number(b.no_answer_park_after)) && Number(b.no_answer_park_after) >= 2) d.sdr_settings.no_answer_park_after = Math.min(10, Math.round(Number(b.no_answer_park_after)));

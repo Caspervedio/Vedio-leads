@@ -266,6 +266,17 @@
 #sale-card .cv-step.no .cv-bar i{background:#D9534F}
 #sale-card .cv-cost{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 20px;border-top:1px solid var(--line);background:var(--paper)}
 #sale-card .cv-cost h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
+#sale-card .cc-health{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;background:var(--white);border:1px solid var(--line);margin-bottom:12px}
+#sale-card .cc-health b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:34px;line-height:1;min-width:64px;color:var(--txt-faint)}
+#sale-card .cc-health.ok b,#sale-card .cc-health.ok .hw{color:var(--approve)}
+#sale-card .cc-health.warn b,#sale-card .cc-health.warn .hw{color:#A9761E}
+#sale-card .cc-health.bad b,#sale-card .cc-health.bad .hw{color:#B3352B}
+#sale-card .cc-health.ok{border-color:#c9ead5;background:#f3fbf6}
+#sale-card .cc-health.warn{border-color:#f0dfb3;background:#fdf8ec}
+#sale-card .cc-health.bad{border-color:#f3cfc9;background:#fdf1ef}
+#sale-card .cc-health div span{display:block;font-size:12.5px;color:var(--txt-soft)}
+#sale-card .cc-health .hw{font-size:14px;font-weight:800}
+#sale-card .cc-health .hs{font-size:11.5px;color:var(--txt-faint);margin-top:2px}
 #sale-card .cc-row{display:flex;align-items:baseline;gap:8px;padding:5px 0}
 #sale-card .cc-row b{font-size:17px;font-weight:800;min-width:110px}
 #sale-card .cc-row span{font-size:13px;color:var(--txt-soft)}
@@ -1318,6 +1329,10 @@ function renderConv() {
     </div>
     <div class="cv-cost">
       <div class="cc-main"><h5>Hvad en demo og et salg koster</h5>
+        ${D.ltv ? (() => { const r = D.ltv_ratio, r2 = D.ltv_ratio_if_all_waiting_close;
+          const tone = (x) => x == null ? '' : x >= 3 ? 'ok' : x >= 1 ? 'warn' : 'bad';
+          const word = (x) => x == null ? 'Ingen salg endnu' : x >= 3 ? 'Sundt' : x >= 1 ? 'Tyndt' : 'Taber penge';
+          return `<div class="cc-health ${tone(r)}"><b>${r == null ? '-' : r.toString().replace('.', ',') + '×'}</b><div><span class="hw">${word(r)}</span><span>LTV ${e(fmtKr(D.ltv))} mod ${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))} pr. salg${r2 != null && n.pending_sale ? ` · ${r2.toString().replace('.', ',')}× hvis alle ${n.pending_sale} ventende lukker` : ''}</span><span class="hs">Sundt fra 3× · tyndt 1-3× · under 1× taber vi penge på hver kunde</span></div></div>`; })() : ''}
         <div class="cc-row"><b>${D.per_qualified == null ? '-' : e(fmtKr(D.per_qualified))}</b><span>pr. kvalificeret demo</span></div>
         <div class="cc-row big"><b>${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))}</b><span>pr. salg</span>${n.pending_sale && D.per_sale_if_all_waiting_close ? `<em>ned til ${e(fmtKr(D.per_sale_if_all_waiting_close))}, hvis alle ${n.pending_sale} ventende lukker</em>` : n.won ? '' : '<em>ingen salg endnu</em>'}</div>
       </div>
@@ -1772,7 +1787,8 @@ function openSettings() {
         row('Oplæringsperiode til og med', 'Coachen og ugens opsummering vurderer fremgang, ikke fulde mål. Tom = slået fra.', `<input id="st-onboard" type="date" value="${e(s.onboarding_until || '')}">`)))}
     ${pane('pay', 'Provision følger lønperioden (29.-28.). Satsen gælder fra den dag, en demo bliver kvalificeret.', grp('Løn',
         row('Provision pr. kvalificeret demo', 'Hver demo beholder satsen fra den dag, den blev kvalificeret.', num('st-comm', s.commission_dkk ?? 1000, { min: 0, unit: 'kr' }))
-      + row('Grundløn pr. SDR pr. måned', 'Vises sammen med provisionen under Dine tal, og bruges i pris pr. salg.', num('st-base', s.base_salary_dkk ?? 15000, { min: 0, unit: 'kr' })))
+      + row('Grundløn pr. SDR pr. måned', 'Vises sammen med provisionen under Dine tal, og bruges i pris pr. salg.', num('st-base', s.base_salary_dkk ?? 15000, { min: 0, unit: 'kr' }))
+      + row('Kundeværdi (LTV)', 'Hvad en kunde er værd over sin levetid. Holdes op mod pris pr. salg under Konvertering - sundt fra 3×.', num('st-ltv', s.ltv_dkk ?? 19000, { min: 0, unit: 'kr' })))
       + grp('Rykker på kvalificerede demoer uden afgørelse',
         row('Markér gul efter', 'Benchmark: de fleste afgør inden 14 dage.', num('st-nudge', s.sale_nudge_days ?? 14, { min: 1, max: 365, unit: 'dage' }))
       + row('Markér rød efter', 'Benchmark: 90% afgør inden 45 dage.', num('st-stale', s.sale_stale_days ?? 45, { min: 1, max: 730, unit: 'dage' })))
@@ -1829,7 +1845,7 @@ async function saveSettings() {
     tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0, usd_dkk: Number($('tl-fx').value) || 6.9 },
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
     cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
-    sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45,
+    sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45, ltv_dkk: Number($('st-ltv').value) || 0,
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };

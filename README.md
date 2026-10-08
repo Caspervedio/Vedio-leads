@@ -196,7 +196,10 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   - de er måske ikke kvalificerede. Under tragten: hvad en kvalificeret demo og et salg koster os
   (grundløn pro rata for perioden × antal SDR'er + provision for de
   kvalificerede + faste værktøjsabonnementer i kr via dollarkursen under ⚙),
-  og hvad pris pr. salg falder til, hvis alle ventende lukker.
+  og hvad pris pr. salg falder til, hvis alle ventende lukker. Øverst en
+  **sundhedsmåler**: kundeværdi (LTV, ⚙ → Løn) delt med pris pr. salg -
+  sundt fra 3×, tyndt 1-3×, under 1× taber vi penge på hver kunde - og hvad
+  den bliver, hvis alle ventende lukker.
   En kvalificeret demo uden afgørelse markeres **gul efter 14 dage og rød
   efter 45** (dagene sættes under ⚙ → Løn; benchmark: de fleste afgør inden
   14, 90% inden 45). Overblik får en alarm, og "venter på svar"-feltet
