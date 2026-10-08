@@ -146,7 +146,13 @@
 #sale-card .sale-hint{display:block;font-size:11.5px;font-weight:700;color:var(--approve);margin-top:3px}
 #sale-card .age{display:inline-block;min-width:30px;text-align:center;font-weight:800;padding:2px 8px;border-radius:var(--pill);background:var(--paper)}
 #sale-card .age.mid{background:#fdf3dc;color:#A9761E}
-#sale-card .age.old{background:#fdecec;color:#B3352B}
+#sale-card .age.old,#sale-card .age.stale{background:#fdecec;color:#B3352B}
+#sale-card .age.nudge{background:#fdf3dc;color:#A9761E}
+#sale-card .age.parked{background:var(--paper);color:var(--txt-faint);font-weight:700;font-size:12px}
+#sale-card tr.sale-stale td:first-child{box-shadow:inset 4px 0 0 #D9534F}
+#sale-card tr.sale-nudge td:first-child{box-shadow:inset 4px 0 0 #E0A93B}
+#sale-card tr.sale-parked{opacity:.65}
+#sale-card .k.warn b{color:#A9761E}#sale-card .k.bad b{color:#B3352B}
 #salemodal .sm-reasons{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px}
 #salemodal .sm-reasons .chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--txt);margin:0}
 #salemodal .sm-reasons input{width:auto}
@@ -967,6 +973,8 @@ function renderOverview() {
   const daysLeft = target ? (p.ready / target).toFixed(1) : '-';
   const alerts = [];
   if (p.pendingDemos > 0) alerts.push(`<div class="alert act"><span>🎯</span><span><b>${p.pendingDemos} demo${p.pendingDemos === 1 ? '' : 'er'}</b> venter på din vurdering.</span><button class="pill sm violet" onclick="showTab('demos');resSub('demos')">Gennemgå</button></div>`);
+  if (p.saleStale > 0 || p.saleNudge > 0) { const nd = s.sale_nudge_days || 14, sd = s.sale_stale_days || 45;
+    alerts.push(`<div class="alert ${p.saleStale ? 'warn' : ''}"><span>${p.saleStale ? '⚠' : '⏳'}</span><span>${p.saleStale ? `<b>${p.saleStale === 1 ? '1 kvalificeret demo har' : p.saleStale + ' kvalificerede demoer har'} ventet over ${sd} dage</b> på en afgørelse${p.saleNudge ? `, og ${p.saleNudge} over ${nd} dage` : ''}.` : `<b>${p.saleNudge === 1 ? '1 kvalificeret demo har' : p.saleNudge + ' kvalificerede demoer har'} ventet over ${nd} dage</b> på en afgørelse.`} Afgør dem, eller udsæt med en dato.</span><button class="pill sm" onclick="saleFilter='open';showTab('demos');resSub('conv')">Se dem</button></div>`); }
   if (O.onboarding) alerts.push(`<div class="alert" style="background:#effaf3;border-color:#cfeedd"><span>🌱</span><span><b>Oplæringsperiode til og med ${e(O.onboarding.label)}.</b> Salgsteamet er stadig i lære- og onboardingmåneden - 4 demoer om dagen er ikke målet endnu. Coachen og ugens opsummering ved det. Ændres under ⚙.</span></div>`);
   if (p.newLast7 === 0) alerts.push(`<div class="alert warn"><span>⏸</span><span><b>Ingen nye leads de sidste 7 dage.</b> Intake (StoreLeads / berigelse) kører ikke - puljen rækker ca. <b>${daysLeft} dage</b> ved fuldt tempo.</span></div>`);
   else if (p.ready < target * 2) alerts.push(`<div class="alert warn"><span>⚠</span><span>Kun <b>${p.ready} leads klar</b> - ca. ${daysLeft} dages opkald ved ${target}/dag.</span></div>`);
@@ -1298,6 +1306,8 @@ function renderSales() {
   const all = (O.demos || []).filter((l) => (!demoSdr || l.demo_booked_by === demoSdr) && (l.demo_status === 'qualified' || l.sale_status));
   const open = all.filter((l) => !l.sale_status), won = all.filter((l) => l.sale_status === 'won'), lost = all.filter((l) => l.sale_status === 'lost');
   const days = (iso) => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 864e5)) : null;
+  const nudgeDays = Number((O.settings || {}).sale_nudge_days) || 14, staleDays = Number((O.settings || {}).sale_stale_days) || 45;
+  const isParked = (l) => l.sale_followup_at && new Date(l.sale_followup_at).getTime() > Date.now();
   const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '-';
   const value = won.reduce((a, l) => a + (Number(l.sale_value_dkk) || 0), 0);
   const oldest = open.reduce((a, l) => Math.max(a, days(l.demo_qualified_at || l.demo_booked_at) || 0), 0);
@@ -1306,31 +1316,38 @@ function renderSales() {
   $('sale-kpis').innerHTML = `
     <div class="k"><b>${pct(won.length, won.length + lost.length)}</b><span>af de afgjorte</span><em>${won.length} solgt · ${lost.length} ikke solgt</em></div>
     <div class="k"><b>${won.length}</b><span>solgt</span><em>${value ? fmtKr(value) + ' i alt' : 'ingen værdi sat'}</em></div>
-    <div class="k"><b>${open.length}</b><span>venter på svar</span><em>${open.length ? 'ældste ' + oldest + ' dage' : 'alle afgjort'}</em></div>
+    <div class="k${open.some((l) => !isParked(l) && days(l.demo_qualified_at || l.demo_booked_at) >= staleDays) ? ' bad' : open.some((l) => !isParked(l) && days(l.demo_qualified_at || l.demo_booked_at) >= nudgeDays) ? ' warn' : ''}"><b>${open.length}</b><span>venter på svar</span><em>${open.length ? `${open.filter((l) => !isParked(l) && days(l.demo_qualified_at || l.demo_booked_at) >= nudgeDays).length} over ${nudgeDays} dage · ældste ${oldest}` : 'alle afgjort'}</em></div>
     <div class="k per"><span>Pr. SDR</span>${Object.keys(per).length ? Object.entries(per).map(([n, p]) => `<em><b>${e(n)}</b> ${p.won} af ${p.n} solgt</em>`).join('') : '<em>Intet afgjort endnu</em>'}</div>`;
   $('sale-filters').innerHTML = [['open', 'Venter', open.length], ['won', 'Solgt', won.length], ['lost', 'Ikke solgt', lost.length]].map(([k, l, n]) => `<button class="${saleFilter === k ? 'on' : ''}" onclick="saleFilter='${k}';renderSales()">${l}<span class="n">${n}</span></button>`).join('');
   const rows = saleFilter === 'won' ? won : saleFilter === 'lost' ? lost : open;
-  rows.sort((a, b) => saleFilter === 'open' ? new Date(a.demo_qualified_at || a.demo_booked_at) - new Date(b.demo_qualified_at || b.demo_booked_at) : new Date(b.sale_at) - new Date(a.sale_at));
+  // Open: the ones that need a push first (oldest), parked ones last.
+  rows.sort((a, b) => saleFilter === 'open' ? (isParked(a) - isParked(b)) || new Date(a.demo_qualified_at || a.demo_booked_at) - new Date(b.demo_qualified_at || b.demo_booked_at) : new Date(b.sale_at) - new Date(a.sale_at));
   $('sale-head').innerHTML = `<tr><th>Demo booket</th><th>Virksomhed</th><th>Kontakt</th><th>Booket af</th>${saleFilter === 'open' ? '<th class="num">Dage siden</th><th></th>' : `<th>${saleFilter === 'won' ? 'Solgt' : 'Afgjort'}</th><th>${saleFilter === 'won' ? 'Værdi' : 'Grund'}</th><th></th>`}</tr>`;
   const RL = Object.fromEntries(SALE_REASONS);
   $('tb-sale').innerHTML = rows.length ? rows.map((l) => {
     const d = days(l.demo_qualified_at || l.demo_booked_at);
     const hint = l.customer && l.customer.current && !l.sale_status ? `<span class="sale-hint">✓ Står som betalende kunde i kundelisten</span>` : '';
+    // Marked at the nudge mark (amber) and the stale mark (red) from ⚙ → Løn;
+    // a parked one shows its date and stays calm until then.
+    const parked = l.sale_followup_at && new Date(l.sale_followup_at).getTime() > Date.now();
+    const lvl = parked ? 'parked' : d >= staleDays ? 'stale' : d >= nudgeDays ? 'nudge' : '';
+    const ageTxt = parked ? `<span class="age parked" title="Udsat - vender tilbage ${e(fmtDate(l.sale_followup_at))}">${e(fmtDate(l.sale_followup_at))}</span>`
+      : `<span class="age ${lvl}" title="${lvl === 'stale' ? `Over ${staleDays} dage uden afgørelse - afgør den, eller udsæt med en dato` : lvl === 'nudge' ? `Over ${nudgeDays} dage - tid til at følge op` : 'Dage siden kvalificeret'}">${d}${lvl === 'stale' ? ' ⚠' : ''}</span>`;
     const tail = saleFilter === 'open'
-      ? `<td class="num"><span class="age ${d >= 21 ? 'old' : d >= 10 ? 'mid' : ''}">${d}</span></td>
-         <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button class="ok" onclick="saleWon('${e(l.cvr)}')">Solgt</button><button class="no" onclick="saleLost('${e(l.cvr)}')">Ikke solgt</button></div></td>`
+      ? `<td class="num">${ageTxt}</td>
+         <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button class="ok" onclick="saleWon('${e(l.cvr)}')">Solgt</button><button class="no" onclick="saleLost('${e(l.cvr)}')">Ikke solgt</button><button onclick="saleWait('${e(l.cvr)}')" title="Kunden skal tænke - udsæt til en dato, så den ikke rykkes imens">Udsæt</button></div></td>`
       : `<td>${e(fmtDate(l.sale_at))}</td>
          <td>${saleFilter === 'won' ? (l.sale_value_dkk != null ? e(fmtKr(l.sale_value_dkk)) : '<span class="sub">-</span>') : e(RL[l.sale_reason] || 'Andet')}${l.sale_note ? `<span class="sub">${e(l.sale_note)}</span>` : ''}</td>
          <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button onclick="saleSet('${e(l.cvr)}','pending')" title="Tilbage til Venter">Fortryd</button></div></td>`;
-    return `<tr class="rowlink" onclick="openLead('${e(l.cvr)}')">
+    return `<tr class="rowlink sale-${saleFilter === 'open' ? lvl : ''}" onclick="openLead('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtDate(l.demo_booked_at))}</span></td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? (l.city ? ' · ' : '') + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span>${hint}</td>
+      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? (l.city ? ' · ' : '') + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span>${hint}${parked && l.sale_note ? `<span class="sub">${e(l.sale_note)}</span>` : ''}</td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '-'}</td>
       <td>${e(l.demo_booked_by_name || '')}</td>${tail}</tr>`;
   }).join('') : `<tr class="empty-row"><td colspan="7">${saleFilter === 'open' ? 'Ingen kvalificerede demoer venter på svar.' : saleFilter === 'won' ? 'Ingen salg markeret endnu.' : 'Ingen markeret som ikke solgt.'}</td></tr>`;
 }
 async function saleSet(cvr, status, extra) {
-  try { await post('/api/sdr/admin/sale', { cvr, status, ...(extra || {}) }); toast(status === 'won' ? '✓ Markeret som solgt' : status === 'lost' ? 'Markeret som ikke solgt' : 'Tilbage til Venter'); if ($('salemodal')) $('salemodal').remove(); CONV.data = null; await loadOverview(); }
+  try { await post('/api/sdr/admin/sale', { cvr, status, ...(extra || {}) }); toast(status === 'won' ? '✓ Markeret som solgt' : status === 'lost' ? 'Markeret som ikke solgt' : status === 'wait' ? 'Udsat - rykkes ikke før datoen' : 'Tilbage til Venter'); if ($('salemodal')) $('salemodal').remove(); CONV.data = null; await loadOverview(); }
   catch (ex) { toast(ex.message, 4000); }
 }
 function saleModal(html) {
@@ -1338,6 +1355,14 @@ function saleModal(html) {
   bg.innerHTML = `<div class="modal">${html}</div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+}
+function saleWait(cvr) {
+  const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
+  const t = new Date(); t.setDate(t.getDate() + 14); const v = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  saleModal(`<h3>${e(l.name)} skal tænke</h3><p>Udsæt afgørelsen til en dato. Demoen tæller stadig som "venter", men rykkes ikke før den dag.</p>
+    <label>Vender tilbage</label><input type="date" id="sm-at" value="${v}" min="${drillToday()}">
+    <label>Note - valgfri</label><input id="sm-note" maxlength="500" placeholder="fx beslutter efter Black Friday">
+    <div class="row"><button class="pill tertiary" onclick="$('salemodal').remove()">Annullér</button><button class="pill primary" onclick="saleSet('${e(cvr)}','wait',{ followup_at: $('sm-at').value ? $('sm-at').value + 'T09:00:00' : null, note: $('sm-note').value })">Udsæt</button></div>`);
 }
 function saleWon(cvr) {
   const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
@@ -1720,6 +1745,10 @@ function openSettings() {
     <div><label>Provision pr. kvalificeret demo (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
     <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
     </div>
+    <div class="setgrid">
+    <div><label>Rykker: kvalificeret demo uden afgørelse markeres gul efter (dage)</label><input id="st-nudge" type="number" min="1" max="365" value="${e(s.sale_nudge_days ?? 14)}"></div>
+    <div><label>… og rød efter (dage) - benchmark: de fleste afgør inden 14, 90% inden 45</label><input id="st-stale" type="number" min="1" max="730" value="${e(s.sale_stale_days ?? 45)}"></div>
+    </div>
     <label>Tæller med i omkostninger og konvertering (grundløn × antal, og deres demoer i tragten)</label>
     <div class="rules">${((O.perUser || []).filter((u) => u.id && u.id !== 'admin')).map((u) => `<label class="chk"><input type="checkbox" class="st-cost" value="${e(u.id)}" ${(s.cost_exclude || []).includes(u.id) ? '' : 'checked'}> ${e(u.name)}</label>`).join('') || '<span class="sub">Ingen SDR\'er endnu.</span>'}</div>
     </div>
@@ -1779,6 +1808,7 @@ async function saveSettings() {
     tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0, usd_dkk: Number($('tl-fx').value) || 6.9 },
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
     cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
+    sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45,
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };

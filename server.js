@@ -13615,7 +13615,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533, usd_dkk: 6.9 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -14240,7 +14240,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; SDR_NO_VER++; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "sale_followup_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14714,7 +14714,7 @@ function sdrSlim(l, nameById) {
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
     demo_status: l.demo_status || (l.lastAction === "demo-booked" ? "pending" : null), demo_review_reason: l.demo_review_reason || "",
     demo_qualified_at: l.demo_qualified_at || null,
-    sale_status: l.sale_status || null, sale_at: l.sale_at || null, sale_value_dkk: l.sale_value_dkk ?? null, sale_reason: l.sale_reason || "", sale_note: l.sale_note || "",
+    sale_status: l.sale_status || null, sale_at: l.sale_at || null, sale_value_dkk: l.sale_value_dkk ?? null, sale_reason: l.sale_reason || "", sale_note: l.sale_note || "", sale_followup_at: l.sale_followup_at || null,
     undo_until: l._undo && l._undo.at ? new Date(new Date(l._undo.at).getTime() + SDR_UNDO_WINDOW_MS).toISOString() : null,
     last_debrief: Array.isArray(l.debriefs) && l.debriefs.length ? l.debriefs[l.debriefs.length - 1] : null,
     claimed_by: l.claimed_by || null,
@@ -16322,7 +16322,7 @@ app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
     const b = req.body || {};
-    if (!["won", "lost", "pending"].includes(b.status)) return res.status(400).json({ error: "Ugyldig status" });
+    if (!["won", "lost", "pending", "wait"].includes(b.status)) return res.status(400).json({ error: "Ugyldig status" });
     const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === b.cvr);
     if (!lead || lead.lastAction !== "demo-booked") return res.status(404).json({ error: "Ingen booket demo på det lead" });
     const nowIso = new Date().toISOString();
@@ -16332,8 +16332,15 @@ app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
     if (value != null && !(Number.isFinite(value) && value >= 0 && value < 1e8)) return res.status(400).json({ error: "Ugyldig værdi" });
     if (b.status === "lost" && b.reason && !SALE_REASONS[b.reason]) return res.status(400).json({ error: "Ugyldig grund" });
     const users = loadUsers(); const adminName = (users.find((u) => u.id === req.userId) || {}).name || "admin";
-    if (b.status === "pending") { lead.sale_status = null; lead.sale_at = null; lead.sale_by = null; lead.sale_value_dkk = null; lead.sale_reason = ""; lead.sale_note = ""; }
+    if (b.status === "pending") { lead.sale_status = null; lead.sale_at = null; lead.sale_by = null; lead.sale_value_dkk = null; lead.sale_reason = ""; lead.sale_note = ""; lead.sale_followup_at = null; }
+    else if (b.status === "wait") {
+      // A slow decider: park it until a date. Still open, still counted as waiting - just not nagged until then.
+      const w = b.followup_at ? new Date(b.followup_at) : null;
+      if (!w || isNaN(w.getTime()) || w.getTime() < Date.now()) return res.status(400).json({ error: "Vælg en dato fremme i tiden" });
+      lead.sale_followup_at = w.toISOString(); lead.sale_note = String(b.note || "").trim().slice(0, 500);
+    }
     else {
+      lead.sale_followup_at = null;
       lead.sale_status = b.status; lead.sale_at = at; lead.sale_by = req.userId;
       lead.sale_value_dkk = b.status === "won" ? value : null;
       lead.sale_reason = b.status === "lost" ? String(b.reason || "other") : "";
@@ -16341,12 +16348,13 @@ app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
     }
     // Into the thread, so the SDR who booked it sees how it ended.
     const text = b.status === "won" ? `Solgt efter demoen${value != null ? ` (${value.toLocaleString("da-DK")} kr)` : ""}${lead.sale_note ? " - " + lead.sale_note : ""}`
-      : b.status === "lost" ? `Ikke solgt efter demoen: ${SALE_REASONS[lead.sale_reason] || "Andet"}${lead.sale_note ? " - " + lead.sale_note : ""}` : "Salg sat tilbage til afventer";
+      : b.status === "lost" ? `Ikke solgt efter demoen: ${SALE_REASONS[lead.sale_reason] || "Andet"}${lead.sale_note ? " - " + lead.sale_note : ""}`
+      : b.status === "wait" ? `Salg: vender tilbage ${new Date(lead.sale_followup_at).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}${lead.sale_note ? " - " + lead.sale_note : ""}` : "Salg sat tilbage til afventer";
     lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
     lead.note_log.push({ at: nowIso, by: req.userId, where: "admin", text });
     sdrTouch(lead);
     savePool(d);
-    logActivity("sdr-sale", `${adminName}: ${lead.name} ${b.status === "won" ? "solgt" : b.status === "lost" ? "ikke solgt" : "afventer salg"}`, { cvr: lead.cvr, userId: req.userId, status: b.status });
+    logActivity("sdr-sale", `${adminName}: ${lead.name} ${b.status === "won" ? "solgt" : b.status === "lost" ? "ikke solgt" : b.status === "wait" ? "salg udsat" : "afventer salg"}`, { cvr: lead.cvr, userId: req.userId, status: b.status });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "admin/sale"); }
 });
@@ -16486,6 +16494,11 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
         archived: leads.filter((l) => l.lastAction === "not-relevant").length, twenty: leads.filter((l) => l.twenty_opportunity_id).length,
         newLast7: days.slice(-7).reduce((a, k) => a + byDay[k].newLeads, 0), newLast14: days.reduce((a, k) => a + byDay[k].newLeads, 0),
         followupsOpen: base.stats.followupsOpen, pendingDemos: (base.demos || []).filter((x) => (x.demo_status || "pending") === "pending").length,
+        // Qualified demos still without a sales outcome, past the nudge / stale marks (a parked one waits until its date).
+        ...(() => { const nd = Number(settings.sale_nudge_days) || 14, sd = Number(settings.sale_stale_days) || 45; let nudge = 0, stale = 0;
+          for (const l of leads) { if (l.lastAction !== "demo-booked" || l.demo_status !== "qualified" || l.sale_status) continue; if (l.sale_followup_at && new Date(l.sale_followup_at).getTime() > now) continue;
+            const age = (now - new Date(demoQualifiedAt(l) || l.demo_booked_at).getTime()) / 864e5; if (age >= sd) stale++; else if (age >= nd) nudge++; }
+          return { saleNudge: nudge, saleStale: stale }; })(),
         onLists: leads.filter((l) => sdrClaimActive(l, now)).length,
         retry: leads.filter((l) => l.retry_pool && sdrIsActive(l) && !(l.retry && l.retry.blocked)).length,
       },
@@ -18900,6 +18913,8 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
       if (typeof b.onboarding_until === "string" && (b.onboarding_until === "" || /^\d{4}-\d{2}-\d{2}$/.test(b.onboarding_until))) d.sdr_settings.onboarding_until = b.onboarding_until;
+      // How long a qualified demo may wait for a sales outcome before it is flagged (amber) and marked hard (red).
+      for (const [k, lo, hi] of [["sale_nudge_days", 1, 365], ["sale_stale_days", 1, 730]]) if (Number.isFinite(Number(b[k])) && Number(b[k]) >= lo && Number(b[k]) <= hi) d.sdr_settings[k] = Math.round(Number(b[k]));
       // SDRs left out of the cost / conversion figures (a co-founder who calls now and then is not a salaried SDR).
       if (Array.isArray(b.cost_exclude)) d.sdr_settings.cost_exclude = b.cost_exclude.map(String).filter((id) => loadUsers().some((u) => u.id === id)).slice(0, 20);
       if (Number.isFinite(Number(b.no_answer_park_after)) && Number(b.no_answer_park_after) >= 2) d.sdr_settings.no_answer_park_after = Math.min(10, Math.round(Number(b.no_answer_park_after)));

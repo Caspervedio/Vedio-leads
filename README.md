@@ -197,6 +197,11 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   (grundløn pro rata for perioden × antal SDR'er + provision for de
   kvalificerede + faste værktøjsabonnementer i kr via dollarkursen under ⚙),
   og hvad pris pr. salg falder til, hvis alle ventende lukker.
+  En kvalificeret demo uden afgørelse markeres **gul efter 14 dage og rød
+  efter 45** (dagene sættes under ⚙ → Løn; benchmark: de fleste afgør inden
+  14, 90% inden 45). Overblik får en alarm, og "venter på svar"-feltet
+  tæller dem. **Udsæt** parkerer en langsom beslutter til en dato med en note
+  - stadig åben, men rykkes ikke før da.
   **Fra demo til salg** (under møde-listen): kvalificerede demoer venter, til
   de markeres *Solgt* (dato, valgfri værdi og note) eller *Ikke solgt* (grund:
   pris, timing, valgte en anden, intet behov, svarer ikke, andet). Fortryd
