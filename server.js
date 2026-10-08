@@ -16270,8 +16270,9 @@ app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
     const re = /^\d{4}-\d{2}-\d{2}$/;
     const d = loadPool(); const settings = sdrSettings(d);
     const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
-    const sdrs = users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled);
-    const booked = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at);
+    const excluded = new Set(Array.isArray(settings.cost_exclude) ? settings.cost_exclude : []);
+    const sdrs = users.filter((u) => u.id && u.id !== POOL_ID && !sdrIsAdmin(u.id) && !u.disabled && !excluded.has(u.id));
+    const booked = (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_booked_at && !excluded.has(l.demo_booked_by));
     const first = booked.map((l) => l.demo_booked_at).sort()[0] || new Date().toISOString();
     const toKey = re.test(String(req.query.to || "")) ? String(req.query.to) : sdrDayKey();
     const fromKey = re.test(String(req.query.from || "")) ? String(req.query.from) : sdrDayKey(first);
@@ -16306,7 +16307,8 @@ app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
     const cost = { salary, commission, tools: toolsDkk, total: salary + commission + toolsDkk, months: Math.round(months * 100) / 100, sdrs: sdrCount, usd_dkk: usdDkk, base_per_month: base };
     const perX = (x) => (x > 0 ? Math.round(cost.total / x) : null);
     res.json({ ok: true, from: fromKey, to: toKey, sdr, n, per: Object.values(per).sort((a, b) => b.booked - a.booked), cost,
-      per_booked: perX(n.booked), per_qualified: perX(n.qualified), per_sale: perX(n.won), per_sale_if_all_waiting_close: perX(n.won + n.waiting) });
+      per_booked: perX(n.booked), per_qualified: perX(n.qualified), per_sale: perX(n.won), per_sale_if_all_waiting_close: perX(n.won + n.waiting),
+      excluded: users.filter((u) => excluded.has(u.id)).map((u) => u.name) });
   } catch (e) { sdrFail(res, e, "admin/conversion"); }
 });
 // Admin: did the demo become a sale? The step after "kvalificeret" - the
@@ -18895,6 +18897,8 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
       if (typeof b.onboarding_until === "string" && (b.onboarding_until === "" || /^\d{4}-\d{2}-\d{2}$/.test(b.onboarding_until))) d.sdr_settings.onboarding_until = b.onboarding_until;
+      // SDRs left out of the cost / conversion figures (a co-founder who calls now and then is not a salaried SDR).
+      if (Array.isArray(b.cost_exclude)) d.sdr_settings.cost_exclude = b.cost_exclude.map(String).filter((id) => loadUsers().some((u) => u.id === id)).slice(0, 20);
       if (Number.isFinite(Number(b.no_answer_park_after)) && Number(b.no_answer_park_after) >= 2) d.sdr_settings.no_answer_park_after = Math.min(10, Math.round(Number(b.no_answer_park_after)));
       if (Number.isFinite(Number(b.no_answer_park_days)) && Number(b.no_answer_park_days) >= 7) d.sdr_settings.no_answer_park_days = Math.min(365, Math.round(Number(b.no_answer_park_days)));
       if (typeof b.demo_webhook_url === "string" && b.demo_webhook_url !== "(sat)") d.sdr_settings.demo_webhook_url = b.demo_webhook_url.trim().slice(0, 500);

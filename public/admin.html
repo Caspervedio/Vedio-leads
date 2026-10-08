@@ -1284,7 +1284,7 @@ function renderConv() {
         <div><span>Provision · ${n.qualified} kvalificerede</span><b>${e(fmtKr(c.commission))}</b></div>
         <div><span>Værktøjer · faste abonnementer (${c.usd_dkk} kr/$)</span><b>${e(fmtKr(c.tools))}</b></div>
         <div class="tot"><span>I alt</span><b>${e(fmtKr(c.total))}</b></div>
-        <p>Grundløn ${e(fmtKr(c.base_per_month))}/md pr. SDR og kursen sættes under ⚙ → Løn og Integrationer. Gemini og Cloud er ikke med.</p>
+        <p>Grundløn ${e(fmtKr(c.base_per_month))}/md pr. SDR og kursen sættes under ⚙ → Løn og Integrationer. Gemini og Cloud er ikke med.${(D.excluded || []).length ? ` <b>${e(D.excluded.join(', '))}</b> er holdt ude af beregningen (⚙ → Løn).` : ''}</p>
       </div>
     </div>`;
 }
@@ -1716,6 +1716,8 @@ function openSettings() {
     <div><label>Provision pr. kvalificeret demo (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
     <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
     </div>
+    <label>Tæller med i omkostninger og konvertering (grundløn × antal, og deres demoer i tragten)</label>
+    <div class="rules">${((O.perUser || []).filter((u) => u.id && u.id !== 'admin')).map((u) => `<label class="chk"><input type="checkbox" class="st-cost" value="${e(u.id)}" ${(s.cost_exclude || []).includes(u.id) ? '' : 'checked'}> ${e(u.name)}</label>`).join('') || '<span class="sub">Ingen SDR\'er endnu.</span>'}</div>
     </div>
     <div class="st-pane" data-k="flow" hidden>
     <p class="st-lead">Sådan arbejder SDR'erne dagen igennem.</p>
@@ -1772,6 +1774,7 @@ async function saveSettings() {
     fresh_target: Number($('st-cap').value) || 0,
     tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0, usd_dkk: Number($('tl-fx').value) || 6.9 },
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
+    cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
