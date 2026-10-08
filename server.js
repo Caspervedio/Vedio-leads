@@ -14757,7 +14757,6 @@ function sdrOnboarding(settings, now) {
   return { until, label: end.toLocaleDateString("da-DK", { day: "numeric", month: "long" }) };
 }
 const SDR_ONBOARDING_LINE = (o) => `Oplæring: Salgsteamet er i en lære- og onboardingperiode (til og med ${o.label}). 4 demoer om dagen er ikke realistisk endnu, og det er ikke målet. Vurder fremgang - bedre samtaler, flere ja'er, flere der tager telefonen og bliver i samtalen - og ros den konkret. Pres ikke på tal, de ikke kan nå endnu, og sammenlign ikke med et fuldt indkørt team.`;
-const SDR_DUE_SLOTS = 3; // callbacks due that may sit on the 10-lead list at once
 const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem (1-5 mio. kr/år)", large: "Store (over 5 mio. kr/år)" };
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
 function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
@@ -14867,37 +14866,26 @@ function sdrEnsureList(d, userId, now, settings) {
     return keep;
   });
   if (L.cvrs.length !== before) dirty = true;
-  // Callbacks that are due take a few slots at the top - agreed ones before
-  // "no answer" retries, oldest first. The rest wait in Opfølgning and rotate
-  // in as slots free up; the list itself never grows past `target`.
-  const target = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
-  const dueSlots = Math.min(SDR_DUE_SLOTS, Math.max(0, target - 1));
-  const agreed = (l) => (l.lastAction === "follow-up" || l.lastAction === "email-sent" || !l.lastAction) ? 0 : 1;
-  const allDue = leads.filter((l) => sdrEligible(l, now) && sdrIsDue(l, now) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !(L.done || []).includes(l.cvr))
-    .sort((a, b) => (agreed(a) - agreed(b)) || (new Date(a.callback_at) - new Date(b.callback_at)));
-  // Never reorder what the SDR sees: the top lead is the open one ("Ring →"
-  // puts a lead first, "Spring over" puts it last). Callbacks already on the
-  // list keep their place; new ones go in right after the open lead.
+  // The list is fresh leads only. Casper: "the calling list needs to be fresh
+  // leads with no previous interaction" - follow-ups that are due live in
+  // their own lane (Ringeliste "Opfølgninger i dag", the call view's side box,
+  // the red count on Opfølgning). One is on the list only while the SDR has
+  // it open: "Ring" on it pins it first (L.pin) until an outcome moves it on.
   const beforeDue = L.cvrs.join(",");
   const isDueC = (c) => { const l = byCvr.get(c); return !!(l && sdrIsDue(l, now)); };
-  const onListDue = new Set(L.cvrs.filter(isDueC));
-  const keepDue = new Set();
-  if (L.cvrs[0] && onListDue.has(L.cvrs[0])) keepDue.add(L.cvrs[0]);
-  for (const l of allDue) if (keepDue.size < dueSlots && onListDue.has(l.cvr)) keepDue.add(l.cvr);
-  const addDue = [];
-  for (const l of allDue) { if (keepDue.size >= dueSlots) break; if (!keepDue.has(l.cvr) && !onListDue.has(l.cvr)) { keepDue.add(l.cvr); addDue.push(l.cvr); } }
-  for (const c of onListDue) if (!keepDue.has(c)) { const l = byCvr.get(c); if (l && l.claimed_by === userId) sdrUnclaim(l); } // waits in Opfølgning
-  L.cvrs = L.cvrs.filter((c) => !onListDue.has(c) || keepDue.has(c));
-  if (addDue.length) L.cvrs.splice(L.cvrs.length ? 1 : 0, 0, ...addDue);
-  for (const c of addDue) { const l = byCvr.get(c); if (l && l.claimed_by !== userId) sdrClaim(l, userId, now); }
+  if (L.pin && !L.cvrs.includes(L.pin)) L.pin = null;
+  const dueOff = L.cvrs.filter((c) => isDueC(c) && c !== L.pin);
+  for (const c of dueOff) { const l = byCvr.get(c); if (l && l.claimed_by === userId) sdrUnclaim(l); } // waits in its lane
+  if (dueOff.length) L.cvrs = L.cvrs.filter((c) => !dueOff.includes(c));
   if (L.cvrs.join(",") !== beforeDue) dirty = true;
   // Casper: ten at a time - more on one list felt overwhelming. The list
-  // holds `target` FRESH leads (list_size, default 10); callbacks that are due
-  // sit on top and don't count. Extra fresh leads go back to the pool (a
-  // researched or self-added one stays reserved and comes back first), and
-  // every state load tops it up again - from the SDR's focus first.
+  // holds `target` FRESH leads (list_size, default 10); an opened follow-up
+  // sits on top for as long as it is open and doesn't count. Extra fresh
+  // leads go back to the pool (a researched or self-added one stays reserved
+  // and comes back first), and every state load tops it up again - from the
+  // SDR's focus first.
   const dueNow = (cvr) => { const l = byCvr.get(cvr); return !!(l && sdrIsDue(l, now)); };
-  const freshTarget = Math.max(1, target - L.cvrs.filter(dueNow).length);
+  const freshTarget = Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size);
   let freshCvrs = L.cvrs.filter((c) => !dueNow(c));
   if (freshCvrs.length > freshTarget) {
     // Keep the SDR's own reserved leads (their research, their additions)
@@ -15262,6 +15250,7 @@ app.post("/api/sdr/claim", authMiddleware, (req, res) => {
     lead.deferred_until = null; lead.resurface_at = null;
     L.cvrs = [cvr, ...L.cvrs.filter((x) => x !== cvr)];
     L.done = (L.done || []).filter((x) => x !== cvr);
+    if (lead.callback_at) L.pin = cvr; // an opened follow-up stays on the list until it is dealt with
     sdrClaim(lead, req.userId, now);
     savePool(d); sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "claim"); }
@@ -15963,6 +15952,7 @@ app.post("/api/sdr/reopen", authMiddleware, (req, res) => {
       const { list: L } = sdrEnsureList(d, owner, now, sdrSettings(d));
       L.cvrs = [lead.cvr, ...L.cvrs.filter((x) => x !== lead.cvr)];
       L.done = (L.done || []).filter((x) => x !== lead.cvr);
+      L.pin = lead.cvr;
       sdrClaim(lead, owner, now);
     }
     sdrTouch(lead);
@@ -16023,7 +16013,8 @@ app.post("/api/sdr/skip", authMiddleware, (req, res) => {
     if (note && String(note).trim()) { lead.last_note = String(note).trim().slice(0, 2000); sdrTouch(lead); }
     const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
-    if (L.cvrs.includes(cvr)) L.cvrs = [...L.cvrs.filter((x) => x !== cvr), cvr];
+    if (L.pin === cvr) { L.pin = null; L.cvrs = L.cvrs.filter((x) => x !== cvr); if (lead.claimed_by === req.userId) sdrUnclaim(lead); } // back to the follow-up lane
+    else if (L.cvrs.includes(cvr)) L.cvrs = [...L.cvrs.filter((x) => x !== cvr), cvr];
     savePool(d); sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "skip"); }
 });

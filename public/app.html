@@ -89,6 +89,7 @@
       <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - oprettes som nyt lead">+ Nyt lead</button>
     </div>
     <div id="sub-list">
+      <div class="duelane" id="duelane" hidden></div>
       <div class="focusbar" id="focusbar"></div>
       <div class="tablewrap">
         <table>
@@ -119,6 +120,7 @@
     <div class="ring">
       <div id="cardwrap"></div>
       <aside class="side">
+        <div class="box duebox" id="duebox" hidden><h4>Opfølgninger der venter<span class="dn" id="due-n"></span></h4><div class="upnext" id="due-side"></div></div>
         <div class="box"><h4>Næste på listen</h4><div class="upnext" id="upnext"></div></div>
         <div class="box" id="histbox" hidden><h4>Historik på leadet</h4><div class="history" id="history"></div></div>
       </aside>
@@ -401,11 +403,10 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   if ($('s-screened')) { $('s-screened').hidden = !st.screenedToday; $('s-screened').textContent = st.screenedToday ? ` · ${st.screenedToday} fjernet` : ''; }
   $('s-demos').textContent = st.demosToday || 0; $('s-avail').textContent = st.poolAvailable || 0;
   $('s-perdemo').textContent = st.callsPerDemo30 == null ? '-' : st.callsPerDemo30;
-  $('n-list').textContent = st.listRemaining || 0; if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0; $('n-list').classList.toggle('due', (st.followupsDue || 0) > 0);
-  $('n-fu').textContent = (S.followups || []).length;
+  $('n-list').textContent = st.listRemaining || 0; if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0;
   $('n-res').textContent = (S.todayCalls || []).length;
   if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; const nr = $('n-rsh'); if (nr) nr.textContent = S.research.remaining || 0; }
-  renderList();
+  renderList(); renderDue();
   if (!keepCurrent) renderCard(); else if ($('note')) $('note').value = prevNote;
   renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday(); renderFocus();
 }
@@ -460,7 +461,7 @@ function renderFocus() {
       ${tile('fo-size', 'Størrelse', F.options.size, 'Alle størrelser', cur.size)}
       ${tile('fo-role', 'Kontakt', F.options.role, 'Alle kontakter', cur.role)}
     </div>
-    <div class="fb-note"><i></i>${on ? `<b>${F.matching ?? 0} leads</b>&nbsp;passer på det hele${F.short ? ' - listen er fyldt op med andre (markeret "uden for fokus").' : '.'} ` : ''}${F.short ? '' : `Altid ${target} på listen: op til 3 opfølgninger (◆) - de er med uanset fokus - og resten ${on ? 'fra dit fokus' : 'friske leads fra puljen'}.`}</div>`;
+    <div class="fb-note"><i></i>${on ? `<b>${F.matching ?? 0} leads</b>&nbsp;passer på det hele${F.short ? ' - listen er fyldt op med andre (markeret "uden for fokus").' : '.'} ` : ''}${F.short ? '' : `Altid ${target} friske leads på listen ${on ? 'fra dit fokus' : 'fra puljen'} - opfølgninger ligger for sig selv ovenover.`}</div>`;
 }
 async function setFocus(clear) {
   const body = clear ? {} : { cat: $('fo-cat').value, size: $('fo-size').value, role: $('fo-role').value };
@@ -630,6 +631,44 @@ async function saveContact() {
   const body = { cvr: L.cvr, name: $('ce-name').value, title: $('ce-title').value, phone: $('ce-phone').value, email: $('ce-email').value };
   try { const note = $('note') ? $('note').value : ''; apply(await post('/api/sdr/contact', body)); if ($('note')) $('note').value = note; toast('✓ Kontakt gemt'); }
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
+}
+/* ─── Opfølgninger der er forfaldne ───────────────────────────────────────
+   Casper: the calling list is fresh leads only. Follow-ups that are due get
+   their own lane so none is missed: above Ringeliste, in the call view's side
+   box, and as the red count on Opfølgning. Promised ones first ("Følg op",
+   no outcome yet), then "Mail sendt", then the "Ingen svar" retries - oldest
+   first. "Ring" opens one on top of the list; an outcome moves it on. */
+const DUE_RANK = { agreed: 0, mail: 1, retry: 2 };
+function dueList() {
+  const now = Date.now(); const cur = S.current && S.current.cvr;
+  const kind = (l) => l.lastAction === 'email-sent' ? 'mail' : ['no-answer', 'ivr'].includes(l.lastAction) ? 'retry' : 'agreed';
+  return (S.followups || []).filter((l) => l.callback_at && new Date(l.callback_at).getTime() <= now && l.cvr !== cur)
+    .map((l) => ({ l, k: kind(l) })).sort((a, b) => DUE_RANK[a.k] - DUE_RANK[b.k] || new Date(a.l.callback_at) - new Date(b.l.callback_at));
+}
+function renderDue() {
+  const due = dueList(); const total = (S.followups || []).length;
+  const n = { agreed: 0, mail: 0, retry: 0 }; for (const x of due) n[x.k]++;
+  const fu = $('n-fu'); fu.textContent = due.length || total; fu.classList.toggle('due', due.length > 0);
+  fu.title = due.length ? `${due.length} venter nu (af ${total} opfølgninger i alt)` : `${total} opfølgninger - ingen venter lige nu`;
+  const parts = [n.agreed && `${n.agreed} aftalt${n.agreed === 1 ? '' : 'e'}`, n.mail && `${n.mail} efter mail`, n.retry && `${n.retry} ingen svar`].filter(Boolean).join(' · ');
+  const row = ({ l }) => { const k = dueKind(l);
+    return `<div class="dl-row" onclick="jumpTo('${e(l.cvr)}')" title="Åbn og ring nu">
+      <span class="chip ${k.cls} sm">${e(k.label)}</span>
+      <div class="dl-who"><b>${e(l.name)}</b><span>${l.contact ? e(l.contact.name) + ' · ' : ''}${e(fmtPhone(l.phone))}</span></div>
+      <div class="dl-note">${e(l.last_note || '')}</div>
+      <time>${e(fmtWhen(l.callback_at))}</time>
+      <button class="pill sm violet" onclick="event.stopPropagation();jumpTo('${e(l.cvr)}')">Ring →</button></div>`; };
+  const lane = $('duelane'); lane.hidden = !due.length;
+  if (due.length) lane.innerHTML = `<div class="dl-head"><div><b>Opfølgninger i dag</b><span class="dl-n">${due.length}</span><span class="sub">${e(parts)} - ligger uden for listen, så de ikke tager pladsen fra nye leads.</span></div>
+      <button class="linkbtn" onclick="fuFilter='all';showTab('followups')">Alle opfølgninger →</button></div>
+    <div class="dl-rows">${due.slice(0, 5).map(row).join('')}</div>
+    ${due.length > 5 ? `<button class="dl-more" onclick="fuFilter='${n.agreed ? 'agreed' : 'all'}';showTab('followups')">+ ${due.length - 5} flere venter - se dem i Opfølgning</button>` : ''}`;
+  const box = $('duebox'); box.hidden = !due.length;
+  if (due.length) {
+    $('due-n').textContent = due.length;
+    $('due-side').innerHTML = due.slice(0, 4).map(({ l }) => `<div class="r" onclick="jumpTo('${e(l.cvr)}')" title="Åbn og ring nu"><div><b>${e(l.name)}</b><span>${e(dueKind(l).label)} · ${e(fmtWhen(l.callback_at))}</span></div></div>`).join('')
+      + (due.length > 4 ? `<div class="r more" onclick="fuFilter='all';showTab('followups')"><span>+ ${due.length - 4} flere i Opfølgning →</span></div>` : '');
+  }
 }
 function renderUpNext() {
   const u = S.upNext || [];
