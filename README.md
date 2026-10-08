@@ -196,9 +196,9 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   hvis alle ventende lukker. Derunder én bjælke: solgt / venter / ikke
   solgt af de kvalificerede, og i småt hvor mange bookede der venter på
   vurdering (de tæller ikke - de er måske ikke kvalificerede). Nederst
-  omkostningerne som én stablet bjælke: grundløn pro rata × antal SDR'er,
-  provision for de kvalificerede og faste værktøjsabonnementer (dollarkurs
-  under ⚙), med i alt, pr. kvalificeret demo og pr. salg.
+  omkostningerne som tal: grundløn pro rata × antal SDR'er, provision for de
+  kvalificerede, faste værktøjsabonnementer (dollarkurs under ⚙), i alt,
+  pr. kvalificeret demo og pr. salg.
   En kvalificeret demo uden afgørelse markeres **gul efter 14 dage og rød
   efter 45** (dagene sættes under ⚙ → Løn; benchmark: de fleste afgør inden
   14, 90% inden 45). Overblik får en alarm, og "venter på svar"-feltet
