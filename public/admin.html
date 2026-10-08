@@ -133,14 +133,6 @@
 #cmp-card .mixlegend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;font-size:12px;color:var(--txt-soft)}
 #cmp-card .mixlegend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 @media (max-width:760px){#cmp-card .cmp-badges{display:none}#cmp-card .cmp-tools{max-width:100%}#cmp-card .seg{max-width:100%;overflow-x:auto}#cmp-card .seg button{white-space:nowrap}#cmp-card table.cmp{font-size:12.5px}}
-#sale-card .sale-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.4fr);gap:12px;padding:16px 24px;border-bottom:1px solid var(--line)}
-#sale-card .k{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--white)}
-#sale-card .k b{display:block;font-family:Anton,Inter,sans-serif;font-weight:400;font-size:30px;line-height:1.05}
-#sale-card .k span{display:block;font-size:12.5px;font-weight:700;margin-top:4px}
-#sale-card .k em{display:block;font-style:normal;font-size:12px;color:var(--txt-faint);margin-top:2px}
-#sale-card .k.per span{margin:0 0 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint)}
-#sale-card .k.per em{color:var(--txt-soft);font-size:12.5px;margin-top:3px}
-#sale-card .k.per em b{display:inline;font-family:inherit;font-size:12.5px;font-weight:700;color:var(--txt)}
 #sale-card td.sale-act{text-align:right}
 #sale-card td.sale-act .review{justify-content:flex-end;flex-wrap:nowrap}
 #sale-card .sale-hint{display:block;font-size:11.5px;font-weight:700;color:var(--approve);margin-top:3px}
@@ -152,11 +144,9 @@
 #sale-card tr.sale-stale td:first-child{box-shadow:inset 4px 0 0 #D9534F}
 #sale-card tr.sale-nudge td:first-child{box-shadow:inset 4px 0 0 #E0A93B}
 #sale-card tr.sale-parked{opacity:.65}
-#sale-card .k.warn b{color:#A9761E}#sale-card .k.bad b{color:#B3352B}
 #salemodal .sm-reasons{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px}
 #salemodal .sm-reasons .chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--txt);margin:0}
 #salemodal .sm-reasons input{width:auto}
-@media (max-width:760px){#sale-card .sale-kpis{grid-template-columns:1fr 1fr}}
 #view-demos .res-head{display:flex;flex-direction:column;gap:14px;margin-bottom:18px}
 #view-demos .res-head h2{font-size:26px;font-weight:800;letter-spacing:-.02em}
 #view-demos .res-head p{font-size:13px;color:var(--txt-soft);margin-top:2px}
@@ -242,52 +232,35 @@
 .impmenu a .ini{width:24px;height:24px;border-radius:50%;background:var(--violet-soft);color:var(--violet);display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800}
 .impmenu a i{margin-left:auto;font-style:normal;color:var(--txt-faint)}
 #sale-card .conv{border-bottom:1px solid var(--line)}
-#sale-card .cv-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;padding:18px 24px 6px}
-#sale-card .cv-head h4{font-size:15px;font-weight:800}
-#sale-card .cv-head p{font-size:13px;color:var(--txt-soft);margin-top:2px;max-width:560px}
-#sale-card .cv-rate{text-align:right}
-#sale-card .cv-rate b{display:block;font-family:Anton,Inter,sans-serif;font-weight:400;font-size:40px;line-height:1;color:var(--approve)}
-#sale-card .cv-rate span{display:block;font-size:12.5px;font-weight:700;margin-top:4px}
-#sale-card .cv-rate em{display:block;font-style:normal;font-size:12px;color:var(--txt-faint);margin-top:2px}
-#sale-card .cv-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:10px 24px 4px}
-#sale-card .cv-step .cv-bar{height:10px;border-radius:5px;background:var(--paper);overflow:hidden;margin-bottom:8px}
-#sale-card .cv-step .cv-bar i{display:block;height:100%;background:var(--txt-faint);border-radius:5px}
-#sale-card .cv-step.ok .cv-bar i{background:#7CC4A0}
-#sale-card .cv-step.won .cv-bar i{background:var(--approve)}
-#sale-card .cv-step b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:26px;line-height:1.05}
-#sale-card .cv-step span{display:inline-block;font-size:12.5px;font-weight:700;margin-left:6px}
-#sale-card .cv-step em{display:block;font-style:normal;font-size:11.5px;color:var(--txt-faint)}
-#sale-card .cv-split{display:flex;flex-wrap:wrap;gap:8px 18px;padding:8px 24px 16px;font-size:12.5px;color:var(--txt-soft)}
-#sale-card .cv-split b{color:var(--txt)}
-#sale-card .cv-split .wait b{color:#A9761E}
-#sale-card .cv-split .no b{color:#B3352B}
-#sale-card .cv-split .dim{margin-left:auto;color:var(--txt-faint)}
-#sale-card .cv-split .dim b{color:var(--txt-soft)}
-#sale-card .cv-step.no .cv-bar i{background:#D9534F}
-#sale-card .cv-cost{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px 20px;border-top:1px solid var(--line);background:var(--paper)}
-#sale-card .cv-cost h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:10px}
-#sale-card .cc-health{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;background:var(--white);border:1px solid var(--line);margin-bottom:12px}
-#sale-card .cc-health b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:34px;line-height:1;min-width:64px;color:var(--txt-faint)}
-#sale-card .cc-health.ok b,#sale-card .cc-health.ok .hw{color:var(--approve)}
-#sale-card .cc-health.warn b,#sale-card .cc-health.warn .hw{color:#A9761E}
-#sale-card .cc-health.bad b,#sale-card .cc-health.bad .hw{color:#B3352B}
-#sale-card .cc-health.ok{border-color:#c9ead5;background:#f3fbf6}
-#sale-card .cc-health.warn{border-color:#f0dfb3;background:#fdf8ec}
-#sale-card .cc-health.bad{border-color:#f3cfc9;background:#fdf1ef}
-#sale-card .cc-health div span{display:block;font-size:12.5px;color:var(--txt-soft)}
-#sale-card .cc-health .hw{font-size:14px;font-weight:800}
-#sale-card .cc-health .hs{font-size:11.5px;color:var(--txt-faint);margin-top:2px}
-#sale-card .cc-row{display:flex;align-items:baseline;gap:8px;padding:5px 0}
-#sale-card .cc-row b{font-size:17px;font-weight:800;min-width:110px}
-#sale-card .cc-row span{font-size:13px;color:var(--txt-soft)}
-#sale-card .cc-row.big b{font-family:Anton,Inter,sans-serif;font-weight:400;font-size:30px;line-height:1}
-#sale-card .cc-row em{display:block;width:100%;font-style:normal;font-size:12px;color:var(--txt-faint)}
-#sale-card .cc-row.big{flex-wrap:wrap;margin-top:4px}
-#sale-card .cc-basis div{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;color:var(--txt-soft)}
-#sale-card .cc-basis div b{color:var(--txt)}
-#sale-card .cc-basis div.tot{border-top:1px solid var(--line);margin-top:4px;padding-top:8px;font-weight:700;color:var(--txt)}
-#sale-card .cc-basis p{font-size:11.5px;color:var(--txt-faint);margin-top:8px}
-@media (max-width:760px){#sale-card .cv-steps,#sale-card .cv-cost{grid-template-columns:1fr}}
+#sale-card .cv-top{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:20px 24px 6px}
+#sale-card .cv-kpi{padding:16px 18px;border-radius:14px;border:1px solid var(--line);background:var(--white)}
+#sale-card .cv-kpi b{display:block;font-family:Anton,Inter,sans-serif;font-weight:400;font-size:38px;line-height:1}
+#sale-card .cv-kpi span{display:block;font-size:13.5px;font-weight:700;margin-top:6px}
+#sale-card .cv-kpi em{display:block;font-style:normal;font-size:12px;color:var(--txt-faint);margin-top:3px;line-height:1.4}
+#sale-card .cv-kpi.ok{border-color:#c9ead5;background:#f3fbf6}#sale-card .cv-kpi.ok b,#sale-card .cv-kpi.ok span{color:var(--approve)}
+#sale-card .cv-kpi.warn{border-color:#f0dfb3;background:#fdf8ec}#sale-card .cv-kpi.warn b,#sale-card .cv-kpi.warn span{color:#A9761E}
+#sale-card .cv-kpi.bad{border-color:#f3cfc9;background:#fdf1ef}#sale-card .cv-kpi.bad b,#sale-card .cv-kpi.bad span{color:#B3352B}
+#sale-card .cv-funnel{padding:12px 24px 16px}
+#sale-card .cv-track{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--paper)}
+#sale-card .cv-track i{display:block;height:100%}
+#sale-card .cv-track i.won,#sale-card .cv-legend i.won{background:var(--approve)}
+#sale-card .cv-track i.wait,#sale-card .cv-legend i.wait{background:#E0A93B}
+#sale-card .cv-track i.lost,#sale-card .cv-legend i.lost{background:#D9534F}
+#sale-card .cv-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12.5px;color:var(--txt-soft)}
+#sale-card .cv-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+#sale-card .cv-legend .dim{margin-left:auto;color:var(--txt-faint)}
+#sale-card details.cv-more{border-top:1px solid var(--line)}
+#sale-card details.cv-more>summary{list-style:none;cursor:pointer;padding:11px 24px;font-size:12.5px;font-weight:700;color:var(--txt-soft)}
+#sale-card details.cv-more>summary::-webkit-details-marker{display:none}
+#sale-card details.cv-more>summary::after{content:" ▾"}
+#sale-card details.cv-more[open]>summary::after{content:" ▴"}
+#sale-card .cv-calc{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:4px 24px 20px;background:var(--paper)}
+#sale-card .cv-calc h5{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:10px 0 8px}
+#sale-card .cv-calc .r{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0;color:var(--txt-soft)}
+#sale-card .cv-calc .r b{color:var(--txt)}
+#sale-card .cv-calc .r.tot{border-top:1px solid var(--line);margin-top:4px;padding-top:8px;font-weight:700;color:var(--txt)}
+#sale-card .cv-calc p{font-size:12.5px;color:var(--txt-soft);line-height:1.5;margin:0 0 8px}
+@media (max-width:760px){#sale-card .cv-top,#sale-card .cv-calc{grid-template-columns:1fr}#sale-card .cv-legend .dim{margin-left:0}}
 .trend .lbl{grid-column:1/-1;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);margin:6px 0 -2px}
 .filters.left{justify-content:flex-start}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 24px;border-bottom:1px solid var(--line)}
@@ -693,7 +666,6 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     <div class="tablewrap" id="sale-card">
       <div class="thead"><div><h3>Fra demo til salg</h3><p>Kvalificerede demoer, indtil de er afgjort. Markér <b>Solgt</b> eller <b>Ikke solgt</b> efter demoen - SDR'en, der bookede demoen, ser det på sin demo.</p></div><div class="filters" id="sale-filters"></div></div>
       <div class="conv" id="conv"><p class="sub" style="padding:16px 24px">Henter…</p></div>
-      <div class="sale-kpis" id="sale-kpis"></div>
       <table><thead id="sale-head"></thead><tbody id="tb-sale"></tbody></table>
     </div>
     </div>
@@ -1307,43 +1279,42 @@ async function convLoad() {
 function renderConv() {
   const D = CONV.data; const box = $('conv'); if (!D || !box) return;
   const n = D.n, c = D.cost;
-  const pct = (a, b) => (b > 0 ? Math.round(100 * a / b) + '%' : '-');
-  const bar = (k, label, v, cls) => `<div class="cv-step ${cls || ''}"><div class="cv-bar"><i style="width:${n.booked ? Math.max(2, 100 * v / n.booked) : 0}%"></i></div><b>${v}</b><span>${label}</span><em>${pct(v, n.booked)}</em></div>`;
-  const when = `${new Date(D.from + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })} - ${D.to === drillToday() ? 'i dag' : new Date(D.to + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
-  // Rates are out of the QUALIFIED demos. Booked ones still waiting for review are shown, not counted.
   const base = n.qualified;
   const pq = (v) => (base > 0 ? Math.round(100 * v / base) + '%' : '-');
-  const qbar = (label, v, cls) => `<div class="cv-step ${cls || ''}"><div class="cv-bar"><i style="width:${base ? Math.max(2, 100 * v / base) : 0}%"></i></div><b>${v}</b><span>${label}</span><em>${pq(v)}</em></div>`;
+  const kr = (v) => (v == null ? '-' : fmtKr(v));
+  const x = (v) => (v == null ? '-' : v.toString().replace('.', ',') + '×');
+  const when = `${new Date(D.from + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })} - ${D.to === drillToday() ? 'i dag' : new Date(D.to + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
+  // Three numbers that matter, one line under each; the rest folds away.
+  const r = D.ltv_ratio, r2 = D.ltv_ratio_if_all_waiting_close;
+  const tone = r == null ? '' : r >= 3 ? 'ok' : r >= 1 ? 'warn' : 'bad';
+  const word = r == null ? 'Ingen salg endnu' : r >= 3 ? 'Sundt' : r >= 1 ? 'Tyndt' : 'Taber penge';
+  const seg = (cls, v, title) => (base && v ? `<i class="${cls}" style="width:${100 * v / base}%" title="${title}"></i>` : '');
   box.innerHTML = `
-    <div class="cv-head"><div><h4>Fra kvalificeret demo til salg</h4><p>Demoer booket ${e(when)}${D.sdr ? ' af ' + e((D.per[0] || {}).name || '') : ''}. Tallene regnes af de <b>kvalificerede</b> demoer - de ${n.pending_review} der venter på din vurdering, er ikke med, før de er vurderet.</p></div>
-      <div class="cv-rate"><b>${pq(n.won)}</b><span>solgt af ${n.qualified} kvalificerede</span><em>${n.pending_sale} venter på salg${n.pending_sale ? ' · op til ' + pq(n.won + n.pending_sale) + ' hvis alle lukker' : ''}</em></div></div>
-    <div class="cv-steps">
-      ${qbar('kvalificerede demoer', n.qualified)}
-      ${qbar('solgt', n.won, 'won')}
-      ${qbar('ikke solgt', n.lost, 'no')}
+    <div class="cv-top">
+      <div class="cv-kpi ${tone}"><b>${x(r)}</b><span>${word}</span><em>${D.ltv ? `kundeværdi ${e(kr(D.ltv))} mod pris pr. salg${r2 != null && n.pending_sale ? ` · ${x(r2)} hvis alle ventende lukker` : ''}` : 'Sæt kundeværdi (LTV) under ⚙ → Løn'}</em></div>
+      <div class="cv-kpi"><b>${pq(n.won)}</b><span>solgt af ${n.qualified} kvalificerede</span><em>${n.pending_sale ? `${n.pending_sale} venter · op til ${pq(n.won + n.pending_sale)} hvis alle lukker` : n.qualified ? 'alle afgjort' : 'ingen kvalificerede endnu'}</em></div>
+      <div class="cv-kpi"><b>${kr(D.per_sale)}</b><span>pr. salg</span><em>${n.pending_sale && D.per_sale_if_all_waiting_close ? `ned til ${e(kr(D.per_sale_if_all_waiting_close))}, hvis alle ventende lukker` : `${e(kr(D.per_qualified))} pr. kvalificeret demo`}</em></div>
     </div>
-    <div class="cv-split">
-      <span class="cs wait"><b>${n.pending_sale}</b> kvalificeret, venter på salg</span>
-      ${n.value ? `<span class="cs"><b>${e(fmtKr(n.value))}</b> solgt for</span>` : ''}
-      <span class="cs dim">Booket i alt: <b>${n.booked}</b> · <b>${n.pending_review}</b> venter på vurdering · <b>${n.unqualified}</b> ikke kvalificeret</span>
+    <div class="cv-funnel">
+      <div class="cv-track">${seg('won', n.won, 'solgt')}${seg('wait', n.pending_sale, 'venter på salg')}${seg('lost', n.lost, 'ikke solgt')}</div>
+      <div class="cv-legend"><span><i class="won"></i>${n.won} solgt</span><span><i class="wait"></i>${n.pending_sale} venter</span><span><i class="lost"></i>${n.lost} ikke solgt</span><span class="dim">${n.qualified} kvalificerede af ${n.booked} bookede ${e(when)} · ${n.pending_review} venter på vurdering · ${n.unqualified} ikke kvalificeret</span></div>
     </div>
-    <div class="cv-cost">
-      <div class="cc-main"><h5>Hvad en demo og et salg koster</h5>
-        ${D.ltv ? (() => { const r = D.ltv_ratio, r2 = D.ltv_ratio_if_all_waiting_close;
-          const tone = (x) => x == null ? '' : x >= 3 ? 'ok' : x >= 1 ? 'warn' : 'bad';
-          const word = (x) => x == null ? 'Ingen salg endnu' : x >= 3 ? 'Sundt' : x >= 1 ? 'Tyndt' : 'Taber penge';
-          return `<div class="cc-health ${tone(r)}"><b>${r == null ? '-' : r.toString().replace('.', ',') + '×'}</b><div><span class="hw">${word(r)}</span><span>LTV ${e(fmtKr(D.ltv))} mod ${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))} pr. salg${r2 != null && n.pending_sale ? ` · ${r2.toString().replace('.', ',')}× hvis alle ${n.pending_sale} ventende lukker` : ''}</span><span class="hs">Sundt fra 3× · tyndt 1-3× · under 1× taber vi penge på hver kunde</span></div></div>`; })() : ''}
-        <div class="cc-row"><b>${D.per_qualified == null ? '-' : e(fmtKr(D.per_qualified))}</b><span>pr. kvalificeret demo</span></div>
-        <div class="cc-row big"><b>${D.per_sale == null ? '-' : e(fmtKr(D.per_sale))}</b><span>pr. salg</span>${n.pending_sale && D.per_sale_if_all_waiting_close ? `<em>ned til ${e(fmtKr(D.per_sale_if_all_waiting_close))}, hvis alle ${n.pending_sale} ventende lukker</em>` : n.won ? '' : '<em>ingen salg endnu</em>'}</div>
+    <details class="cv-more"><summary>Vis beregning</summary>
+      <div class="cv-calc">
+        <div><h5>Omkostninger i perioden</h5>
+          <div class="r"><span>Grundløn · ${c.sdrs} SDR · ${c.months} md</span><b>${e(kr(c.salary))}</b></div>
+          <div class="r"><span>Provision · ${n.qualified} kvalificerede</span><b>${e(kr(c.commission))}</b></div>
+          <div class="r"><span>Værktøjer · faste abonnementer (${c.usd_dkk} kr/$)</span><b>${e(kr(c.tools))}</b></div>
+          <div class="r tot"><span>I alt</span><b>${e(kr(c.total))}</b></div>
+          <div class="r"><span>Pr. kvalificeret demo</span><b>${e(kr(D.per_qualified))}</b></div>
+          <div class="r"><span>Pr. salg</span><b>${e(kr(D.per_sale))}</b></div></div>
+        <div><h5>Sådan læses det</h5>
+          <p>Sundhed = kundeværdi (LTV) delt med pris pr. salg. Sundt fra 3×, tyndt 1-3×, under 1× taber vi penge på hver kunde.</p>
+          <p>Kun kvalificerede demoer tæller - de ${n.pending_review}, der venter på vurdering, er ikke en base for noget endnu.</p>
+          <p>Grundløn ${e(kr(c.base_per_month))}/md pr. SDR, LTV og dollarkurs sættes under ⚙. Gemini og Cloud er ikke med.${(D.excluded || []).length ? ` <b>${e(D.excluded.join(', '))}</b> er holdt ude.` : ''}</p>
+          ${n.value ? `<p>Solgt for ${e(kr(n.value))} i alt.</p>` : ''}</div>
       </div>
-      <div class="cc-basis"><h5>Regnet af</h5>
-        <div><span>Grundløn · ${c.sdrs} SDR · ${c.months} md</span><b>${e(fmtKr(c.salary))}</b></div>
-        <div><span>Provision · ${n.qualified} kvalificerede</span><b>${e(fmtKr(c.commission))}</b></div>
-        <div><span>Værktøjer · faste abonnementer (${c.usd_dkk} kr/$)</span><b>${e(fmtKr(c.tools))}</b></div>
-        <div class="tot"><span>I alt</span><b>${e(fmtKr(c.total))}</b></div>
-        <p>Grundløn ${e(fmtKr(c.base_per_month))}/md pr. SDR og kursen sættes under ⚙ → Løn og Integrationer. Gemini og Cloud er ikke med.${(D.excluded || []).length ? ` <b>${e(D.excluded.join(', '))}</b> er holdt ude af beregningen (⚙ → Løn).` : ''}</p>
-      </div>
-    </div>`;
+    </details>`;
 }
 function renderSales() {
   if (!$('tb-sale')) return;
@@ -1358,11 +1329,6 @@ function renderSales() {
   const oldest = open.reduce((a, l) => Math.max(a, days(l.demo_qualified_at || l.demo_booked_at) || 0), 0);
   // Per SDR: sold of decided - the demos are the founders', the leads the SDR's.
   const per = {}; for (const l of [...won, ...lost]) { const k = l.demo_booked_by_name || '?'; const p = per[k] || (per[k] = { won: 0, n: 0 }); p.n++; if (l.sale_status === 'won') p.won++; }
-  $('sale-kpis').innerHTML = `
-    <div class="k"><b>${pct(won.length, won.length + lost.length)}</b><span>af de afgjorte</span><em>${won.length} solgt · ${lost.length} ikke solgt</em></div>
-    <div class="k"><b>${won.length}</b><span>solgt</span><em>${value ? fmtKr(value) + ' i alt' : 'ingen værdi sat'}</em></div>
-    <div class="k${open.some((l) => !isParked(l) && days(l.demo_qualified_at || l.demo_booked_at) >= staleDays) ? ' bad' : open.some((l) => !isParked(l) && days(l.demo_qualified_at || l.demo_booked_at) >= nudgeDays) ? ' warn' : ''}"><b>${open.length}</b><span>venter på svar</span><em>${open.length ? `${open.filter((l) => !isParked(l) && days(l.demo_qualified_at || l.demo_booked_at) >= nudgeDays).length} over ${nudgeDays} dage · ældste ${oldest}` : 'alle afgjort'}</em></div>
-    <div class="k per"><span>Pr. SDR</span>${Object.keys(per).length ? Object.entries(per).map(([n, p]) => `<em><b>${e(n)}</b> ${p.won} af ${p.n} solgt</em>`).join('') : '<em>Intet afgjort endnu</em>'}</div>`;
   $('sale-filters').innerHTML = [['open', 'Venter', open.length], ['won', 'Solgt', won.length], ['lost', 'Ikke solgt', lost.length]].map(([k, l, n]) => `<button class="${saleFilter === k ? 'on' : ''}" onclick="saleFilter='${k}';renderSales()">${l}<span class="n">${n}</span></button>`).join('');
   const rows = saleFilter === 'won' ? won : saleFilter === 'lost' ? lost : open;
   // Open: the ones that need a push first (oldest), parked ones last.

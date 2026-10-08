@@ -189,17 +189,16 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   betales to gange. Hvert møde beholder satsen fra godkendelsesdagen.
   Et godkendt møde i en åben periode kan flyttes til næste måneds løn ("→
   <måned>" i møde-listen) og tilbage igen, så længe perioden ikke er låst.
-  **Konvertering** starter med den levende tragt fra KVALIFICERET demo til
-  salg: kvalificerede → solgt / ikke solgt / venter på salg. Salgsraten er
-  solgt af alle kvalificerede (ikke kun de afgjorte), og "op til X% hvis alle
-  lukker" viser loftet. Demoer der venter på vurdering, vises men tæller ikke
-  - de er måske ikke kvalificerede. Under tragten: hvad en kvalificeret demo og et salg koster os
-  (grundløn pro rata for perioden × antal SDR'er + provision for de
-  kvalificerede + faste værktøjsabonnementer i kr via dollarkursen under ⚙),
-  og hvad pris pr. salg falder til, hvis alle ventende lukker. Øverst en
-  **sundhedsmåler**: kundeværdi (LTV, ⚙ → Løn) delt med pris pr. salg -
-  sundt fra 3×, tyndt 1-3×, under 1× taber vi penge på hver kunde - og hvad
-  den bliver, hvis alle ventende lukker.
+  **Konvertering** åbner med tre tal: **sundhed** (kundeværdi/LTV fra ⚙ →
+  Løn delt med pris pr. salg - sundt fra 3×, tyndt 1-3×, under 1× taber vi
+  penge pr. kunde), **salgsrate** (solgt af alle kvalificerede, ikke kun de
+  afgjorte) og **pris pr. salg**; under hvert tal står, hvad det bliver,
+  hvis alle ventende lukker. Derunder én bjælke: solgt / venter / ikke
+  solgt af de kvalificerede, og i småt hvor mange bookede der venter på
+  vurdering (de tæller ikke - de er måske ikke kvalificerede). "Vis
+  beregning" folder omkostningerne ud: grundløn pro rata × antal SDR'er +
+  provision for de kvalificerede + faste værktøjsabonnementer (dollarkurs
+  under ⚙), i alt, pr. kvalificeret demo og pr. salg.
   En kvalificeret demo uden afgørelse markeres **gul efter 14 dage og rød
   efter 45** (dagene sættes under ⚙ → Løn; benchmark: de fleste afgør inden
   14, 90% inden 45). Overblik får en alarm, og "venter på svar"-feltet
