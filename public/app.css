@@ -13,6 +13,8 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
+/* Always keep room for the scrollbar: a short page (Kunder) was 7px wider than a long one and everything shifted when switching tabs. */
+html{scrollbar-gutter:stable}
 body{background:var(--paper);color:var(--txt);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
 a{color:inherit}
 button{font-family:var(--sans);cursor:pointer;border:0;background:none;color:inherit}

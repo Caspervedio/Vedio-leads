@@ -186,12 +186,42 @@
 #sickmodal .sk-dates{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:1100px){#view-demos .res-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){#view-demos .res-kpis{grid-template-columns:1fr 1fr}}
-#settings .modal{padding-top:22px}
-#settings .st-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:12px -28px 16px;padding:0 28px}
-#settings .st-tabs button{border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:700;color:var(--txt-soft);padding:10px 12px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
+#settings .st-modal{max-width:820px;width:100%;max-height:92vh;padding:0;display:flex;flex-direction:column;overflow:hidden}
+#settings .st-head{padding:24px 28px 8px}
+#settings .st-head p{margin:2px 0 0}
+#settings .st-tabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 20px}
+#settings .st-tabs button{border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:700;color:var(--txt-soft);padding:12px 12px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
 #settings .st-tabs button:hover{color:var(--txt)}
-#settings .st-tabs button.on{color:var(--violet);border-bottom-color:var(--violet)}
-#settings .st-lead{font-size:13px;color:var(--txt-soft);margin:0 0 6px}
+#settings .st-tabs button.on{color:var(--txt);border-bottom-color:var(--txt)}
+#settings .st-body{flex:1;overflow-y:auto;padding:6px 28px 20px;background:var(--paper)}
+#settings .st-lead{font-size:13px;color:var(--txt-soft);margin:14px 0 12px}
+#settings .st-grp{background:var(--white);border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden}
+#settings .st-grp h4{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint);padding:14px 18px 4px}
+#settings .st-hint{font-size:12.5px;color:var(--txt-soft);padding:0 18px 10px}
+#settings .st-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:13px 18px;border-top:1px solid var(--line)}
+#settings .st-grp h4 + .st-row{border-top:0}
+#settings .st-txt{min-width:0;flex:1}
+#settings .st-txt b{display:block;font-size:14px;font-weight:700;color:var(--txt)}
+#settings .st-txt span{display:block;font-size:12.5px;color:var(--txt-soft);margin-top:2px;line-height:1.4}
+#settings .st-ctl{display:flex;align-items:center;gap:8px;flex-shrink:0}
+#settings .st-ctl input[type=number]{width:118px;margin:0;padding:9px 12px;text-align:right;background:var(--white);border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;font-weight:600}
+#settings .st-ctl input[type=date]{width:auto;margin:0;padding:9px 12px;background:var(--white);border:1px solid var(--line);border-radius:10px;font:inherit}
+#settings .st-ctl i{font-style:normal;font-size:12.5px;color:var(--txt-faint);min-width:34px}
+#settings .st-ctl .st-text{width:300px;margin:0;padding:9px 12px;background:var(--white);border:1px solid var(--line);border-radius:10px;font:inherit;font-size:13.5px}
+#settings .st-ctl input:focus{outline:none;border-color:var(--violet)}
+#settings .st-chks{display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:flex-end;max-width:380px}
+#settings .st-chks .chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--txt);margin:0}
+#settings .st-chks .chk input{width:auto;margin:0}
+#settings .st-switch{position:relative;display:inline-flex;align-items:center;gap:8px;cursor:pointer;margin:0}
+#settings .st-switch input{position:absolute;opacity:0;width:0;height:0}
+#settings .st-switch i{width:40px;height:22px;border-radius:11px;background:#d9d5cc;position:relative;transition:background .15s}
+#settings .st-switch i::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+#settings .st-switch input:checked + i{background:var(--approve)}
+#settings .st-switch input:checked + i::after{transform:translateX(18px)}
+#settings .st-area{width:100%;min-height:150px;margin:0 18px 16px;width:calc(100% - 36px);border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--paper);font:inherit;font-size:13.5px;line-height:1.5}
+#settings #st-mails{padding:0 18px}
+#settings .st-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 28px;border-top:1px solid var(--line);background:var(--white)}
+@media (max-width:760px){#settings .st-row{flex-direction:column;align-items:stretch}#settings .st-ctl{justify-content:flex-end}#settings .st-ctl .st-text{width:100%}#settings .st-chks{justify-content:flex-start;max-width:none}}
 #sdr-card .sdr-head{align-items:center}
 #sdr-card .sdr-tabs{display:inline-flex;background:var(--paper);border-radius:var(--pill);padding:3px;gap:2px;margin-left:auto}
 #sdr-card .sdr-tabs button{border:0;background:transparent;padding:7px 14px;border-radius:var(--pill);font:inherit;font-size:13px;font-weight:700;color:var(--txt-soft);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
@@ -1711,73 +1741,64 @@ async function downloadExport(from, to, sdr, btn) {
 function openSettings() {
   const s = O.settings || {}; const r = s.rules || {}; const sources = Object.keys(O.sources || {}).sort();
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'settings';
-  bg.innerHTML = `<div class="modal wide" style="max-height:92vh;overflow-y:auto">
+  // One row per setting: a short title, a one-line explanation, the control
+  // on the right. Groups of related rows. The ids and the save are unchanged.
+  const T = s.tools || {}, B = s.bench || {};
+  const row = (title, help, ctl) => `<div class="st-row"><div class="st-txt"><b>${title}</b>${help ? `<span>${help}</span>` : ''}</div><div class="st-ctl">${ctl}</div></div>`;
+  const num = (id, v, o = {}) => `<input id="${id}" type="number" ${o.min != null ? `min="${o.min}"` : ''} ${o.max != null ? `max="${o.max}"` : ''} ${o.step ? `step="${o.step}"` : ''} value="${e(v)}">${o.unit ? `<i>${o.unit}</i>` : ''}`;
+  const sw = (id, on, label) => `<label class="st-switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><i></i>${label ? `<span>${label}</span>` : ''}</label>`;
+  const grp = (title, body) => `<section class="st-grp"><h4>${title}</h4>${body}</section>`;
+  const pane = (k, lead, body, open) => `<div class="st-pane" data-k="${k}" ${open ? '' : 'hidden'}><p class="st-lead">${lead}</p>${body}</div>`;
+  bg.innerHTML = `<div class="modal st-modal">
     <div class="st-head"><div><h3>Indstillinger</h3><p>Fælles for alle SDR'er. Ét Gem gemmer alle faner.</p></div></div>
     <div class="st-tabs" id="st-tabs">${[['pool', 'Pulje & regler'], ['goals', 'Mål'], ['pay', 'Løn'], ['flow', 'Arbejdsgang'], ['pitch', 'Pitch & mails'], ['int', 'Integrationer']].map(([k, l], i) => `<button class="${i ? '' : 'on'}" onclick="stTab('${k}')" data-k="${k}">${l}</button>`).join('')}</div>
-    <div class="st-pane" data-k="pool">
-    <p class="st-lead">Hvad puljen må servere til SDR'erne, og hvornår et lead hviler.</p>
-    <label>Regler - hvad SDR'erne må få</label>
-    <div class="rules">
-      <label class="chk"><input type="checkbox" id="r-meta" ${r.require_meta ? 'checked' : ''}> Kun leads der kører Meta-annoncer</label>
-      <label class="chk">Min. antal annoncer <input id="r-minads" type="number" min="0" max="500" value="${e(r.min_ads || 0)}" style="width:80px;margin-left:8px"></label>
-      <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk kilder</div>${sources.map((x) => `<label class="chk" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="r-src" value="${e(x)}" ${(r.exclude_sources || []).includes(x) ? 'checked' : ''}> ${e(x)}</label>`).join('') || '<span style="font-size:13px;color:var(--txt-faint)">Ingen kilder endnu.</span>'}</div>
-      <div style="grid-column:1/-1"><div class="kicker" style="margin:6px 0">Udeluk nicher (kommasepareret, matcher på del af ordet)</div><input id="r-niches" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}"></div>
+    <div class="st-body">
+    ${pane('pool', 'Hvad puljen må servere til SDR\'erne, og hvornår et lead hviler.', grp('Hvad SDR\'erne må få',
+        row('Kun leads der kører Meta-annoncer', 'Alt andet holdes tilbage i puljen.', sw('r-meta', r.require_meta))
+      + row('Mindste antal annoncer', 'Leads med færre annoncer serveres ikke. 0 = ingen grænse.', num('r-minads', r.min_ads || 0, { min: 0, max: 500 }))
+      + row('Udeluk kilder', 'Afkrydsede kilder serveres ikke.', `<div class="st-chks">${sources.map((x) => `<label class="chk"><input type="checkbox" class="r-src" value="${e(x)}" ${(r.exclude_sources || []).includes(x) ? 'checked' : ''}> ${e(x)}</label>`).join('') || '<span class="sub">Ingen kilder endnu.</span>'}</div>`)
+      + row('Udeluk nicher', 'Kommasepareret, matcher på en del af ordet.', `<input id="r-niches" class="st-text" placeholder="fx ejendom, revisor, tandlæge" value="${e((r.exclude_niches || []).join(', '))}">`))
+      + grp('Forsyning og hvile',
+        row('Friske leads der skal ligge klar', 'Aldrig ringet, med navn og nummer. Under tallet hentes nye butikker fra StoreLeads-reserven og der købes numre. 0 = altid.', num('st-cap', s.fresh_target ?? 450, { min: 0, max: 10000 }))
+      + row('Parkér efter opkald uden svar', 'Så mange opkald i træk uden svar, før leadet hviler.', num('st-park-after', s.no_answer_park_after ?? 3, { min: 2, max: 10, unit: 'opkald' }))
+      + row('… og lad det hvile', 'Derefter nederst i puljen igen.', num('st-park-days', s.no_answer_park_days ?? 60, { min: 7, max: 365, unit: 'dage' }))), true)}
+    ${pane('goals', 'Målene farver tallene i Overblik og sætter flagene under Sammenlign.', grp('Aktivitet',
+        row('Dagligt mål', 'Opkald pr. SDR pr. dag. Farver "Opkald" i Per SDR, fordelt over arbejdsdagen.', num('st-target', s.daily_target || 60, { min: 1, max: 500, unit: 'opkald' })))
+      + grp('Kvalitet',
+        row('Opkald pr. bookede demo', 'Farver "Opk./demo". Lavere er bedre.', num('st-bdemo', B.calls_per_demo ?? 40, { min: 1, max: 1000 }))
+      + row('Andel kvalificerede demoer', 'Af de vurderede. Under dette flages SDR\'en under Sammenlign.', num('st-bqual', B.qual_rate_pct ?? 70, { min: 1, max: 100, unit: '%' }))
+      + row('Tid pr. lead', 'Tid med kortet fremme, fra åbning til udfald. Farver "Snit pr. lead".', num('st-btalk', B.talk_avg_s ?? 180, { min: 5, max: 3600, unit: 'sek.' })))
+      + grp('Oplæring',
+        row('Oplæringsperiode til og med', 'Coachen og ugens opsummering vurderer fremgang, ikke fulde mål. Tom = slået fra.', `<input id="st-onboard" type="date" value="${e(s.onboarding_until || '')}">`)))}
+    ${pane('pay', 'Provision følger lønperioden (29.-28.). Satsen gælder fra den dag, en demo bliver kvalificeret.', grp('Løn',
+        row('Provision pr. kvalificeret demo', 'Hver demo beholder satsen fra den dag, den blev kvalificeret.', num('st-comm', s.commission_dkk ?? 1000, { min: 0, unit: 'kr' }))
+      + row('Grundløn pr. SDR pr. måned', 'Vises sammen med provisionen under Dine tal, og bruges i pris pr. salg.', num('st-base', s.base_salary_dkk ?? 15000, { min: 0, unit: 'kr' })))
+      + grp('Rykker på kvalificerede demoer uden afgørelse',
+        row('Markér gul efter', 'Benchmark: de fleste afgør inden 14 dage.', num('st-nudge', s.sale_nudge_days ?? 14, { min: 1, max: 365, unit: 'dage' }))
+      + row('Markér rød efter', 'Benchmark: 90% afgør inden 45 dage.', num('st-stale', s.sale_stale_days ?? 45, { min: 1, max: 730, unit: 'dage' })))
+      + grp('Tæller med i omkostninger og konvertering',
+        row('SDR\'er', 'Grundløn × antal, og deres demoer i tragten. Slå fra for en medstifter, der ringer nu og da.', `<div class="st-chks">${((O.perUser || []).filter((u) => u.id && u.id !== 'admin')).map((u) => `<label class="chk"><input type="checkbox" class="st-cost" value="${e(u.id)}" ${(s.cost_exclude || []).includes(u.id) ? '' : 'checked'}> ${e(u.name)}</label>`).join('') || '<span class="sub">Ingen SDR\'er endnu.</span>'}</div>`)))}
+    ${pane('flow', 'Sådan arbejder SDR\'erne dagen igennem.', grp('Ringelisten',
+        row('Friske leads på listen ad gangen', 'Fyldes op efter hvert opkald. Opfølgninger ligger for sig selv.', num('st-size', s.list_size || 10, { min: 3, max: 100, unit: 'leads' }))
+      + row('Opfølgning efter en sendt mail', 'Hverdage, før leadet dukker op igen.', num('st-mdays', s.email_followup_days || 2, { min: 1, max: 30, unit: 'hverdage' })))
+      + grp('Booking',
+        row('Calendly-link', 'Åbnes fra kortet med kontakten udfyldt.', `<input id="st-cal" class="st-text" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">`)))}
+    ${pane('pitch', 'Det nye SDR\'er starter med. Har en SDR lavet sin egen pitch, beholder de deres.', `
+      <section class="st-grp"><h4>Holdets pitch</h4><p class="st-hint">Felter: {fornavn} {firma} {annoncer} {sdr} {måned}</p>
+        <textarea id="st-pitch" class="st-area">${e(s.pitch_text || '')}</textarea></section>
+      <section class="st-grp"><h4>Mailskabeloner</h4><p class="st-hint">SDR\'en vælger én, når et lead beder om en mail. Felter: {fornavn} {firma} {sdr} {calendly} {note} {om}. Links som [tekst](https://…)</p>
+        <div id="st-mails"></div>
+        <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button></section>`)}
+    ${pane('int', 'Nøgler og priser på de værktøjer, puljen bygger på.', grp('Beskeder',
+        row('Slack-webhook', 'Får en besked, når en demo bookes.', `<input id="st-hook" class="st-text" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">`))
+      + grp('Abonnementer · bruges til pris pr. demo og pr. salg',
+        row('StoreLeads', 'Pr. måned.', num('tl-sl', T.storeleads_usd ?? 250, { min: 0, unit: '$' }))
+      + row('Apollo', 'Pr. måned.', num('tl-ap', T.apollo_usd ?? 65, { min: 0, unit: '$' }))
+      + row('Apollo credits', 'Pr. måned - se Apollo → Settings → Usage. 0 = ukendt.', num('tl-apc', T.apollo_credits ?? 0, { min: 0 }))
+      + row('Full Enrich', 'Pris pr. credit. Et fundet nummer koster 10 credits.', num('tl-fe', T.fe_usd_per_credit ?? 0.0533, { min: 0, step: '0.0001', unit: '$' }))
+      + row('Dollarkurs', 'Kr pr. dollar - til pris pr. salg under Konvertering.', num('tl-fx', T.usd_dkk ?? 6.9, { min: 1, step: '0.01', unit: 'kr' }))))}
     </div>
-    <div class="setgrid">
-    <div><label>Friske leads der skal ligge klar (aldrig ringet, med navn + nummer). Under tallet flyttes nye butikker ind fra StoreLeads-reserven og der købes telefonnumre - over det venter de betalte opslag (0 = altid)</label><input id="st-cap" type="number" min="0" max="10000" value="${e(s.fresh_target ?? 450)}"></div>
-    <div><label>Parkér et lead efter så mange opkald i træk uden svar</label><input id="st-park-after" type="number" min="2" max="10" value="${e(s.no_answer_park_after ?? 3)}"></div>
-    <div><label>… og lad det hvile i så mange dage (så nederst i puljen)</label><input id="st-park-days" type="number" min="7" max="365" value="${e(s.no_answer_park_days ?? 60)}"></div>
-    </div>
-    </div>
-    <div class="st-pane" data-k="goals" hidden>
-    <p class="st-lead">Målene farver tallene i Overblik og sætter flagene under Sammenlign SDR'er.</p>
-    <div class="setgrid">
-    <div><label>Dagligt mål (opkald pr. SDR)</label><input id="st-target" type="number" min="1" max="500" value="${e(s.daily_target || 60)}"></div>
-    <div><label>Benchmark: gennemsnitlig tid pr. lead (sekunder) - tid med kortet fremme, fra de åbner det til udfaldet er valgt. Farver "Snit pr. lead" i Per SDR</label><input id="st-btalk" type="number" min="5" max="3600" value="${e((s.bench || {}).talk_avg_s ?? 180)}"></div>
-    <div><label>Benchmark: opkald pr. bookede demo - farver "Opk./demo". Lavere er bedre</label><input id="st-bdemo" type="number" min="1" max="1000" value="${e((s.bench || {}).calls_per_demo ?? 40)}"></div>
-    <div><label>Mål: andel kvalificerede demoer (%) - af de vurderede. Bruges til flag under "Sammenlign SDR'er"</label><input id="st-bqual" type="number" min="1" max="100" value="${e((s.bench || {}).qual_rate_pct ?? 70)}"></div>
-    <div><label>Oplæringsperiode til og med (coachen og ugens opsummering vurderer fremgang, ikke fulde mål; tom = slået fra)</label><input id="st-onboard" type="date" value="${e(s.onboarding_until || '')}"></div>
-    </div>
-    </div>
-    <div class="st-pane" data-k="pay" hidden>
-    <p class="st-lead">Provision følger lønperioden (29.-28.). Satsen gælder fra den dag, en demo bliver kvalificeret.</p>
-    <div class="setgrid">
-    <div><label>Provision pr. kvalificeret demo (kr)</label><input id="st-comm" type="number" min="0" value="${e(s.commission_dkk ?? 1000)}"></div>
-    <div><label>Grundløn pr. SDR pr. måned (kr) - vises sammen med provisionen på deres resultatside</label><input id="st-base" type="number" min="0" value="${e(s.base_salary_dkk ?? 15000)}"></div>
-    </div>
-    <div class="setgrid">
-    <div><label>Rykker: kvalificeret demo uden afgørelse markeres gul efter (dage)</label><input id="st-nudge" type="number" min="1" max="365" value="${e(s.sale_nudge_days ?? 14)}"></div>
-    <div><label>… og rød efter (dage) - benchmark: de fleste afgør inden 14, 90% inden 45</label><input id="st-stale" type="number" min="1" max="730" value="${e(s.sale_stale_days ?? 45)}"></div>
-    </div>
-    <label>Tæller med i omkostninger og konvertering (grundløn × antal, og deres demoer i tragten)</label>
-    <div class="rules">${((O.perUser || []).filter((u) => u.id && u.id !== 'admin')).map((u) => `<label class="chk"><input type="checkbox" class="st-cost" value="${e(u.id)}" ${(s.cost_exclude || []).includes(u.id) ? '' : 'checked'}> ${e(u.name)}</label>`).join('') || '<span class="sub">Ingen SDR\'er endnu.</span>'}</div>
-    </div>
-    <div class="st-pane" data-k="flow" hidden>
-    <p class="st-lead">Sådan arbejder SDR'erne dagen igennem.</p>
-    <div class="setgrid">
-    <div><label>Friske leads på hver SDR's liste ad gangen (fyldes op efter hvert opkald; opfølgninger ligger for sig selv i Opfølgning)</label><input id="st-size" type="number" min="3" max="100" value="${e(s.list_size || 10)}"></div>
-    <div><label>Opfølgning efter en sendt mail (hverdage)</label><input id="st-mdays" type="number" min="1" max="30" value="${e(s.email_followup_days || 2)}"></div>
-    </div>
-    <label>Calendly-link</label><input id="st-cal" placeholder="https://calendly.com/…" value="${e(s.calendly_url || '')}">
-    </div>
-    <div class="st-pane" data-k="pitch" hidden>
-    <label>Holdets pitch ({fornavn} {firma} {annoncer} {sdr} {måned}) - det nye SDR'er starter med. Har en SDR lavet sin egen, beholder de deres.</label><textarea id="st-pitch" style="width:100%;min-height:140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--paper);font-size:13.5px;line-height:1.5">${e(s.pitch_text || '')}</textarea>
-    <label>Mailskabeloner - SDR'en vælger én når et lead beder om en mail ({fornavn} {firma} {sdr} {calendly} {note} {om}). Links skrives som [tekst](https://…)</label>
-    <div id="st-mails"></div>
-    <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button>
-    </div>
-    <div class="st-pane" data-k="int" hidden>
-    <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
-    <div class="kicker" style="margin:18px 0 0">Abonnementer - bruges til "pris pr. demo" under Drift</div>
-    <div class="setgrid">
-    <div><label>StoreLeads pr. måned ($)</label><input id="tl-sl" type="number" min="0" value="${e((s.tools || {}).storeleads_usd ?? 250)}"></div>
-    <div><label>Apollo pr. måned ($)</label><input id="tl-ap" type="number" min="0" value="${e((s.tools || {}).apollo_usd ?? 65)}"></div>
-    <div><label>Apollo credits pr. måned (se Apollo → Settings → Usage; 0 = ukendt)</label><input id="tl-apc" type="number" min="0" value="${e((s.tools || {}).apollo_credits ?? 0)}"></div>
-    <div><label>Full Enrich pris pr. credit ($) - et fundet nummer koster 10 credits</label><input id="tl-fe" type="number" min="0" step="0.0001" value="${e((s.tools || {}).fe_usd_per_credit ?? 0.0533)}"></div>
-    <div><label>Dollarkurs (kr pr. $) - bruges til "pris pr. salg" under Konvertering</label><input id="tl-fx" type="number" min="1" step="0.01" value="${e((s.tools || {}).usd_dkk ?? 6.9)}"></div>
-    </div>
-    </div>
-    <div class="row"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="saveSettings()">Gem</button></div>
+    <div class="st-foot"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 22px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
