@@ -14234,7 +14234,7 @@ async function sdrGeminiJson(prompt, audio) {
 }
 // The latest pool and a change counter, for the "a no covers the company" index (sdrNoIndex).
 let SDR_NO_LEADS = null, SDR_NO_VER = 0, SDR_NO_CACHE = null;
-function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) SDR_NO_LEADS = d.leads; return d; }
+function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) { SDR_NO_LEADS = d.leads; SDR_LISTS_REF = d.sdr_lists || {}; SDR_LISTED.map = null; } return d; }
 // Every SDR/admin save also stamps the meta (lists + settings) as freshest.
 function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(POOL_ID, d); }
 // Write-stamps: SDR/admin handlers mark what they changed so a background
@@ -14296,7 +14296,18 @@ function sdrDayKey(dt) {
 // SDR_CLAIM_TTL_MS releases their leads back to the shared pool for the other.
 const SDR_CLAIM_TTL_MS = 5 * 86400e3;
 function sdrClaimActive(l, now) { return !!(l.claimed_by && l.claimed_at && (now - new Date(l.claimed_at).getTime()) < SDR_CLAIM_TTL_MS); }
-function sdrClaimedByOther(l, userId, now) { return sdrClaimActive(l, now) && l.claimed_by !== userId; }
+function sdrClaimedByOther(l, userId, now) { return (sdrClaimActive(l, now) && l.claimed_by !== userId) || sdrOnOtherList(l.cvr, userId); }
+// A lead sitting on another SDR's stored list is theirs, whether or not their
+// claim stamp is still fresh. Victor's list from 29/9 sat untrimmed while he
+// was away; its claims lapsed after 5 days and the same leads were served to
+// Christian and Marcus - two SDRs with the same lead. Built once per pool load.
+let SDR_LISTED = { leads: null, map: null };
+function sdrOnOtherList(cvr, userId) {
+  const d = SDR_NO_LEADS; if (!d) return false;
+  if (SDR_LISTED.leads !== d || !SDR_LISTED.map) { SDR_LISTED = { leads: d, map: new Map() }; for (const [u, L] of Object.entries(SDR_LISTS_REF || {})) for (const c of (L && L.cvrs) || []) if (!SDR_LISTED.map.has(c)) SDR_LISTED.map.set(c, u); }
+  const u = SDR_LISTED.map.get(cvr); return !!u && u !== userId;
+}
+let SDR_LISTS_REF = null;
 function sdrPrimaryContact(l) {
   const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
   // SDR's explicit pick wins; else the first person with a direct DK line; else the first person.
@@ -14834,13 +14845,25 @@ function sdrUnclaim(l) { l.claimed_by = null; l.claimed_at = null; sdrTouch(l); 
 // Today's list for a user - builds it on first touch each day, prunes leads
 // that stopped being eligible, and auto-inserts follow-ups that became due.
 // Returns { list, dirty } - caller saves once.
-function sdrEnsureList(d, userId, now, settings) {
+function sdrEnsureList(d, userId, now, settings, _inner) {
   d.sdr_lists = d.sdr_lists || {};
   const leads = d.leads || [];
   const byCvr = new Map(leads.map((l) => [l.cvr, l]));
   const key = sdrDayKey(now);
   let L = d.sdr_lists[userId];
   let dirty = false;
+  // Keep the other SDRs' stored lists in shape too - trimmed to size, dead
+  // leads dropped, claims released - so a list nobody opens can't hold leads
+  // hostage. Each is built exactly as its owner's load would build it.
+  if (!_inner) {
+    SDR_LISTED.map = null;
+    for (const u of Object.keys(d.sdr_lists)) {
+      if (u === userId || sdrIsAdmin(u)) continue;
+      const r = sdrEnsureList(d, u, now, settings, true);
+      if (r.dirty) dirty = true;
+    }
+    SDR_LISTED.map = null;
+  }
   // Admins don't dial - never build them a list (it would claim leads away
   // from the SDRs). Release anything an admin session claimed earlier.
   if (sdrIsAdmin(userId)) {
@@ -14901,7 +14924,7 @@ function sdrEnsureList(d, userId, now, settings) {
     for (const cvr of drop) { const l = byCvr.get(cvr); if (l && l.claimed_by === userId) sdrUnclaim(l); }
     L.cvrs = L.cvrs.filter((c) => dueNow(c) || keepSet.has(c)); dirty = true; // same order as before
   }
-  if (freshCvrs.length < freshTarget) {
+  if (freshCvrs.length < freshTarget && !_inner) {
     const skip = new Set([...L.cvrs, ...(L.done || [])]);
     const q = sdrQueue(d, userId, now, skip, settings).filter((l) => !sdrIsDue(l, now));
     const want = freshTarget - freshCvrs.length;
@@ -14911,6 +14934,7 @@ function sdrEnsureList(d, userId, now, settings) {
     if (!!L.focus_short !== short) { L.focus_short = short; dirty = true; }
     for (const l of pick) { L.cvrs.push(l.cvr); sdrClaim(l, userId, now); dirty = true; }
   }
+  if (_inner) return { list: L, dirty };
   // Re-stamp my claims at most once a day per lead (keeps pool writes down);
   // a lead on my list that nobody holds, or whose claim lapsed, is taken back.
   for (const cvr of L.cvrs) { const l = byCvr.get(cvr); if (l && (l.claimed_by !== userId || !l.claimed_at || now - new Date(l.claimed_at).getTime() > 86400e3)) { sdrClaim(l, userId, now); dirty = true; } }
