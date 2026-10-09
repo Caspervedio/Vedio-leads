@@ -243,7 +243,12 @@
 #conv-card .cv-kpi.warn{border-color:#f0dfb3;background:#fdf8ec}#conv-card .cv-kpi.warn b,#conv-card .cv-kpi.warn span{color:#A9761E}
 #conv-card .cv-kpi.bad{border-color:#f3cfc9;background:#fdf1ef}#conv-card .cv-kpi.bad b,#conv-card .cv-kpi.bad span{color:#B3352B}
 #conv-card .cv-funnel{padding:12px 24px 16px}
+#conv-card .cv-bar{position:relative;margin-top:20px}
 #conv-card .cv-track{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--paper)}
+#conv-card .cv-mark{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--txt);border-radius:1px}
+#conv-card .cv-mark em{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:3px;white-space:nowrap;font-style:normal;font-size:11.5px;font-weight:700;color:var(--txt)}
+#conv-card .cv-mark.l em{left:0;transform:none}
+#conv-card .cv-mark.r em{left:auto;right:0;transform:none}
 #conv-card .cv-track i{display:block;height:100%}
 #conv-card .cv-track i.won,#conv-card .cv-legend i.won{background:var(--approve)}
 #conv-card .cv-track i.wait,#conv-card .cv-legend i.wait{background:#E0A93B}
@@ -1323,9 +1328,21 @@ function renderConv() {
   const when = `${new Date(D.from + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })} - ${D.to === drillToday() ? 'i dag' : new Date(D.to + 'T12:00:00').toLocaleDateString('da-DK', { day: 'numeric', month: 'short' })}`;
   // Three numbers that matter, one line under each; the rest folds away.
   const r = D.ltv_ratio, r2 = D.ltv_ratio_if_all_waiting_close;
-  const tone = r == null ? '' : r >= 3 ? 'ok' : r >= 1 ? 'warn' : 'bad';
-  const word = r == null ? 'Ingen salg endnu' : r >= 3 ? 'Sundt' : r >= 1 ? 'Tyndt' : 'Taber penge';
+  const HEALTHY = 3; // kundeværdi mindst 3× prisen pr. salg
+  const tone = r == null ? '' : r >= HEALTHY ? 'ok' : r >= 1 ? 'warn' : 'bad';
+  const word = r == null ? 'Ingen salg endnu' : r >= HEALTHY ? 'Sundt' : r >= 1 ? 'Tyndt' : 'Taber penge';
   const seg = (cls, v, title) => (base && v ? `<i class="${cls}" style="width:${100 * v / base}%" title="${title}"></i>` : '');
+  // The line on the bar: how many of the qualified demos must close before the
+  // period is healthy. The cost is fixed by then (commission follows qualified,
+  // not sales), so the number doesn't depend on which ones close.
+  let mark = '';
+  if (base && D.ltv > 0 && c.total > 0) {
+    const need = Math.ceil(HEALTHY * c.total / D.ltv);
+    const over = need > base; const pos = over ? 100 : 100 * need / base;
+    const side = pos < 18 ? ' l' : pos > 82 ? ' r' : '';
+    const label = over ? `Sundt fra ${need} salg - flere end de ${base} kvalificerede` : `Sundt fra ${need} salg`;
+    mark = `<span class="cv-mark${side}" style="left:${pos}%" title="Ved ${need} salg er kundeværdien ${HEALTHY}× prisen pr. salg"><em>${label}</em></span>`;
+  }
   box.innerHTML = `
     <div class="cv-top">
       <div class="cv-kpi ${tone}"><b>${x(r)}</b><span>${word}</span><em>${D.ltv ? `kundeværdi ${e(kr(D.ltv))} mod pris pr. salg${r2 != null && n.pending_sale ? ` · ${x(r2)} hvis alle ventende lukker` : ''}` : 'Sæt kundeværdi (LTV) under ⚙ → Løn'}</em></div>
@@ -1333,7 +1350,7 @@ function renderConv() {
       <div class="cv-kpi"><b>${kr(D.per_sale)}</b><span>pr. salg</span><em>${n.pending_sale && D.per_sale_if_all_waiting_close ? `ned til ${e(kr(D.per_sale_if_all_waiting_close))}, hvis alle ventende lukker` : `${e(kr(D.per_qualified))} pr. kvalificeret demo`}</em></div>
     </div>
     <div class="cv-funnel">
-      <div class="cv-track">${seg('won', n.won, 'solgt')}${seg('wait', n.pending_sale, 'venter på salg')}${seg('lost', n.lost, 'ikke solgt')}</div>
+      <div class="cv-bar"><div class="cv-track">${seg('won', n.won, 'solgt')}${seg('wait', n.pending_sale, 'venter på salg')}${seg('lost', n.lost, 'ikke solgt')}</div>${mark}</div>
       <div class="cv-legend"><span><i class="won"></i>${n.won} solgt</span><span><i class="wait"></i>${n.pending_sale} venter</span><span><i class="lost"></i>${n.lost} ikke solgt</span><span class="dim">${n.qualified} kvalificerede af ${n.booked} bookede ${e(when)} · ${n.pending_review} venter på vurdering · ${n.unqualified} ikke kvalificeret</span></div>
     </div>
     <div class="cv-calc">
