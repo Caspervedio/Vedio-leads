@@ -229,7 +229,10 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
 4. **Meta-tjekkes** — deres Facebook-side fortæller, om de annoncerer lige nu.
 5. **Lander på en liste** — bedste først.
 
-Hvad automatikken ikke kan, havner i Research-fanen til SDR'erne.
+Hvad automatikken ikke kan, havner i Research-fanen til SDR'erne. Et lead, en SDR
+har gemt noget på (navn eller nummer), hviler 30 dage fra Research - også hvis
+der stadig mangler et direkte nummer; det, der blev gemt, er det, der kunne findes.
+"Kunne ikke findes" hviler 90 dage, "Spring over" kun for den SDR, resten af dagen.
 
 **Sparring (den lilla ✦ nederst til højre).** En chat med Gemini i et panel til højre. Den
 kender pitchen, de 12 scripts, træningsguiden, referencekunderne og det lead

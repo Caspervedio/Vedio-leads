@@ -15535,6 +15535,7 @@ app.post("/api/sdr/focus", authMiddleware, (req, res) => {
 const SDR_RESEARCH_SKIP_MS = 90 * 86400e3;   // "kunne ikke findes" rests 90 days
 const SDR_RESEARCH_HOLD_MS = 20 * 60e3;      // soft lock so two SDRs don't collide
 const SDR_RESEARCH_PASS_MS = 8 * 3600e3;     // "Spring over": out of MY queue for the day
+const SDR_RESEARCH_DONE_MS = 30 * 86400e3;   // researched by a human: rests, even if a gap remains
 function sdrResearchScore(l) {
   let s = 0;
   if (isDkPhone(sdrPhone(l).phone)) s += 100;                       // dialable already - only a name missing
@@ -15558,6 +15559,10 @@ function sdrResearchQueue(d, userId, now) {
     if (l.lastAction === "demo-booked") return false;
     if (!sdrResearchNeeds(l).any) return false;
     if (!(l.web || l.website)) return false;                         // nothing to look at
+    // Saved by a human = what could be found. Without this, a lead whose main
+    // number is a phone menu came straight back after "Gem og næste" whenever
+    // the SDR found a name but no direct line - the same card, again and again.
+    if (l.research_at && now - new Date(l.research_at).getTime() < SDR_RESEARCH_DONE_MS) return false;
     if (l.research_skipped_at && now - new Date(l.research_skipped_at).getTime() < SDR_RESEARCH_SKIP_MS) return false;
     if (l.research_hold_by && l.research_hold_by !== userId && l.research_hold_at && now - new Date(l.research_hold_at).getTime() < SDR_RESEARCH_HOLD_MS) return false;
     // "Spring over" = not this one, not now. Mine only, and only for today -
