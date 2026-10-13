@@ -1459,8 +1459,7 @@ function openDemoCheck(cvr) {
   const tier = l.demo_tier || 1; const min = Number(s.tier1_min_signals) || 2;
   const r1 = Number(s.commission_dkk ?? 1000), r2 = Number(s.commission_tier2_dkk ?? 500);
   const n = (k) => CK[k].filter((x) => c && c[k][x.id]).length;
-  const num = (k, i) => (k === 'basics' ? String(i + 1).padStart(2, '0') : 'ABC'[i] || '');
-  const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b><i class="n">${num(k, i)}</i>${e(x.title)}</b><span>${e(x.desc)}</span></span></div>`; };
+  const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span></span></div>`; };
   const status = st === 'qualified' ? `Kvalificeret${l.commission_rate != null ? ' · ' + fmtKr(l.commission_rate) + ' i provision' : ''}` : st === 'unqualified' ? `Ikke kvalificeret${l.demo_review_reason ? ' · ' + l.demo_review_reason : ''}` : 'Afventer din vurdering';
   const inp = 'width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px';
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'ckmodal';

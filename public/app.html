@@ -1168,8 +1168,7 @@ function openDemoCheck() {
 function renderDemoCheck() {
   const bg = $('dcheck'); if (!bg) return;
   const CK = dcList(); const L = S.current || {};
-  const num = (k, i) => (k === 'basics' ? String(i + 1).padStart(2, '0') : 'ABC'[i] || '');
-  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b><i class="n">${num(k, i)}</i>${e(x.title)}</b><span>${e(x.desc)}</span>${x.how ? `<em class="how">${e(x.how)}</em>` : ''}</span></label>`;
+  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${x.how ? `<em class="how">${e(x.how)}</em>` : ''}</span></label>`;
   const head = (step, h, p) => `<div class="dc-head"><div><span class="dc-kicker">Demo booket med ${e(L.name || '')} · trin ${step} af 2</span><h3>${h}</h3><p>${p}</p></div><span class="dc-steps"><i class="${step === 1 ? 'on' : 'done'}"></i><i class="${step === 2 ? 'on' : ''}"></i></span></div>`;
   if (DC.step === 1) {
     bg.innerHTML = `<div class="modal wide dcheck">
