@@ -184,7 +184,7 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
 - **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
   tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
   på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på
-  annoncer · løbende behov for videoer · en på holdet kan drive det · fri til at
+  annoncer · løbende behov for annoncer · en på holdet kan drive det · fri til at
   starte · beslutningstager deltager), så de **tre købssignaler** (nævner selv
   problemet · har prøvet at løse det · vil i gang snart). Signalerne sætter tier:
   2 eller flere = **Tier 1** (fuld provision, 1.000 kr), ellers **Tier 2** (500 kr) -
