@@ -1168,16 +1168,18 @@ function openDemoCheck() {
 function renderDemoCheck() {
   const bg = $('dcheck'); if (!bg) return;
   const CK = dcList(); const L = S.current || {};
-  const item = (k, x) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${x.how ? `<em>${e(x.how)}</em>` : ''}</span></label>`;
+  const num = (k, i) => (k === 'basics' ? String(i + 1).padStart(2, '0') : 'ABC'[i] || '');
+  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b><i class="n">${num(k, i)}</i>${e(x.title)}</b><span>${e(x.desc)}</span>${x.how ? `<em class="how">${e(x.how)}</em>` : ''}</span></label>`;
+  const head = (step, h, p) => `<div class="dc-head"><div><span class="dc-kicker">Demo booket med ${e(L.name || '')} · trin ${step} af 2</span><h3>${h}</h3><p>${p}</p></div><span class="dc-steps"><i class="${step === 1 ? 'on' : 'done'}"></i><i class="${step === 2 ? 'on' : ''}"></i></span></div>`;
   if (DC.step === 1) {
     bg.innerHTML = `<div class="modal wide dcheck">
-      <div class="dc-head"><div><h3>Demo booket med ${e(L.name || '')}</h3><p>Seks ting, der skal være på plads, før demoen kan blive kvalificeret. Sæt flueben ved det, du har tjekket eller fået bekræftet.</p></div><span class="dc-step">1 af 2 · Grundlag</span></div>
-      <div class="ck-list">${CK.basics.map((x) => item('basics', x)).join('')}</div>
+      ${head(1, 'Grundlag', 'Seks ting, der skal være på plads, før demoen kan blive kvalificeret. Sæt flueben ved det, du har tjekket eller fået bekræftet.')}
+      <div class="ck-list">${CK.basics.map((x, i) => item('basics', x, i)).join('')}</div>
       <div class="dc-foot" id="dc-foot"></div></div>`;
   } else {
     bg.innerHTML = `<div class="modal wide dcheck">
-      <div class="dc-head"><div><h3>Købssignaler</h3><p>Hvad tyder på, at de køber? Sæt flueben ved det, der kom fra dem selv i samtalen. ${dcMin()} eller flere = Tier 1.</p></div><span class="dc-step">2 af 2 · Signaler</span></div>
-      <div class="ck-list">${CK.signals.map((x) => item('signals', x)).join('')}</div>
+      ${head(2, 'Købssignaler', `Hvad tyder på, at de køber? Sæt flueben ved det, der kom fra dem selv i samtalen. ${dcMin()} eller flere giver Tier 1.`)}
+      <div class="ck-list">${CK.signals.map((x, i) => item('signals', x, i)).join('')}</div>
       <div id="dc-tier"></div>
       <div class="dc-foot" id="dc-foot"></div></div>`;
   }
@@ -1185,15 +1187,16 @@ function renderDemoCheck() {
 }
 function renderDemoCheckFoot() {
   const CK = dcList(); const nb = dcCount('basics'), NB = CK.basics.length;
+  const prog = (n, N, word) => `<span class="dc-count"><span class="dc-prog"><i style="width:${N ? 100 * n / N : 0}%"></i></span>${n} af ${N} ${word}</span>`;
   if (DC.step === 1) {
-    $('dc-foot').innerHTML = `<span class="dc-count">${nb} af ${NB} på plads</span><div class="row"><button class="pill tertiary" onclick="$('dcheck').remove()">Annuller</button><button class="pill primary" onclick="DC.step=2;renderDemoCheck()">Videre til købssignaler →</button></div>`;
+    $('dc-foot').innerHTML = `${prog(nb, NB, 'på plads')}<div class="row"><button class="pill tertiary" onclick="$('dcheck').remove()">Annuller</button><button class="pill primary" onclick="DC.step=2;renderDemoCheck()">Videre til købssignaler →</button></div>`;
     return;
   }
   const t = dcTier(), ns = dcCount('signals'), NS = CK.signals.length;
   const missing = CK.basics.filter((x) => !DC.basics[x.id]).map((x) => x.short);
-  $('dc-tier').innerHTML = `<div class="dc-tier t${t}"><b>Tier ${t}</b><span>${ns} af ${NS} købssignaler${t === 1 ? '' : ` - Tier 1 fra ${dcMin()}`} · ${e(fmtKr(dcRate(t)))} i provision, hvis demoen kvalificeres</span></div>`
-    + (missing.length ? `<div class="dc-warn"><b>${missing.length} af ${NB} grundlag mangler:</b> ${e(missing.join(', '))}. Demoen bookes alligevel, men den bliver måske ikke kvalificeret - skriv i noten, hvad du ved.</div>` : '');
-  $('dc-foot').innerHTML = `<span class="dc-count">${nb} af ${NB} grundlag · ${ns} af ${NS} signaler</span><div class="row"><button class="pill tertiary" onclick="DC.step=1;renderDemoCheck()">← Tilbage</button><button class="pill approve" onclick="demoCheckSubmit()">Demo booket ✓</button></div>`;
+  $('dc-tier').innerHTML = `<div class="dc-tier t${t}"><div class="l"><span>Tier</span><b>${t}</b></div><div class="r"><b>${e(fmtKr(dcRate(t)))} i provision</b><span>${ns} af ${NS} købssignaler${t === 1 ? '' : ` · Tier 1 fra ${dcMin()}`} · udbetales når demoen er kvalificeret</span></div></div>`
+    + (missing.length ? `<div class="dc-warn"><b>${missing.length} af ${NB} grundlag mangler</b><div class="chips">${missing.map((m) => `<span>${e(m)}</span>`).join('')}</div><p>Demoen bookes alligevel, men den bliver måske ikke kvalificeret - skriv i noten, hvad du ved.</p></div>` : '');
+  $('dc-foot').innerHTML = `${prog(nb, NB, 'grundlag')}<div class="row"><button class="pill tertiary" onclick="DC.step=1;renderDemoCheck()">← Tilbage</button><button class="pill go" onclick="demoCheckSubmit()">Demo booket ✓</button></div>`;
 }
 async function demoCheckSubmit() {
   if (busy) return;

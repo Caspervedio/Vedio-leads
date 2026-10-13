@@ -1459,26 +1459,28 @@ function openDemoCheck(cvr) {
   const tier = l.demo_tier || 1; const min = Number(s.tier1_min_signals) || 2;
   const r1 = Number(s.commission_dkk ?? 1000), r2 = Number(s.commission_tier2_dkk ?? 500);
   const n = (k) => CK[k].filter((x) => c && c[k][x.id]).length;
-  const item = (k, x) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span></span></div>`; };
+  const num = (k, i) => (k === 'basics' ? String(i + 1).padStart(2, '0') : 'ABC'[i] || '');
+  const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b><i class="n">${num(k, i)}</i>${e(x.title)}</b><span>${e(x.desc)}</span></span></div>`; };
+  const status = st === 'qualified' ? `Kvalificeret${l.commission_rate != null ? ' · ' + fmtKr(l.commission_rate) + ' i provision' : ''}` : st === 'unqualified' ? `Ikke kvalificeret${l.demo_review_reason ? ' · ' + l.demo_review_reason : ''}` : 'Afventer din vurdering';
   const inp = 'width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px';
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'ckmodal';
   bg.innerHTML = `<div class="modal wide dcheck">
-    <div class="dc-head"><div><h3>${e(l.name)}</h3><p>Booket ${e(fmtDate(l.demo_booked_at))} af ${e(l.demo_booked_by_name || '')}${c ? " · SDR'ens tjekliste fra samtalen" : ' · booket uden tjekliste'}${st !== 'pending' ? ` · <b>${ST[st]}</b>` : ''}</p></div>${c ? `<span class="dc-step">${n('basics')} af ${CK.basics.length} grundlag</span>` : ''}</div>
-    ${c ? `<div class="dc-k">Grundlag - skal være på plads for at kvalificere</div><div class="ck-list">${CK.basics.map((x) => item('basics', x)).join('')}</div>
-    <div class="dc-k">Købssignaler - ${n('signals')} af ${CK.signals.length}</div><div class="ck-list">${CK.signals.map((x) => item('signals', x)).join('')}</div>`
+    <div class="dc-head"><div><span class="dc-kicker">Demo · booket ${e(fmtDate(l.demo_booked_at))} af ${e(l.demo_booked_by_name || '')}${c ? " · SDR'ens tjekliste" : ' · uden tjekliste'}</span><h3>${e(l.name)}</h3><p>${e(status)}</p></div>${c ? `<span class="dc-step">${n('basics')} af ${CK.basics.length} grundlag</span>` : ''}</div>
+    ${c ? `<div class="dc-k">Grundlag - skal være på plads for at kvalificere</div><div class="ck-list">${CK.basics.map((x, i) => item('basics', x, i)).join('')}</div>
+    <div class="dc-k">Købssignaler - ${n('signals')} af ${CK.signals.length}</div><div class="ck-list">${CK.signals.map((x, i) => item('signals', x, i)).join('')}</div>`
     : `<p class="sub">Demoen blev booket, før tjeklisten fandtes. Vælg tier ud fra det, du ved.</p>`}
     <div class="dc-k">Tier - afgør provisionen</div>
     <div class="dc-tiers">
       <label><input type="radio" name="ck-tier" value="1" ${tier === 1 ? 'checked' : ''}><b>Tier 1 · ${e(fmtKr(r1))}</b><span>${c ? (n('signals') >= min ? 'Foreslået af købssignalerne' : `Kræver ${min} købssignaler`) : 'Fuld provision'}</span></label>
       <label><input type="radio" name="ck-tier" value="2" ${tier === 2 ? 'checked' : ''}><b>Tier 2 · ${e(fmtKr(r2))}</b><span>${c && n('signals') < min ? 'Foreslået af købssignalerne' : 'Færre købssignaler'}</span></label>
     </div>
-    ${st === 'qualified' && l.commission_rate != null ? `<p class="sub" style="margin-top:8px">Kvalificeret til ${e(fmtKr(l.commission_rate))}. Skifter du tier, følger satsen med - indtil lønperioden låses.</p>` : ''}
+    ${st === 'qualified' ? `<p class="sub" style="margin-top:8px">Skifter du tier, følger satsen med - indtil lønperioden låses.</p>` : ''}
     <div class="dc-k">Hvis ikke kvalificeret - hvorfor?</div>
     <input id="ck-reason" placeholder="no-show, ikke ICP, ikke interesseret…" value="${e(l.demo_review_reason || '')}" style="${inp}">
     <div class="dc-foot"><span></span><div class="row">
       <button class="pill tertiary" onclick="$('ckmodal').remove()">Luk</button>
       ${st !== 'unqualified' ? `<button class="pill" onclick="ckDecide('${e(cvr)}','unqualified')">Ikke kvalificeret</button>` : ''}
-      <button class="pill primary" onclick="ckDecide('${e(cvr)}','qualified')">${st === 'qualified' ? 'Gem tier' : 'Kvalificeret ✓'}</button>
+      <button class="pill ${st === 'qualified' ? 'primary' : 'go'}" onclick="ckDecide('${e(cvr)}','qualified')">${st === 'qualified' ? 'Gem tier' : 'Kvalificeret ✓'}</button>
     </div></div></div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
