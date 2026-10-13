@@ -181,6 +181,19 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
   som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
   `sdr_absence.json` (ikke i puljen).
+- **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
+  tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
+  på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på
+  annoncer · løbende behov for videoer · en på holdet kan drive det · fri til at
+  starte · beslutningstager deltager), så de **tre købssignaler** (nævner selv
+  problemet · har prøvet at løse det · vil i gang snart). Signalerne sætter tier:
+  2 eller flere = **Tier 1** (fuld provision, 1.000 kr), ellers **Tier 2** (500 kr) -
+  grænsen og satserne står under ⚙ → Løn. Mangler der grundlag, siger listen det,
+  men demoen bookes alligevel. Svarene gemmes på leadet (`demo_check`, `demo_tier`),
+  står i Slack-beskeden, i Twenty-noten og i Excel-arket, og admin ser dem under
+  Resultater → Demoer, når demoen vurderes - *Kvalificeret* går altid gennem listen,
+  hvor tier kan rettes. Satsen låses ved kvalificering; tier kan rettes, indtil
+  lønperioden låses.
 - **Demoer** (fanen under Resultater) — godkend eller afvis bookede demoer. Provision følger
   **lønperioden**: et møde godkendt til og med d. 28. kommer med i den
   måneds løn, godkendt fra d. 29. i næste måneds. Vælg "Løn <måned>" for at se

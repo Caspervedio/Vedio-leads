@@ -428,6 +428,8 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
 #view-demos td.demonote{min-width:110px;max-width:220px;color:var(--txt-soft)}
 #view-demos td.demonote .nt{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 #view-demos td.demost .why{display:block;margin-top:5px;font-size:12px;color:var(--txt-soft);white-space:normal;max-width:260px}
+#view-demos td.demost .cksum{display:block;margin-top:5px;font-size:12px;color:var(--txt-faint);text-align:left;white-space:normal}
+#view-demos td.demost .cksum:hover{color:var(--txt)}
 .twl{display:block;margin-top:6px;font-size:12.5px;font-weight:700;color:var(--violet);text-decoration:none;width:max-content}
 .twl:hover{text-decoration:underline}
 .twn{display:block;margin-top:5px;font-size:12px;color:var(--txt-faint)}
@@ -662,7 +664,7 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
     </div>
     <div id="res-demos">
     <div class="tablewrap">
-      <div class="thead"><div><h3>Bookede demoer</h3><p>Vurdér efter demoen: kvalificeret = ICP, interesseret og mødt op. Kun kvalificerede demoer giver provision.</p></div><div class="demo-ctl"><select id="demo-month" onchange="setDemoMonth(this.value)" title="Vis møderne i en lønperiode (og dem der afventer, mens perioden er åben)"></select><select id="demo-sdr" onchange="setDemoSdr(this.value)" title="Vis kun én SDR's demoer"></select><div class="filters" id="demo-filters"></div></div></div>
+      <div class="thead"><div><h3>Bookede demoer</h3><p>Vurdér efter demoen ud fra SDR'ens tjekliste - de seks grundlag skal være på plads. Kun kvalificerede demoer giver provision: Tier 1 fuld sats, Tier 2 lavere.</p></div><div class="demo-ctl"><select id="demo-month" onchange="setDemoMonth(this.value)" title="Vis møderne i en lønperiode (og dem der afventer, mens perioden er åben)"></select><select id="demo-sdr" onchange="setDemoSdr(this.value)" title="Vis kun én SDR's demoer"></select><div class="filters" id="demo-filters"></div></div></div>
       <table class="demotbl"><thead><tr><th>Booket</th><th>Virksomhed</th><th>Kontakt</th><th>Note</th><th>Af</th><th>Status</th></tr></thead><tbody id="tb-demo"></tbody></table>
     </div>
     </div>
@@ -1289,9 +1291,10 @@ function renderDemos() {
       <td class="democ">${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>${l.contact.email ? `<span class="sub">${e(l.contact.email)}</span>` : ''}` : '<b>-</b>'}<span class="sub">${e(fmtPhone(l.phone))}</span></td>
       <td class="demonote"><div class="nt" title="${e(l.last_note || '')}">${e(l.last_note || '')}</div></td>
       <td>${e(l.demo_booked_by_name || '')}</td>
-      <td class="demost" onclick="event.stopPropagation()"><div class="chips"><span class="chip st-${st}">${ST[st]}</span>${l.sale_status === 'won' ? '<span class="chip sold">Solgt</span>' : l.sale_status === 'lost' ? '<span class="chip">Ikke solgt</span>' : ''}</div>${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
+      <td class="demost" onclick="event.stopPropagation()"><div class="chips"><span class="chip st-${st}">${ST[st]}</span>${l.demo_tier ? `<span class="chip tier${e(String(l.demo_tier))}" title="Klik for at se tjeklisten eller rette tier" onclick="openDemoCheck('${e(l.cvr)}')" style="cursor:pointer">Tier ${e(String(l.demo_tier))}</span>` : ''}${l.sale_status === 'won' ? '<span class="chip sold">Solgt</span>' : l.sale_status === 'lost' ? '<span class="chip">Ikke solgt</span>' : ''}</div>${l.demo_review_reason ? `<span class="why">${e(l.demo_review_reason)}</span>` : ''}
+        <button class="linkbtn cksum" onclick="openDemoCheck('${e(l.cvr)}')">${e(ckSummary(l))}</button>
         ${twentyCell(l.twenty)}
-        <div class="review">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
+        <div class="review">${st !== 'qualified' ? `<button class="ok" onclick="openDemoCheck('${e(l.cvr)}')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div></td>
     </tr>`; }).join('') : `<tr class="empty-row"><td colspan="6">Ingen demoer ${demoFilter === 'all' ? (listPeriod || demoSdr ? 'med de valg' : 'endnu') : 'i den kategori' + (listPeriod || demoSdr ? ' med de valg' : '')}.</td></tr>`;
   renderSales();
 }
@@ -1439,9 +1442,58 @@ function saleLost(cvr) {
     <label>Note - valgfri</label><input id="sm-note" maxlength="500" placeholder="fx vender tilbage i Q1">
     <div class="row"><button class="pill tertiary" onclick="$('salemodal').remove()">Annullér</button><button class="pill primary" onclick="saleSet('${e(cvr)}','lost',{ reason: (document.querySelector('input[name=sm-r]:checked') || {}).value, note: $('sm-note').value })">Markér ikke solgt</button></div>`);
 }
-async function demoReview(cvr, status) {
-  let reason = ''; if (status === 'unqualified') { reason = prompt('Hvorfor ikke kvalificeret? (no-show, ikke ICP, ikke interesseret…)'); if (reason === null) return; }
-  try { await post('/api/sdr/demo-review', { cvr, status, reason }); toast(status === 'qualified' ? '✓ Kvalificeret - tæller i den åbne lønperiode' : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); payReset(); await loadPay(); loadOverview(); } catch (ex) { toast(ex.message, 4000); }
+/* The SDR's checklist from the call, read-only, with the tier choice and the
+   decision. "Kvalificeret" always comes through here, so the tier is seen. */
+function ckSummary(l) {
+  const CK = O.settings && O.settings.checklist; const c = l.demo_check;
+  if (!CK || !c || !c.basics) return 'Booket uden tjekliste';
+  const n = (o) => Object.values(o || {}).filter(Boolean).length;
+  return `Grundlag ${n(c.basics)}/${CK.basics.length} · købssignaler ${n(c.signals)}/${CK.signals.length}`;
+}
+function openDemoCheck(cvr) {
+  const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
+  if ($('ckmodal')) $('ckmodal').remove();
+  const CK = (O.settings && O.settings.checklist) || { basics: [], signals: [] }; const s = O.settings || {};
+  const c = l.demo_check && l.demo_check.basics ? l.demo_check : null;
+  const st = l.demo_status || 'pending'; const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
+  const tier = l.demo_tier || 1; const min = Number(s.tier1_min_signals) || 2;
+  const r1 = Number(s.commission_dkk ?? 1000), r2 = Number(s.commission_tier2_dkk ?? 500);
+  const n = (k) => CK[k].filter((x) => c && c[k][x.id]).length;
+  const item = (k, x) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span></span></div>`; };
+  const inp = 'width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px';
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'ckmodal';
+  bg.innerHTML = `<div class="modal wide dcheck">
+    <div class="dc-head"><div><h3>${e(l.name)}</h3><p>Booket ${e(fmtDate(l.demo_booked_at))} af ${e(l.demo_booked_by_name || '')}${c ? " · SDR'ens tjekliste fra samtalen" : ' · booket uden tjekliste'}${st !== 'pending' ? ` · <b>${ST[st]}</b>` : ''}</p></div>${c ? `<span class="dc-step">${n('basics')} af ${CK.basics.length} grundlag</span>` : ''}</div>
+    ${c ? `<div class="dc-k">Grundlag - skal være på plads for at kvalificere</div><div class="ck-list">${CK.basics.map((x) => item('basics', x)).join('')}</div>
+    <div class="dc-k">Købssignaler - ${n('signals')} af ${CK.signals.length}</div><div class="ck-list">${CK.signals.map((x) => item('signals', x)).join('')}</div>`
+    : `<p class="sub">Demoen blev booket, før tjeklisten fandtes. Vælg tier ud fra det, du ved.</p>`}
+    <div class="dc-k">Tier - afgør provisionen</div>
+    <div class="dc-tiers">
+      <label><input type="radio" name="ck-tier" value="1" ${tier === 1 ? 'checked' : ''}><b>Tier 1 · ${e(fmtKr(r1))}</b><span>${c ? (n('signals') >= min ? 'Foreslået af købssignalerne' : `Kræver ${min} købssignaler`) : 'Fuld provision'}</span></label>
+      <label><input type="radio" name="ck-tier" value="2" ${tier === 2 ? 'checked' : ''}><b>Tier 2 · ${e(fmtKr(r2))}</b><span>${c && n('signals') < min ? 'Foreslået af købssignalerne' : 'Færre købssignaler'}</span></label>
+    </div>
+    ${st === 'qualified' && l.commission_rate != null ? `<p class="sub" style="margin-top:8px">Kvalificeret til ${e(fmtKr(l.commission_rate))}. Skifter du tier, følger satsen med - indtil lønperioden låses.</p>` : ''}
+    <div class="dc-k">Hvis ikke kvalificeret - hvorfor?</div>
+    <input id="ck-reason" placeholder="no-show, ikke ICP, ikke interesseret…" value="${e(l.demo_review_reason || '')}" style="${inp}">
+    <div class="dc-foot"><span></span><div class="row">
+      <button class="pill tertiary" onclick="$('ckmodal').remove()">Luk</button>
+      ${st !== 'unqualified' ? `<button class="pill" onclick="ckDecide('${e(cvr)}','unqualified')">Ikke kvalificeret</button>` : ''}
+      <button class="pill primary" onclick="ckDecide('${e(cvr)}','qualified')">${st === 'qualified' ? 'Gem tier' : 'Kvalificeret ✓'}</button>
+    </div></div></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+async function ckDecide(cvr, status) {
+  const tier = Number((document.querySelector('input[name=ck-tier]:checked') || {}).value) || 1;
+  const reason = status === 'unqualified' ? ($('ck-reason').value || '').trim() : '';
+  if (status === 'unqualified' && !reason) { toast('Skriv kort hvorfor'); $('ck-reason').focus(); return; }
+  if ($('ckmodal')) $('ckmodal').remove();
+  await demoReview(cvr, status, { tier, reason });
+}
+async function demoReview(cvr, status, extra) {
+  let reason = extra && extra.reason != null ? extra.reason : '';
+  if (status === 'unqualified' && !extra) { reason = prompt('Hvorfor ikke kvalificeret? (no-show, ikke ICP, ikke interesseret…)'); if (reason === null) return; }
+  try { await post('/api/sdr/demo-review', { cvr, status, reason, ...(extra && extra.tier ? { tier: extra.tier } : {}) }); toast(status === 'qualified' ? `✓ Kvalificeret${extra && extra.tier ? ' som tier ' + extra.tier : ''} - tæller i den åbne lønperiode` : status === 'unqualified' ? 'Markeret ikke kvalificeret' : 'Sat til afventer'); payReset(); await loadPay(); loadOverview(); } catch (ex) { toast(ex.message, 4000); }
 }
 
 /* leads browser */
@@ -1800,7 +1852,9 @@ function openSettings() {
       + grp('Oplæring',
         row('Oplæringsperiode til og med', 'Coachen og ugens opsummering vurderer fremgang, ikke fulde mål. Tom = slået fra.', `<input id="st-onboard" type="date" value="${e(s.onboarding_until || '')}">`)))}
     ${pane('pay', 'Provision følger lønperioden (29.-28.). Satsen gælder fra den dag, en demo bliver kvalificeret.', grp('Løn',
-        row('Provision pr. kvalificeret demo', 'Hver demo beholder satsen fra den dag, den blev kvalificeret.', num('st-comm', s.commission_dkk ?? 1000, { min: 0, unit: 'kr' }))
+        row('Provision · Tier 1', 'Demoer med nok købssignaler. Hver demo beholder satsen fra den dag, den blev kvalificeret.', num('st-comm', s.commission_dkk ?? 1000, { min: 0, unit: 'kr' }))
+      + row('Provision · Tier 2', 'Demoer med færre købssignaler.', num('st-comm2', s.commission_tier2_dkk ?? 500, { min: 0, unit: 'kr' }))
+      + row('Tier 1 fra', 'Så mange af de tre købssignaler (nævner selv problemet, har prøvet at løse det, vil i gang snart). Du kan altid rette tier, når demoen vurderes.', num('st-t1sig', s.tier1_min_signals ?? 2, { min: 1, max: 3, unit: 'signaler' }))
       + row('Grundløn pr. SDR pr. måned', 'Vises sammen med provisionen under Dine tal, og bruges i pris pr. salg.', num('st-base', s.base_salary_dkk ?? 15000, { min: 0, unit: 'kr' }))
       + row('Kundeværdi (LTV)', 'Hvad en kunde er værd over sin levetid. Holdes op mod pris pr. salg under Konvertering - sundt fra 3×.', num('st-ltv', s.ltv_dkk ?? 19000, { min: 0, unit: 'kr' })))
       + grp('Rykker på kvalificerede demoer uden afgørelse',
@@ -1860,7 +1914,7 @@ async function saveSettings() {
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
     cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
     sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45, ltv_dkk: Number($('st-ltv').value) || 0,
-    daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
+    daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), commission_tier2_dkk: Number($('st-comm2').value), tier1_min_signals: Number($('st-t1sig').value) || 2, base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     rules: { require_meta: $('r-meta').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }

@@ -13615,7 +13615,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533, usd_dkk: 6.9 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, ltv_dkk: 19000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, ltv_dkk: 19000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, commission_tier2_dkk: 500, tier1_min_signals: 2, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -13697,6 +13697,7 @@ async function sdrNotifyDemo(url, lead, sdrName, note) {
     `👤 ${c.name || "-"}${c.title ? " · " + c.title : ""} · 📞 ${sdrPhone(lead).phone || "-"}${c.email ? " · ✉ " + c.email : ""}`,
     lead.web ? `🌐 ${lead.web}` : null,
     (lead.meta_advertiser || ads) ? `📣 Kører ${ads ? ads + " " : ""}Meta-annoncer lige nu` : null,
+    demoCheckLine(lead) ? `🏷 ${demoCheckLine(lead)}` : null,
     note ? `📝 ${note}` : null,
   ].filter(Boolean).join("\n");
   try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); }
@@ -13859,6 +13860,7 @@ function twentyDemoNote(lead, sdrName) {
     phone ? `- Telefon: ${phone}` : null,
     c.name ? `- Kontakt: ${c.name}${c.title ? " · " + c.title : ""}${c.email ? " · " + c.email : ""}` : null,
     (lead.meta_advertiser || ads) ? `- Meta: kører ${ads ? ads + " " : ""}annoncer lige nu` : null,
+    demoCheckLine(lead) ? `- Tjekliste: ${demoCheckLine(lead)}` : null,
     lead.about ? `- Om dem: ${String(lead.about).replace(/\n/g, " / ")}` : null,
     `- Kilde: Vedio Ring (${sdrSourceLabel(lead) || lead.source || "ukendt"})`,
   ].filter((x) => x !== null);
@@ -14240,7 +14242,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; SDR_NO_VER++; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "sale_followup_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "demo_check", "demo_tier", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "sale_followup_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -14724,7 +14726,7 @@ function sdrSlim(l, nameById) {
     email_sent_at: l.email_sent_at || null, email_count: l.email_count || 0, email_template: l.email_template || "", email_to: l.email_to || "",
     demo_booked_at: l.demo_booked_at || null, demo_booked_by: l.demo_booked_by || null, demo_booked_by_name: l.demo_booked_by ? (nameById[l.demo_booked_by] || l.demo_booked_by) : "",
     demo_status: l.demo_status || (l.lastAction === "demo-booked" ? "pending" : null), demo_review_reason: l.demo_review_reason || "",
-    demo_qualified_at: l.demo_qualified_at || null,
+    demo_qualified_at: l.demo_qualified_at || null, demo_tier: l.demo_tier || null, demo_check: l.demo_check || null, commission_rate: l.commission_rate ?? null,
     sale_status: l.sale_status || null, sale_at: l.sale_at || null, sale_value_dkk: l.sale_value_dkk ?? null, sale_reason: l.sale_reason || "", sale_note: l.sale_note || "", sale_followup_at: l.sale_followup_at || null,
     undo_until: l._undo && l._undo.at ? new Date(new Date(l._undo.at).getTime() + SDR_UNDO_WINDOW_MS).toISOString() : null,
     last_debrief: Array.isArray(l.debriefs) && l.debriefs.length ? l.debriefs[l.debriefs.length - 1] : null,
@@ -14959,6 +14961,59 @@ function commissionLabel(P) { const [y, m] = P.split("-").map(Number); return ne
 function loadCommissionLocks() { try { const j = JSON.parse(fs.readFileSync(COMMISSION_LOCKS_FILE, "utf8")); return j && j.periods ? j : { periods: {} }; } catch { return { periods: {} }; } }
 // When the meeting was approved. Older approvals only carry the review stamp.
 function demoQualifiedAt(l) { return l.demo_qualified_at || (l.demo_status === "qualified" ? (l.demo_reviewed_at || l.demo_booked_at || null) : null); }
+// The demo checklist (Casper, Oct 2026): six basics that must be in place
+// for a demo to qualify, and three buying signals that set the tier. Tier 1
+// pays the full commission, tier 2 the lower rate. The texts live here so
+// the SDR app, admin, Slack and Twenty all say the same thing.
+const SDR_CHECKLIST = {
+  basics: [
+    { id: "live", short: "Sælger online", title: "Butikken er i gang og sælger online", desc: "Der kommer rigtige ordrer ind - ikke en butik, der lige er åbnet.", how: "Tjek før opkaldet: StoreLeads." },
+    { id: "spend", short: "10.000 kr/md på annoncer", title: "Mindst 10.000 kr om måneden på annoncer", desc: "På Meta eller TikTok, lige nu. Ikke \"planlægger at starte\". Vejledende niveau - vi justerer, når vi ser, hvem der køber.", how: "Tjek aktive annoncer i Meta Ad Library, og spørg til forbruget i samtalen." },
+    { id: "volume", short: "Løbende behov for videoer", title: "De har brug for nye annoncevideoer hele tiden", desc: "Flere annoncer kører, og der kommer tit nye til. De skal blive ved med at fodre deres annoncer for at undgå træthed. Ikke en enkelt kampagne.", how: "Tjek Meta Ad Library: hvor mange annoncer, og hvor tit starter der nye." },
+    { id: "person", short: "En på holdet kan drive det", title: "Nogen på holdet kan drive det", desc: "En person, der kan optage materiale og arbejde med os uge for uge. Helst en, der allerede optager video til annoncer eller sociale medier.", how: "Spørg i samtalen: hvem skal gøre det?" },
+    { id: "free", short: "Fri til at starte", title: "De er fri til at starte", desc: "Ikke bundet til et andet videobureau eller en kontrakt de kommende måneder.", how: "Spørg i samtalen." },
+    { id: "decider", short: "Beslutningstager deltager", title: "Beslutningstageren deltager", desc: "Ejeren, eller den der kan sige ja.", how: "Bekræft i samtalen og i invitationen." },
+  ],
+  signals: [
+    { id: "problem", short: "Nævner selv problemet", title: "De nævner selv problemet", desc: "\"Vi kan ikke følge med på nye videoer\" kommer fra dem, ikke fra os. Trætte annoncer, stigende pris pr. salg, indhold der tager for lang tid." },
+    { id: "tried", short: "Har prøvet at løse det", title: "De har allerede prøvet at løse det", desc: "Et bureau, en freelancer eller internt. De ved, det er svært, og hvad det koster." },
+    { id: "soon", short: "Vil i gang snart", title: "De vil i gang snart", desc: "Inden for cirka en måned. De ved, det haster at komme i gang." },
+  ],
+};
+// What the SDR ticked, as booleans keyed by id - anything else is dropped.
+function demoCheckClean(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const pick = (list, src) => Object.fromEntries(list.map((x) => [x.id, !!(src && src[x.id])]));
+  return { basics: pick(SDR_CHECKLIST.basics, raw.basics), signals: pick(SDR_CHECKLIST.signals, raw.signals) };
+}
+function demoCheckCount(check) {
+  const n = (o) => Object.values(o || {}).filter(Boolean).length;
+  return check && check.basics ? { basics: n(check.basics), signals: n(check.signals) } : null;
+}
+// Tier from the buying signals: enough of them and it is a tier 1 demo.
+function demoTierOf(check, settings) {
+  const min = Math.max(1, Math.min(SDR_CHECKLIST.signals.length, Number(settings.tier1_min_signals) || 2));
+  const c = demoCheckCount(check);
+  return c && c.signals >= min ? 1 : 2;
+}
+function demoTierRate(tier, settings) { return Number(tier) === 2 ? Number(settings.commission_tier2_dkk ?? 500) : Number(settings.commission_dkk ?? 1000); }
+// A demo still waiting for review counts at the tier the checklist suggested.
+function demoPendingRate(l, settings) { return demoTierRate(l.demo_tier || 1, settings); }
+// One line for Slack, Twenty and the export: tier, what the checklist is
+// missing, and which buying signals were there.
+function demoCheckLine(lead, withTier = true) {
+  const c = demoCheckCount(lead.demo_check); if (!c) return null;
+  const missing = SDR_CHECKLIST.basics.filter((x) => !lead.demo_check.basics[x.id]).map((x) => x.short);
+  const got = SDR_CHECKLIST.signals.filter((x) => lead.demo_check.signals[x.id]).map((x) => x.short);
+  return `${withTier ? `Tier ${lead.demo_tier || 1} · ` : ""}grundlag ${c.basics}/${SDR_CHECKLIST.basics.length}${missing.length ? " (mangler: " + missing.join(", ") + ")" : ""} · købssignaler ${c.signals}/${SDR_CHECKLIST.signals.length}${got.length ? " (" + got.join(", ") + ")" : ""}`;
+}
+// Once the salary period a demo was paid in is locked, its tier stays.
+function demoPeriodLocked(d, lead, settings) {
+  const q = demoQualifiedAt(lead); if (!q) return false;
+  const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
+  const P = lead.commission_period || commissionPeriodOf(q);
+  return !!((commissionLocks(d, settings, nameById).locks.periods || {})[P]);
+}
 function demoCommissionRate(l, settings) { return Number.isFinite(Number(l.commission_rate)) && l.commission_rate !== null ? Number(l.commission_rate) : Number(settings.commission_dkk || 0); }
 // Approved as of `t`: a review that took it away after `t` doesn't count yet.
 function demoApprovedAsOf(l, t) {
@@ -15104,17 +15159,17 @@ function buildSdrState(userId, d) {
   const cOpen = commissionPeriodView(d, commissionPeriodOf(now), settings, nameById);
   const cLast = commissionPeriodView(d, commissionPrev(cOpen.key), settings, nameById);
   const mKey = cOpen.key, lmKey = cLast.key;
-  for (const p of Object.values(per)) { p.demosQualMonth = 0; p.demosPendingMonth = 0; p.demosUnqualMonth = 0; p.commissionMonth = 0; p.commissionLastMonth = 0; p.demosQualLastMonth = 0; }
-  const perOf = (by) => per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
+  for (const p of Object.values(per)) { p.demosQualMonth = 0; p.demosPendingMonth = 0; p.pendingKrMonth = 0; p.demosUnqualMonth = 0; p.commissionMonth = 0; p.commissionLastMonth = 0; p.demosQualLastMonth = 0; }
+  const perOf = (by) => per[by] || (per[by] = { id: by, name: nameById[by] || by, callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, pendingKrMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 });
   for (const e of cOpen.entries) { const p = perOf(e.by); if (e.sign > 0) p.demosQualMonth++; p.commissionMonth += e.sign * e.rate; }
   for (const e of cLast.entries) { const p = perOf(e.by); if (e.sign > 0) p.demosQualLastMonth++; p.commissionLastMonth += e.sign * e.rate; }
   for (const l of demos) {
     const by = l.demo_booked_by; if (!by) continue;
     const st = l.demo_status || "pending";
-    if (st === "pending") perOf(by).demosPendingMonth++;
+    if (st === "pending") { perOf(by).demosPendingMonth++; perOf(by).pendingKrMonth += demoPendingRate(l, settings); }
     else if (st === "unqualified" && commissionPeriodOf(l.demo_reviewed_at || l.demo_booked_at || now) === mKey) perOf(by).demosUnqualMonth++;
   }
-  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
+  const mine = per[userId] || { callsToday: 0, demosToday: 0, callsWeek: 0, demosWeek: 0, calls30: 0, demos30: 0, talksToday: 0, talksWeek: 0, talks30: 0, demosQualMonth: 0, demosPendingMonth: 0, pendingKrMonth: 0, demosUnqualMonth: 0, commissionMonth: 0, commissionLastMonth: 0, demosQualLastMonth: 0 };
   const perUser = Object.values(per).filter((p) => p.id !== "admin" && p.id !== POOL_ID && (p.callsWeek > 0 || p.demosPendingMonth > 0 || p.demosQualMonth > 0 || users.some((u) => u.id === p.id && !u.role)));
   // How many dials it takes to book one meeting. Null until a demo exists -
   // "0 opkald pr. demo" would be a lie, and dividing by nothing is worse.
@@ -15123,10 +15178,10 @@ function buildSdrState(userId, d) {
   // Casper: an SDR should see the money the moment they book, not a 0 that
   // waits on a founder. Booked counts until it is rejected, so `expected`
   // includes pending; `confirmed_kr` stays what the founders have approved.
-  const expected_kr = mine.commissionMonth + mine.demosPendingMonth * rate;
+  const expected_kr = mine.commissionMonth + (mine.pendingKrMonth || 0);
   // What they actually take home this month: base + what the meetings earned.
   const base_kr = Math.max(0, Number(settings.base_salary_dkk) || 0);
-  const commission = { month: mKey, period_label: cOpen.label, period_from: cOpen.from, period_to: cOpen.to, rate, expected_kr, base_kr, salary_kr: base_kr + expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_locked: !!cLast.locked, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
+  const commission = { month: mKey, period_label: cOpen.label, period_from: cOpen.from, period_to: cOpen.to, rate, rate_tier2: Number(settings.commission_tier2_dkk ?? 500), pending_kr: mine.pendingKrMonth || 0, expected_kr, base_kr, salary_kr: base_kr + expected_kr, confirmed_kr: mine.commissionMonth, confirmed_n: mine.demosQualMonth, pending_n: mine.demosPendingMonth, unqualified_n: mine.demosUnqualMonth, last_month: lmKey, last_locked: !!cLast.locked, last_kr: mine.commissionLastMonth, last_n: mine.demosQualLastMonth };
   const available = sdrQueue(d, userId, now, new Set(L.cvrs), settings);
   // What the focus dropdowns can offer: fresh leads in the pool plus those on the list.
   const focusBase = [...available.filter((l) => !sdrIsDue(l, now)), ...items.filter((l) => !sdrIsDue(l, now))];
@@ -15173,6 +15228,7 @@ function buildSdrState(userId, d) {
     ...base,
     pitch_text: myPitch || settings.pitch_text, pitch_is_mine: !!myPitch, pitch_team: settings.pitch_text,
     email_templates: mineMail || settings.email_templates, mail_is_mine: !!mineMail, mail_team: settings.email_templates,
+    checklist: SDR_CHECKLIST,
   };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
@@ -15319,7 +15375,7 @@ function sdrDispositionHandler(req, res) {
     const nowIso = new Date(now).toISOString();
     const cleanNote = String(note || "").trim().slice(0, 2000);
     // Snapshot for "Fortryd" (10-min window, same SDR).
-    const UNDO_FIELDS = ["parked_at", "parked_reason", "note_log", "lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to"];
+    const UNDO_FIELDS = ["parked_at", "parked_reason", "note_log", "lastAction", "lastCallAt", "calls_count", "callback_at", "resurface_at", "archived_at", "demo_booked_at", "demo_booked_by", "demo_status", "demo_check", "demo_tier", "no_answer_count", "notes", "last_note", "phone", "ph", "phone_missing", "phone_source", "contacts", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to"];
     lead._undo = { at: nowIso, by: req.userId, prev: Object.fromEntries(UNDO_FIELDS.map((k) => [k, (k === "contacts" || k === "note_log") ? JSON.parse(JSON.stringify(lead[k] || [])) : (lead[k] === undefined ? null : lead[k])])) };
     // Call duration ≈ tel: tap → outcome (ignore if the tap was >2h ago).
     // Time on the lead: from the card opening to this outcome. Falls back to
@@ -15353,6 +15409,9 @@ function sdrDispositionHandler(req, res) {
     }
     if (action === "demo-booked") {
       lead.demo_booked_at = nowIso; lead.demo_booked_by = req.userId; lead.demo_status = "pending"; lead.demo_review_reason = ""; lead.callback_at = null;
+      const check = demoCheckClean(req.body && req.body.check);
+      lead.demo_check = check ? { ...check, at: nowIso, by: req.userId } : null;
+      lead.demo_tier = check ? demoTierOf(check, sdrSettings(d)) : null;
       sdrNotifyDemo(sdrSettings(d).demo_webhook_url, lead, meUser ? meUser.name : req.userId, cleanNote); // fire-and-forget
     }
     else if (action === "wrong-number") {
@@ -16267,19 +16326,28 @@ app.post("/api/sdr/undo", authMiddleware, (req, res) => {
 app.post("/api/sdr/demo-review", authMiddleware, (req, res) => {
   try {
     if (!sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Kun admin kan vurdere demoer" });
-    const d = loadPool(); const { cvr, status, reason } = req.body || {};
+    const d = loadPool(); const { cvr, status, reason, tier } = req.body || {};
     if (!["pending", "qualified", "unqualified"].includes(status)) return res.status(400).json({ error: "Ugyldig status" });
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead || lead.lastAction !== "demo-booked") return res.status(404).json({ error: "Ingen booket demo på det lead" });
     const was = lead.demo_status || "pending"; const nowIso = new Date().toISOString();
+    const settings = sdrSettings(d);
+    // Tier: admin's choice, else what the SDR's checklist suggested, else 1.
+    const t = [1, 2].includes(Number(tier)) ? Number(tier) : (lead.demo_tier || 1);
     // The approval date decides the salary period (see commissionPeriodOf);
-    // the rate is fixed at approval so a later change doesn't touch it.
-    if (status === "qualified" && was !== "qualified") { lead.demo_qualified_at = nowIso; lead.commission_rate = Number(sdrSettings(d).commission_dkk || 0); }
+    // the rate is fixed at approval so a later change doesn't touch it. The
+    // tier can still be corrected until that period is locked.
+    if (status === "qualified") {
+      if (was === "qualified" && t !== (lead.demo_tier || 1) && demoPeriodLocked(d, lead, settings)) return res.status(400).json({ error: "Lønperioden er låst - tier kan ikke ændres" });
+      if (was !== "qualified") lead.demo_qualified_at = nowIso;
+      if (was !== "qualified" || t !== (lead.demo_tier || 1)) lead.commission_rate = demoTierRate(t, settings);
+    }
+    lead.demo_tier = t;
     lead.demo_status = status; lead.demo_review_reason = String(reason || "").trim().slice(0, 200);
     lead.demo_reviewed_by = req.userId; lead.demo_reviewed_at = nowIso;
     sdrTouch(lead);
     savePool(d);
-    logActivity("sdr-demo-review", `Demo ${lead.name}: ${status}${lead.demo_review_reason ? " - " + lead.demo_review_reason : ""}`, { cvr, userId: req.userId, status });
+    logActivity("sdr-demo-review", `Demo ${lead.name}: ${status}${status === "qualified" ? " (tier " + t + ")" : ""}${lead.demo_review_reason ? " - " + lead.demo_review_reason : ""}`, { cvr, userId: req.userId, status });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "demo-review"); }
 });
@@ -16743,7 +16811,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     const c = sdrPrimaryContact(l) || {}; const st = l.demo_status || "pending"; const tw = twentyDemoState(ledger, l);
     const q = st === "qualified" ? demoQualifiedAt(l) : null;
     return [{ v: new Date(l.demo_booked_at), s: "dt" }, who(l.demo_booked_by), l.name || "", String(l.web || l.website || "").replace(/^https?:\/\//, ""), l.city || "", c.name || "", c.title || "", c.email || "", sdrPhone(l).phone || "",
-      ST[st] || st, l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "",
+      ST[st] || st, l.demo_tier ? "Tier " + l.demo_tier : "", demoCheckLine(l, false) || "", l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "",
       l.sale_status === "won" ? "Solgt" : l.sale_status === "lost" ? `Ikke solgt${l.sale_reason ? " - " + (SALE_REASONS[l.sale_reason] || l.sale_reason) : ""}` : st === "qualified" ? "Afventer" : "", l.sale_at ? { v: new Date(l.sale_at), s: "dt" } : "", l.sale_status === "won" && l.sale_value_dkk != null ? { v: Number(l.sale_value_dkk), s: "kr" } : "",
       tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
   });
@@ -16763,7 +16831,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     ["Kontaktrate", "Samtaler delt med opkald."],
     ["Demoer", "Leads der står som booket demo nu, og som blev booket i perioden. Samme liste som Resultater og provisionen. En fortrudt booking tæller ikke."],
     ["Salg", "Om demoen blev til et salg - markeret af admin efter demoen (Solgt / Ikke solgt). Salgsrate = solgt delt med de afgjorte; demoer der endnu ikke er afgjort, tæller ikke med."],
-    ["Provision", `Demoer kvalificeret i perioden gange satsen den dag, de blev kvalificeret (nu ${rate} kr). Lønnen følger lønperioden: kvalificeret til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, kvalificeret fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
+    ["Provision", `Demoer kvalificeret i perioden gange satsen den dag, de blev kvalificeret (nu ${rate} kr for tier 1 og ${Number(settings.commission_tier2_dkk ?? 500)} kr for tier 2). Lønnen følger lønperioden: kvalificeret til og med d. ${COMMISSION_CUTOFF_DAY}. kommer med i den måneds løn, kvalificeret fra d. ${COMMISSION_CUTOFF_DAY + 1}. i næste måneds. Vælg datoerne 29.-28. for at få præcis én lønperiode - eller se admin → Demoer → Lønperiode.`],
     ["Tid på leads", "Tid med lead-kortet fremme: research + opkald + note. Max 20 min pr. lead. Kun opkald ringet fra værktøjet har en tid."],
     ["Beriget i Research", "Leads SDR'en har fundet kontakt/nummer på i Research-fanen. Tæller den seneste research på hvert lead."],
     ["Fravalgt uden opkald", "Leads SDR'en fravalgte uden at ringe (ikke vores målgruppe, for svag lige nu, ring senere). Tæller ikke som opkald."],
@@ -16773,7 +16841,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   return [
     { name: "Oversigt", cols: [34, 12, ...ids.map(() => 13)], rows: overview, head: headRow, freeze: headRow + 1 },
     { name: "Per dag", cols: [12, 10, 9, 10, 12, 9, 17, 10, ...ids.flatMap(() => [15, 15])], rows: [dayHead, ...dayRows], head: 0, freeze: 1 },
-    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Begrundelse", "Kvalificeret", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
+    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 8, 40, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Tier", "Tjekliste", "Begrundelse", "Kvalificeret", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
     { name: "Opkald", cols: [17, 12, 28, 20, 16, 16, 9, 12, 17, 60, 18, 14, 22], rows: [["Tidspunkt", "SDR", "Virksomhed", "Kontakt", "Telefon", "Udfald", "Samtale", "Tid (min)", "Følg op", "Note", "Kilde", "By", "ID"], ...callRows], head: 0, freeze: 1, filter: true },
     { name: "Nye leads", cols: [24, 12, 17, 12, 12, 12, 14], rows: [["Kilde", "Nye leads", "Kan ringes til nu", "Andel klar", "Ringet til", "Samtaler", "Demoer booket"], ...srcRows], head: 0, freeze: 1 },
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },
@@ -17079,11 +17147,11 @@ app.get("/api/sdr/admin/commission", authMiddleware, (req, res) => {
     const v = commissionPeriodView(d, want, settings, nameById);
     const bySdr = {};
     for (const e of v.entries) { const b = bySdr[e.by] || (bySdr[e.by] = { id: e.by, name: e.by_name, n: 0, rev: 0, amount: 0 }); if (e.sign > 0) b.n++; else b.rev++; b.amount += e.sign * e.rate; }
-    const pending = v.open ? (d.leads || []).filter((l) => l.lastAction === "demo-booked" && (l.demo_status || "pending") === "pending").map((l) => ({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: nameById[l.demo_booked_by] || l.demo_booked_by || "", booked_at: l.demo_booked_at })).sort((a, b) => String(a.booked_at).localeCompare(b.booked_at)) : [];
+    const pending = v.open ? (d.leads || []).filter((l) => l.lastAction === "demo-booked" && (l.demo_status || "pending") === "pending").map((l) => ({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: nameById[l.demo_booked_by] || l.demo_booked_by || "", booked_at: l.demo_booked_at, tier: l.demo_tier || null, rate: demoPendingRate(l, settings) })).sort((a, b) => String(a.booked_at).localeCompare(b.booked_at)) : [];
     const moved = v.locked ? [] : (d.leads || []).filter((l) => l.lastAction === "demo-booked" && l.demo_status === "qualified" && l.commission_period && l.commission_period > want && demoQualifiedAt(l) && commissionPeriodOf(demoQualifiedAt(l)) <= want)
       .map((l) => ({ cvr: l.cvr, name: l.name || "", by_name: nameById[l.demo_booked_by] || l.demo_booked_by, to: l.commission_period, to_label: commissionLabel(l.commission_period), rate: demoCommissionRate(l, settings) }));
     const keys = [...new Set([...Object.keys(locks.periods || {}), open, commissionNext(open)])].sort().reverse();
-    res.json({ ok: true, rate: Number(settings.commission_dkk || 0), cutoff_day: COMMISSION_CUTOFF_DAY,
+    res.json({ ok: true, rate: Number(settings.commission_dkk || 0), rate_tier2: Number(settings.commission_tier2_dkk ?? 500), cutoff_day: COMMISSION_CUTOFF_DAY,
       periods: keys.map((k) => { const b = commissionBounds(k); return { key: k, label: commissionLabel(k), open: k === open, locked: !!(locks.periods || {})[k], from: b.from.toISOString(), to: b.to.toISOString() }; }),
       period: { ...v, entries: undefined }, entries: v.entries.sort((a, b) => String(a.by_name).localeCompare(b.by_name, "da") || String(a.qualified_at).localeCompare(b.qualified_at)),
       per: Object.values(bySdr).sort((a, b) => b.amount - a.amount), pending, moved, next: commissionNext(open), next_label: commissionLabel(commissionNext(open)),
@@ -18955,6 +19023,8 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         d.sdr_settings.bench = cur;
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
+      if (Number.isFinite(Number(b.commission_tier2_dkk)) && Number(b.commission_tier2_dkk) >= 0) d.sdr_settings.commission_tier2_dkk = Math.round(Number(b.commission_tier2_dkk));
+      if (Number.isFinite(Number(b.tier1_min_signals)) && Number(b.tier1_min_signals) >= 1 && Number(b.tier1_min_signals) <= SDR_CHECKLIST.signals.length) d.sdr_settings.tier1_min_signals = Math.round(Number(b.tier1_min_signals));
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
       if (typeof b.onboarding_until === "string" && (b.onboarding_until === "" || /^\d{4}-\d{2}-\d{2}$/.test(b.onboarding_until))) d.sdr_settings.onboarding_until = b.onboarding_until;
       // How long a qualified demo may wait for a sales outcome before it is flagged (amber) and marked hard (red).

@@ -586,7 +586,7 @@ function renderCard() {
       </div>
       <div class="steplbl two"><i>2</i> Udfald</div>
       <div class="row disp">
-        <button class="pill approve" onclick="disp('demo-booked')"><span class="key">1</span>Demo booket</button>
+        <button class="pill approve" onclick="openDemoCheck()" title="Åbner tjeklisten: seks grundlag og tre købssignaler, før demoen gemmes"><span class="key">1</span>Demo booket</button>
         <button class="pill" onclick="markMailSent()" title="Du har sendt dem en mail fra din egen Gmail. Leadet får mærket ✉ Mail sendt, og en opfølgning planlægges om ${e(String((S.settings && S.settings.email_followup_days) || 2))} hverdage">✉ Mail sendt</button>
         <button class="pill" onclick="toggleChooser()"><span class="key">3</span>Følg op ▾</button>
       </div>
@@ -696,7 +696,8 @@ function renderDemos() {
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending';
     // How it ended after the founders' demo - the booking's real payoff.
     const sale = l.sale_status === 'won' ? ' <span class="chip sold">Solgt 🎉</span>' : l.sale_status === 'lost' ? ' <span class="chip">Ikke solgt</span>' : '';
-    const chip = `<span class="chip st-${e(st)}" title="${e(l.demo_review_reason || '')}">${ST[st] || st}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>${sale}`;
+    const tier = l.demo_tier ? ` <span class="chip tier${e(String(l.demo_tier))}" title="${e(l.demo_tier === 1 ? 'Tier 1 - fuld provision' : 'Tier 2 - lavere provision')}">Tier ${e(String(l.demo_tier))}</span>` : '';
+    const chip = `<span class="chip st-${e(st)}" title="${e(l.demo_review_reason || '')}">${ST[st] || st}${l.demo_review_reason ? ' · ' + e(l.demo_review_reason) : ''}</span>${tier}${sale}`;
     const ctl = admin ? `<div class="review" style="margin-top:6px">${st !== 'qualified' ? `<button class="ok" onclick="demoReview('${e(l.cvr)}','qualified')">Kvalificeret</button>` : ''}${st !== 'unqualified' ? `<button class="no" onclick="demoReview('${e(l.cvr)}','unqualified')">Ikke kval.</button>` : ''}${st !== 'pending' ? `<button onclick="demoReview('${e(l.cvr)}','pending')">Afventer</button>` : ''}</div>` : '';
     return `<tr class="rowlink" onclick="openDemoEdit('${e(l.cvr)}')" title="Klik for at rette leadet">
       <td><span class="chip ok">${e(fmtWhen(l.demo_booked_at))}</span></td>
@@ -809,7 +810,7 @@ function renderResults() {
   // One money figure: what the founders have approved for this salary. Pending
   // demos are shown as "op til" next to it - never added into the salary,
   // which read as 33.000 kr when 3.000 kr was approved.
-  const conf = c.confirmed_kr || 0, upTo = (c.pending_n || 0) * (c.rate || 0);
+  const conf = c.confirmed_kr || 0, upTo = c.pending_kr != null ? c.pending_kr : (c.pending_n || 0) * (c.rate || 0);
   pay.innerHTML = `
     <div><div class="big">${e(fmtKr(conf))}</div><div class="lbl">Provision · ${e(mName)}-lønnen · kvalificeret</div>
       ${c.base_kr ? `<div class="salary">${e(fmtKr(c.base_kr))} grundløn + ${e(fmtKr(conf))} provision = <b>${e(fmtKr(c.base_kr + conf))}</b> indtil nu</div>` : ''}</div>
@@ -1142,6 +1143,63 @@ async function disp(action, callback_at, extra) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
   finally { busy = false; }
+}
+/* ─── Demo booket: the checklist before the outcome is saved ─────────────
+   Step 1: six basics that must be in place for the demo to qualify.
+   Step 2: three buying signals - enough of them and it is a tier 1 demo.
+   The answers ride with the outcome; admin sees them when judging the demo,
+   and the tier sets the commission. Texts come from the server (settings.checklist). */
+const DC = { step: 1, basics: {}, signals: {} };
+function dcList() { return (S.settings && S.settings.checklist) || { basics: [], signals: [] }; }
+function dcCount(k) { return dcList()[k].filter((x) => DC[k][x.id]).length; }
+function dcMin() { return Math.max(1, Number(S.settings && S.settings.tier1_min_signals) || 2); }
+function dcTier() { return dcCount('signals') >= dcMin() ? 1 : 2; }
+function dcRate(t) { const s = S.settings || {}; return t === 2 ? Number(s.commission_tier2_dkk ?? 500) : Number(s.commission_dkk ?? 1000); }
+function dcToggle(el) { DC[el.dataset.k][el.dataset.id] = el.checked; renderDemoCheckFoot(); }
+function openDemoCheck() {
+  const L = S.current; if (!L || busy || $('dcheck')) return;
+  if (!dcList().basics.length) { disp('demo-booked'); return; } // an old server without the list
+  DC.step = 1; DC.basics = {}; DC.signals = {};
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'dcheck';
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  renderDemoCheck();
+}
+function renderDemoCheck() {
+  const bg = $('dcheck'); if (!bg) return;
+  const CK = dcList(); const L = S.current || {};
+  const item = (k, x) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${x.how ? `<em>${e(x.how)}</em>` : ''}</span></label>`;
+  if (DC.step === 1) {
+    bg.innerHTML = `<div class="modal wide dcheck">
+      <div class="dc-head"><div><h3>Demo booket med ${e(L.name || '')}</h3><p>Seks ting, der skal være på plads, før demoen kan blive kvalificeret. Sæt flueben ved det, du har tjekket eller fået bekræftet.</p></div><span class="dc-step">1 af 2 · Grundlag</span></div>
+      <div class="ck-list">${CK.basics.map((x) => item('basics', x)).join('')}</div>
+      <div class="dc-foot" id="dc-foot"></div></div>`;
+  } else {
+    bg.innerHTML = `<div class="modal wide dcheck">
+      <div class="dc-head"><div><h3>Købssignaler</h3><p>Hvad tyder på, at de køber? Sæt flueben ved det, der kom fra dem selv i samtalen. ${dcMin()} eller flere = Tier 1.</p></div><span class="dc-step">2 af 2 · Signaler</span></div>
+      <div class="ck-list">${CK.signals.map((x) => item('signals', x)).join('')}</div>
+      <div id="dc-tier"></div>
+      <div class="dc-foot" id="dc-foot"></div></div>`;
+  }
+  renderDemoCheckFoot();
+}
+function renderDemoCheckFoot() {
+  const CK = dcList(); const nb = dcCount('basics'), NB = CK.basics.length;
+  if (DC.step === 1) {
+    $('dc-foot').innerHTML = `<span class="dc-count">${nb} af ${NB} på plads</span><div class="row"><button class="pill tertiary" onclick="$('dcheck').remove()">Annuller</button><button class="pill primary" onclick="DC.step=2;renderDemoCheck()">Videre til købssignaler →</button></div>`;
+    return;
+  }
+  const t = dcTier(), ns = dcCount('signals'), NS = CK.signals.length;
+  const missing = CK.basics.filter((x) => !DC.basics[x.id]).map((x) => x.short);
+  $('dc-tier').innerHTML = `<div class="dc-tier t${t}"><b>Tier ${t}</b><span>${ns} af ${NS} købssignaler${t === 1 ? '' : ` - Tier 1 fra ${dcMin()}`} · ${e(fmtKr(dcRate(t)))} i provision, hvis demoen kvalificeres</span></div>`
+    + (missing.length ? `<div class="dc-warn"><b>${missing.length} af ${NB} grundlag mangler:</b> ${e(missing.join(', '))}. Demoen bookes alligevel, men den bliver måske ikke kvalificeret - skriv i noten, hvad du ved.</div>` : '');
+  $('dc-foot').innerHTML = `<span class="dc-count">${nb} af ${NB} grundlag · ${ns} af ${NS} signaler</span><div class="row"><button class="pill tertiary" onclick="DC.step=1;renderDemoCheck()">← Tilbage</button><button class="pill approve" onclick="demoCheckSubmit()">Demo booket ✓</button></div>`;
+}
+async function demoCheckSubmit() {
+  if (busy) return;
+  const check = { basics: { ...DC.basics }, signals: { ...DC.signals } };
+  const bg = $('dcheck'); if (bg) bg.remove();
+  await disp('demo-booked', null, { check });
 }
 /* Notes as a thread: everything ever written on the lead, oldest first, with
    who wrote it and when. Outcome notes sit in the same stream as free notes,
@@ -2334,7 +2392,8 @@ function openSettings() {
         </section>
         ${isAdmin ? `<section class="set-card">
           <div class="set-k">Admin</div>
-          <label>Provision pr. kvalificeret demo (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
+          <label>Provision pr. kvalificeret demo - Tier 1 (kr)</label><input id="st-comm" type="number" min="0" max="100000" value="${e(s.commission_dkk ?? 1000)}">
+          <label>Provision - Tier 2 (kr)</label><input id="st-comm2" type="number" min="0" max="100000" value="${e(s.commission_tier2_dkk ?? 500)}">
           <label>Slack-webhook når en demo bookes</label><input id="st-hook" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">
         </section>` : ''}
       </div>
@@ -2427,6 +2486,7 @@ async function gmailDisconnect() {
 async function saveSettings() {
   const body = { calendly_url: $('st-cal').value.trim(), daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 60, pitch_text: $('st-pitch').value, email_templates: mailTpls.filter((t) => t.name && t.subject && t.body) };
   if ($('st-comm')) body.commission_dkk = Number($('st-comm').value);
+  if ($('st-comm2')) body.commission_tier2_dkk = Number($('st-comm2').value);
   if ($('st-hook')) body.demo_webhook_url = $('st-hook').value.trim();
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt'); loadState({ keepCurrent: true }); }
   catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -2437,12 +2497,12 @@ document.addEventListener('keydown', (ev) => {
   if ($('app').hidden) return;
   const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((ev.target && ev.target.tagName) || '');
   if (ev.key === 'Escape') { if ($('settings')) $('settings').remove(); if (chooserOpen) closeChooser(); if (ceditOpen) toggleCedit(); if (inField) ev.target.blur(); return; }
-  if (inField) return;
+  if (inField || $('dcheck')) return;
   if (!$('view-ring').classList.contains('active')) return;
   if (ev.key === ' ') { ev.preventDefault(); const b = $('callbtn'); if (b) b.click(); }
   // The keys follow the labels on the buttons (they used to be one off:
   // 5 said "Ikke nu" but archived, 6 said "Ikke relevant" but wiped the number).
-  else if (ev.key === '1') disp('demo-booked');
+  else if (ev.key === '1') openDemoCheck();
   else if (ev.key === '3') toggleChooser();
   else if (ev.key === '4') disp('no-answer');
   else if (ev.key === '5') disp('not-now');
