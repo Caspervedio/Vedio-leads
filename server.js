@@ -16148,6 +16148,43 @@ app.post("/api/sdr/list/remove", authMiddleware, (req, res) => {
     savePool(d); sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "list/remove"); }
 });
+// "Nye leads": swap the list for the next batch from the pool. What the SDR
+// holds for a reason stays - a pinned follow-up, a lead they are on the phone
+// with, and their own reserved leads (research, self-added). The rest go back
+// to the pool and rest until tomorrow, exactly like "Ikke i dag", so the same
+// ten don't come straight back. Capped per day so the pool isn't burned
+// through by someone shopping for the perfect list.
+const SDR_LIST_REFRESH_PER_DAY = 5;
+app.post("/api/sdr/list/refresh", authMiddleware, (req, res) => {
+  try {
+    if (sdrIsAdmin(req.userId)) return res.status(400).json({ error: "Admin har ingen ringeliste" });
+    const d = loadPool(); const now = Date.now(); const settings = sdrSettings(d);
+    const { list: L } = sdrEnsureList(d, req.userId, now, settings);
+    const key = sdrDayKey(now);
+    const used = L.refresh && L.refresh.date === key ? L.refresh.n : 0;
+    if (used >= SDR_LIST_REFRESH_PER_DAY) return res.status(429).json({ error: `Du har byttet listen ${SDR_LIST_REFRESH_PER_DAY} gange i dag - ring dem, du har` });
+    const byCvr = new Map((d.leads || []).map((l) => [l.cvr, l]));
+    const tmr = new Date(now); tmr.setHours(24, 0, 0, 0);
+    const keep = [], out = [];
+    for (const cvr of L.cvrs) {
+      const l = byCvr.get(cvr); if (!l) continue;
+      const onPhone = l.last_call_started_at && now - new Date(l.last_call_started_at).getTime() < 20 * 60e3 && l.claimed_by === req.userId;
+      if (cvr === L.pin || onPhone || sdrReservedFor(l) === req.userId || sdrIsDue(l, now)) { keep.push(cvr); continue; }
+      out.push(cvr);
+      if (l.claimed_by === req.userId) sdrUnclaim(l);
+      l.deferred_until = tmr.toISOString();
+      sdrTouch(l);
+    }
+    L.cvrs = keep;
+    L.refresh = { date: key, n: used + 1 };
+    const { list: after } = sdrEnsureList(d, req.userId, now, settings);
+    const fresh = after.cvrs.filter((c) => !keep.includes(c)).length;
+    savePool(d);
+    const me = loadUsers().find((u) => u.id === req.userId);
+    logActivity("sdr-list-refresh", `${me ? me.name : req.userId} byttede ${out.length} leads ud på listen (${used + 1}. gang i dag)`, { userId: req.userId, out: out.length, fresh });
+    sdrRespond(res, req.userId, d, { replaced: out.length, fresh, kept: keep.length, left_today: SDR_LIST_REFRESH_PER_DAY - used - 1 });
+  } catch (e) { sdrFail(res, e, "list/refresh"); }
+});
 // One-click top-up from the pool, in pool order.
 app.post("/api/sdr/list/add-more", authMiddleware, (req, res) => {
   try {

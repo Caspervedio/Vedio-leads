@@ -80,7 +80,11 @@ tager pladsen fra nye leads og ikke bliver glemt: Opfølgning-fanen har filtret
 "Ingen svar"-genopkald, ældste først) og tallet på fanen viser hvor mange. På
 Ringeliste står én smal linje, kun når der venter aftalte opfølgninger; i
 Opkald-fanens sidekolonne de tre næste. **Ring** på en åbner den øverst på listen, til et udfald (eller
-Spring over) sender den videre. Listen fyldes op efter hvert opkald. Leads en SDR selv har researchet eller tilføjet,
+Spring over) sender den videre. Listen fyldes op efter hvert opkald. **↻ Nye leads** (øverst
+på Ringelisten) bytter hele den friske del af listen ud med de næste fra puljen;
+de fravalgte hviler til i morgen som ved "Ikke i dag". Opfølgninger, det lead der
+er en samtale i gang på, og leads SDR'en selv har researchet eller tilføjet bliver.
+Højst 5 gange om dagen pr. SDR, og hvert byt logges. Leads en SDR selv har researchet eller tilføjet,
 er reserveret til dem (andre får dem ikke) og kommer først. **Fokus i dag**
 over listen: branche, webshop-størrelse (StoreLeads' anslåede omsætning) og
 kontakt (ejer/direktør, marketing/salg, omstilling) - listen fyldes fra fokus

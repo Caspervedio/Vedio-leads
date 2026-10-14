@@ -86,6 +86,7 @@
       <button data-sub="list" class="on" onclick="listSub('list')">Din liste<span class="n" id="sn-list">0</span></button>
       <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
       <div class="search listsearch"><input id="list-q" placeholder="Søg firma, person, nummer…" oninput="listSearch()"></div>
+      <button class="addlead refresh" onclick="openListRefresh()" title="Byt listen ud med nye leads fra puljen. Dem du ikke har ringet til, kommer tilbage i puljen i morgen.">↻ Nye leads</button>
       <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - oprettes som nyt lead">+ Nyt lead</button>
     </div>
     <div id="sub-list">
@@ -506,6 +507,32 @@ async function reorder(cvrs) {
 async function removeItem(cvr) {
   if (busy) return; busy = true;
   try { apply(await post('/api/sdr/list/remove', { cvr })); toast('Ikke i dag - tilbage i puljen i morgen'); } catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
+}
+/* "Nye leads": the whole fresh part of the list is swapped for the next batch
+   from the pool. Pinned follow-ups and the SDR's own reserved leads stay. */
+function openListRefresh() {
+  if (busy || $('lrefresh')) return;
+  const n = Math.max(1, Number(S.settings && S.settings.list_size) || 10);
+  const items = (S.list && S.list.items) || [];
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'lrefresh';
+  bg.innerHTML = `<div class="modal">
+    <h3>Nye leads på listen</h3>
+    <p>De ${items.length} leads, du har nu, byttes ud med ${n} nye fra puljen. Dem du ikke har ringet til, kommer tilbage i puljen i morgen. Opfølgninger og leads, du selv har researchet eller tilføjet, bliver.</p>
+    <div class="row"><button class="pill tertiary" onclick="$('lrefresh').remove()">Annuller</button><button class="pill primary" id="lr-go" onclick="listRefresh()">Giv mig ${n} nye</button></div>
+  </div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+async function listRefresh() {
+  if (busy) return; busy = true; const btn = $('lr-go'); if (btn) { btn.disabled = true; btn.textContent = 'Henter…'; }
+  try {
+    const r = await post('/api/sdr/list/refresh', {});
+    if ($('lrefresh')) $('lrefresh').remove();
+    apply(r);
+    toast(`✓ ${r.fresh} nye leads på listen${r.kept ? ` - ${r.kept} beholdt` : ''}${r.left_today === 0 ? ' · det var sidste gang i dag' : ''}`, 5000);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (ex) { if (btn) { btn.disabled = false; btn.textContent = 'Prøv igen'; } toast(ex.message, 5000); }
+  finally { busy = false; }
 }
 /* Opkald card */
 function renderCard() {

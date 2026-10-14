@@ -324,6 +324,9 @@ details.pitch .body .obj{display:block;margin-top:8px;color:var(--txt-soft);font
 .al-choice{margin-top:12px;padding:12px 14px;border:1px solid #e9c9a6;background:#fff8ea;border-radius:var(--radius);font-size:13.5px;line-height:1.45}
 .subnav .addlead{margin-left:auto;border-color:var(--violet);color:var(--violet)}
 .subnav .addlead:hover{background:var(--violet-soft);color:var(--violet)}
+.subnav .addlead.refresh{margin-left:auto;border-color:var(--line);color:var(--txt-soft)}
+.subnav .addlead.refresh:hover{background:var(--paper);color:var(--txt)}
+.subnav .addlead.refresh + .addlead{margin-left:8px}
 /* "Tilføj lead" form */
 .al-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
 .al-grid .full{grid-column:1/-1}
