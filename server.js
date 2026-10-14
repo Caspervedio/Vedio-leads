@@ -15035,7 +15035,7 @@ function commissionDeltas(d, locks, asOf, settings, nameById) {
     const want = demoApprovedAsOf(l, asOf) ? 1 : 0, have = paid.get(l.cvr) || 0;
     if (want === have) continue;
     const q = demoQualifiedAt(l);
-    out.push({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: (nameById || {})[l.demo_booked_by] || l.demo_booked_by, booked_at: l.demo_booked_at || null, qualified_at: q, approved_period: q ? commissionPeriodOf(q) : null, moved_to: l.commission_period || null, rate: demoCommissionRate(l, settings), sign: want > have ? 1 : -1 });
+    out.push({ cvr: l.cvr, name: l.name || "", by: l.demo_booked_by, by_name: (nameById || {})[l.demo_booked_by] || l.demo_booked_by, booked_at: l.demo_booked_at || null, qualified_at: q, approved_period: q ? commissionPeriodOf(q) : null, moved_to: l.commission_period || null, rate: demoCommissionRate(l, settings), tier: l.demo_tier || null, sign: want > have ? 1 : -1 });
   }
   return out;
 }
