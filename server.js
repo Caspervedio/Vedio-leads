@@ -14690,6 +14690,7 @@ function sdrSlim(l, nameById) {
   return {
     cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "",
     about: l.about || "",
+    shop: sdrShopOf(l),
     niche: l.ind || l.industry || l.niche || "",
     phone: ph.phone, phone_label: ph.label,
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
@@ -14773,9 +14774,19 @@ const SDR_ONBOARDING_LINE = (o) => `Oplæring: Salgsteamet er i en lære- og onb
 const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem (1-5 mio. kr/år)", large: "Store (over 5 mio. kr/år)" };
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
 function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
+// StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
+const STORELEADS_USD_DKK = 6.9;
+// What StoreLeads estimates for a webshop: yearly sales (in kr) and monthly
+// visits. Shown on the call card, in the checklist and on the demo row, so
+// nobody has to open StoreLeads for a number we already hold.
+function sdrShopOf(l) {
+  const cents = Number(l.storeleads_estimated_sales_yearly) || 0;
+  const visits = Number(l.storeleads_estimated_visits) || 0;
+  if (!cents && !visits) return null;
+  return { sales_kr: cents ? Math.round(cents / 100 * STORELEADS_USD_DKK) : null, visits: visits || null, size: sdrLeadSize(l), platform: l.storeleads_platform || "", pulled_at: l.storeleads_pulled_at || null };
+}
 function sdrLeadSize(l) {
-  // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
-  const kr = (Number(l.storeleads_estimated_sales_yearly) || 0) / 100 * 6.9;
+  const kr = (Number(l.storeleads_estimated_sales_yearly) || 0) / 100 * STORELEADS_USD_DKK;
   if (!kr) return "";
   return kr < 1e6 ? "small" : kr < 5e6 ? "medium" : "large";
 }

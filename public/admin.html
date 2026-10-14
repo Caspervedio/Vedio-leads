@@ -699,6 +699,9 @@ function fmtPhone(p) { const d = String(p || '').replace(/[^0-9+]/g, ''); if (/^
 function fmtWhen(iso) { if (!iso) return ''; const d = new Date(iso), now = new Date(); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); if (d.toDateString() === now.toDateString()) return 'I dag ' + hm; return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }) + ' ' + hm; }
 function fmtDate(iso) { if (!iso) return '-'; return new Date(iso).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }); }
 function fmtKr(n) { return (Number(n) || 0).toLocaleString('da-DK') + ' kr'; }
+function fmtSales(kr) { kr = Number(kr) || 0; return kr >= 1e6 ? (kr / 1e6).toLocaleString('da-DK', { maximumFractionDigits: 1 }) + ' mio. kr/år' : (Math.round(kr / 1000) * 1000).toLocaleString('da-DK') + ' kr/år'; }
+function shopLine(s) { if (!s) return ''; return [s.sales_kr ? '≈ ' + fmtSales(s.sales_kr) : '', s.visits ? Math.round(s.visits).toLocaleString('da-DK') + ' besøg/md' : ''].filter(Boolean).join(' · '); }
+function shopPlatform(s) { const k = String((s && s.platform) || '').toLowerCase(); return { shopify: 'Shopify', woocommerce: 'WooCommerce', magento: 'Magento', prestashop: 'PrestaShop', bigcommerce: 'BigCommerce', wix: 'Wix', squarespace: 'Squarespace' }[k] || (k ? k.charAt(0).toUpperCase() + k.slice(1) : ''); }
 function fmtDur(sec) {
   const s = Math.max(0, Math.round(Number(sec) || 0));
   if (!s) return '-';
@@ -1287,7 +1290,7 @@ function renderDemos() {
   const ST = { pending: 'Afventer', qualified: 'Kvalificeret', unqualified: 'Ikke kvalificeret' };
   $('tb-demo').innerHTML = rows.length ? rows.map((l) => { const st = l.demo_status || 'pending'; return `<tr class="rowlink" onclick="openLead('${e(l.cvr)}')">
       <td><span class="chip ok">${e(fmtDate(l.demo_booked_at))}</span><span class="sub">kl. ${e(new Date(l.demo_booked_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' }))}</span></td>
-      <td class="democo"><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span></td>
+      <td class="democo"><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? ' · ' + e(String(l.web).replace(/^https?:\/\//, '')) : ''}</span>${l.shop ? `<span class="sub" title="StoreLeads-estimat">${e(shopLine(l.shop))}</span>` : ''}</td>
       <td class="democ">${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>${l.contact.email ? `<span class="sub">${e(l.contact.email)}</span>` : ''}` : '<b>-</b>'}<span class="sub">${e(fmtPhone(l.phone))}</span></td>
       <td class="demonote"><div class="nt" title="${e(l.last_note || '')}">${e(l.last_note || '')}</div></td>
       <td>${e(l.demo_booked_by_name || '')}</td>
@@ -1459,12 +1462,16 @@ function openDemoCheck(cvr) {
   const tier = l.demo_tier || 1; const min = Number(s.tier1_min_signals) || 2;
   const r1 = Number(s.commission_dkk ?? 1000), r2 = Number(s.commission_tier2_dkk ?? 500);
   const n = (k) => CK[k].filter((x) => c && c[k][x.id]).length;
-  const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span></span></div>`; };
+  const ads = l.meta && l.meta.advertiser ? (l.meta.adsMatched > 0 ? `Meta: ${l.meta.adsMatched} aktive annoncer` : l.meta.activeNow ? 'Meta: annoncerer lige nu' : 'Meta-annoncør') : '';
+  const hint = (x) => x.id === 'live' && l.shop ? `StoreLeads: ${shopLine(l.shop)}` : (x.id === 'spend' || x.id === 'volume') && ads ? ads : '';
+  const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}</span></div>`; };
+  const facts = [l.shop ? `StoreLeads: ${shopLine(l.shop)}${l.shop.platform ? ' · ' + shopPlatform(l.shop) : ''}` : '', ads].filter(Boolean);
   const status = st === 'qualified' ? `Kvalificeret${l.commission_rate != null ? ' · ' + fmtKr(l.commission_rate) + ' i provision' : ''}` : st === 'unqualified' ? `Ikke kvalificeret${l.demo_review_reason ? ' · ' + l.demo_review_reason : ''}` : 'Afventer din vurdering';
   const inp = 'width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px';
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'ckmodal';
   bg.innerHTML = `<div class="modal wide dcheck">
     <div class="dc-head"><div><span class="dc-kicker">Demo · booket ${e(fmtDate(l.demo_booked_at))} af ${e(l.demo_booked_by_name || '')}${c ? " · SDR'ens tjekliste" : ' · uden tjekliste'}</span><h3>${e(l.name)}</h3><p>${e(status)}</p></div>${c ? `<span class="dc-step">${n('basics')} af ${CK.basics.length} grundlag</span>` : ''}</div>
+    ${facts.length ? `<div class="dc-facts">${facts.map((f) => `<span>${e(f)}</span>`).join('')}</div>` : ''}
     ${c ? `<div class="dc-k">Grundlag - skal være på plads for at kvalificere</div><div class="ck-list">${CK.basics.map((x, i) => item('basics', x, i)).join('')}</div>
     <div class="dc-k">Købssignaler - ${n('signals')} af ${CK.signals.length}</div><div class="ck-list">${CK.signals.map((x, i) => item('signals', x, i)).join('')}</div>`
     : `<p class="sub">Demoen blev booket, før tjeklisten fandtes. Vælg tier ud fra det, du ved.</p>`}

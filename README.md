@@ -181,6 +181,13 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
   som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
   `sdr_absence.json` (ikke i puljen).
+- **StoreLeads-estimatet er synligt.** For webshops fra StoreLeads (ca. 4 af 10 leads)
+  står den anslåede årlige omsætning og månedlige besøg ("≈ 2,3 mio. kr/år · 972
+  besøg/md · StoreLeads-estimat") på opkaldskortet under websitet, som hint på
+  tjeklistens første punkt, under firmanavnet på demorækken og som chips øverst i
+  admins vurdering - sammen med Meta-status på annoncepunkterne. Tallet er
+  StoreLeads' estimat i USD-cent omregnet med 6,9 kr/$; samme tal driver
+  størrelsesfilteret i "Fokus i dag".
 - **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
   tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
   på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på

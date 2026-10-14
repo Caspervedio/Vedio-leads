@@ -962,3 +962,7 @@ main{transition:margin-right .46s var(--ease)}
 .dc-tiers input{position:absolute;opacity:0;width:0;height:0}
 .pill.go{background:var(--approve);border-color:var(--approve);color:#fff;padding:13px 24px;font-size:15px}
 .pill.go:hover{background:#17854f;border-color:#17854f}
+.co .shopline{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12.5px;color:var(--txt-soft)}
+.co .shopline i{font-style:normal;font-size:10.5px;font-weight:600;letter-spacing:.02em;color:var(--txt-faint);padding:2px 7px;border:1px solid var(--line);border-radius:999px}
+.dcheck .dc-facts{display:flex;flex-wrap:wrap;gap:6px;margin:-8px 0 14px}
+.dcheck .dc-facts span{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--line);color:var(--txt-soft)}

@@ -548,6 +548,7 @@ function renderCard() {
       <div>
         <h2>${e(L.name || '-')}</h2>
         <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${web ? `<span>·</span><a href="${e(/^https?:/.test(L.web) ? L.web : 'https://' + L.web)}" target="_blank" rel="noopener">${e(web)}</a>` : ''}${L.niche ? `<span>·</span><span>${e(L.niche)}</span>` : ''}</div>
+        ${L.shop ? `<div class="shopline" title="StoreLeads' estimat af årlig omsætning og månedlige besøg${L.shop.platform ? ' · ' + e(shopPlatform(L.shop)) : ''}">${e(shopLine(L.shop))}<i>StoreLeads-estimat</i></div>` : ''}
       </div>
       <div class="proofwrap">${proof}${adAlt}</div>
     </div>
@@ -1168,7 +1169,11 @@ function openDemoCheck() {
 function renderDemoCheck() {
   const bg = $('dcheck'); if (!bg) return;
   const CK = dcList(); const L = S.current || {};
-  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${x.how ? `<em class="how">${e(x.how)}</em>` : ''}</span></label>`;
+  // What we already know rides along as the hint: the shop's size from
+  // StoreLeads on item 1, the live Meta-ads count on the two ad items.
+  const ads = L.meta && L.meta.advertiser ? (L.meta.adsMatched > 0 ? `Meta: ${L.meta.adsMatched} aktive annoncer lige nu` : L.meta.activeNow ? 'Meta: annoncerer lige nu' : '') : '';
+  const hint = (x) => x.id === 'live' && L.shop ? `StoreLeads: ${shopLine(L.shop)}` : (x.id === 'spend' || x.id === 'volume') && ads ? `${ads} · ${x.how || ''}` : (x.how || '');
+  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}</span></label>`;
   const head = (step, h, p) => `<div class="dc-head"><div><span class="dc-kicker">Demo booket med ${e(L.name || '')} · trin ${step} af 2</span><h3>${h}</h3><p>${p}</p></div><span class="dc-steps"><i class="${step === 1 ? 'on' : 'done'}"></i><i class="${step === 2 ? 'on' : ''}"></i></span></div>`;
   if (DC.step === 1) {
     bg.innerHTML = `<div class="modal wide dcheck">
@@ -1710,6 +1715,10 @@ async function selectContact(name) {
 }
 function fmtDur(s) { if (!s && s !== 0) return ''; if (s < 60) return s + ' s'; return Math.round(s / 60) + ' min'; }
 function fmtKr(n) { return (Number(n) || 0).toLocaleString('da-DK') + ' kr'; }
+/* StoreLeads' estimate, readable: "≈ 1,9 mio. kr/år · 94.000 besøg/md". */
+function fmtSales(kr) { kr = Number(kr) || 0; return kr >= 1e6 ? (kr / 1e6).toLocaleString('da-DK', { maximumFractionDigits: 1 }) + ' mio. kr/år' : (Math.round(kr / 1000) * 1000).toLocaleString('da-DK') + ' kr/år'; }
+function shopLine(s) { if (!s) return ''; return [s.sales_kr ? '≈ ' + fmtSales(s.sales_kr) : '', s.visits ? Math.round(s.visits).toLocaleString('da-DK') + ' besøg/md' : ''].filter(Boolean).join(' · '); }
+function shopPlatform(s) { const k = String((s && s.platform) || '').toLowerCase(); return { shopify: 'Shopify', woocommerce: 'WooCommerce', magento: 'Magento', prestashop: 'PrestaShop', bigcommerce: 'BigCommerce', wix: 'Wix', squarespace: 'Squarespace' }[k] || (k ? k.charAt(0).toUpperCase() + k.slice(1) : ''); }
 
 /* ─── Historik: hvad jeg har lavet, og hvem jeg har sagt nej til ───────── */
 let HIST = { activity: [], declined: [], total: 0, loaded: false, busy: false };
