@@ -8823,6 +8823,7 @@ function adLibraryAllUrl(pageId) { return `https://www.facebook.com/ads/library/
 // out of it and drive the lists: active > past > unchecked; never-ran is
 // not served at all (rules.exclude_no_ads).
 const ADLIB_RECHECK_ACTIVE_MS = 14 * 86400e3, ADLIB_RECHECK_OTHER_MS = 30 * 86400e3;
+const ADLIB_MAX_RUN_MS = 12 * 60e3; // one run never holds the browser longer than this
 const ADLIB_MON = { jan: 0, feb: 1, mar: 2, apr: 3, maj: 4, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, okt: 9, oct: 9, nov: 10, dec: 11 };
 function adlibParse(text) {
   if (!text) return null;
@@ -8899,21 +8900,32 @@ async function adlibSweep(batch) {
     const d0 = loadPool(); const now = Date.now();
     const todo = adlibCandidates(d0, now); stats.candidates = todo.length;
     const pick = todo.slice(0, batch); if (!pick.length) return stats;
-    const lb = await launchAdsBrowser(); browser = lb.browser;
-    const results = new Map();
+    console.log(`[adlib] start: ${pick.length} af ${todo.length} kandidater`);
+    const lb = await Promise.race([launchAdsBrowser(), new Promise((_, rej) => setTimeout(() => rej(new Error("chromium start tog over 90 s")), 90e3))]);
+    browser = lb.browser;
+    // Written back in chunks, so a slow or interrupted run still leaves what
+    // it found - and the log shows it moving. Capped per run; the next tick
+    // picks up where this one stopped.
+    const results = new Map(); const t0 = Date.now(); let flushed = 0;
+    const flush = () => {
+      if (!results.size) return;
+      const d = loadPool(); const nowIso = new Date().toISOString();
+      for (const l of d.leads || []) { const r = results.get(l.cvr); if (!r) continue; adlibApply(l, r, nowIso); stats.checked++; stats[l.adlib_status]++; }
+      savePool(d); flushed += results.size; results.clear();
+      console.log(`[adlib] ${flushed} gemt efter ${Math.round((Date.now() - t0) / 1000)} s · aktive ${stats.active} · før ${stats.past} · aldrig ${stats.none}`);
+    };
     for (const l of pick) {
+      if (Date.now() - t0 > ADLIB_MAX_RUN_MS) { stats.cut = true; break; }
       try {
         const r = await adlibCheckLead(lb.context, l);
         if (!r) continue;
         if (r.blocked) { stats.blocked++; if (stats.blocked >= 3) break; continue; }
         results.set(l.cvr, r);
-      } catch (e) { stats.errors++; if (stats.errors >= 5) break; }
+      } catch (e) { stats.errors++; console.warn("[adlib]", l.name, e.message.slice(0, 120)); if (stats.errors >= 5) break; }
+      if (results.size >= 8) flush();
     }
-    if (results.size) {
-      const d = loadPool(); const nowIso = new Date().toISOString();
-      for (const l of d.leads || []) { const r = results.get(l.cvr); if (!r) continue; adlibApply(l, r, nowIso); stats.checked++; stats[l.adlib_status]++; }
-      savePool(d);
-    }
+    flush();
+    stats.seconds = Math.round((Date.now() - t0) / 1000);
     logActivity("adlib-check", `Ad Library-tjek: ${stats.checked} efterset · ${stats.active} aktive · ${stats.past} tidligere · ${stats.none} ingen${stats.blocked ? ` · ${stats.blocked} blokeret` : ""}${stats.errors ? ` · ${stats.errors} fejl` : ""}`, { stats });
     return stats;
   } finally { adlibRunning = false; if (browser) await browser.close().catch(() => {}); }
@@ -19262,7 +19274,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
 // and a few page loads every twenty minutes is all it takes to keep the pool
 // checked. ADLIB_SWEEP=0 turns it off (tests, local copies).
 if (process.env.ADLIB_SWEEP !== "0") {
-  const tick = () => adlibSweep(Number(process.env.ADLIB_BATCH) || 40).catch((e) => console.warn("[adlib]", e.message)).finally(() => setTimeout(tick, 20 * 60e3));
+  const tick = () => adlibSweep(Number(process.env.ADLIB_BATCH) || 30).catch((e) => console.warn("[adlib]", e.message)).finally(() => setTimeout(tick, 20 * 60e3));
   setTimeout(tick, 3 * 60e3);
 }
 app.listen(PORT, () => {
