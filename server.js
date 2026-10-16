@@ -8871,6 +8871,27 @@ function adlibApply(l, r, nowIso, by) {
   if (r.active > 0 || r.total > 0) l.meta_advertiser = true;
 }
 function adlibTier(l) { return l.adlib_status === "active" ? 3 : l.adlib_status === "past" ? 2 : l.adlib_status === "none" ? 0 : 1; }
+// Days since the newest ad we saw start (active) or run (past); Infinity if unknown.
+function adlibDaysSince(l, now) { return l.adlib_last_start ? Math.max(0, ((now || Date.now()) - new Date(l.adlib_last_start + "T12:00:00Z").getTime()) / 86400e3) : Infinity; }
+// The weight behind the list order. Bands, not a smooth curve, so the order
+// is explainable on the card: "12 aktive, nyeste 15. okt." beats "1 aktiv
+// siden marts", which sits below "pausede i sidste uge".
+//   300+  active, 3+ ads or a new ad within 30 days (+ up to 100 for volume)
+//   220   past, last ad within 90 days
+//   200   active but thin: 1-2 ads, nothing new in 90 days
+//   150   past, 90-180 days   ·  100  past, 180-365 days  ·  50  older
+//    80   not checked yet (has a Facebook page)  ·  40  no page to check
+//     0   never ran an ad (filtered out by default)
+function adlibScore(l, now) {
+  const st = l.adlib_status; const days = adlibDaysSince(l, now); const n = Number(l.adlib_active) || 0;
+  if (st === "active") {
+    if (n >= 3 || days <= 30) return 300 + Math.min(100, n * 5) + (days <= 30 ? 40 : days <= 90 ? 20 : 0);
+    return 200;
+  }
+  if (st === "past") return days <= 90 ? 220 : days <= 180 ? 150 : days <= 365 ? 100 : 50;
+  if (st === "none") return 0;
+  return l.facebook_adlib_id || l.facebook_url || l.facebook_page_id ? 80 : 40;
+}
 function adlibDue(l, now) {
   if (!l.adlib_checked_at) return true;
   return now - new Date(l.adlib_checked_at).getTime() > (l.adlib_status === "active" ? ADLIB_RECHECK_ACTIVE_MS : ADLIB_RECHECK_OTHER_MS);
@@ -8882,12 +8903,13 @@ function adlibCandidates(d, now) {
     .sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || ((b.meta_verified_active === true) - (a.meta_verified_active === true)) || ((sdrHasPerson(b) ? 1 : 0) - (sdrHasPerson(a) ? 1 : 0)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
 }
 function adlibCoverage(d) {
-  const now = Date.now(); const c = { total: 0, active: 0, past: 0, none: 0, unchecked: 0, no_page: 0, due: 0 };
+  const now = Date.now(); const c = { total: 0, active: 0, past: 0, stale: 0, none: 0, unchecked: 0, no_page: 0, due: 0 };
   for (const l of d.leads || []) {
     if (!(sdrIsActive(l) && !l.archived_at && !l.retry_pool && sdrCallable(l) && !l.lastCallAt)) continue;
     c.total++;
     if (!l.facebook_adlib_id) { c.no_page++; continue; }
     if (!l.adlib_status) c.unchecked++; else c[l.adlib_status]++;
+    if (l.adlib_status === "past" && adlibDaysSince(l, now) > 365) c.stale++;
     if (adlibDue(l, now)) c.due++;
   }
   return c;
@@ -13669,7 +13691,7 @@ const SDR_DEFAULT_PITCH = [
   "Hvis de siger \"ikke lige nu\": Fair nok. Hvornår giver det bedre mening - om et par uger eller efter {måned}? Så ringer jeg der.",
   "Hvis de siger \"send mig en mail\": Det gør jeg med det samme. Hvad er den bedste adresse? Og må jeg ringe tilbage om et par dage, når du har kigget på den?",
 ].join("\n");
-const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, exclude_no_ads: true };
+const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, exclude_no_ads: true, exclude_stale_ads: true };
 // "Send me an email" is the most common ask on a cold call. Templates are
 // filled client-side and opened in the SDR's own mail app, so the mail comes
 // from their vedio.dk address and replies land in their inbox.
@@ -13813,6 +13835,8 @@ function sdrPassesRules(l, settings) {
   // The Ad Library check is the truth where we have it; the page flag only
   // speaks for leads not yet checked. "Never ran an ad" is not served.
   if (r.exclude_no_ads !== false && l.adlib_status === "none") return false;
+  // A page whose last ad is over a year old has stopped, not paused.
+  if (r.exclude_stale_ads !== false && l.adlib_status === "past" && adlibDaysSince(l) > 365) return false;
   const ads = Number(l.adsMatched || 0);
   const isMeta = l.adlib_status === "active" || l.adlib_status === "past" || (!l.adlib_status && (l.meta_advertiser === true || l.meta_verified_active === true));
   if (r.require_meta && !isMeta) return false;
@@ -14974,10 +14998,12 @@ function sdrQueue(d, userId, now, exclude, settings) {
     if (az !== bz) return az - bz;
     // A named decision-maker outranks everything else: you can have the
     // conversation. Switchboard-only leads are real work, just further down.
-    // Verified in the Ad Library first: active ads, then pages that ran ads
-    // before, then the unchecked. (Never-ran is filtered out by the rules.)
-    const at = adlibTier(a), bt = adlibTier(b);
-    if (at !== bt) return bt - at;
+    // Verified in the Ad Library first, weighted: many fresh active ads on
+    // top, a page that paused last week above one with a single old ad, the
+    // unchecked below, pages with no Facebook page at all last. (Never-ran
+    // and long-stopped are filtered out by the rules.)
+    const as = adlibScore(a, now), bs = adlibScore(b, now);
+    if (as !== bs) return bs - as;
     const ap = sdrHasPerson(a) ? 1 : 0, bp = sdrHasPerson(b) ? 1 : 0;
     if (ap !== bp) return bp - ap;
     const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
@@ -19259,6 +19285,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         if (Array.isArray(b.rules.exclude_niches)) r.exclude_niches = b.rules.exclude_niches.map((x) => String(x).trim()).filter(Boolean).slice(0, 50);
         if (typeof b.rules.require_meta === "boolean") r.require_meta = b.rules.require_meta;
         if (typeof b.rules.exclude_no_ads === "boolean") r.exclude_no_ads = b.rules.exclude_no_ads;
+        if (typeof b.rules.exclude_stale_ads === "boolean") r.exclude_stale_ads = b.rules.exclude_stale_ads;
         if (Number.isFinite(Number(b.rules.min_ads)) && Number(b.rules.min_ads) >= 0) r.min_ads = Math.round(Number(b.rules.min_ads));
         d.sdr_settings.rules = r;
       }
