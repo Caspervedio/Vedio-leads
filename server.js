@@ -8850,9 +8850,14 @@ async function adlibCheckLead(context, l) {
     // Meta's page is heavy and the server has one CPU: wait only for the
     // navigation to commit, then give the ads a few seconds to render.
     await page.goto(url, { waitUntil: "commit", timeout: 45000 });
-    await page.waitForTimeout(5000);
+    // Wait for the part we read - the result count or the "no ads" line -
+    // rather than a fixed pause; the page renders slowly on one CPU.
+    await page.waitForFunction(() => /resultat|results|ingen annoncer matcher|no ads match/i.test(document.body.innerText || ""), null, { timeout: 25000 }).catch(() => {});
+    await page.waitForTimeout(1500);
     const text = await page.evaluate(() => document.body.innerText).catch(() => null);
-    return adlibParse(text);
+    const r = adlibParse(text);
+    if (!r) console.warn(`[adlib] blokeret? ${l.name}: ${await page.title().catch(() => "?")} · ${String(text || "").replace(/\s+/g, " ").slice(0, 160)}`);
+    return r;
   };
   try {
     const a = await read(adLibraryActiveUrl(pid)); if (!a) return { blocked: true };
@@ -8951,6 +8956,7 @@ async function adlibSweep(batch) {
     }
     flush();
     stats.seconds = Math.round((Date.now() - t0) / 1000);
+    console.log("[adlib] færdig:", JSON.stringify(stats));
     logActivity("adlib-check", `Ad Library-tjek: ${stats.checked} efterset · ${stats.active} aktive · ${stats.past} tidligere · ${stats.none} ingen${stats.blocked ? ` · ${stats.blocked} blokeret` : ""}${stats.errors ? ` · ${stats.errors} fejl` : ""}`, { stats });
     return stats;
   } finally { adlibRunning = false; if (browser) await browser.close().catch(() => {}); }
