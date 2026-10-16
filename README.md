@@ -188,8 +188,10 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
 - **Ad Library-tjek - er de annoncører?** Facebook-sidens "kører annoncer"-flag viste sig
   forkert på 10 af 14 leads på listerne (okt. 2026). Puljen efterses derfor i selve
   Meta Ad Library (sidens egne annoncer, alle lande) - lister først, dernæst puljen
-  i serveringsrækkefølge, 40 ad gangen hvert 20. minut inde i serveren
-  (`ADLIB_SWEEP=0` slår det fra; `POST /api/cron/adlib-check` kører det udefra).
+  i serveringsrækkefølge, 30 ad gangen hvert 20. minut via Cloud Scheduler-jobbet
+  `adlib-check` → `POST /api/cron/adlib-check?batch=30` (Cloud Run giver kun CPU,
+  mens en forespørgsel kører, så en intern timer sultede; `ADLIB_SWEEP=1` slår
+  timeren til på en lokal server uden scheduler).
   Resultatet står på leadet (`adlib_status` active · past · none, `adlib_active`,
   `adlib_total`, `adlib_last_start`, `adlib_checked_at`); aktive tjekkes igen efter
   14 dage, resten efter 30. Listerne serverer **aktive annoncører først, så sider

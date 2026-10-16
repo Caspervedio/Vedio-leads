@@ -19306,10 +19306,12 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
   } catch (e) { sdrFail(res, e, "settings"); }
 });
 
-// The Ad Library sweep runs in-process: Cloud Run keeps one instance warm,
-// and a few page loads every twenty minutes is all it takes to keep the pool
-// checked. ADLIB_SWEEP=0 turns it off (tests, local copies).
-if (process.env.ADLIB_SWEEP !== "0") {
+// The Ad Library sweep is driven by Cloud Scheduler (job adlib-check →
+// POST /api/cron/adlib-check every 20 minutes): Cloud Run only gives the
+// container CPU while a request is in flight, so an in-process timer sat
+// starved - pages never rendered. ADLIB_SWEEP=1 enables the timer for a
+// local server that has no scheduler.
+if (process.env.ADLIB_SWEEP === "1") {
   const tick = () => adlibSweep(Number(process.env.ADLIB_BATCH) || 30).catch((e) => console.warn("[adlib]", e.message)).finally(() => setTimeout(tick, 20 * 60e3));
   setTimeout(tick, 3 * 60e3);
 }
