@@ -969,3 +969,8 @@ main{transition:margin-right .46s var(--ease)}
 .co .shopline i{font-style:normal;font-size:10.5px;font-weight:600;letter-spacing:.02em;color:var(--txt-faint);padding:2px 7px;border:1px solid var(--line);border-radius:999px}
 .dcheck .dc-facts{display:flex;flex-wrap:wrap;gap:6px;margin:-8px 0 14px}
 .dcheck .dc-facts span{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--line);color:var(--txt-soft)}
+.ck .bands{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.ck .bands i{font-style:normal;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-faint);margin-right:4px}
+.ck .bands button{font:inherit;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);cursor:pointer}
+.ck .bands button:hover{border-color:#cfc9bd;color:var(--txt)}
+.ck .bands button.on{background:var(--black);border-color:var(--black);color:#fff}

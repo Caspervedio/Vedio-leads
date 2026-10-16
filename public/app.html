@@ -1177,17 +1177,25 @@ async function disp(action, callback_at, extra) {
    Step 2: three buying signals - enough of them and it is a tier 1 demo.
    The answers ride with the outcome; admin sees them when judging the demo,
    and the tier sets the commission. Texts come from the server (settings.checklist). */
-const DC = { step: 1, basics: {}, signals: {} };
+const DC = { step: 1, basics: {}, signals: {}, spend_band: '' };
 function dcList() { return (S.settings && S.settings.checklist) || { basics: [], signals: [] }; }
 function dcCount(k) { return dcList()[k].filter((x) => DC[k][x.id]).length; }
 function dcMin() { return Math.max(1, Number(S.settings && S.settings.tier1_min_signals) || 2); }
 function dcTier() { return dcCount('signals') >= dcMin() ? 1 : 2; }
 function dcRate(t) { const s = S.settings || {}; return t === 2 ? Number(s.commission_tier2_dkk ?? 500) : Number(s.commission_dkk ?? 1000); }
 function dcToggle(el) { DC[el.dataset.k][el.dataset.id] = el.checked; renderDemoCheckFoot(); }
+/* The spend band sits inside the item's label, so the click must not toggle
+   the box by itself - a band of 10.000+ ticks it, under 10.000 unticks it. */
+function dcBand(ev, id) {
+  ev.preventDefault(); ev.stopPropagation();
+  DC.spend_band = DC.spend_band === id ? '' : id;
+  if (DC.spend_band && DC.spend_band !== 'unknown') DC.basics.spend = DC.spend_band !== 'lt10';
+  renderDemoCheck();
+}
 function openDemoCheck() {
   const L = S.current; if (!L || busy || $('dcheck')) return;
   if (!dcList().basics.length) { disp('demo-booked'); return; } // an old server without the list
-  DC.step = 1; DC.basics = {}; DC.signals = {};
+  DC.step = 1; DC.basics = {}; DC.signals = {}; DC.spend_band = '';
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'dcheck';
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
@@ -1199,8 +1207,11 @@ function renderDemoCheck() {
   // What we already know rides along as the hint: the shop's size from
   // StoreLeads on item 1, the live Meta-ads count on the two ad items.
   const ads = L.meta && L.meta.advertiser ? (L.meta.adsMatched > 0 ? `Meta: ${L.meta.adsMatched} aktive annoncer lige nu` : L.meta.activeNow ? 'Meta: annoncerer lige nu' : '') : '';
-  const hint = (x) => x.id === 'live' && L.shop ? `StoreLeads: ${shopLine(L.shop)}` : (x.id === 'spend' || x.id === 'volume') && ads ? `${ads} · ${x.how || ''}` : (x.how || '');
-  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}</span></label>`;
+  const est = L.shop && L.shop.ad_est ? `Anslået ${Math.round(L.shop.ad_est.lo / 1000)}-${Math.round(L.shop.ad_est.hi / 1000)}.000 kr/md ud fra omsætningen` : '';
+  const hint = (x) => x.id === 'live' && L.shop ? `StoreLeads: ${shopLine(L.shop)}` : x.id === 'spend' ? [est, ads].filter(Boolean).join(' · ') || (x.how || '') : x.id === 'volume' && ads ? `${ads} · ${x.how || ''}` : (x.how || '');
+  // Item 2 also asks for the number: one tap on what they say they spend.
+  const bands = (x) => x.id !== 'spend' ? '' : `<span class="bands"><i>Hvad siger de selv?</i>${(CK.spend_bands || []).map((b) => `<button type="button" class="${DC.spend_band === b.id ? 'on' : ''}" onclick="dcBand(event,'${e(b.id)}')">${e(b.label)}</button>`).join('')}</span>`;
+  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}${bands(x)}</span></label>`;
   const head = (step, h, p) => `<div class="dc-head"><div><span class="dc-kicker">Demo booket med ${e(L.name || '')} · trin ${step} af 2</span><h3>${h}</h3><p>${p}</p></div><span class="dc-steps"><i class="${step === 1 ? 'on' : 'done'}"></i><i class="${step === 2 ? 'on' : ''}"></i></span></div>`;
   if (DC.step === 1) {
     bg.innerHTML = `<div class="modal wide dcheck">
@@ -1231,7 +1242,7 @@ function renderDemoCheckFoot() {
 }
 async function demoCheckSubmit() {
   if (busy) return;
-  const check = { basics: { ...DC.basics }, signals: { ...DC.signals } };
+  const check = { basics: { ...DC.basics }, signals: { ...DC.signals }, spend_band: DC.spend_band || '' };
   const bg = $('dcheck'); if (bg) bg.remove();
   await disp('demo-booked', null, { check });
 }

@@ -1451,7 +1451,8 @@ function ckSummary(l) {
   const CK = O.settings && O.settings.checklist; const c = l.demo_check;
   if (!CK || !c || !c.basics) return 'Booket uden tjekliste';
   const n = (o) => Object.values(o || {}).filter(Boolean).length;
-  return `Grundlag ${n(c.basics)}/${CK.basics.length} · købssignaler ${n(c.signals)}/${CK.signals.length}`;
+  const band = (CK.spend_bands || []).find((b) => b.id === c.spend_band);
+  return `Grundlag ${n(c.basics)}/${CK.basics.length} · købssignaler ${n(c.signals)}/${CK.signals.length}${band && band.id !== 'unknown' ? ` · annoncer ${band.short}/md` : ''}`;
 }
 function openDemoCheck(cvr) {
   const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
@@ -1463,9 +1464,12 @@ function openDemoCheck(cvr) {
   const r1 = Number(s.commission_dkk ?? 1000), r2 = Number(s.commission_tier2_dkk ?? 500);
   const n = (k) => CK[k].filter((x) => c && c[k][x.id]).length;
   const ads = l.meta && l.meta.advertiser ? (l.meta.adsMatched > 0 ? `Meta: ${l.meta.adsMatched} aktive annoncer` : l.meta.activeNow ? 'Meta: annoncerer lige nu' : 'Meta-annoncør') : '';
-  const hint = (x) => x.id === 'live' && l.shop ? `StoreLeads: ${shopLine(l.shop)}` : (x.id === 'spend' || x.id === 'volume') && ads ? ads : '';
+  const band = c && (CK.spend_bands || []).find((b) => b.id === c.spend_band);
+  const bandTxt = band ? `${band.label}${band.id === 'unknown' ? '' : ' kr/md'}` : '';
+  const est = l.shop && l.shop.ad_est ? `anslået ${Math.round(l.shop.ad_est.lo / 1000)}-${Math.round(l.shop.ad_est.hi / 1000)}.000 kr/md ud fra omsætningen` : '';
+  const hint = (x) => x.id === 'live' && l.shop ? `StoreLeads: ${shopLine(l.shop)}` : x.id === 'spend' ? [band ? `SDR'en fik: ${bandTxt}` : '', est, ads].filter(Boolean).join(' · ') : x.id === 'volume' && ads ? ads : '';
   const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}</span></div>`; };
-  const facts = [l.shop ? `StoreLeads: ${shopLine(l.shop)}${l.shop.platform ? ' · ' + shopPlatform(l.shop) : ''}` : '', ads].filter(Boolean);
+  const facts = [l.shop ? `StoreLeads: ${shopLine(l.shop)}${l.shop.platform ? ' · ' + shopPlatform(l.shop) : ''}` : '', ads, band ? `Annoncer: ${bandTxt} (SDR)` : ''].filter(Boolean);
   const status = st === 'qualified' ? `Kvalificeret${l.commission_rate != null ? ' · ' + fmtKr(l.commission_rate) + ' i provision' : ''}` : st === 'unqualified' ? `Ikke kvalificeret${l.demo_review_reason ? ' · ' + l.demo_review_reason : ''}` : 'Afventer din vurdering';
   const inp = 'width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px';
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'ckmodal';

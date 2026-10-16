@@ -14783,7 +14783,13 @@ function sdrShopOf(l) {
   const cents = Number(l.storeleads_estimated_sales_yearly) || 0;
   const visits = Number(l.storeleads_estimated_visits) || 0;
   if (!cents && !visits) return null;
-  return { sales_kr: cents ? Math.round(cents / 100 * STORELEADS_USD_DKK) : null, visits: visits || null, size: sdrLeadSize(l), platform: l.storeleads_platform || "", pulled_at: l.storeleads_pulled_at || null };
+  const sales_kr = cents ? Math.round(cents / 100 * STORELEADS_USD_DKK) : null;
+  // A starting point for "how much do you spend on ads": webshops that run
+  // ads typically put 5-15% of revenue into paid media. Only when we know
+  // they advertise, and only when it comes to something.
+  const ads = l.meta_verified_active === true || l.meta_advertiser === true;
+  const lo = sales_kr && ads ? Math.round(sales_kr / 12 * 0.05 / 1000) * 1000 : 0, hi = sales_kr && ads ? Math.round(sales_kr / 12 * 0.15 / 1000) * 1000 : 0;
+  return { sales_kr, visits: visits || null, size: sdrLeadSize(l), platform: l.storeleads_platform || "", pulled_at: l.storeleads_pulled_at || null, ad_est: hi >= 2000 ? { lo: Math.max(1000, lo), hi } : null };
 }
 function sdrLeadSize(l) {
   const kr = (Number(l.storeleads_estimated_sales_yearly) || 0) / 100 * STORELEADS_USD_DKK;
@@ -14991,11 +14997,22 @@ const SDR_CHECKLIST = {
     { id: "soon", short: "Vil i gang snart", title: "De vil i gang snart", desc: "Inden for cirka en måned. De ved, det haster at komme i gang." },
   ],
 };
+// What they say they spend on ads, asked on the call (item 2). Meta doesn't
+// publish spend for commercial ads, so this is the only number we can trust.
+SDR_CHECKLIST.spend_bands = [
+  { id: "lt10", label: "Under 10.000", short: "< 10k" },
+  { id: "10-25", label: "10-25.000", short: "10-25k" },
+  { id: "25-50", label: "25-50.000", short: "25-50k" },
+  { id: "gt50", label: "Over 50.000", short: "> 50k" },
+  { id: "unknown", label: "Ved ikke", short: "?" },
+];
+function spendBandOf(id) { return SDR_CHECKLIST.spend_bands.find((b) => b.id === id) || null; }
 // What the SDR ticked, as booleans keyed by id - anything else is dropped.
 function demoCheckClean(raw) {
   if (!raw || typeof raw !== "object") return null;
   const pick = (list, src) => Object.fromEntries(list.map((x) => [x.id, !!(src && src[x.id])]));
-  return { basics: pick(SDR_CHECKLIST.basics, raw.basics), signals: pick(SDR_CHECKLIST.signals, raw.signals) };
+  const band = spendBandOf(String(raw.spend_band || ""));
+  return { basics: pick(SDR_CHECKLIST.basics, raw.basics), signals: pick(SDR_CHECKLIST.signals, raw.signals), spend_band: band ? band.id : null };
 }
 function demoCheckCount(check) {
   const n = (o) => Object.values(o || {}).filter(Boolean).length;
@@ -15016,7 +15033,8 @@ function demoCheckLine(lead, withTier = true) {
   const c = demoCheckCount(lead.demo_check); if (!c) return null;
   const missing = SDR_CHECKLIST.basics.filter((x) => !lead.demo_check.basics[x.id]).map((x) => x.short);
   const got = SDR_CHECKLIST.signals.filter((x) => lead.demo_check.signals[x.id]).map((x) => x.short);
-  return `${withTier ? `Tier ${lead.demo_tier || 1} · ` : ""}grundlag ${c.basics}/${SDR_CHECKLIST.basics.length}${missing.length ? " (mangler: " + missing.join(", ") + ")" : ""} · købssignaler ${c.signals}/${SDR_CHECKLIST.signals.length}${got.length ? " (" + got.join(", ") + ")" : ""}`;
+  const band = spendBandOf(lead.demo_check.spend_band);
+  return `${withTier ? `Tier ${lead.demo_tier || 1} · ` : ""}grundlag ${c.basics}/${SDR_CHECKLIST.basics.length}${missing.length ? " (mangler: " + missing.join(", ") + ")" : ""} · købssignaler ${c.signals}/${SDR_CHECKLIST.signals.length}${got.length ? " (" + got.join(", ") + ")" : ""}${band ? ` · annoncer ${band.label}${band.id === "unknown" ? "" : " kr/md"}` : ""}`;
 }
 // Once the salary period a demo was paid in is locked, its tier stays.
 function demoPeriodLocked(d, lead, settings) {
@@ -16859,7 +16877,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
     const c = sdrPrimaryContact(l) || {}; const st = l.demo_status || "pending"; const tw = twentyDemoState(ledger, l);
     const q = st === "qualified" ? demoQualifiedAt(l) : null;
     return [{ v: new Date(l.demo_booked_at), s: "dt" }, who(l.demo_booked_by), l.name || "", String(l.web || l.website || "").replace(/^https?:\/\//, ""), l.city || "", c.name || "", c.title || "", c.email || "", sdrPhone(l).phone || "",
-      ST[st] || st, l.demo_tier ? "Tier " + l.demo_tier : "", demoCheckLine(l, false) || "", l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "",
+      ST[st] || st, l.demo_tier ? "Tier " + l.demo_tier : "", demoCheckLine(l, false) || "", (() => { const b = l.demo_check && spendBandOf(l.demo_check.spend_band); return b ? (b.id === "unknown" ? b.label : b.label + " kr/md") : ""; })(), l.demo_review_reason || "", q ? { v: new Date(q), s: "dt" } : "", q ? commissionLabel(commissionPeriodOf(q)) : "", st === "qualified" ? { v: demoCommissionRate(l, settings), s: "kr" } : "",
       l.sale_status === "won" ? "Solgt" : l.sale_status === "lost" ? `Ikke solgt${l.sale_reason ? " - " + (SALE_REASONS[l.sale_reason] || l.sale_reason) : ""}` : st === "qualified" ? "Afventer" : "", l.sale_at ? { v: new Date(l.sale_at), s: "dt" } : "", l.sale_status === "won" && l.sale_value_dkk != null ? { v: Number(l.sale_value_dkk), s: "kr" } : "",
       tw ? (tw.url ? "Ja" : tw.error ? `Fejl: ${tw.error}` : "Afventer") : "-", { v: l.last_note || "", s: "wrap" }, l.cvr];
   });
@@ -16889,7 +16907,7 @@ function sdrExportSheets(d, { fromKey, toKey, sdr }) {
   return [
     { name: "Oversigt", cols: [34, 12, ...ids.map(() => 13)], rows: overview, head: headRow, freeze: headRow + 1 },
     { name: "Per dag", cols: [12, 10, 9, 10, 12, 9, 17, 10, ...ids.flatMap(() => [15, 15])], rows: [dayHead, ...dayRows], head: 0, freeze: 1 },
-    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 8, 40, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Tier", "Tjekliste", "Begrundelse", "Kvalificeret", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
+    { name: "Demoer", cols: [17, 12, 26, 24, 14, 20, 18, 26, 16, 16, 8, 40, 18, 22, 17, 16, 13, 22, 17, 13, 12, 60, 22], rows: [["Booket", "Booket af", "Virksomhed", "Hjemmeside", "By", "Kontakt", "Titel", "Email", "Telefon", "Status", "Tier", "Tjekliste", "Annoncebudget (SDR)", "Begrundelse", "Kvalificeret", "Lønperiode", "Provision (kr)", "Salg", "Salgsdato", "Værdi (kr)", "I Twenty", "Note", "ID"], ...demoRows], head: 0, freeze: 1, filter: true },
     { name: "Opkald", cols: [17, 12, 28, 20, 16, 16, 9, 12, 17, 60, 18, 14, 22], rows: [["Tidspunkt", "SDR", "Virksomhed", "Kontakt", "Telefon", "Udfald", "Samtale", "Tid (min)", "Følg op", "Note", "Kilde", "By", "ID"], ...callRows], head: 0, freeze: 1, filter: true },
     { name: "Nye leads", cols: [24, 12, 17, 12, 12, 12, 14], rows: [["Kilde", "Nye leads", "Kan ringes til nu", "Andel klar", "Ringet til", "Samtaler", "Demoer booket"], ...srcRows], head: 0, freeze: 1 },
     { name: "Definitioner", cols: [22, 110], rows: defs, head: null },

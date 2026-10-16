@@ -192,6 +192,13 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   admins vurdering - sammen med Meta-status på annoncepunkterne. Tallet er
   StoreLeads' estimat i USD-cent omregnet med 6,9 kr/$; samme tal driver
   størrelsesfilteret i "Fokus i dag".
+- **Annoncebudget.** Meta offentliggør ikke forbrug for almindelige annoncer, så
+  tjeklistens punkt 2 spørger SDR'en om det, de fik at vide i samtalen - ét tryk på
+  *Under 10.000 · 10-25.000 · 25-50.000 · Over 50.000 · Ved ikke* (kr/md). 10.000+
+  sætter fluebenet, under 10.000 fjerner det. Som udgangspunkt står et estimat på
+  punktet (5-15 % af StoreLeads-omsætningen, kun når de kører annoncer). Svaret
+  gemmes i `demo_check.spend_band`, står på demorækken, i admins vurdering, i
+  Slack/Twenty-linjen og i Excel-kolonnen "Annoncebudget (SDR)".
 - **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
   tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
   på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på
