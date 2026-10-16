@@ -8847,8 +8847,10 @@ async function adlibCheckLead(context, l) {
   const pid = l.facebook_adlib_id; if (!pid) return null;
   const page = await context.newPage();
   const read = async (url) => {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(3500);
+    // Meta's page is heavy and the server has one CPU: wait only for the
+    // navigation to commit, then give the ads a few seconds to render.
+    await page.goto(url, { waitUntil: "commit", timeout: 45000 });
+    await page.waitForTimeout(5000);
     const text = await page.evaluate(() => document.body.innerText).catch(() => null);
     return adlibParse(text);
   };
@@ -8923,6 +8925,7 @@ async function adlibSweep(batch) {
         results.set(l.cvr, r);
       } catch (e) { stats.errors++; console.warn("[adlib]", l.name, e.message.slice(0, 120)); if (stats.errors >= 5) break; }
       if (results.size >= 8) flush();
+      await new Promise((r) => setTimeout(r, 1500)); // a breath between pages
     }
     flush();
     stats.seconds = Math.round((Date.now() - t0) / 1000);
