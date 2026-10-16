@@ -974,3 +974,7 @@ main{transition:margin-right .46s var(--ease)}
 .ck .bands button{font:inherit;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--white);color:var(--txt-soft);cursor:pointer}
 .ck .bands button:hover{border-color:#cfc9bd;color:var(--txt)}
 .ck .bands button.on{background:var(--black);border-color:var(--black);color:#fff}
+.chip.meta.past{background:#efe9fb;color:#6b4fb3}
+.chip.meta.soft{background:#f3efe9;color:var(--txt-soft)}
+.chip.noads{background:#f3efe9;color:var(--txt-faint)}
+.proof.off{color:var(--txt-faint)}.proof.off .shape{background:#cfc9bd}

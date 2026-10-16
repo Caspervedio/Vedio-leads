@@ -332,6 +332,8 @@ function fmtWhen(iso) {
   if (d.toDateString() === tmr.toDateString()) return 'I morgen ' + hm;
   return d.toLocaleDateString('da-DK', { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + hm;
 }
+function fmtDay(iso) { return iso ? new Date(iso).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }) : ''; }
+function fmtMonth(iso) { return iso ? new Date(iso).toLocaleDateString('da-DK', { month: 'short', year: 'numeric' }) : ''; }
 function fmtAgo(iso) { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); if (m < 1) return 'lige nu'; if (m < 60) return m + ' min'; const h = Math.round(m / 60); if (h < 24) return h + ' t'; return Math.round(h / 24) + ' d'; }
 const ACTION_LABEL = { 'demo-booked': 'Demo booket', 'follow-up': 'Følg op', 'no-answer': 'Ingen svar', 'not-now': 'Ikke nu', 'not-relevant': 'Ikke relevant', 'wrong-number': 'Forkert nummer', 'email-sent': 'Mail sendt', 'ivr': 'Telefonmenu', 'interested': 'Interesseret', 'sms': 'SMS', 'call-back': 'Ring tilbage' };
 function signalChip(l) {
@@ -339,7 +341,9 @@ function signalChip(l) {
   // Which kind matters: agreed callback, our own retry, or a sent mail.
   if (l.callback_at && new Date(l.callback_at).getTime() <= Date.now()) { const k = dueKind(l); return k.cls === 'mail' ? '<span class="chip mail">Mail sendt</span>' : `<span class="chip ${k.cls}">${k.label} · ${e(fmtWhen(l.callback_at))}</span>`; }
   if (l.email_sent_at) return '<span class="chip mail">Mail sendt</span>';
-  if (l.meta && l.meta.advertiser) return `<span class="chip meta">${l.meta.activeNow ? (l.meta.adsMatched > 0 ? l.meta.adsMatched + ' annoncer nu' : 'Annoncerer nu') : 'Meta-annoncør'}</span>`;
+  const ad = l.meta && l.meta.adlib;
+  if (ad) return ad.status === 'active' ? `<span class="chip meta" title="Tjekket i Ad Library ${e(fmtDay(ad.at))}">${ad.active} aktiv${ad.active === 1 ? ' annonce' : 'e annoncer'}</span>` : ad.status === 'past' ? `<span class="chip meta past" title="Ingen aktive annoncer lige nu - tjekket ${e(fmtDay(ad.at))}">Har kørt annoncer${ad.last ? ' · sidst ' + e(fmtMonth(ad.last)) : ''}</span>` : `<span class="chip noads">Ingen annoncer</span>`;
+  if (l.meta && l.meta.advertiser) return `<span class="chip meta soft" title="Facebook-siden siger de annoncerer - ikke efterset i Ad Library endnu">${l.meta.activeNow ? 'Annoncerer (ikke efterset)' : 'Meta-annoncør'}</span>`;
   return `<span class="chip">${e(l.source_label || '-')}</span>`;
 }
 /* Ad Library link.
@@ -553,7 +557,15 @@ function renderCard() {
   // produced one. Without a page id there is no link worth following.
   const m = L.meta || {};
   const url = adLibUrl(L);
-  const proof = m.advertiser
+  // The Ad Library check is the evidence when we have it: what they run now,
+  // or that they ran ads before - with the date we looked.
+  const ad = m.adlib; const chk = ad && ad.at ? `tjekket ${fmtDay(ad.at)}${ad.by && ad.by !== 'cron' ? ' af en SDR' : ''}` : '';
+  const proofAd = !ad ? '' : ad.status === 'active'
+    ? `<a class="proof" href="${e(ad.url_active)}" target="_blank" rel="noopener" title="Deres aktive annoncer i Meta Ad Library · ${e(chk)}"><span class="shape"></span>Kører ${ad.active} Meta-annonce${ad.active === 1 ? '' : 'r'} lige nu ↗</a>`
+    : ad.status === 'past'
+      ? `<a class="proof quiet" href="${e(ad.url_all)}" target="_blank" rel="noopener" title="Har kørt annoncer før - ingen aktive lige nu · ${e(chk)}"><span class="shape"></span>Har kørt Meta-annoncer${ad.last ? ' · sidst ' + e(fmtMonth(ad.last)) : ''} ↗</a>`
+      : `<span class="proof off" title="${e(chk)}"><span class="shape"></span>Ingen annoncer i Ad Library</span>`;
+  const proof = proofAd ? proofAd : m.advertiser
     ? (m.activeNow
         ? (url
             ? `<a class="proof" href="${url}" target="_blank" rel="noopener" title="Søger Meta Ad Library efter &quot;${e(m.pageName || L.name || '')}&quot;"><span class="shape"></span>Kører ${adsN > 0 ? adsN + ' Meta-annoncer' : 'Meta-annoncer'} lige nu ↗</a>`
@@ -940,6 +952,7 @@ function toggleScreen(first) {
     ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fravælg uden opkald</span>'}
     <button class="pill" onclick="screen('icp')" title="Arkiveres - kommer ikke igen">Ikke vores målgruppe</button>
     <button class="pill" onclick="screen('weak')" title="Tilbage i puljen om 3 måneder, nederst">For svag lige nu</button>
+    <button class="pill" onclick="screen('noads')" title="Du har set efter i Ad Library: ingen aktive annoncer. Gemmes på leadet, så det ikke serveres igen før om 3 måneder">Ingen aktive annoncer</button>
     <span class="screen-later">Ring senere: <button class="pill sm" onclick="screen('later','${at(7, 9)}')">Om 1 uge</button><button class="pill sm" onclick="screen('later','${at(14, 9)}')">Om 2 uger</button><button class="pill sm" onclick="screen('later','${at(30, 9)}')">Om 1 måned</button></span>
     <span class="sub" style="width:100%">Tæller ikke som et opkald. En note i feltet ovenfor gemmes med.</span>
   </div>`;
@@ -949,7 +962,7 @@ async function screen(reason, when) {
   const note = ($('note') && $('note').value.trim()) || '';
   try {
     apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note }));
-    const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
+    const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', noads: 'Noteret: ingen aktive annoncer - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -1206,7 +1219,8 @@ function renderDemoCheck() {
   const CK = dcList(); const L = S.current || {};
   // What we already know rides along as the hint: the shop's size from
   // StoreLeads on item 1, the live Meta-ads count on the two ad items.
-  const ads = L.meta && L.meta.advertiser ? (L.meta.adsMatched > 0 ? `Meta: ${L.meta.adsMatched} aktive annoncer lige nu` : L.meta.activeNow ? 'Meta: annoncerer lige nu' : '') : '';
+  const adl = L.meta && L.meta.adlib;
+  const ads = adl ? (adl.status === 'active' ? `Ad Library: ${adl.active} aktive annoncer (${fmtDay(adl.at)})` : adl.status === 'past' ? `Ad Library: ingen aktive annoncer - har kørt før${adl.last ? ', sidst ' + fmtMonth(adl.last) : ''}` : 'Ad Library: ingen annoncer') : L.meta && L.meta.advertiser ? (L.meta.adsMatched > 0 ? `Meta: ${L.meta.adsMatched} aktive annoncer lige nu` : L.meta.activeNow ? 'Meta: annoncerer ifølge Facebook-siden (ikke efterset)' : '') : '';
   const est = L.shop && L.shop.ad_est ? `Anslået ${Math.round(L.shop.ad_est.lo / 1000)}-${Math.round(L.shop.ad_est.hi / 1000)}.000 kr/md ud fra omsætningen` : '';
   const hint = (x) => x.id === 'live' && L.shop ? `StoreLeads: ${shopLine(L.shop)}` : x.id === 'spend' ? [est, ads].filter(Boolean).join(' · ') || (x.how || '') : x.id === 'volume' && ads ? `${ads} · ${x.how || ''}` : (x.how || '');
   // Item 2 also asks for the number: one tap on what they say they spend.

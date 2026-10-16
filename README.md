@@ -185,6 +185,21 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
   som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
   `sdr_absence.json` (ikke i puljen).
+- **Ad Library-tjek - er de annoncører?** Facebook-sidens "kører annoncer"-flag viste sig
+  forkert på 10 af 14 leads på listerne (okt. 2026). Puljen efterses derfor i selve
+  Meta Ad Library (sidens egne annoncer, alle lande) - lister først, dernæst puljen
+  i serveringsrækkefølge, 40 ad gangen hvert 20. minut inde i serveren
+  (`ADLIB_SWEEP=0` slår det fra; `POST /api/cron/adlib-check` kører det udefra).
+  Resultatet står på leadet (`adlib_status` active · past · none, `adlib_active`,
+  `adlib_total`, `adlib_last_start`, `adlib_checked_at`); aktive tjekkes igen efter
+  14 dage, resten efter 30. Listerne serverer **aktive annoncører først, så sider
+  der har kørt annoncer før, så de ikke-efterset** - og sider, der aldrig har kørt
+  en annonce, serveres ikke (⚙ → Regler → "Serv aldrig leads uden annoncer"). Kortet
+  og Ringelisten viser beviset ("Kører 12 Meta-annoncer lige nu · tjekket 16. okt.",
+  "Har kørt Meta-annoncer · sidst sep. 2026", "Ingen annoncer i Ad Library"), og
+  linket åbner de aktive annoncer. SDR'en kan selv fravælge med "Ingen aktive
+  annoncer" - det gemmes som et tjek, og leadet hviler 3 måneder. Dækningen og en
+  manuel kørsel står under ⚙ → Regler.
 - **StoreLeads-estimatet er synligt.** For webshops fra StoreLeads (ca. 4 af 10 leads)
   står den anslåede årlige omsætning og månedlige besøg ("≈ 2,3 mio. kr/år · 972
   besøg/md · StoreLeads-estimat") på opkaldskortet under websitet, som hint på

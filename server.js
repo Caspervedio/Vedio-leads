@@ -8812,6 +8812,125 @@ const META_RECENT_WINDOW_DAYS = 90;
 // advertiser instead of its empty search page, and `all` rather than `active`
 // keeps it useful when our last check is a few days old - a paused ad is still
 // something to open a call with.
+function adLibraryActiveUrl(pageId) { return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`; }
+function adLibraryAllUrl(pageId) { return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`; }
+// ─── Ad Library check: what the SDR would see ────────────────────────────
+// The Facebook-page flag ("currently running ads") was wrong on 10 of 14
+// listed leads when checked by hand (Oct 2026) - half of every list was not
+// advertising. This opens the page's own Ad Library view instead: active ads
+// across all countries, counted; with none active, the "all" view says
+// whether they ever ran ads and when the newest started. Three tiers come
+// out of it and drive the lists: active > past > unchecked; never-ran is
+// not served at all (rules.exclude_no_ads).
+const ADLIB_RECHECK_ACTIVE_MS = 14 * 86400e3, ADLIB_RECHECK_OTHER_MS = 30 * 86400e3;
+const ADLIB_MON = { jan: 0, feb: 1, mar: 2, apr: 3, maj: 4, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, okt: 9, oct: 9, nov: 10, dec: 11 };
+function adlibParse(text) {
+  if (!text) return null;
+  if (!/annoncebibliotek|ad library/i.test(text)) return null; // login wall / bot challenge
+  if (/ingen annoncer matcher|no ads match/i.test(text)) return { count: 0, dates: [] };
+  const m = text.match(/(?:ca\.|~)\s*([\d.,\s]+?)\s*resultat/i) || text.match(/(?:about|~)\s*([\d.,\s]+?)\s*results?/i);
+  // Every date on the page: "Begyndte at køre 7. okt. 2026" on active ads,
+  // "22. jan. 2026 – 21. feb. 2026" on inactive ones (English: "Started
+  // running on Oct 7, 2026", "Jan 22, 2026 - Feb 21, 2026"). The newest is
+  // the last day we know they had an ad running.
+  const dates = [];
+  for (const x of text.matchAll(/(\d{1,2})\.\s*([a-zæøå]{3})[a-zæøå.]*\s+(\d{4})/gi)) { const mo = ADLIB_MON[x[2].toLowerCase()]; if (mo != null) dates.push(Date.UTC(Number(x[3]), mo, Number(x[1]))); }
+  for (const x of text.matchAll(/\b([a-z]{3})[a-z]*\s+(\d{1,2}),\s*(\d{4})/gi)) { const mo = ADLIB_MON[x[1].toLowerCase()]; if (mo != null) dates.push(Date.UTC(Number(x[3]), mo, Number(x[2]))); }
+  if (m) return { count: Number(String(m[1]).replace(/[^\d]/g, "")) || 0, dates };
+  // No count line but ads on the page (a single ad shows no "~1 resultat" in
+  // every locale): count the library ids we can see.
+  const ids = (text.match(/biblioteks-id|library id/gi) || []).length;
+  return { count: ids, dates, approx: true };
+}
+async function adlibCheckLead(context, l) {
+  const pid = l.facebook_adlib_id; if (!pid) return null;
+  const page = await context.newPage();
+  const read = async (url) => {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(3500);
+    const text = await page.evaluate(() => document.body.innerText).catch(() => null);
+    return adlibParse(text);
+  };
+  try {
+    const a = await read(adLibraryActiveUrl(pid)); if (!a) return { blocked: true };
+    let total = a.count, last = a.dates.length ? Math.max(...a.dates) : null;
+    if (a.count === 0) { const all = await read(adLibraryAllUrl(pid)); if (!all) return { blocked: true }; total = all.count; last = all.dates.length ? Math.max(...all.dates) : null; }
+    return { active: a.count, total, last };
+  } finally { await page.close().catch(() => {}); }
+}
+function adlibApply(l, r, nowIso, by) {
+  l.adlib_active = r.active; l.adlib_total = r.total;
+  if (r.last) l.adlib_last_start = new Date(r.last).toISOString().slice(0, 10);
+  l.adlib_checked_at = nowIso; l.adlib_by = by || "cron";
+  l.adlib_status = r.active > 0 ? "active" : r.total > 0 ? "past" : "none";
+  // The page flag was the old truth - keep it in line for anything still reading it.
+  l.meta_verified_active = r.active > 0; l.meta_verified_at = nowIso; l.meta_ads_active_now = r.active;
+  if (r.active > 0 || r.total > 0) l.meta_advertiser = true;
+}
+function adlibTier(l) { return l.adlib_status === "active" ? 3 : l.adlib_status === "past" ? 2 : l.adlib_status === "none" ? 0 : 1; }
+function adlibDue(l, now) {
+  if (!l.adlib_checked_at) return true;
+  return now - new Date(l.adlib_checked_at).getTime() > (l.adlib_status === "active" ? ADLIB_RECHECK_ACTIVE_MS : ADLIB_RECHECK_OTHER_MS);
+}
+// Who first: what is on a list now, then the pool in the order it would be served.
+function adlibCandidates(d, now) {
+  const onList = new Set(Object.values(d.sdr_lists || {}).flatMap((L) => L.cvrs || []));
+  return (d.leads || []).filter((l) => l.facebook_adlib_id && sdrIsActive(l) && !l.archived_at && !l.retry_pool && sdrCallable(l) && adlibDue(l, now))
+    .sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || ((b.meta_verified_active === true) - (a.meta_verified_active === true)) || ((sdrHasPerson(b) ? 1 : 0) - (sdrHasPerson(a) ? 1 : 0)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
+}
+function adlibCoverage(d) {
+  const now = Date.now(); const c = { total: 0, active: 0, past: 0, none: 0, unchecked: 0, no_page: 0, due: 0 };
+  for (const l of d.leads || []) {
+    if (!(sdrIsActive(l) && !l.archived_at && !l.retry_pool && sdrCallable(l) && !l.lastCallAt)) continue;
+    c.total++;
+    if (!l.facebook_adlib_id) { c.no_page++; continue; }
+    if (!l.adlib_status) c.unchecked++; else c[l.adlib_status]++;
+    if (adlibDue(l, now)) c.due++;
+  }
+  return c;
+}
+let adlibRunning = false;
+async function adlibSweep(batch) {
+  if (adlibRunning) return { skipped: "kører allerede" };
+  adlibRunning = true;
+  const stats = { candidates: 0, checked: 0, active: 0, past: 0, none: 0, blocked: 0, errors: 0 };
+  let browser = null;
+  try {
+    const d0 = loadPool(); const now = Date.now();
+    const todo = adlibCandidates(d0, now); stats.candidates = todo.length;
+    const pick = todo.slice(0, batch); if (!pick.length) return stats;
+    const lb = await launchAdsBrowser(); browser = lb.browser;
+    const results = new Map();
+    for (const l of pick) {
+      try {
+        const r = await adlibCheckLead(lb.context, l);
+        if (!r) continue;
+        if (r.blocked) { stats.blocked++; if (stats.blocked >= 3) break; continue; }
+        results.set(l.cvr, r);
+      } catch (e) { stats.errors++; if (stats.errors >= 5) break; }
+    }
+    if (results.size) {
+      const d = loadPool(); const nowIso = new Date().toISOString();
+      for (const l of d.leads || []) { const r = results.get(l.cvr); if (!r) continue; adlibApply(l, r, nowIso); stats.checked++; stats[l.adlib_status]++; }
+      savePool(d);
+    }
+    logActivity("adlib-check", `Ad Library-tjek: ${stats.checked} efterset · ${stats.active} aktive · ${stats.past} tidligere · ${stats.none} ingen${stats.blocked ? ` · ${stats.blocked} blokeret` : ""}${stats.errors ? ` · ${stats.errors} fejl` : ""}`, { stats });
+    return stats;
+  } finally { adlibRunning = false; if (browser) await browser.close().catch(() => {}); }
+}
+app.post("/api/cron/adlib-check", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try { res.json({ ok: true, stats: await adlibSweep(Math.max(1, Math.min(200, Number(req.query.batch) || 40))) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.get("/api/sdr/admin/adlib", authMiddleware, (req, res) => {
+  try { if (!sdrAdminGuard(req, res)) return; res.json({ ok: true, running: adlibRunning, coverage: adlibCoverage(loadPool()) }); }
+  catch (e) { sdrFail(res, e, "admin/adlib"); }
+});
+app.post("/api/sdr/admin/adlib/run", authMiddleware, async (req, res) => {
+  try { if (!sdrAdminGuard(req, res)) return; const stats = await adlibSweep(Math.max(1, Math.min(100, Number((req.body || {}).batch) || 20))); res.json({ ok: true, stats, coverage: adlibCoverage(loadPool()) }); }
+  catch (e) { sdrFail(res, e, "admin/adlib/run"); }
+});
 function adLibraryPageUrl(pageId) {
   return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`;
 }
@@ -13535,7 +13654,7 @@ const SDR_DEFAULT_PITCH = [
   "Hvis de siger \"ikke lige nu\": Fair nok. Hvornår giver det bedre mening - om et par uger eller efter {måned}? Så ringer jeg der.",
   "Hvis de siger \"send mig en mail\": Det gør jeg med det samme. Hvad er den bedste adresse? Og må jeg ringe tilbage om et par dage, når du har kigget på den?",
 ].join("\n");
-const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0 };
+const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, exclude_no_ads: true };
 // "Send me an email" is the most common ask on a cold call. Templates are
 // filled client-side and opened in the SDR's own mail app, so the mail comes
 // from their vedio.dk address and replies land in their inbox.
@@ -13676,7 +13795,11 @@ function sdrPassesRules(l, settings) {
   const r = (settings && settings.rules) || SDR_DEFAULT_RULES;
   if (r.exclude_sources && r.exclude_sources.length) { const s = sdrSourceLabel(l); if (r.exclude_sources.includes(s)) return false; }
   if (r.exclude_niches && r.exclude_niches.length) { const n = String(l.ind || l.industry || l.niche || "").toLowerCase(); if (n && r.exclude_niches.some((x) => x && n.includes(String(x).toLowerCase()))) return false; }
-  const ads = Number(l.adsMatched || 0); const isMeta = l.meta_advertiser === true || l.meta_verified_active === true;
+  // The Ad Library check is the truth where we have it; the page flag only
+  // speaks for leads not yet checked. "Never ran an ad" is not served.
+  if (r.exclude_no_ads !== false && l.adlib_status === "none") return false;
+  const ads = Number(l.adsMatched || 0);
+  const isMeta = l.adlib_status === "active" || l.adlib_status === "past" || (!l.adlib_status && (l.meta_advertiser === true || l.meta_verified_active === true));
   if (r.require_meta && !isMeta) return false;
   if (r.min_ads > 0 && ads < r.min_ads) return false;
   return true;
@@ -14710,6 +14833,8 @@ function sdrSlim(l, nameById) {
       // the form 1000… is a profile id and opens an empty Ad Library.
       adlibId: l.facebook_adlib_id || (/^1000\d{10,}$/.test(String(l.facebook_page_id || "")) ? "" : (l.facebook_page_id || "")),
       pageName: l.facebook_page_name || "",
+      // What the Ad Library itself shows for the page (see adlibSweep).
+      adlib: l.adlib_status ? { status: l.adlib_status, active: Number(l.adlib_active) || 0, total: Number(l.adlib_total) || 0, last: l.adlib_last_start || null, at: l.adlib_checked_at || null, by: l.adlib_by || null, url_active: l.facebook_adlib_id ? adLibraryActiveUrl(l.facebook_adlib_id) : "", url_all: l.facebook_adlib_id ? adLibraryAllUrl(l.facebook_adlib_id) : "" } : null,
     },
     source_label: sdrSourceLabel(l),
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
@@ -14834,6 +14959,10 @@ function sdrQueue(d, userId, now, exclude, settings) {
     if (az !== bz) return az - bz;
     // A named decision-maker outranks everything else: you can have the
     // conversation. Switchboard-only leads are real work, just further down.
+    // Verified in the Ad Library first: active ads, then pages that ran ads
+    // before, then the unchecked. (Never-ran is filtered out by the rules.)
+    const at = adlibTier(a), bt = adlibTier(b);
+    if (at !== bt) return bt - at;
     const ap = sdrHasPerson(a) ? 1 : 0, bp = sdrHasPerson(b) ? 1 : 0;
     if (ap !== bp) return bp - ap;
     const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
@@ -15548,6 +15677,7 @@ app.post("/api/sdr/admin/set-stage", authMiddleware, (req, res) => {
 const SDR_SCREEN = {
   icp: { label: "Ikke vores målgruppe" },
   weak: { label: "For svag lige nu", days: 90 },
+  noads: { label: "Ingen aktive annoncer", days: 90 },
   later: { label: "Ring senere" },
 };
 app.post("/api/sdr/screen", authMiddleware, (req, res) => {
@@ -15562,14 +15692,22 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
       when = callback_at ? new Date(callback_at) : null;
       if (!when || isNaN(when.getTime()) || when.getTime() < now - 60000) return res.status(400).json({ error: "Vælg en dato fremme i tiden" });
     }
-    const F = ["lastAction", "archived_at", "archived_by", "resurface_at", "callback_at", "deferred_until", "owner_override", "owner_override_at", "note_log", "last_note", "screen_log", "parked_at", "parked_reason"];
+    const F = ["lastAction", "archived_at", "archived_by", "resurface_at", "callback_at", "deferred_until", "owner_override", "owner_override_at", "note_log", "last_note", "screen_log", "parked_at", "parked_reason", "adlib_status", "adlib_active", "adlib_checked_at", "adlib_by", "meta_verified_active", "meta_ads_active_now"];
     lead._undo = { at: nowIso, by: req.userId, kind: "screen", prev: Object.fromEntries(F.map((k) => [k, lead[k] === undefined ? null : JSON.parse(JSON.stringify(lead[k]))])) };
     const cleanNote = String(note || "").trim().slice(0, 2000);
     if (reason === "icp") { lead.lastAction = "not-relevant"; lead.archived_at = nowIso; lead.archived_by = req.userId; lead.callback_at = null; }
     else if (reason === "weak") { lead.callback_at = null; lead.resurface_at = new Date(now + R.days * 86400e3).toISOString(); lead.parked_at = nowIso; lead.parked_reason = "weak"; }
+    // The SDR looked and saw no active ads: that is a check too. A page that
+    // ran ads before stays "past" (interesting later); otherwise "none".
+    else if (reason === "noads") {
+      lead.callback_at = null; lead.resurface_at = new Date(now + R.days * 86400e3).toISOString(); lead.parked_at = nowIso; lead.parked_reason = "noads";
+      lead.adlib_active = 0; lead.adlib_checked_at = nowIso; lead.adlib_by = req.userId;
+      lead.adlib_status = (Number(lead.adlib_total) > 0 || lead.adlib_status === "active" || lead.adlib_status === "past") ? "past" : "none";
+      lead.meta_verified_active = false; lead.meta_ads_active_now = 0;
+    }
     else { lead.callback_at = when.toISOString(); lead.owner_override = req.userId; lead.owner_override_at = nowIso; lead.resurface_at = null; }
     lead.deferred_until = null; lead.opened_at = null; lead.opened_by = null; lead.last_call_started_at = null;
-    const label = R.label + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : reason === "weak" ? " - tilbage i puljen om 3 måneder" : "");
+    const label = R.label + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : (reason === "weak" || reason === "noads") ? " - tilbage i puljen om 3 måneder" : "");
     lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
     lead.note_log.push({ at: nowIso, by: req.userId, where: "list", text: `Fravalgt uden opkald: ${label}${cleanNote ? " - " + cleanNote : ""}` });
     if (cleanNote) { lead.last_note = cleanNote; lead.note_saved_at = nowIso; lead.note_saved_by = req.userId; }
@@ -19105,6 +19243,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         if (Array.isArray(b.rules.exclude_sources)) r.exclude_sources = b.rules.exclude_sources.map(String).slice(0, 20);
         if (Array.isArray(b.rules.exclude_niches)) r.exclude_niches = b.rules.exclude_niches.map((x) => String(x).trim()).filter(Boolean).slice(0, 50);
         if (typeof b.rules.require_meta === "boolean") r.require_meta = b.rules.require_meta;
+        if (typeof b.rules.exclude_no_ads === "boolean") r.exclude_no_ads = b.rules.exclude_no_ads;
         if (Number.isFinite(Number(b.rules.min_ads)) && Number(b.rules.min_ads) >= 0) r.min_ads = Math.round(Number(b.rules.min_ads));
         d.sdr_settings.rules = r;
       }
@@ -19119,6 +19258,13 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
   } catch (e) { sdrFail(res, e, "settings"); }
 });
 
+// The Ad Library sweep runs in-process: Cloud Run keeps one instance warm,
+// and a few page loads every twenty minutes is all it takes to keep the pool
+// checked. ADLIB_SWEEP=0 turns it off (tests, local copies).
+if (process.env.ADLIB_SWEEP !== "0") {
+  const tick = () => adlibSweep(Number(process.env.ADLIB_BATCH) || 40).catch((e) => console.warn("[adlib]", e.message)).finally(() => setTimeout(tick, 20 * 60e3));
+  setTimeout(tick, 3 * 60e3);
+}
 app.listen(PORT, () => {
   console.log(`\n🎯 Vedio Sales kører på http://localhost:${PORT}`);
   console.log(`📡 CVR-provider: datafordeler`);
