@@ -15410,14 +15410,15 @@ function buildSdrState(userId, d) {
   const cnt = (fn, skip) => { const m = {}; for (const l of focusBase) { if (skip && !okExcept(l, skip)) continue; const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
   const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size");
   // Thresholds are cumulative: "mindst 3" counts everything with 3 or more.
-  const adsN = Object.fromEntries(Object.keys(SDR_ADS_MIN).map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrAdsMatch(l, k)).length]));
+  const adsKeys = ["any", "1", "3", "5", "10", "20"]; // numeric keys would otherwise sort first
+  const adsN = Object.fromEntries(adsKeys.map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrAdsMatch(l, k)).length]));
   const focus = {
     current: L.focus || null, short: !!L.focus && !!L.focus_short,
     matching: L.focus ? focusBase.filter((l) => sdrFocusMatch(l, L.focus)).length : focusBase.length,
     options: {
       cat: Object.entries(catsAll).filter(([k]) => k !== "andet").sort((a, b) => b[1] - a[1]).map(([k]) => ({ key: k, label: CAT_LABEL[k] || k, n: cats[k] || 0 })),
       size: Object.keys(SDR_SIZE).map((k) => ({ key: k, label: SDR_SIZE[k], n: sizes[k] || 0 })),
-      ads: Object.keys(SDR_ADS_MIN).map((k) => ({ key: k, label: SDR_ADS_MIN[k], n: adsN[k] || 0 })),
+      ads: adsKeys.map((k) => ({ key: k, label: SDR_ADS_MIN[k], n: adsN[k] || 0 })),
     },
   };
 
