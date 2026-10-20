@@ -197,7 +197,9 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   `adlib_total`, `adlib_last_start`, `adlib_checked_at`); aktive tjekkes igen efter
   14 dage, resten efter 30. Listerne serverer **aktive annoncører først, så sider
   der har kørt annoncer før, så de ikke-efterset** - og sider, der aldrig har kørt
-  en annonce, serveres ikke (⚙ → Regler → "Serv aldrig leads uden annoncer"). Kortet
+  en annonce, kommer allersidst (Casper, 20. okt.: de skal blive ved med at være en
+  mulighed, ellers løber listerne tør; ⚙ → Regler → "Skjul leads, der aldrig har
+  kørt annoncer" holder dem helt ude, slået fra som standard). Kortet
   og Ringelisten viser beviset ("Kører 12 Meta-annoncer lige nu · tjekket 16. okt.",
   "Har kørt Meta-annoncer · sidst sep. 2026", "Ingen annoncer i Ad Library"), og
   linket åbner de aktive annoncer. SDR'en kan selv fravælge med "Ingen aktive
@@ -206,9 +208,11 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   Rækkefølgen inden for de efterset er vægtet (`adlibScore`): mange og friske
   aktive annoncer øverst (3+ annoncer eller en ny inden for 30 dage), så sider
   der pausede inden for 90 dage, så tynde annoncører (1-2 gamle annoncer), så
-  ældre pauser, så de ikke-efterset, og sider uden Facebook-side sidst. Sider,
-  hvis sidste annonce er over 12 måneder gammel, serveres ikke (⚙ → Regler,
-  "Serv ikke sider, der stoppede for over et år siden").
+  ældre pauser, så de ikke-efterset, så sider uden Facebook-side, og sider der
+  aldrig har kørt en annonce allersidst. ⚙ → Regler kan skjule "aldrig" og
+  "stoppet for over et år siden" helt (begge slået fra som standard). Fokus-
+  håndtaget "Aktive Meta-annoncer" har også "Har kørt annoncer (nu eller før)"
+  til den SDR, der kun vil ringe til annoncører.
 - **StoreLeads-estimatet er synligt.** For webshops fra StoreLeads (ca. 4 af 10 leads)
   står den anslåede årlige omsætning og månedlige besøg ("≈ 2,3 mio. kr/år · 972
   besøg/md · StoreLeads-estimat") på opkaldskortet under websitet, som hint på

@@ -1851,8 +1851,8 @@ function openSettings() {
     <div class="st-tabs" id="st-tabs">${[['pool', 'Pulje & regler'], ['goals', 'Mål'], ['pay', 'Løn'], ['flow', 'Arbejdsgang'], ['pitch', 'Pitch & mails'], ['int', 'Integrationer']].map(([k, l], i) => `<button class="${i ? '' : 'on'}" onclick="stTab('${k}')" data-k="${k}">${l}</button>`).join('')}</div>
     <div class="st-body">
     ${pane('pool', 'Hvad puljen må servere til SDR\'erne, og hvornår et lead hviler.', grp('Hvad SDR\'erne må få',
-        row('Serv aldrig leads uden annoncer', 'Sider, der ifølge Ad Library aldrig har kørt en annonce, holdes ude af listerne. Aktive annoncører serveres først, dernæst dem der har kørt før.', sw('r-noads', r.exclude_no_ads !== false))
-      + row('Serv ikke sider, der stoppede for over et år siden', 'En side, hvis sidste annonce er over 12 måneder gammel, er stoppet - ikke sat på pause. Nyere pauser serveres efter de aktive.', sw('r-stale', r.exclude_stale_ads !== false))
+        row('Skjul leads, der aldrig har kørt annoncer', 'Slået fra: de serveres sidst - efter aktive, tidligere og ikke-efterset - så listerne aldrig løber tør. Slået til: de holdes helt ude.', sw('r-noads', r.hide_no_ads === true))
+      + row('Skjul sider, der stoppede for over et år siden', 'Slået fra: de serveres, men langt nede. Slået til: en side, hvis sidste annonce er over 12 måneder gammel, holdes helt ude.', sw('r-stale', r.hide_stale_ads === true))
       + row('Ad Library-tjek', 'Puljen efterses løbende i Meta Ad Library (lister først). Tallene er friske leads med nummer, aldrig ringet.', `<span id="st-adlib" class="st-note">Henter…</span> <button class="pill sm tertiary" onclick="adlibRun()">Kør 20 nu</button>`)
       + row('Kun leads der kører Meta-annoncer', 'Alt andet holdes tilbage i puljen.', sw('r-meta', r.require_meta))
       + row('Mindste antal annoncer', 'Leads med færre annoncer serveres ikke. 0 = ingen grænse.', num('r-minads', r.min_ads || 0, { min: 0, max: 500 }))
@@ -1934,7 +1934,7 @@ async function saveSettings() {
     cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
     sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45, ltv_dkk: Number($('st-ltv').value) || 0,
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), commission_tier2_dkk: Number($('st-comm2').value), tier1_min_signals: Number($('st-t1sig').value) || 2, base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
-    rules: { require_meta: $('r-meta').checked, exclude_no_ads: $('r-noads').checked, exclude_stale_ads: $('r-stale').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
+    rules: { require_meta: $('r-meta').checked, hide_no_ads: $('r-noads').checked, hide_stale_ads: $('r-stale').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
 }

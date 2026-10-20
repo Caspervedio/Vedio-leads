@@ -13697,7 +13697,7 @@ const SDR_DEFAULT_PITCH = [
   "Hvis de siger \"ikke lige nu\": Fair nok. Hvornår giver det bedre mening - om et par uger eller efter {måned}? Så ringer jeg der.",
   "Hvis de siger \"send mig en mail\": Det gør jeg med det samme. Hvad er den bedste adresse? Og må jeg ringe tilbage om et par dage, når du har kigget på den?",
 ].join("\n");
-const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, exclude_no_ads: true, exclude_stale_ads: true };
+const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, hide_no_ads: false, hide_stale_ads: false };
 // "Send me an email" is the most common ask on a cold call. Templates are
 // filled client-side and opened in the SDR's own mail app, so the mail comes
 // from their vedio.dk address and replies land in their inbox.
@@ -13839,10 +13839,13 @@ function sdrPassesRules(l, settings) {
   if (r.exclude_sources && r.exclude_sources.length) { const s = sdrSourceLabel(l); if (r.exclude_sources.includes(s)) return false; }
   if (r.exclude_niches && r.exclude_niches.length) { const n = String(l.ind || l.industry || l.niche || "").toLowerCase(); if (n && r.exclude_niches.some((x) => x && n.includes(String(x).toLowerCase()))) return false; }
   // The Ad Library check is the truth where we have it; the page flag only
-  // speaks for leads not yet checked. "Never ran an ad" is not served.
-  if (r.exclude_no_ads !== false && l.adlib_status === "none") return false;
+  // speaks for leads not yet checked. Casper (20 Oct): pages that never ran
+  // an ad stay available - they rank last, so they only surface when the
+  // advertisers run out - unless admin hides them under Regler (opt-in; the
+  // keys changed from exclude_* so the old default-on value is not inherited).
+  if (r.hide_no_ads === true && l.adlib_status === "none") return false;
   // A page whose last ad is over a year old has stopped, not paused.
-  if (r.exclude_stale_ads !== false && l.adlib_status === "past" && adlibDaysSince(l) > 365) return false;
+  if (r.hide_stale_ads === true && l.adlib_status === "past" && adlibDaysSince(l) > 365) return false;
   const ads = Number(l.adsMatched || 0);
   const isMeta = l.adlib_status === "active" || l.adlib_status === "past" || (!l.adlib_status && (l.meta_advertiser === true || l.meta_verified_active === true));
   if (r.require_meta && !isMeta) return false;
@@ -14945,8 +14948,9 @@ const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
 // "Fokus i dag" → Aktive Meta-annoncer: at least this many, verified in the
 // Ad Library. Replaced the Kontakt handle (Casper: nobody used it).
-const SDR_ADS_MIN = { "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer" };
+const SDR_ADS_MIN = { any: "Har kørt annoncer (nu eller før)", "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer" };
 function sdrLeadAds(l) { return l.adlib_status === "active" ? (Number(l.adlib_active) || 0) : 0; }
+function sdrAdsMatch(l, k) { return k === "any" ? (l.adlib_status === "active" || l.adlib_status === "past") : sdrLeadAds(l) >= Number(k); }
 function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
 // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
 const STORELEADS_USD_DKK = 6.9;
@@ -14982,7 +14986,7 @@ function sdrFocusMatch(l, f) {
   if (f.cat && sdrLeadCat(l) !== f.cat) return false;
   if (f.size && sdrLeadSize(l) !== f.size) return false;
   if (f.role && sdrLeadRole(l) !== f.role) return false;
-  if (f.ads && sdrLeadAds(l) < Number(f.ads)) return false;
+  if (f.ads && !sdrAdsMatch(l, f.ads)) return false;
   return true;
 }
 // A lead an SDR researched or added themselves is theirs until it has been
@@ -15402,11 +15406,11 @@ function buildSdrState(userId, d) {
   // trimmed here so it can't hold leads back invisibly.
   if (L.focus && L.focus.role) { delete L.focus.role; if (!L.focus.cat && !L.focus.size && !L.focus.ads) { L.focus = null; L.focus_short = false; } }
   const fc = L.focus || {};
-  const okExcept = (l, skip) => (skip === "cat" || !fc.cat || sdrLeadCat(l) === fc.cat) && (skip === "size" || !fc.size || sdrLeadSize(l) === fc.size) && (skip === "ads" || !fc.ads || sdrLeadAds(l) >= Number(fc.ads));
+  const okExcept = (l, skip) => (skip === "cat" || !fc.cat || sdrLeadCat(l) === fc.cat) && (skip === "size" || !fc.size || sdrLeadSize(l) === fc.size) && (skip === "ads" || !fc.ads || sdrAdsMatch(l, fc.ads));
   const cnt = (fn, skip) => { const m = {}; for (const l of focusBase) { if (skip && !okExcept(l, skip)) continue; const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
   const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size");
   // Thresholds are cumulative: "mindst 3" counts everything with 3 or more.
-  const adsN = Object.fromEntries(Object.keys(SDR_ADS_MIN).map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrLeadAds(l) >= Number(k)).length]));
+  const adsN = Object.fromEntries(Object.keys(SDR_ADS_MIN).map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrAdsMatch(l, k)).length]));
   const focus = {
     current: L.focus || null, short: !!L.focus && !!L.focus_short,
     matching: L.focus ? focusBase.filter((l) => sdrFocusMatch(l, L.focus)).length : focusBase.length,
@@ -19300,8 +19304,8 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         if (Array.isArray(b.rules.exclude_sources)) r.exclude_sources = b.rules.exclude_sources.map(String).slice(0, 20);
         if (Array.isArray(b.rules.exclude_niches)) r.exclude_niches = b.rules.exclude_niches.map((x) => String(x).trim()).filter(Boolean).slice(0, 50);
         if (typeof b.rules.require_meta === "boolean") r.require_meta = b.rules.require_meta;
-        if (typeof b.rules.exclude_no_ads === "boolean") r.exclude_no_ads = b.rules.exclude_no_ads;
-        if (typeof b.rules.exclude_stale_ads === "boolean") r.exclude_stale_ads = b.rules.exclude_stale_ads;
+        if (typeof b.rules.hide_no_ads === "boolean") r.hide_no_ads = b.rules.hide_no_ads;
+        if (typeof b.rules.hide_stale_ads === "boolean") r.hide_stale_ads = b.rules.hide_stale_ads;
         if (Number.isFinite(Number(b.rules.min_ads)) && Number(b.rules.min_ads) >= 0) r.min_ads = Math.round(Number(b.rules.min_ads));
         d.sdr_settings.rules = r;
       }
