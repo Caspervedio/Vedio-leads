@@ -453,12 +453,12 @@ function renderFocus() {
     <div class="fb-tiles">
       ${tile('fo-cat', 'Branche', F.options.cat, 'Alle brancher', cur.cat)}
       ${tile('fo-size', 'Størrelse', F.options.size, 'Alle størrelser', cur.size)}
-      ${tile('fo-role', 'Kontakt', F.options.role, 'Alle kontakter', cur.role)}
+      ${tile('fo-ads', 'Aktive Meta-annoncer', F.options.ads, 'Alle', cur.ads)}
     </div>
     <div class="fb-note"><i></i>${on ? `<b>${F.matching ?? 0} leads</b>&nbsp;passer på det hele${F.short ? ' - listen er fyldt op med andre (markeret "uden for fokus").' : '.'} ` : ''}${F.short ? '' : `Altid ${target} friske leads på listen ${on ? 'fra dit fokus' : 'fra puljen'} - opfølgninger ligger for sig selv ovenover.`}</div>`;
 }
 async function setFocus(clear) {
-  const body = clear ? {} : { cat: $('fo-cat').value, size: $('fo-size').value, role: $('fo-role').value };
+  const body = clear ? {} : { cat: $('fo-cat').value, size: $('fo-size').value, ads: $('fo-ads').value };
   try { apply(await post('/api/sdr/focus', body), { keepCurrent: true }); toast(clear ? 'Fokus nulstillet' : 'Fokus sat - listen er opdateret'); }
   catch (ex) { toast(ex.message, 4000); }
 }

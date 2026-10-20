@@ -87,8 +87,9 @@ er en samtale i gang på, og leads SDR'en selv har researchet eller tilføjet bl
 Højst 5 gange om dagen pr. SDR, og hvert byt logges. Leads en SDR selv har researchet eller tilføjet,
 er reserveret til dem (andre får dem ikke) og kommer først. **Fokus i dag**
 over listen: branche, webshop-størrelse (StoreLeads' anslåede omsætning) og
-kontakt (ejer/direktør, marketing/salg, omstilling) - listen fyldes fra fokus
-først og fra resten, når fokus er tomt.
+aktive Meta-annoncer (mindst 1 · 3 · 5 · 10 · 20, efterset i Ad Library) - listen
+fyldes fra fokus først og fra resten, når fokus er tomt. (Kontakt-håndtaget
+ejer/marketing/omstilling er taget ud - ingen brugte det.)
 
 **Fravælg uden opkald** (tæller ikke som et opkald): *Ikke vores
 målgruppe* (arkiveres), *For svag lige nu* (hviler 90 dage og kommer tilbage

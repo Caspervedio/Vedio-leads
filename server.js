@@ -14943,6 +14943,10 @@ function sdrOnboarding(settings, now) {
 const SDR_ONBOARDING_LINE = (o) => `Oplæring: Salgsteamet er i en lære- og onboardingperiode (til og med ${o.label}). 4 demoer om dagen er ikke realistisk endnu, og det er ikke målet. Vurder fremgang - bedre samtaler, flere ja'er, flere der tager telefonen og bliver i samtalen - og ros den konkret. Pres ikke på tal, de ikke kan nå endnu, og sammenlign ikke med et fuldt indkørt team.`;
 const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem (1-5 mio. kr/år)", large: "Store (over 5 mio. kr/år)" };
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
+// "Fokus i dag" → Aktive Meta-annoncer: at least this many, verified in the
+// Ad Library. Replaced the Kontakt handle (Casper: nobody used it).
+const SDR_ADS_MIN = { "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer" };
+function sdrLeadAds(l) { return l.adlib_status === "active" ? (Number(l.adlib_active) || 0) : 0; }
 function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
 // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
 const STORELEADS_USD_DKK = 6.9;
@@ -14978,6 +14982,7 @@ function sdrFocusMatch(l, f) {
   if (f.cat && sdrLeadCat(l) !== f.cat) return false;
   if (f.size && sdrLeadSize(l) !== f.size) return false;
   if (f.role && sdrLeadRole(l) !== f.role) return false;
+  if (f.ads && sdrLeadAds(l) < Number(f.ads)) return false;
   return true;
 }
 // A lead an SDR researched or added themselves is theirs until it has been
@@ -15393,17 +15398,22 @@ function buildSdrState(userId, d) {
   // Counts per option given the OTHER choices - pick "Bolig" and the sizes
   // show how many Bolig leads are small/medium/large - so a combination is
   // visible before it is chosen.
+  // The Kontakt handle is gone from the card; a focus saved with it is
+  // trimmed here so it can't hold leads back invisibly.
+  if (L.focus && L.focus.role) { delete L.focus.role; if (!L.focus.cat && !L.focus.size && !L.focus.ads) { L.focus = null; L.focus_short = false; } }
   const fc = L.focus || {};
-  const okExcept = (l, skip) => (skip === "cat" || !fc.cat || sdrLeadCat(l) === fc.cat) && (skip === "size" || !fc.size || sdrLeadSize(l) === fc.size) && (skip === "role" || !fc.role || sdrLeadRole(l) === fc.role);
+  const okExcept = (l, skip) => (skip === "cat" || !fc.cat || sdrLeadCat(l) === fc.cat) && (skip === "size" || !fc.size || sdrLeadSize(l) === fc.size) && (skip === "ads" || !fc.ads || sdrLeadAds(l) >= Number(fc.ads));
   const cnt = (fn, skip) => { const m = {}; for (const l of focusBase) { if (skip && !okExcept(l, skip)) continue; const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
-  const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size"), roles = cnt(sdrLeadRole, "role");
+  const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size");
+  // Thresholds are cumulative: "mindst 3" counts everything with 3 or more.
+  const adsN = Object.fromEntries(Object.keys(SDR_ADS_MIN).map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrLeadAds(l) >= Number(k)).length]));
   const focus = {
     current: L.focus || null, short: !!L.focus && !!L.focus_short,
     matching: L.focus ? focusBase.filter((l) => sdrFocusMatch(l, L.focus)).length : focusBase.length,
     options: {
       cat: Object.entries(catsAll).filter(([k]) => k !== "andet").sort((a, b) => b[1] - a[1]).map(([k]) => ({ key: k, label: CAT_LABEL[k] || k, n: cats[k] || 0 })),
       size: Object.keys(SDR_SIZE).map((k) => ({ key: k, label: SDR_SIZE[k], n: sizes[k] || 0 })),
-      role: Object.keys(SDR_ROLE).map((k) => ({ key: k, label: SDR_ROLE[k], n: roles[k] || 0 })),
+      ads: Object.keys(SDR_ADS_MIN).map((k) => ({ key: k, label: SDR_ADS_MIN[k], n: adsN[k] || 0 })),
     },
   };
 
@@ -15778,11 +15788,11 @@ app.post("/api/sdr/focus", authMiddleware, (req, res) => {
     const f = {
       cat: typeof b.cat === "string" && (CAT_LABEL[b.cat] || b.cat === "andet") ? b.cat : "",
       size: SDR_SIZE[b.size] ? b.size : "",
-      role: SDR_ROLE[b.role] ? b.role : "",
+      ads: SDR_ADS_MIN[String(b.ads || "")] ? String(b.ads) : "",
     };
     const d = loadPool(); const now = Date.now(); const settings = sdrSettings(d);
     const { list: L } = sdrEnsureList(d, req.userId, now, settings);
-    L.focus = f.cat || f.size || f.role ? f : null;
+    L.focus = f.cat || f.size || f.ads ? f : null;
     if (!L.focus) L.focus_short = false;
     if (L.focus) {
       const byCvr = new Map((d.leads || []).map((l) => [l.cvr, l]));
