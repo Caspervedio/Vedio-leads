@@ -284,7 +284,9 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   sendt først (ét Gemini-kald ad gangen pr. samtale, det sidste før "end"). Ca.
   8-12 s fra noget siges, til det står på kortet. Admin slår det fra under
   Telefoni ("AI lytter med under samtalen", `dialer.live`), og så sendes ingen
-  Stream-TwiML. Kun samtalens linjer holdes i hukommelsen i 5 min efter opkaldet;
+  Stream-TwiML. WebSocket-forbindelsen skal bære Twilios signatur (`X-Twilio-Signature`
+  over wss-adressen), ellers afvises den med 403, før den koster et Gemini-kald.
+  Kun samtalens linjer holdes i hukommelsen i 5 min efter opkaldet;
   intet gemmes på leadet herfra (det gør optagelsens analyse bagefter). Cloud Run
   holder WebSocket'en som ét request, så en samtale over 20 min (request-timeout)
   mister live-delen, ikke opkaldet.

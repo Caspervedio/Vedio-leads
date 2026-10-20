@@ -3727,8 +3727,15 @@ function liveEnd(st) {
 function liveAttach(server) {
   let WebSocketServer; try { ({ WebSocketServer } = require("ws")); } catch { console.warn("[live] ws not installed"); return; }
   const wss = new WebSocketServer({ noServer: true });
+  // Twilio signs the upgrade request like a webhook (the wss URL, no params);
+  // anything unsigned is dropped before it costs a Gemini call.
+  const signed = (req) => {
+    if (process.env.TWILIO_SKIP_VALIDATE === "1") return true;
+    try { return require("twilio").validateRequest(twilioCfg().token, String(req.headers["x-twilio-signature"] || ""), PUBLIC_URL.replace(/^http/, "ws") + req.url, {}); } catch { return false; }
+  };
   server.on("upgrade", (req, socket, head) => {
     if (!String(req.url || "").startsWith("/api/twilio/stream")) { socket.destroy(); return; }
+    if (!signed(req)) { console.warn("[live] unsigned stream connection dropped"); try { socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); } catch {} socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, (ws) => {
       let st = null;
       ws.on("message", (raw) => {
