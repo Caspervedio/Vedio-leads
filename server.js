@@ -3514,6 +3514,37 @@ function twilioValid(req) {
   try { return require("twilio").validateRequest(twilioCfg().token, String(req.headers["x-twilio-signature"] || ""), PUBLIC_URL + req.originalUrl, req.body || {}); }
   catch { return false; }
 }
+// The lead behind a phone number (main number or a contact's), for the phone
+// window: an inbound call shows who is calling, a dialled number attaches to
+// its lead. Active leads first, then the rest.
+function sdrLeadByPhone(d, phone) {
+  const key = String(phone || "").replace(/[^0-9]/g, "").slice(-8); if (key.length !== 8) return null;
+  const has = (l) => { const ps = [l.phone, l.ph, ...((l.contacts || []).flatMap((c) => c ? [c.phone, c.direct_phone, c.mobile] : []))]; return ps.some((p) => p && String(p).replace(/[^0-9]/g, "").slice(-8) === key); };
+  const hits = (d.leads || []).filter(has); if (!hits.length) return null;
+  return hits.find((l) => sdrIsActive(l) && !l.archived_at) || hits[0];
+}
+app.get("/api/sdr/lookup", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const l = sdrLeadByPhone(d, req.query.phone);
+    if (!l) return res.json({ ok: true, lead: null });
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name])); const now = Date.now();
+    const mine = new Set(((d.sdr_lists || {})[req.userId] || {}).cvrs || []); const c = sdrPrimaryContact(l) || {};
+    const status = mine.has(l.cvr) ? "mine" : l.lastAction === "not-relevant" ? "archived" : l.lastAction === "demo-booked" ? "demo" : sdrClaimedByOther(l, req.userId, now) ? "other:" + (nameById[l.claimed_by] || sdrFollowupOwner(l) || "") : "free";
+    res.json({ ok: true, lead: { cvr: l.cvr, name: l.name || "", city: l.city || "", contact: c.name ? { name: c.name, title: c.title || "" } : null, status, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null, last_note: l.last_note || "", demo_status: l.demo_status || null } });
+  } catch (e) { sdrFail(res, e, "lookup"); }
+});
+// "Åbn lead" from the phone window: on top of my list when it can be mine,
+// otherwise just shown on the card (the outcome still lands on the lead).
+app.post("/api/sdr/open-lead", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const now = Date.now(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
+    if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
+    const nameById = Object.fromEntries(loadUsers().map((u) => [u.id, u.name]));
+    const mine = sdrGiveTo(d, lead, req.userId, now);
+    if (mine) { const L = (d.sdr_lists || {})[req.userId]; if (L) L.pin = lead.cvr; savePool(d); return sdrRespond(res, req.userId, d, { opened: true, mine: true }); }
+    res.json({ ok: true, opened: true, mine: false, lead: sdrSlim(lead, nameById) });
+  } catch (e) { sdrFail(res, e, "open-lead"); }
+});
 const twiml = (inner) => `<?xml version="1.0" encoding="UTF-8"?>\n<Response>${inner}</Response>`;
 const xesc = (v) => String(v == null ? "" : v).replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[c]));
 const twilioAuth = () => "Basic " + Buffer.from(`${twilioCfg().sid}:${twilioCfg().token}`).toString("base64");
@@ -3556,7 +3587,8 @@ app.post("/api/twilio/voice", (req, res) => {
       if (!me.enabled) return res.send(twiml(`<Say language="da-DK">Telefonen er ikke slået til for dig.</Say>`));
       if (to === "test") return res.send(twiml(`<Say language="da-DK">Dette er en lydtest. Tal efter tonen, og hør dig selv bagefter.</Say><Record maxLength="6" playBeep="true" action="${cb("/api/twilio/testcall")}" />`));
       if (!isDkPhone(to)) return res.send(twiml(`<Say language="da-DK">Vi ringer kun til danske numre.</Say>`));
-      const cvr = String(b.cvr || "").slice(0, 80); const q = `?uid=${encodeURIComponent(uid)}&cvr=${encodeURIComponent(cvr)}`;
+      const matched = !b.cvr ? sdrLeadByPhone(d, to) : null;
+      const cvr = String(b.cvr || (matched && matched.cvr) || "").slice(0, 80); const q = `?uid=${encodeURIComponent(uid)}&cvr=${encodeURIComponent(cvr)}`;
       const rec = `record="record-from-answer-dual" recordingStatusCallback="${cb("/api/twilio/recording" + q)}" recordingStatusCallbackEvent="completed"`;
       const whisper = D.consent === "auto" ? ` url="${cb("/api/twilio/whisper")}"` : "";
       return res.send(twiml(`<Dial callerId="${xesc(me.number)}" answerOnBridge="true" timeout="35" ${rec}><Number statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed"${whisper}>${xesc(normDkPhone(to))}</Number></Dial>`));
@@ -3587,7 +3619,7 @@ app.post("/api/twilio/status", (req, res) => {
   try {
     const b = req.body || {}; const q = req.query || {}; const nowIso = new Date().toISOString();
     const d = loadPool(); let lead = q.cvr ? (d.leads || []).find((l) => l.cvr === q.cvr) : null;
-    if (!lead && q.inbound && q.from) { const fromN = normDkPhone(q.from); lead = (d.leads || []).find((l) => sdrPhone(l).phone && normDkPhone(sdrPhone(l).phone) === fromN); }
+    if (!lead && q.inbound && q.from) lead = sdrLeadByPhone(d, q.from);
     if (!lead) return;
     const sid = String(b.ParentCallSid || b.CallSid || ""); const status = String(b.CallStatus || "");
     lead.dial_log = Array.isArray(lead.dial_log) ? lead.dial_log : [];
@@ -3608,7 +3640,7 @@ app.post("/api/twilio/recording", (req, res) => {
   try {
     const b = req.body || {}; const q = req.query || {}; const nowIso = new Date().toISOString();
     const d = loadPool(); let lead = q.cvr ? (d.leads || []).find((l) => l.cvr === q.cvr) : null;
-    if (!lead && q.inbound && q.from) { const fromN = normDkPhone(q.from); lead = (d.leads || []).find((l) => sdrPhone(l).phone && normDkPhone(sdrPhone(l).phone) === fromN); }
+    if (!lead && q.inbound && q.from) lead = sdrLeadByPhone(d, q.from);
     if (!lead) return;
     const rec = { sid: String(b.RecordingSid || ""), call_sid: String(b.CallSid || ""), at: nowIso, by: String(q.uid || ""), inbound: !!q.inbound, duration_s: Number(b.RecordingDuration) || 0, url: String(b.RecordingUrl || ""), status: "pending" };
     if (!rec.sid) return;

@@ -189,6 +189,8 @@
 </main>
 
 <!-- ─── SPARRING (Gemini) - a colleague in a panel on the right ─────────── -->
+<button id="ph-fab" class="ph-fab" hidden title="Telefon - ring et nummer op, og se hvem der ringer ind" onclick="phToggle()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg><i class="ph-badge" hidden></i></button>
+<div id="ph-win" class="ph-win" hidden></div>
 <button id="ai-fab" class="ai-fab" title="Sparring - spørg om alt: scripts, indvendinger, det åbne lead" onclick="aiToggle(true)">
   <span class="gem"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z"/></svg></span>
 </button>
@@ -562,6 +564,8 @@ async function dialInit() {
     await dev.register();
     DIAL.device = dev;
     dialFillMics();
+    if ($('ph-fab')) $('ph-fab').hidden = false;
+    renderPhone();
   } catch (ex) { console.warn('[dialer] init', ex); toast('Telefonen kunne ikke starte: ' + ex.message, 6000); }
   finally { DIAL.loading = false; }
 }
@@ -581,31 +585,36 @@ function dialWire(call, cvr, label) {
   call.on('disconnect', end); call.on('cancel', end); call.on('reject', end); call.on('error', (err) => { toast('Opkald: ' + (err.message || err.code), 5000); end(); });
   renderDial();
 }
-async function dialStart(to) {
+async function dialStart(to, opts) {
   if (!DIAL.device) { await dialInit(); if (!DIAL.device) return; }
   if (DIAL.call) return;
-  const L = S.current; const test = to === 'test';
-  if (!test && (!L || !isDk(L.phone))) { toast('Vi ringer kun til danske numre - ret nummeret via "✎ Ret lead".', 3500); return; }
-  const num = test ? 'test' : String(L.phone).replace(/[^0-9+]/g, '');
+  const test = to === 'test'; const manual = !!(opts && opts.manual);
+  const L = manual ? null : S.current;
+  if (!test && !manual && (!L || !isDk(L.phone))) { toast('Vi ringer kun til danske numre - ret nummeret via "✎ Ret lead".', 3500); return; }
+  if (manual && !isDk(to)) { toast('Vi ringer kun til danske numre.', 3500); return; }
+  const num = test ? 'test' : String(manual ? to : L.phone).replace(/[^0-9+]/g, '');
+  const cvr = test ? '' : manual ? ((opts && opts.cvr) || '') : L.cvr;
+  const label = test ? 'Lydtest' : manual ? ((opts && opts.name) ? `${opts.name} · ${fmtPhone(num)}` : fmtPhone(num)) : fmtPhone(L.phone);
   try {
-    const call = await DIAL.device.connect({ params: { To: num, cvr: test ? '' : L.cvr } });
+    const call = await DIAL.device.connect({ params: { To: num, cvr } });
     DIAL.sid = (call.parameters && call.parameters.CallSid) || '';
-    dialWire(call, test ? '' : L.cvr, test ? 'Lydtest' : fmtPhone(L.phone));
+    DIAL.manual = manual; DIAL.manualCvr = cvr;
+    dialWire(call, cvr, label);
+    if (manual) { PH.open = true; renderPhone(); }
   } catch (ex) { toast('Kunne ikke ringe: ' + ex.message, 5000); }
 }
 function dialIncoming(call) {
   const from = (call.parameters && call.parameters.From) || '';
   if (DIAL.call) { call.reject(); return; }
-  DIAL.incoming = call; DIAL.state = 'incoming'; DIAL.to = fmtPhone(from);
-  const hit = (S.list && S.list.items || []).concat(S.followups || [], S.demos || []).find((l) => l.phone && String(l.phone).replace(/[^0-9]/g, '').slice(-8) === String(from).replace(/[^0-9]/g, '').slice(-8));
-  DIAL.incomingName = hit ? hit.name : '';
-  call.on('cancel', () => { if (DIAL.incoming === call) { DIAL.incoming = null; DIAL.state = 'idle'; renderDial(); } });
-  call.on('reject', () => { if (DIAL.incoming === call) { DIAL.incoming = null; DIAL.state = 'idle'; renderDial(); } });
-  renderDial();
-  try { new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=').play().catch(() => {}); } catch {}
+  DIAL.incoming = call; DIAL.state = 'incoming'; DIAL.to = fmtPhone(from); DIAL.incomingName = ''; DIAL.incomingLead = null; DIAL.manualCvr = '';
+  const stop = () => { if (DIAL.incoming === call) { DIAL.incoming = null; DIAL.state = 'idle'; phRing(false); renderDial(); } };
+  call.on('cancel', stop); call.on('reject', stop);
+  PH.open = true; phRing(true); renderDial();
+  // Who is it? The whole pool, not just what the browser holds.
+  get('/api/sdr/lookup?phone=' + encodeURIComponent(from)).then((r) => { if (DIAL.incoming !== call) return; DIAL.incomingLead = r.lead || null; DIAL.incomingName = r.lead ? r.lead.name : ''; renderDial(); }).catch(() => {});
 }
-function dialAccept() { const c = DIAL.incoming; if (!c) return; DIAL.incoming = null; dialWire(c, '', DIAL.to + (DIAL.incomingName ? ' · ' + DIAL.incomingName : '')); c.accept(); }
-function dialReject() { const c = DIAL.incoming; if (!c) return; c.reject(); DIAL.incoming = null; DIAL.state = 'idle'; renderDial(); }
+function dialAccept() { const c = DIAL.incoming; if (!c) return; DIAL.incoming = null; phRing(false); const lead = DIAL.incomingLead; DIAL.manual = true; DIAL.manualCvr = lead ? lead.cvr : ''; dialWire(c, lead ? lead.cvr : '', DIAL.to + (DIAL.incomingName ? ' · ' + DIAL.incomingName : '')); c.accept(); }
+function dialReject() { const c = DIAL.incoming; if (!c) return; c.reject(); DIAL.incoming = null; phRing(false); DIAL.state = 'idle'; renderDial(); }
 function dialHangup() { if (DIAL.call) DIAL.call.disconnect(); }
 function dialMute() { if (!DIAL.call) return; DIAL.muted = !DIAL.muted; DIAL.call.mute(DIAL.muted); renderDial(); }
 function dialDigit(d) { if (DIAL.call) DIAL.call.sendDigits(d); }
@@ -614,6 +623,7 @@ function dialEnded(call, cvr) {
   const dur = DIAL.t0 ? Math.round((Date.now() - DIAL.t0) / 1000) : 0;
   if (DIAL.timer) { clearInterval(DIAL.timer); DIAL.timer = null; }
   DIAL.call = null; DIAL.state = 'ended'; DIAL.lastDur = dur; DIAL.lastSid = DIAL.sid || ((call.parameters && call.parameters.CallSid) || ''); DIAL.lastCvr = cvr || ''; DIAL.muted = false; DIAL.keypad = false;
+  DIAL.lastManual = !!DIAL.manual; DIAL.manual = false;
   renderDial();
   if (cvr && dur >= 20 && DIAL.lastSid) { DIAL.aiStatus = 'wait'; DIAL.aiFor = cvr; dialPoll(DIAL.lastSid, cvr, Date.now()); }
   else if (cvr && dur > 0 && dur < 20) DIAL.aiStatus = 'short';
@@ -632,6 +642,7 @@ async function dialPoll(sid, cvr, t0) {
 function dialFmt(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 function renderDialQuality() { const q = $('dial-q'); if (!q) return; q.className = 'dial-q ' + DIAL.quality; q.title = DIAL.warn ? 'Netværk: ' + DIAL.warn : 'Lyden er god'; q.textContent = DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'; }
 function renderDial() {
+  renderPhone();
   const p = $('dialpanel'); if (!p) return;
   if (!dialerOn() && DIAL.state === 'idle') { p.hidden = true; return; }
   const L = S.current || {};
@@ -675,6 +686,80 @@ function renderDial() {
       </div>
     </div>` : ''}
   </div>`;
+}
+/* ─── The phone window: dial any number, see who is calling, open the lead ───
+   Floating next to the Sparring button. Shares DIAL with the card panel; the
+   card panel stays for calls started from a lead. */
+const PH = { open: false, num: '', match: null, lookupT: null, ringT: null, ringCtx: null };
+function phToggle() { PH.open = !PH.open; renderPhone(); if (PH.open) { const i = $('ph-num'); if (i) i.focus(); } }
+function phInput(v) { PH.num = String(v || ''); if (PH.lookupT) clearTimeout(PH.lookupT); PH.match = null; const d = PH.num.replace(/[^0-9]/g, ''); if (d.length >= 8) PH.lookupT = setTimeout(phLookup, 250); else renderPhoneMatch(); }
+function phKey(k) { const i = $('ph-num'); PH.num = (PH.num || '') + k; if (i) i.value = PH.num; phInput(PH.num); }
+async function phLookup() { try { const r = await get('/api/sdr/lookup?phone=' + encodeURIComponent(PH.num)); PH.match = r.lead || null; } catch { PH.match = null; } renderPhoneMatch(); }
+function phStatus(s) { if (!s) return ''; return s === 'mine' ? 'på din liste' : s === 'archived' ? 'sagt nej / arkiveret' : s === 'demo' ? 'demo booket' : s.startsWith('other:') ? 'hos ' + s.slice(6) : 'i puljen'; }
+function phMatchHtml(m) { return m ? `<div class="ph-match"><b>${e(m.name)}</b>${m.city ? ` <span>· ${e(m.city)}</span>` : ''}${m.contact ? `<div class="sub">${e(m.contact.name)}${m.contact.title ? ' · ' + e(m.contact.title) : ''}</div>` : ''}<div class="sub">${e(phStatus(m.status))}${m.lastCallAt ? ' · sidst ringet ' + e(fmtAgo(m.lastCallAt)) : ''}</div></div>` : ''; }
+function renderPhoneMatch() { const el = $('ph-matchbox'); if (el) el.innerHTML = PH.match ? phMatchHtml(PH.match) : (PH.num.replace(/[^0-9]/g, '').length >= 8 ? '<div class="ph-match none">Ingen lead med det nummer</div>' : ''); const b = $('ph-call'); if (b) b.disabled = !isDk(PH.num); }
+function phDial() { if (!isDk(PH.num)) { toast('Skriv et dansk nummer'); return; } dialStart(PH.num, { manual: true, cvr: PH.match ? PH.match.cvr : '', name: PH.match ? PH.match.name : '' }); }
+async function phOpenLead(cvr) {
+  if (!cvr) return;
+  const onList = (S.list && S.list.items || []).find((l) => l.cvr === cvr);
+  if (onList) { S.current = onList; showTab('ring'); renderCard(); PH.open = false; renderPhone(); return; }
+  try {
+    const r = await post('/api/sdr/open-lead', { cvr });
+    if (r.state) { apply(r); const it = (S.list && S.list.items || []).find((l) => l.cvr === cvr); if (it) S.current = it; }
+    else if (r.lead) { S.current = r.lead; held = true; toast('Leadet er ikke på din liste - udfaldet gemmes stadig på leadet', 4000); }
+    showTab('ring'); renderCard(); PH.open = false; renderPhone();
+  } catch (ex) { toast(ex.message, 4000); }
+}
+/* A soft ring while a call is coming in: two short tones every three seconds. */
+function phRing(on) {
+  if (!on) { if (PH.ringT) { clearInterval(PH.ringT); PH.ringT = null; } document.title = document.title.replace(/^☎ .*? · /, ''); return; }
+  if (PH.ringT) return;
+  const beep = () => { try { const ctx = PH.ringCtx || (PH.ringCtx = new (window.AudioContext || window.webkitAudioContext)()); [0, 0.35].forEach((t) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 880; g.gain.value = 0.12; o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.25); }); } catch {} };
+  beep(); PH.ringT = setInterval(beep, 3000);
+  if (!/^☎ /.test(document.title)) document.title = '☎ Indgående opkald · ' + document.title;
+}
+function renderPhone() {
+  const w = $('ph-win'), fab = $('ph-fab'); if (!w || !fab) return;
+  if (!dialerOn()) { w.hidden = true; fab.hidden = true; return; }
+  const st = DIAL.state; const busyCall = !!DIAL.call || st === 'incoming';
+  fab.classList.toggle('ring', st === 'incoming'); fab.classList.toggle('live', st === 'live' || st === 'ringing' || st === 'connecting'); fab.classList.toggle('open', PH.open);
+  const badge = fab.querySelector('.ph-badge'); if (badge) badge.hidden = st !== 'incoming';
+  if (!PH.open) { w.hidden = true; return; }
+  w.hidden = false;
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
+  const head = (t) => `<div class="ph-head"><span class="kicker">${t}</span><button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
+  if (st === 'incoming') {
+    const m = DIAL.incomingLead;
+    w.innerHTML = `${head('Indgående opkald')}<div class="ph-in"><i class="dot"></i><b class="ph-num">${e(DIAL.to)}</b>${m ? phMatchHtml(m) : '<div class="ph-match none">Slår op…</div>'}
+      <div class="row"><button class="pill approve" onclick="dialAccept()">Besvar</button><button class="pill danger" onclick="dialReject()">Afvis</button></div></div>`;
+    return;
+  }
+  if (st === 'connecting' || st === 'ringing' || st === 'live') {
+    w.innerHTML = `${head(st === 'live' ? 'I samtale' : st === 'ringing' ? 'Ringer…' : 'Forbinder…')}<div class="ph-live">
+      <b class="ph-num">${e(DIAL.to)}</b>
+      <div class="ph-row">${st === 'live' ? `<span id="dial-time" class="ph-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span><span id="dial-q" class="dial-q ${DIAL.quality}">${DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'}</span>` : '<span class="dial-ai-wait"><i class="spin"></i></span>'}</div>
+      ${st === 'live' && DIAL.keypad ? `<div class="dial-keys">${keys.map((k) => `<button onclick="dialDigit('${k}')">${k}</button>`).join('')}</div>` : ''}
+      <div class="row">${st === 'live' ? `<button class="pill ${DIAL.muted ? 'on' : ''}" onclick="dialMute()">${DIAL.muted ? 'Lyd til' : 'Mute'}</button><button class="pill" onclick="DIAL.keypad=!DIAL.keypad;renderDial()">Tastatur</button>` : ''}<button class="pill danger" onclick="dialHangup()">Læg på</button></div>
+    </div>`;
+    return;
+  }
+  // idle, or just ended a call started here
+  const ended = st === 'ended' && (DIAL.lastManual || DIAL.lastCvr);
+  const ai = DIAL.ai && DIAL.aiFor === DIAL.lastCvr ? DIAL.ai : null;
+  const wait = DIAL.aiStatus === 'wait';
+  w.innerHTML = `${head('Telefon')}
+    ${ended ? `<div class="ph-ended"><span class="dial-st">Samtale slut${DIAL.lastDur ? ' · ' + dialFmt(DIAL.lastDur) : ''}</span>
+      ${wait ? '<span class="dial-ai-wait"><i class="spin"></i>AI læser samtalen…</span>' : ''}
+      ${ai ? `<p class="ai-sum">${e(ai.summary)}</p>${ai.next_step ? `<p class="sub"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}` : ''}
+      ${DIAL.lastCvr ? `<button class="pill sm primary" onclick="phOpenLead('${e(DIAL.lastCvr)}')">Åbn lead → sæt udfald</button>` : '<span class="sub">Nummeret matcher ikke et lead.</span>'}
+      <button class="linkbtn" onclick="DIAL.state='idle';DIAL.lastManual=false;renderPhone()">Ny samtale</button></div>`
+    : `<div class="ph-dial">
+      <input id="ph-num" type="tel" placeholder="+45 12 34 56 78" value="${e(PH.num)}" oninput="phInput(this.value)" onkeydown="if(event.key==='Enter')phDial()" autocomplete="off">
+      <div id="ph-matchbox"></div>
+      <div class="dial-keys ph-keys">${keys.map((k) => `<button onclick="phKey('${k}')">${k}</button>`).join('')}</div>
+      <div class="row"><button class="pill tertiary" onclick="PH.num='';renderPhone();$('ph-num').focus()">Ryd</button><button class="pill approve" id="ph-call" onclick="phDial()" ${isDk(PH.num) && !busyCall ? '' : 'disabled'}>Ring op</button></div>
+    </div>`}`;
+  renderPhoneMatch();
 }
 function dialReasonLabel(k) { return { budget: 'Intet budget', 'not-decider': 'Ikke beslutningstager', 'has-agency': 'Har bureau', 'no-ads': 'Kører ikke annoncer', timing: 'Timing', 'not-interested': 'Ikke interesseret', unreachable: 'Fik ikke fat', other: 'Andet' }[k] || k; }
 function dialUseNote() { const ai = DIAL.ai; const n = $('note'); if (!ai || !n) return; const txt = `${ai.summary}${ai.next_step ? ' Næste skridt: ' + ai.next_step : ''}`; n.value = n.value.trim() ? n.value.trim() + '\n' + txt : txt; n.focus(); toast('Sat ind i noten'); }

@@ -202,7 +202,14 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   mailen klar til at sende, og tjeklisten forudfyldes ved "Demo booket". Udfaldet
   gemmer den rigtige varighed (`dial_s`) og `call_sid`. Indgående opkald til et
   SDR-nummer ringer i browseren og noteres på leadet ("Ringede selv tilbage").
-  Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
+  **Telefonvinduet** (knappen nederst til venstre, kun når telefonen er slået til) ringer
+  et vilkårligt dansk nummer op med tastatur og slår nummeret op i hele puljen, mens
+  man taster (`GET /api/sdr/lookup?phone=`: firma, kontakt, status); et indgående
+  opkald åbner vinduet af sig selv med ringetone og den matchede kunde; efter
+  samtalen står resuméet der med "Åbn lead → sæt udfald" (`POST /api/sdr/open-lead`:
+  øverst på listen, når leadet kan være ens, ellers vises det bare på kortet).
+  Ringer man et nummer op uden lead på kortet, hæftes samtalen på det lead, nummeret
+  tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
 - **Ad Library-tjek - er de annoncører?** Facebook-sidens "kører annoncer"-flag viste sig

@@ -1009,3 +1009,32 @@ main{transition:margin-right .46s var(--ease)}
 .aipanel .ai-next b,.aipanel .ai-coach b{color:var(--txt);margin-right:6px}
 .aipanel .row{margin-top:4px}
 .mailbox .ai-draft{font-size:12.5px;color:var(--violet);background:var(--violet-soft);padding:8px 12px;border-radius:10px;margin-bottom:10px}
+/* ─── Phone window (dial any number, incoming calls) ─── */
+.ph-fab{position:fixed;left:24px;bottom:24px;width:52px;height:52px;border-radius:50%;background:var(--white);color:var(--txt);border:1px solid var(--line);box-shadow:0 6px 20px rgba(14,14,12,.12);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:40}
+.ph-fab svg{width:22px;height:22px}
+.ph-fab:hover{background:var(--paper)}
+.ph-fab.open{background:var(--black);color:#fff;border-color:var(--black)}
+.ph-fab.live{background:var(--approve);color:#fff;border-color:var(--approve)}
+.ph-fab.ring{background:var(--violet);color:#fff;border-color:var(--violet);animation:phring .9s infinite}
+.ph-fab .ph-badge{position:absolute;top:-3px;right:-3px;width:14px;height:14px;border-radius:50%;background:#B3352B;border:2px solid #fff}
+@keyframes phring{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.ph-win{position:fixed;left:24px;bottom:88px;width:320px;max-width:calc(100vw - 48px);background:var(--white);border:1px solid var(--line);border-radius:18px;box-shadow:0 18px 50px rgba(14,14,12,.18);padding:14px 16px 16px;z-index:41}
+.ph-win .ph-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ph-win .ph-x{border:0;background:transparent;font-size:14px;color:var(--txt-faint);cursor:pointer;padding:4px}
+.ph-win .ph-num{font-size:20px;letter-spacing:-.01em;display:block}
+.ph-win input#ph-num{width:100%;font:inherit;font-size:18px;font-weight:700;letter-spacing:.02em;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+.ph-win input#ph-num:focus{outline:none;border-color:var(--violet);background:var(--white)}
+.ph-win .ph-keys{grid-template-columns:repeat(3,1fr);margin:10px 0 4px}
+.ph-win .row{justify-content:flex-start;gap:8px;margin-top:10px;flex-wrap:wrap}
+.ph-win .ph-match{margin-top:8px;padding:10px 12px;border-radius:12px;background:var(--violet-soft);font-size:13px;line-height:1.45}
+.ph-win .ph-match b{font-size:14px}.ph-win .ph-match span{color:var(--txt-soft)}
+.ph-win .ph-match.none{background:var(--paper);color:var(--txt-faint)}
+.ph-win .ph-in .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--violet);animation:dialpulse .8s infinite;margin-bottom:6px}
+.ph-win .ph-row{display:flex;align-items:center;gap:12px;margin:6px 0 2px}
+.ph-win .ph-time{font-family:Anton,Inter,sans-serif;font-size:22px;letter-spacing:.02em}
+.ph-win .ph-ended{display:flex;flex-direction:column;gap:8px}
+.ph-win .ph-ended .ai-sum{font-size:13px;line-height:1.5;margin:0;padding:10px 12px;border-radius:12px;background:var(--violet-soft)}
+.ph-win .pill.danger{background:#B3352B;border-color:#B3352B;color:#fff}
+.ph-win .pill.on{background:var(--black);color:#fff;border-color:var(--black)}
+body.ai-open .ph-win{left:24px}
+@media (max-width:760px){.ph-fab{left:16px;bottom:16px}.ph-win{left:16px;bottom:78px}}
