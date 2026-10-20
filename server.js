@@ -3506,7 +3506,7 @@ function twilioReady() { const c = twilioCfg(); return !!(c.sid && c.token && c.
 function sdrDialerSettings(settings) { return { ...SDR_DEFAULT_DIALER, ...((settings && settings.dialer) || {}) }; }
 function sdrDialerFor(userId, settings) {
   const D = sdrDialerSettings(settings); const number = (D.numbers || {})[userId] || "";
-  return { configured: twilioReady(), enabled: twilioReady() && Array.isArray(D.users) && D.users.includes(userId) && !!number, number, consent: D.consent || "sdr" };
+  return { configured: twilioReady(), enabled: twilioReady() && Array.isArray(D.users) && D.users.includes(userId) && !!number, number, consent: D.consent || "sdr", live: D.live !== false };
 }
 // Every webhook is signed by Twilio with our auth token over the exact URL + params.
 function twilioValid(req) {
@@ -3591,13 +3591,14 @@ app.post("/api/twilio/voice", (req, res) => {
       const cvr = String(b.cvr || (matched && matched.cvr) || "").slice(0, 80); const q = `?uid=${encodeURIComponent(uid)}&cvr=${encodeURIComponent(cvr)}`;
       const rec = `record="record-from-answer-dual" recordingStatusCallback="${cb("/api/twilio/recording" + q)}" recordingStatusCallbackEvent="completed"`;
       const whisper = D.consent === "auto" ? ` url="${cb("/api/twilio/whisper")}"` : "";
-      return res.send(twiml(`<Dial callerId="${xesc(me.number)}" answerOnBridge="true" timeout="35" ${rec}><Number statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed"${whisper}>${xesc(normDkPhone(to))}</Number></Dial>`));
+      return res.send(twiml(`${liveStreamTwiml(D, uid, cvr, "inbound")}<Dial callerId="${xesc(me.number)}" answerOnBridge="true" timeout="35" ${rec}><Number statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed"${whisper}>${xesc(normDkPhone(to))}</Number></Dial>`));
     }
     const owner = Object.entries(D.numbers || {}).find(([id, n]) => (D.users || []).includes(id) && normDkPhone(n) === normDkPhone(to));
     if (owner) {
       const q = `?uid=${encodeURIComponent(owner[0])}&inbound=1&from=${encodeURIComponent(normDkPhone(from))}`;
       const rec = `record="record-from-answer-dual" recordingStatusCallback="${cb("/api/twilio/recording" + q)}" recordingStatusCallbackEvent="completed"`;
-      return res.send(twiml(`<Dial timeout="25" ${rec}><Client statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed">${xesc(owner[0])}</Client></Dial><Say language="da-DK">Du har ringet til Vedio. Vi kunne ikke tage telefonen lige nu, men vi ringer tilbage.</Say>`));
+      const inLead = sdrLeadByPhone(d, from);
+      return res.send(twiml(`${liveStreamTwiml(D, owner[0], inLead ? inLead.cvr : "", "outbound")}<Dial timeout="25" ${rec}><Client statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed">${xesc(owner[0])}</Client></Dial><Say language="da-DK">Du har ringet til Vedio. Vi kunne ikke tage telefonen lige nu, men vi ringer tilbage.</Say>`));
     }
     return res.send(twiml(`<Say language="da-DK">Du har ringet til Vedio. Vi ringer tilbage.</Say>`));
   } catch (e) { console.error("[twilio/voice]", e.message); res.send(twiml(`<Say language="da-DK">Der skete en fejl.</Say>`)); }
@@ -3649,6 +3650,118 @@ app.post("/api/twilio/recording", (req, res) => {
     sdrTouch(lead); savePool(d);
     setImmediate(() => recordingAnalyse(lead.cvr, rec.sid).catch((e) => console.error("[recording/analyse]", e.message)));
   } catch (e) { console.error("[twilio/recording]", e.message); }
+});
+// ─── Live listening: the call's audio, while it runs, to Gemini → hints ───
+// Casper: "AI listens to the live talk on the phone and comes with answers
+// on objections". Twilio forks both tracks of the call to a WebSocket here
+// (<Start><Stream>). Every few seconds the fresh audio goes to Gemini as a
+// stereo clip (left = SDR, right = customer) with the transcript so far and
+// the pitch's objection answers; it returns the new lines and, when there is
+// something to react to, one short hint. Lines and hints are pushed to the
+// SDR's card over SSE. Nothing is stored here - the recording is read in
+// full when the call ends.
+const LIVE_CALLS = new Map();   // callSid → state
+const LIVE_TICKETS = new Map(); // one-time tickets for the SSE connection (EventSource can't send headers)
+const LIVE_CHUNK_MS = 5000, LIVE_KEEP_MS = 5 * 60e3, LIVE_MIN_BYTES = 8000 * 0.8; // 0.8 s of mulaw
+function liveStreamTwiml(D, uid, cvr, sdrTrack) {
+  if (D.live === false) return "";
+  const url = xesc(PUBLIC_URL.replace(/^http/, "ws") + "/api/twilio/stream");
+  return `<Start><Stream url="${url}" track="both_tracks"><Parameter name="uid" value="${xesc(uid)}"/><Parameter name="cvr" value="${xesc(cvr || "")}"/><Parameter name="sdr" value="${sdrTrack}"/></Stream></Start>`;
+}
+// μ-law → 16-bit PCM (G.711).
+function mulawDecode(buf) {
+  const out = new Int16Array(buf.length);
+  for (let i = 0; i < buf.length; i++) { let u = ~buf[i] & 0xff; const sign = u & 0x80, exp = (u >> 4) & 7, mant = u & 0x0f; let s = ((mant << 3) + 0x84) << exp; s -= 0x84; out[i] = sign ? -s : s; }
+  return out;
+}
+function wavStereo8k(left, right) {
+  const n = Math.max(left.length, right.length); const data = Buffer.alloc(n * 4);
+  for (let i = 0; i < n; i++) { data.writeInt16LE(i < left.length ? left[i] : 0, i * 4); data.writeInt16LE(i < right.length ? right[i] : 0, i * 4 + 2); }
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + data.length, 4); h.write("WAVE", 8); h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(2, 22); h.writeUInt32LE(8000, 24); h.writeUInt32LE(8000 * 4, 28); h.writeUInt16LE(4, 32); h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+function liveGet(sid, init) {
+  let st = LIVE_CALLS.get(sid);
+  if (!st && init) { st = { sid, uid: "", cvr: "", sdrTrack: "inbound", buf: { inbound: [], outbound: [] }, lines: [], hints: [], subs: new Set(), timer: null, busy: false, started: Date.now(), ended: 0, name: "" }; LIVE_CALLS.set(sid, st); }
+  return st || null;
+}
+function liveSend(st, event, data) { const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const r of st.subs) { try { r.write(msg); } catch {} } }
+// One Gemini call at a time per call; a tick that lands while one is running
+// leaves its audio in the buffer for the next.
+function liveFlush(st) { if (st.busy) return st.busy; st.busy = liveFlushRun(st).catch(() => {}).finally(() => { st.busy = null; }); return st.busy; }
+async function liveFlushRun(st) {
+  const take = (k) => { const b = Buffer.concat(st.buf[k]); st.buf[k] = []; return b; };
+  const a = take("inbound"), b = take("outbound");
+  if (a.length + b.length < LIVE_MIN_BYTES) return;
+  try {
+    const sdr = st.sdrTrack === "inbound" ? a : b, cust = st.sdrTrack === "inbound" ? b : a;
+    const wav = wavStereo8k(mulawDecode(sdr), mulawDecode(cust)).toString("base64");
+    const d = loadPool(); const settings = sdrSettings(d); const lead = st.cvr ? (d.leads || []).find((l) => l.cvr === st.cvr) : null;
+    const name = (loadUsers().find((u) => u.id === st.uid) || {}).name || "SDR'en";
+    const obj = String(settings.pitch_text || "").split("\n").filter((l) => /^\s*Hvis de siger/i.test(l)).slice(0, 8).join("\n");
+    const sofar = st.lines.slice(-14).map((x) => `${x.who === "sdr" ? name : "Kunde"}: ${x.text}`).join("\n");
+    const prompt = [
+      `Du lytter med på et dansk salgsopkald, mens det foregår. ${name} fra Vedio (video-annoncer til Meta/TikTok; "Vee" laver løbende nye annoncer, så de ikke bliver trætte) ringer til ${lead ? lead.name : "en webshop"}. Vedhæftet er de seneste sekunder: venstre kanal er ${name}, højre kanal er kunden.`,
+      sofar ? `Samtalen indtil nu (seneste linjer):\n${sofar}` : "Samtalen er lige begyndt.",
+      obj ? `Pitchens svar på indvendinger:\n${obj}` : "",
+      `Tjeklisten, ${name} skal have afklaret: ${SDR_CHECKLIST.basics.map((x) => x.short).join(" · ")}. Købssignaler: ${SDR_CHECKLIST.signals.map((x) => x.short).join(" · ")}.`,
+      `Svar KUN som JSON: {"lines":[{"who":"sdr"|"kunde","text":"<ordret, kort>"}], "hint":{"kind":"objection"|"question"|"cue"|"none","title":"<3-5 ord, fx 'Indvending: har bureau'>","text":"<1-2 sætninger ${name} kan sige NU, på dansk - eller tom>"}}. Skriv kun det, der faktisk siges i klippet (tom liste hvis ingen tale). Giv kun et hint, når der er noget nyt at reagere på: en indvending, et spørgsmål, en åbning, eller noget vigtigt fra tjeklisten, der endnu ikke er afklaret. Ellers kind "none". Gentag ikke et hint, der allerede er givet.`,
+      st.hints.length ? `Hints allerede givet: ${st.hints.slice(-4).map((h) => h.title).join(" | ")}` : "",
+    ].filter(Boolean).join("\n\n");
+    const out = await sdrGeminiJson(prompt, { data: wav, mime: "audio/wav" });
+    const lines = (Array.isArray(out.lines) ? out.lines : []).map((x) => ({ who: x.who === "sdr" ? "sdr" : "kunde", text: String(x.text || "").trim().slice(0, 300), at: Date.now() })).filter((x) => x.text);
+    if (lines.length) { st.lines.push(...lines); if (st.lines.length > 200) st.lines = st.lines.slice(-200); liveSend(st, "lines", lines); }
+    const h = out.hint && typeof out.hint === "object" ? out.hint : null;
+    if (h && h.kind && h.kind !== "none" && String(h.text || "").trim()) { const hint = { kind: String(h.kind).slice(0, 12), title: String(h.title || "").trim().slice(0, 60), text: String(h.text).trim().slice(0, 300), at: Date.now() }; st.hints.push(hint); liveSend(st, "hint", hint); }
+  } catch (e) { console.warn("[live]", st.sid, e.message.slice(0, 120)); }
+}
+function liveEnd(st) {
+  if (st.timer) { clearInterval(st.timer); st.timer = null; }
+  st.ended = Date.now();
+  // the last seconds first, then "end" - so the card gets the final lines before it lets go
+  (async () => { try { await st.busy; await liveFlush(st); } catch {} liveSend(st, "end", { lines: st.lines.length, hints: st.hints.length }); })();
+  setTimeout(() => { for (const r of st.subs) { try { r.end(); } catch {} } LIVE_CALLS.delete(st.sid); }, LIVE_KEEP_MS);
+}
+// Twilio's media stream, one WebSocket per call.
+function liveAttach(server) {
+  let WebSocketServer; try { ({ WebSocketServer } = require("ws")); } catch { console.warn("[live] ws not installed"); return; }
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    if (!String(req.url || "").startsWith("/api/twilio/stream")) { socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      let st = null;
+      ws.on("message", (raw) => {
+        let m; try { m = JSON.parse(raw.toString()); } catch { return; }
+        if (m.event === "start") {
+          const p = (m.start && m.start.customParameters) || {};
+          st = liveGet(m.start.callSid, true); st.uid = String(p.uid || ""); st.cvr = String(p.cvr || ""); st.sdrTrack = p.sdr === "outbound" ? "outbound" : "inbound";
+          st.timer = setInterval(() => liveFlush(st), LIVE_CHUNK_MS);
+          liveSend(st, "start", { at: st.started });
+        } else if (m.event === "media" && st) {
+          const k = m.media.track === "outbound" ? "outbound" : "inbound";
+          st.buf[k].push(Buffer.from(m.media.payload, "base64"));
+        } else if (m.event === "stop" && st) { liveEnd(st); st = null; }
+      });
+      ws.on("close", () => { if (st) { liveEnd(st); st = null; } });
+      ws.on("error", () => {});
+    });
+  });
+}
+app.post("/api/sdr/live/ticket", authMiddleware, (req, res) => {
+  const t = crypto.randomBytes(16).toString("hex"); LIVE_TICKETS.set(t, { uid: req.userId, exp: Date.now() + 2 * 60e3 });
+  for (const [k, v] of LIVE_TICKETS) if (v.exp < Date.now()) LIVE_TICKETS.delete(k);
+  res.json({ ok: true, ticket: t });
+});
+// The card listens here during a call: past lines first, then live.
+app.get("/api/sdr/live", (req, res) => {
+  const tk = LIVE_TICKETS.get(String(req.query.ticket || "")); if (!tk || tk.exp < Date.now()) return res.status(403).end();
+  const sid = String(req.query.sid || ""); if (!sid) return res.status(400).end();
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  const st = liveGet(sid, true); st.subs.add(res);
+  res.write(`event: hello\ndata: ${JSON.stringify({ lines: st.lines.slice(-30), hints: st.hints.slice(-5), ended: !!st.ended })}\n\n`);
+  const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 15000);
+  req.on("close", () => { clearInterval(ping); st.subs.delete(res); });
 });
 const RECORDING_MIN_S = 20, RECORDING_MAX_B64 = 11 * 1024 * 1024;
 async function recordingFetchB64(url) {
@@ -13967,7 +14080,7 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533, usd_dkk: 6.9 };
 // Browser dialer (Twilio Voice): who has it, their outbound number, how the
 // consent line is given, and how long audio is kept. See the Dialer block.
-const SDR_DEFAULT_DIALER = { users: [], numbers: {}, consent: "sdr", retention_days: 30 };
+const SDR_DEFAULT_DIALER = { users: [], numbers: {}, consent: "sdr", retention_days: 30, live: true };
 const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, ltv_dkk: 19000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, commission_tier2_dkk: 500, tier1_min_signals: 2, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES, dialer: SDR_DEFAULT_DIALER };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
@@ -19493,6 +19606,7 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         if (b.dialer.numbers && typeof b.dialer.numbers === "object") { cur.numbers = {}; for (const [id, n] of Object.entries(b.dialer.numbers)) if (ids.includes(id) && isDkPhone(n)) cur.numbers[id] = normDkPhone(n); }
         if (["sdr", "auto"].includes(b.dialer.consent)) cur.consent = b.dialer.consent;
         if (Number.isFinite(Number(b.dialer.retention_days)) && Number(b.dialer.retention_days) >= 1) cur.retention_days = Math.min(365, Math.round(Number(b.dialer.retention_days)));
+        if (typeof b.dialer.live === "boolean") cur.live = b.dialer.live;
         d.sdr_settings.dialer = cur;
       }
       if (Number.isFinite(Number(b.tier1_min_signals)) && Number(b.tier1_min_signals) >= 1 && Number(b.tier1_min_signals) <= SDR_CHECKLIST.signals.length) d.sdr_settings.tier1_min_signals = Math.round(Number(b.tier1_min_signals));
@@ -19535,7 +19649,7 @@ if (process.env.ADLIB_SWEEP === "1") {
   const tick = () => adlibSweep(Number(process.env.ADLIB_BATCH) || 30).catch((e) => console.warn("[adlib]", e.message)).finally(() => setTimeout(tick, 20 * 60e3));
   setTimeout(tick, 3 * 60e3);
 }
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`\n🎯 Vedio Sales kører på http://localhost:${PORT}`);
   console.log(`📡 CVR-provider: datafordeler`);
   console.log(`💾 Data gemmes i: ${DATA_FILE}`);
@@ -19578,3 +19692,4 @@ app.listen(PORT, () => {
     }, 3000);
   }
 });
+liveAttach(httpServer);

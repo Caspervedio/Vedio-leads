@@ -190,9 +190,16 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   for en SDR under ⚙ → Telefoni (og Twilio-nøglerne ligger som secrets:
   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`,
   `TWILIO_TWIML_APP_SID`), ringer SDR'en fra kortet på sit eget danske nummer:
-  Frankfurt-edge, Opus først, ekko-dæmpning til og auto-gain fra, SDK'ens egne
-  advarsler som lydkvalitets-prik, tastatur til telefonmenuer, og "Test lyd"
-  under ⚙ (man hører sig selv). Samtalen optages i to kanaler (samtykke: SDR'en
+  Frankfurt-edge, Opus først (op til 40 kbit/s), SDK'ens egne advarsler som
+  lydkvalitets-prik, tastatur til telefonmenuer, og "Test lyd" under ⚙ (man hører
+  sig selv). **Lyd** under ⚙ vælger mellem *standard* (Chrome renser lyden: ekko-,
+  støj- og volumenbehandling - til laptop-mikrofon og højttaler) og *headset*
+  (ingen bearbejdning - kabel- eller USB-headset; det er Chromes støjreduktion og
+  auto-gain, der får en stemme til at lyde komprimeret og "inde i en kasse").
+  Valget gemmes i browseren (`vl_mic_mode`). Bruger man en Bluetooth-mikrofon
+  (AirPods o.l.), skifter Mac'en til hands-free-profilen i telefonkvalitet, så alt
+  lyder komprimeret - kortet advarer om det ved første opkald; brug Mac'ens egen
+  mikrofon eller et kabelheadset. Samtalen optages i to kanaler (samtykke: SDR'en
   siger det selv, eller en besked afspilles for kunden - valg under Telefoni), og
   når røret lægges på, læser Gemini optagelsen (`/api/twilio/recording` →
   `recordingAnalyse`): transskript, resumé, hvem man fik fat i, gæt på udfald og
@@ -206,8 +213,10 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   et vilkårligt dansk nummer op med tastatur og slår nummeret op i hele puljen, mens
   man taster (`GET /api/sdr/lookup?phone=`: firma, kontakt, status); et indgående
   opkald åbner vinduet af sig selv med ringetone og den matchede kunde; efter
-  samtalen står resuméet der med "Åbn lead → sæt udfald" (`POST /api/sdr/open-lead`:
-  øverst på listen, når leadet kan være ens, ellers vises det bare på kortet).
+  samtalen står resuméet der med "Åbn lead og sæt udfald" (`POST /api/sdr/open-lead`:
+  øverst på listen, når leadet kan være ens, ellers vises det bare på kortet). Under
+  samtalen viser vinduet navn, nummer, initialer, tid og lydkvalitet med runde
+  Mute/Tastatur/Læg på-knapper (timer og kvalitet opdateres i både vinduet og kortet).
   Ringer man et nummer op uden lead på kortet, hæftes samtalen på det lead, nummeret
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
@@ -254,15 +263,31 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   punktet (5-15 % af StoreLeads-omsætningen, kun når de kører annoncer). Svaret
   gemmes i `demo_check.spend_band`, står på demorækken, i admins vurdering, i
   Slack/Twenty-linjen og i Excel-kolonnen "Annoncebudget (SDR)".
-- **Opkaldskortet (okt. 2026).** Under kontaktpersonen ligger tre faner: **Samtale**
-  (det, der skal afklares - de seks grundlag og tre købssignaler som flueben, man
-  sætter mens man taler, og pitchens "Hvis de siger …"-svar foldet sammen; fluebenene
-  følger med over i "Demo booket"), **Pitch** (egen pitch eller et script) og **Noter**
-  (tråden og notefeltet). Højre kolonne viser **Historik** (opkald, udfald, noter,
-  AI-resuméer, mails, demo - nyeste først) og **Referencer**; "Næste på listen" og
-  "Opfølgninger der venter" er taget ud af kortet (de ligger på Ringelisten og under
-  Opfølgning). Træning- og mail-knapperne er væk; mailen skrives nu af AI'en efter
-  samtalen. Tastaturgenvejene virker stadig, hint-linjen er fjernet.
+- **Opkaldskortet (okt. 2026).** Under kontaktpersonen ligger to faner: **Samtale**
+  (AI'en, der lytter med - se næste punkt) og **Pitch** (egen pitch eller et script).
+  Højre kolonne viser **Noter** (notefeltet og tråden), **Historik** (opkald, udfald,
+  noter, AI-resuméer, mails, demo - nyeste først) og **Referencer**; "Næste på listen"
+  og "Opfølgninger der venter" er taget ud af kortet (de ligger på Ringelisten og
+  under Opfølgning). Træning- og mail-knapperne er væk; mailen skrives nu af AI'en
+  efter samtalen. Tastaturgenvejene virker stadig, hint-linjen er fjernet.
+- **AI lytter med under samtalen (Samtale-fanen).** Mens opkaldet kører, forker Twilio
+  lyden til serveren (`<Start><Stream track="both_tracks">` → WebSocket
+  `/api/twilio/stream`, μ-law i 20 ms-pakker, begge kanaler). Hvert 5. sekund
+  (`LIVE_CHUNK_MS`) sendes de nye sekunder som stereo-WAV (venstre = SDR, højre =
+  kunde) til Gemini sammen med de seneste linjer, pitchens "Hvis de siger …"-svar og
+  tjeklisten, og den svarer med de linjer, der blev sagt, og højst ét hint, når der er
+  noget at reagere på: **Indvending** (et svar, SDR'en kan sige nu), **Spørgsmål**
+  (noget fra tjeklisten, der mangler) eller **Åbning** (et købssignal). Kortet
+  abonnerer pr. `CallSid` over SSE (`POST /api/sdr/live/ticket` → engangsbillet,
+  `GET /api/sdr/live?sid&ticket`: hello/start/lines/hint/end) og viser de nyeste
+  hints øverst med den rullende transskription under; ved "end" er alle linjer
+  sendt først (ét Gemini-kald ad gangen pr. samtale, det sidste før "end"). Ca.
+  8-12 s fra noget siges, til det står på kortet. Admin slår det fra under
+  Telefoni ("AI lytter med under samtalen", `dialer.live`), og så sendes ingen
+  Stream-TwiML. Kun samtalens linjer holdes i hukommelsen i 5 min efter opkaldet;
+  intet gemmes på leadet herfra (det gør optagelsens analyse bagefter). Cloud Run
+  holder WebSocket'en som ét request, så en samtale over 20 min (request-timeout)
+  mister live-delen, ikke opkaldet.
 - **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
   tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
   på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på

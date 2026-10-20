@@ -123,6 +123,7 @@
       <aside class="side">
         <div class="box duebox" id="duebox" hidden style="display:none"><h4>Opfølgninger der venter<span class="dn" id="due-n"></span></h4><div class="upnext" id="due-side"></div></div>
         <div class="box" style="display:none"><h4>Næste på listen</h4><div class="upnext" id="upnext"></div></div>
+        <div class="box" id="notebox" hidden></div>
         <div class="box" id="histbox" hidden><h4>Historik</h4><div class="history" id="history"></div></div>
         <div class="box" id="refbox" hidden></div>
       </aside>
@@ -555,8 +556,8 @@ async function dialInit() {
   try {
     if (!window.Twilio) await new Promise((ok, fail) => { const sc = document.createElement('script'); sc.src = '/api/twilio/sdk.js'; sc.onload = ok; sc.onerror = () => fail(new Error('SDK kunne ikke hentes')); document.head.appendChild(sc); });
     const t = await get('/api/twilio/token');
-    const dev = new Twilio.Device(t.token, { edge: t.edge || ['frankfurt', 'dublin'], codecPreferences: ['opus', 'pcmu'], logLevel: 'error', closeProtection: 'Du er i gang med et opkald' });
-    dev.audio.setAudioConstraints({ echoCancellation: true, noiseSuppression: true, autoGainControl: true });
+    const dev = new Twilio.Device(t.token, { edge: t.edge || ['frankfurt', 'dublin'], codecPreferences: ['opus', 'pcmu'], maxAverageBitrate: 40000, logLevel: 'error', closeProtection: 'Du er i gang med et opkald' });
+    dev.audio.setAudioConstraints(dialMicConstraints());
     try { dev.audio.incoming(true); dev.audio.outgoing(true); dev.audio.disconnect(true); } catch {}
     dev.on('tokenWillExpire', async () => { try { const n = await get('/api/twilio/token'); dev.updateToken(n.token); } catch {} });
     dev.on('error', (err) => { console.warn('[dialer]', err); if (!DIAL.call) toast('Telefon: ' + (err.message || err.code), 5000); });
@@ -576,11 +577,21 @@ async function dialFillMics() {
   const cur = DIAL.device.audio.inputDevice; const opts = [...DIAL.device.audio.availableInputDevices.values()];
   sel.innerHTML = `<option value="">Mikrofon: standard</option>` + opts.map((d) => `<option value="${e(d.deviceId)}" ${cur && cur.deviceId === d.deviceId ? 'selected' : ''}>${e(d.label || 'Mikrofon')}</option>`).join('');
 }
+/* Chrome's own processing (noise suppression + automatic gain) is what makes a
+   voice sound compressed and boxed-in. With a headset there is nothing to
+   suppress, so "headset" turns it off; "standard" is for laptop mic + speakers. */
+function dialMicMode() { try { return localStorage.getItem('vl_mic_mode') === 'headset' ? 'headset' : 'std'; } catch { return 'std'; } }
+function dialMicConstraints() { return dialMicMode() === 'headset' ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : { echoCancellation: true, noiseSuppression: true, autoGainControl: true }; }
+function dialSetMicMode(m) { try { localStorage.setItem('vl_mic_mode', m); } catch {} if (DIAL.device) DIAL.device.audio.setAudioConstraints(dialMicConstraints()); toast(m === 'headset' ? 'Headset-lyd: ingen støjreduktion og automatisk volumen' : 'Standard-lyd: Chrome renser lyden'); }
+function dialMicLabel() { if (!DIAL.device) return ''; const cur = DIAL.device.audio.inputDevice; if (cur) return cur.label || ''; const all = [...DIAL.device.audio.availableInputDevices.values()]; const d = all.find((x) => x.deviceId === 'default') || all[0]; return d ? d.label || '' : ''; }
+function dialMicIsBt() { return /airpods|bluetooth|hands-free|\bbt\b|beats|buds|wh-1|wf-1/i.test(dialMicLabel()); }
+function dialMicWarn() { if (DIAL.btWarned || !dialMicIsBt()) return; DIAL.btWarned = true; toast('Bluetooth-mikrofon (' + dialMicLabel() + '): Mac\'en skifter til telefonkvalitet, så alt lyder komprimeret. Brug Mac\'ens egen mikrofon eller et kabelheadset.', 9000); }
 async function dialSetMic(id) { if (!DIAL.device) return; try { if (id) await DIAL.device.audio.setInputDevice(id); else await DIAL.device.audio.unsetInputDevice(); toast('Mikrofon valgt'); } catch (ex) { toast('Kunne ikke skifte mikrofon: ' + ex.message, 4000); } }
-function dialWire(call, cvr, label) {
+function dialWire(call, cvr, label, name, num) {
+  DIAL.toName = name || ''; DIAL.toNum = num || label || '';
   DIAL.call = call; DIAL.state = 'connecting'; DIAL.t0 = 0; DIAL.muted = false; DIAL.keypad = false; DIAL.quality = 'ok'; DIAL.warn = ''; DIAL.ai = null; DIAL.aiStatus = ''; DIAL.to = label || '';
   call.on('ringing', () => { DIAL.state = 'ringing'; phTone('ringback'); renderDial(); });
-  call.on('accept', () => { phTone(false); DIAL.state = 'live'; DIAL.t0 = Date.now(); DIAL.sid = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const t = $('dial-time'); if (t) t.textContent = dialFmt((Date.now() - DIAL.t0) / 1000); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
+  call.on('accept', () => { phTone(false); DIAL.state = 'live'; dialMicWarn(); const sid0 = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (sid0 && cvr) liveSubscribe(sid0); DIAL.t0 = Date.now(); DIAL.sid = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const v = dialFmt((Date.now() - DIAL.t0) / 1000); document.querySelectorAll('.js-dial-time').forEach((t) => { t.textContent = v; }); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
   call.on('warning', (name) => { DIAL.warn = name; DIAL.quality = /low-mos|high-packet-loss|high-packets-lost|high-jitter|high-rtt/.test(name) ? (/low-mos|high-packet/.test(name) ? 'bad' : 'warn') : DIAL.quality; renderDialQuality(); });
   call.on('warning-cleared', () => { DIAL.warn = ''; DIAL.quality = 'ok'; renderDialQuality(); });
   const end = () => { phTone(false); dialEnded(call, cvr); };
@@ -601,7 +612,7 @@ async function dialStart(to, opts) {
     const call = await DIAL.device.connect({ params: { To: num, cvr } });
     DIAL.sid = (call.parameters && call.parameters.CallSid) || '';
     DIAL.manual = manual; DIAL.manualCvr = cvr;
-    dialWire(call, cvr, label);
+    dialWire(call, cvr, label, test ? '' : manual ? ((opts && opts.name) || '') : L.name, test ? '' : fmtPhone(num));
     if (manual) { PH.open = true; renderPhone(); }
   } catch (ex) { toast('Kunne ikke ringe: ' + ex.message, 5000); }
 }
@@ -615,7 +626,7 @@ function dialIncoming(call) {
   // Who is it? The whole pool, not just what the browser holds.
   get('/api/sdr/lookup?phone=' + encodeURIComponent(from)).then((r) => { if (DIAL.incoming !== call) return; DIAL.incomingLead = r.lead || null; DIAL.incomingName = r.lead ? r.lead.name : ''; renderDial(); }).catch(() => {});
 }
-function dialAccept() { const c = DIAL.incoming; if (!c) return; DIAL.incoming = null; phRing(false); const lead = DIAL.incomingLead; DIAL.manual = true; DIAL.manualCvr = lead ? lead.cvr : ''; dialWire(c, lead ? lead.cvr : '', DIAL.to + (DIAL.incomingName ? ' · ' + DIAL.incomingName : '')); c.accept(); }
+function dialAccept() { const c = DIAL.incoming; if (!c) return; DIAL.incoming = null; phRing(false); const lead = DIAL.incomingLead; DIAL.manual = true; DIAL.manualCvr = lead ? lead.cvr : ''; dialWire(c, lead ? lead.cvr : '', DIAL.to + (DIAL.incomingName ? ' · ' + DIAL.incomingName : ''), DIAL.incomingName, DIAL.to); c.accept(); }
 function dialReject() { const c = DIAL.incoming; if (!c) return; c.reject(); DIAL.incoming = null; phRing(false); DIAL.state = 'idle'; renderDial(); }
 function dialHangup() { if (DIAL.call) DIAL.call.disconnect(); }
 function dialMute() { if (!DIAL.call) return; DIAL.muted = !DIAL.muted; DIAL.call.mute(DIAL.muted); renderDial(); }
@@ -626,6 +637,7 @@ function dialEnded(call, cvr) {
   if (DIAL.timer) { clearInterval(DIAL.timer); DIAL.timer = null; }
   DIAL.call = null; DIAL.state = 'ended'; DIAL.lastDur = dur; DIAL.lastSid = DIAL.sid || ((call.parameters && call.parameters.CallSid) || ''); DIAL.lastCvr = cvr || ''; DIAL.muted = false; DIAL.keypad = false;
   DIAL.lastManual = !!DIAL.manual; DIAL.manual = false;
+  LIVE.ended = true; liveClose(8000);
   renderDial();
   if (cvr && dur >= 20 && DIAL.lastSid) { DIAL.aiStatus = 'wait'; DIAL.aiFor = cvr; dialPoll(DIAL.lastSid, cvr, Date.now()); }
   else if (cvr && dur > 0 && dur < 20) DIAL.aiStatus = 'short';
@@ -642,7 +654,8 @@ async function dialPoll(sid, cvr, t0) {
   DIAL.poll = setTimeout(() => dialPoll(sid, cvr, t0), 3000);
 }
 function dialFmt(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
-function renderDialQuality() { const q = $('dial-q'); if (!q) return; q.className = 'dial-q ' + DIAL.quality; q.title = DIAL.warn ? 'Netværk: ' + DIAL.warn : 'Lyden er god'; q.textContent = DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'; }
+function dialQualityLabel() { return DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'; }
+function renderDialQuality() { document.querySelectorAll('.js-dial-q').forEach((q) => { q.className = 'dial-q js-dial-q ' + DIAL.quality; q.title = DIAL.warn ? 'Netværk: ' + DIAL.warn : 'Lyden er god'; q.textContent = dialQualityLabel(); }); }
 function renderDial() {
   renderPhone(); renderLivePane();
   const p = $('dialpanel'); if (!p) return;
@@ -656,9 +669,9 @@ function renderDial() {
   if (st === 'connecting' || st === 'ringing' || st === 'live') {
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
     p.innerHTML = `<div class="dial ${st}">
-      <span class="dial-st"><i class="dot"></i>${st === 'live' ? `<span id="dial-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span>` : st === 'ringing' ? 'Ringer…' : 'Forbinder…'}</span>
+      <span class="dial-st"><i class="dot"></i>${st === 'live' ? `<span class="js-dial-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span>` : st === 'ringing' ? 'Ringer…' : 'Forbinder…'}</span>
       <b>${e(DIAL.to)}</b>
-      ${st === 'live' ? `<span id="dial-q" class="dial-q ${DIAL.quality}">${DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'}</span>` : ''}
+      ${st === 'live' ? `<span class="dial-q js-dial-q ${DIAL.quality}">${dialQualityLabel()}</span>` : ''}
       <div class="row">
         ${st === 'live' ? `<button class="pill ${DIAL.muted ? 'on' : ''}" onclick="dialMute()">${DIAL.muted ? 'Slå lyd til' : 'Mute'}</button><button class="pill" onclick="DIAL.keypad=!DIAL.keypad;renderDial()" title="Tast dig gennem en telefonmenu">Tastatur</button>` : ''}
         <button class="pill danger" onclick="dialHangup()">Læg på</button>
@@ -698,7 +711,7 @@ function phInput(v) { PH.num = String(v || ''); if (PH.lookupT) clearTimeout(PH.
 function phKey(k) { const i = $('ph-num'); PH.num = (PH.num || '') + k; if (i) i.value = PH.num; phInput(PH.num); }
 async function phLookup() { try { const r = await get('/api/sdr/lookup?phone=' + encodeURIComponent(PH.num)); PH.match = r.lead || null; } catch { PH.match = null; } renderPhoneMatch(); }
 function phStatus(s) { if (!s) return ''; return s === 'mine' ? 'på din liste' : s === 'archived' ? 'sagt nej / arkiveret' : s === 'demo' ? 'demo booket' : s.startsWith('other:') ? 'hos ' + s.slice(6) : 'i puljen'; }
-function phMatchHtml(m) { return m ? `<div class="ph-match"><b>${e(m.name)}</b>${m.city ? ` <span>· ${e(m.city)}</span>` : ''}${m.contact ? `<div class="sub">${e(m.contact.name)}${m.contact.title ? ' · ' + e(m.contact.title) : ''}</div>` : ''}<div class="sub">${e(phStatus(m.status))}${m.lastCallAt ? ' · sidst ringet ' + e(fmtAgo(m.lastCallAt)) : ''}</div></div>` : ''; }
+function phMatchHtml(m) { return m ? `<div class="ph-match"><span class="ph-av sm">${e(phInitials(m.name))}</span><div><b>${e(m.name)}</b>${m.city ? ` <span>· ${e(m.city)}</span>` : ''}${m.contact ? `<div class="sub">${e(m.contact.name)}${m.contact.title ? ' · ' + e(m.contact.title) : ''}</div>` : ''}<div class="sub">${e(phStatus(m.status))}${m.lastCallAt ? ' · sidst ringet ' + e(fmtAgo(m.lastCallAt)) : ''}</div></div></div>` : ''; }
 function renderPhoneMatch() { const el = $('ph-matchbox'); if (el) el.innerHTML = PH.match ? phMatchHtml(PH.match) : (PH.num.replace(/[^0-9]/g, '').length >= 8 ? '<div class="ph-match none">Ingen lead med det nummer</div>' : ''); const b = $('ph-call'); if (b) b.disabled = !isDk(PH.num); }
 function phDial() { if (!isDk(PH.num)) { toast('Skriv et dansk nummer'); return; } dialStart(PH.num, { manual: true, cvr: PH.match ? PH.match.cvr : '', name: PH.match ? PH.match.name : '' }); }
 async function phOpenLead(cvr) {
@@ -733,6 +746,7 @@ function phRing(on) {
   phTone('incoming');
   if (!/^☎ /.test(document.title)) document.title = '☎ Indgående opkald · ' + document.title;
 }
+function phInitials(name) { return String(name || '').replace(/[^A-Za-zÆØÅæøå0-9 ]/g, '').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '☎'; }
 function renderPhone() {
   const w = $('ph-win'), fab = $('ph-fab'); if (!w || !fab) return;
   if (!dialerOn()) { w.hidden = true; fab.hidden = true; return; }
@@ -741,39 +755,61 @@ function renderPhone() {
   const badge = fab.querySelector('.ph-badge'); if (badge) badge.hidden = st !== 'incoming';
   if (!PH.open) { w.hidden = true; return; }
   w.hidden = false;
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
-  const head = (t) => `<div class="ph-head"><span class="kicker">${t}</span><button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
+  const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
+  const head = (t, pill) => `<div class="ph-head"><span class="ph-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>${t}</span>${pill ? `<span class="ph-pill ${pill[1]}">${pill[0]}</span>` : ''}<button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
+  const who = (name, num, sub) => `<div class="ph-who"><span class="ph-av">${e(phInitials(name || num))}</span><div><b>${e(name || num)}</b>${name ? `<span>${e(num)}</span>` : ''}${sub ? `<span>${e(sub)}</span>` : ''}</div></div>`;
   if (st === 'incoming') {
     const m = DIAL.incomingLead;
-    w.innerHTML = `${head('Indgående opkald')}<div class="ph-in"><i class="dot"></i><b class="ph-num">${e(DIAL.to)}</b>${m ? phMatchHtml(m) : '<div class="ph-match none">Slår op…</div>'}
-      <div class="row"><button class="pill approve" onclick="dialAccept()">Besvar</button><button class="pill danger" onclick="dialReject()">Afvis</button></div></div>`;
+    w.innerHTML = `${head('Indgående opkald', ['ringer', 'ring'])}
+      ${who(m ? m.name : '', DIAL.to, m ? [m.city, m.contact && m.contact.name, phStatus(m.status)].filter(Boolean).join(' · ') : 'Slår nummeret op…')}
+      <div class="ph-actions"><button class="ph-btn go" onclick="dialAccept()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>Besvar</button><button class="ph-btn stop" onclick="dialReject()">Afvis</button></div>`;
     return;
   }
+  const IC = {
+    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>',
+    micoff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" x2="22" y1="2" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><line x1="12" x2="12" y1="19" y2="22"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="12" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg>',
+    end: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="22" x2="2" y1="2" y2="22"/></svg>',
+  };
   if (st === 'connecting' || st === 'ringing' || st === 'live') {
-    w.innerHTML = `${head(st === 'live' ? 'I samtale' : st === 'ringing' ? 'Ringer…' : 'Forbinder…')}<div class="ph-live">
-      <b class="ph-num">${e(DIAL.to)}</b>
-      <div class="ph-row">${st === 'live' ? `<span id="dial-time" class="ph-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span><span id="dial-q" class="dial-q ${DIAL.quality}">${DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'}</span>` : '<span class="dial-ai-wait"><i class="spin"></i></span>'}</div>
-      ${st === 'live' && DIAL.keypad ? `<div class="dial-keys">${keys.map((k) => `<button onclick="dialDigit('${k}')">${k}</button>`).join('')}</div>` : ''}
-      <div class="row">${st === 'live' ? `<button class="pill ${DIAL.muted ? 'on' : ''}" onclick="dialMute()">${DIAL.muted ? 'Lyd til' : 'Mute'}</button><button class="pill" onclick="DIAL.keypad=!DIAL.keypad;renderDial()">Tastatur</button>` : ''}<button class="pill danger" onclick="dialHangup()">Læg på</button></div>
-    </div>`;
+    const name = DIAL.toName || '', num = DIAL.toNum || DIAL.to;
+    w.innerHTML = `${head(st === 'live' ? 'I samtale' : st === 'ringing' ? 'Ringer op' : 'Forbinder', st === 'live' ? ['live', 'live'] : null)}
+      <div class="ph-call">
+        <span class="ph-av lg ${st === 'live' ? 'live' : 'ring'}">${e(phInitials(name || num))}</span>
+        <b>${e(name || num)}</b>
+        ${name ? `<span class="ph-num">${e(num)}</span>` : ''}
+        ${st === 'live' ? `<span class="ph-time js-dial-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span><span class="dial-q js-dial-q ${DIAL.quality}">${dialQualityLabel()}</span>` : `<span class="ph-wait"><i></i><i></i><i></i></span>`}
+      </div>
+      ${st === 'live' && DIAL.keypad ? `<div class="ph-keys">${keys.map(([k]) => `<button onclick="dialDigit('${k}')"><b>${k}</b></button>`).join('')}</div>` : ''}
+      <div class="ph-round">
+        ${st === 'live' ? `<button class="${DIAL.muted ? 'on' : ''}" onclick="dialMute()"><span class="ic">${DIAL.muted ? IC.micoff : IC.mic}</span><small>${DIAL.muted ? 'Lyd til' : 'Mute'}</small></button>
+        <button class="${DIAL.keypad ? 'on' : ''}" onclick="DIAL.keypad=!DIAL.keypad;renderDial()"><span class="ic">${IC.grid}</span><small>Tastatur</small></button>` : ''}
+        <button class="stop" onclick="dialHangup()"><span class="ic">${IC.end}</span><small>Læg på</small></button>
+      </div>`;
     return;
   }
-  // idle, or just ended a call started here
   const ended = st === 'ended' && (DIAL.lastManual || DIAL.lastCvr);
-  const ai = DIAL.ai && DIAL.aiFor === DIAL.lastCvr ? DIAL.ai : null;
-  const wait = DIAL.aiStatus === 'wait';
-  w.innerHTML = `${head('Telefon')}
-    ${ended ? `<div class="ph-ended"><span class="dial-st">Samtale slut${DIAL.lastDur ? ' · ' + dialFmt(DIAL.lastDur) : ''}</span>
-      ${wait ? '<span class="dial-ai-wait"><i class="spin"></i>AI læser samtalen…</span>' : ''}
-      ${ai ? `<p class="ai-sum">${e(ai.summary)}</p>${ai.next_step ? `<p class="sub"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}` : ''}
-      ${DIAL.lastCvr ? `<button class="pill sm primary" onclick="phOpenLead('${e(DIAL.lastCvr)}')">Åbn lead → sæt udfald</button>` : '<span class="sub">Nummeret matcher ikke et lead.</span>'}
-      <button class="linkbtn" onclick="DIAL.state='idle';DIAL.lastManual=false;renderPhone()">Ny samtale</button></div>`
-    : `<div class="ph-dial">
+  const ai = DIAL.ai && DIAL.aiFor === DIAL.lastCvr ? DIAL.ai : null; const wait = DIAL.aiStatus === 'wait';
+  if (ended) {
+    const name = DIAL.toName || '', num = DIAL.toNum || DIAL.to;
+    w.innerHTML = `${head('Samtale slut', [DIAL.lastDur ? dialFmt(DIAL.lastDur) : '0:00', 'done'])}
+      <div class="ph-call sm">
+        <span class="ph-av">${e(phInitials(name || num))}</span>
+        <div><b>${e(name || num)}</b>${name ? `<span class="ph-num">${e(num)}</span>` : ''}</div>
+      </div>
+      ${wait ? '<div class="ph-note"><span class="dial-ai-wait"><i class="spin"></i>AI læser samtalen…</span></div>' : ''}
+      ${ai ? `<div class="ph-note ai"><b>${e(ai.summary)}</b>${ai.next_step ? `<span>Næste skridt: ${e(ai.next_step)}</span>` : ''}</div>` : ''}
+      ${DIAL.lastCvr ? `<button class="ph-cta" onclick="phOpenLead('${e(DIAL.lastCvr)}')">Åbn lead og sæt udfald →</button>` : '<div class="ph-note">Nummeret matcher ikke et lead.</div>'}
+      <button class="ph-link" onclick="DIAL.state='idle';DIAL.lastManual=false;renderPhone()">Ny samtale</button>`;
+    return;
+  }
+  w.innerHTML = `${head('Telefon', ['klar', 'ok'])}
+    <div class="ph-dial">
       <input id="ph-num" type="tel" placeholder="+45 12 34 56 78" value="${e(PH.num)}" oninput="phInput(this.value)" onkeydown="if(event.key==='Enter')phDial()" autocomplete="off">
       <div id="ph-matchbox"></div>
-      <div class="dial-keys ph-keys">${keys.map((k) => `<button onclick="phKey('${k}')">${k}</button>`).join('')}</div>
-      <div class="row"><button class="pill tertiary" onclick="PH.num='';renderPhone();$('ph-num').focus()">Ryd</button><button class="pill approve" id="ph-call" onclick="phDial()" ${isDk(PH.num) && !busyCall ? '' : 'disabled'}>Ring op</button></div>
-    </div>`}`;
+      <div class="ph-keys">${keys.map(([k, l]) => `<button onclick="phKey('${k}')"><b>${k}</b>${l ? `<small>${l}</small>` : '<small>&nbsp;</small>'}</button>`).join('')}</div>
+      <div class="ph-actions"><button class="ph-btn" onclick="PH.num='';renderPhone();$('ph-num').focus()">Ryd</button><button class="ph-btn go" id="ph-call" onclick="phDial()" ${isDk(PH.num) && !busyCall ? '' : 'disabled'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>Ring op</button></div>
+    </div>`;
   renderPhoneMatch();
 }
 function dialReasonLabel(k) { return { budget: 'Intet budget', 'not-decider': 'Ikke beslutningstager', 'has-agency': 'Har bureau', 'no-ads': 'Kører ikke annoncer', timing: 'Timing', 'not-interested': 'Ikke interesseret', unreachable: 'Fik ikke fat', other: 'Andet' }[k] || k; }
@@ -847,22 +883,11 @@ function renderCard() {
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
     <div class="ctabs">
-      <button data-k="samtale" class="${cardTabK === 'samtale' ? 'on' : ''}" onclick="cardTab('samtale')">Samtale</button>
+      <button data-k="samtale" class="${cardTabK === 'samtale' ? 'on' : ''}" onclick="cardTab('samtale')">Samtale<span class="ai-dot" title="AI lytter med under samtalen"></span></button>
       <button data-k="pitch" class="${cardTabK === 'pitch' ? 'on' : ''}" onclick="cardTab('pitch')">Pitch</button>
-      <button data-k="noter" class="${cardTabK === 'noter' ? 'on' : ''}" onclick="cardTab('noter')">Noter${(L.note_thread || []).length ? `<span class="n">${(L.note_thread || []).length}</span>` : ''}</button>
     </div>
     <div class="cpane" data-k="samtale" ${cardTabK === 'samtale' ? '' : 'hidden'}>${livePaneHtml(L)}</div>
     <div class="cpane" data-k="pitch" ${cardTabK === 'pitch' ? '' : 'hidden'}><div class="pitchwrap" id="pitchbody">${pitchPanelHtml(L)}</div></div>
-    <div class="cpane" data-k="noter" ${cardTabK === 'noter' ? '' : 'hidden'}>
-    ${noteThreadHtml(L && L.note_thread)}
-    <div class="composer" id="composer">
-      <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
-      <div class="cfoot">
-        <span class="sub" id="note-state">Gemmes også automatisk, når du vælger et udfald</span>
-        <button class="pill sm violet" id="note-save" onclick="saveNote()" disabled>Gem note</button>
-      </div>
-    </div>
-    </div>
     <div id="coach" hidden></div>
     <div class="actions">
       <div class="steplbl"><i>1</i> Ring</div>
@@ -890,7 +915,7 @@ function renderCard() {
       <div class="hint"><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
     </div>
   </div>`;
-  renderDial(); renderHistory(); renderRefs();
+  renderDial(); renderNotes(); renderHistory(); renderRefs();
 }
 function toggleCedit() {
   const L = S.current; if (!L) return; const box = $('cedit'); ceditOpen = !ceditOpen; box.hidden = !ceditOpen; if (!ceditOpen) return;
@@ -1482,7 +1507,6 @@ function openDemoCheck() {
   if (!dcList().basics.length) { disp('demo-booked'); return; } // an old server without the list
   DC.step = 1; DC.basics = {}; DC.signals = {}; DC.spend_band = ''; DC.fromCall = false;
   const ai = DIAL.ai; if (ai && DIAL.aiFor === L.cvr && ai.checklist) { for (const [k, v] of Object.entries(ai.checklist.basics || {})) if (v === true) DC.basics[k] = true; for (const [k, v] of Object.entries(ai.checklist.signals || {})) if (v === true) DC.signals[k] = true; DC.spend_band = ai.checklist.spend_band || ''; DC.fromCall = true; }
-  const lc = LIVE.ck[L.cvr]; if (lc) { for (const [k, v] of Object.entries(lc.basics)) if (v) DC.basics[k] = true; for (const [k, v] of Object.entries(lc.signals)) if (v) DC.signals[k] = true; if (Object.values(lc.basics).some(Boolean) || Object.values(lc.signals).some(Boolean)) DC.fromCall = true; }
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'dcheck';
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
@@ -1852,33 +1876,67 @@ function pitchPanelHtml(L) {
 /* ─── Card tabs: Samtale (the live checklist while you talk) · Pitch · Noter ─── */
 let cardTabK = (() => { try { return localStorage.getItem('vl_card_tab') || 'samtale'; } catch { return 'samtale'; } })();
 function cardTab(k) {
-  cardTabK = ['samtale', 'pitch', 'noter'].includes(k) ? k : 'samtale'; try { localStorage.setItem('vl_card_tab', cardTabK); } catch {}
+  cardTabK = ['samtale', 'pitch'].includes(k) ? k : 'samtale'; try { localStorage.setItem('vl_card_tab', cardTabK); } catch {}
   document.querySelectorAll('.ctabs button').forEach((b) => b.classList.toggle('on', b.dataset.k === cardTabK));
   document.querySelectorAll('.cpane').forEach((p) => { p.hidden = p.dataset.k !== cardTabK; });
 }
-/* What you tick while talking is remembered per lead and carried into the
-   demo checklist, so "Demo booket" starts from what was actually covered. */
-const LIVE = { ck: {} };
-function liveCk(cvr) { return LIVE.ck[cvr] || (LIVE.ck[cvr] = { basics: {}, signals: {} }); }
-function liveToggle(k, id) { const L = S.current; if (!L) return; const c = liveCk(L.cvr); c[k][id] = !c[k][id]; renderLivePane(); }
-function liveObjections() {
-  const txt = String((S.settings && S.settings.pitch_text) || ''); const out = [];
-  for (const line of txt.split('\n')) { const m = line.match(/^\s*Hvis de siger\s*[“"']?(.+?)[”"']?\s*:\s*(.+)$/i); if (m) out.push({ q: m[1].trim(), a: m[2].trim() }); }
-  return out;
+/* ─── Live: the AI listens while the call runs ───────────────────────────
+   The server forks the call's audio to Gemini in small chunks and pushes
+   the lines and, when there is something to react to, a hint - an answer
+   to an objection, a question to ask, an opening. The card subscribes by
+   call sid over SSE for the duration of the call. */
+const LIVE = { es: null, sid: '', lines: [], hints: [], ended: false, status: 'idle' };
+async function liveSubscribe(sid) {
+  liveClose();
+  LIVE.sid = sid; LIVE.lines = []; LIVE.hints = []; LIVE.ended = false; LIVE.status = 'connecting'; renderLivePane();
+  try {
+    const t = await post('/api/sdr/live/ticket', {});
+    const es = new EventSource(`/api/sdr/live?sid=${encodeURIComponent(sid)}&ticket=${encodeURIComponent(t.ticket)}`);
+    LIVE.es = es;
+    es.addEventListener('hello', (ev) => { const d = JSON.parse(ev.data); LIVE.lines = d.lines || []; LIVE.hints = (d.hints || []).slice().reverse(); LIVE.ended = !!d.ended; LIVE.status = 'live'; renderLivePane(); });
+    es.addEventListener('start', () => { LIVE.status = 'live'; renderLivePane(); });
+    es.addEventListener('lines', (ev) => { LIVE.lines.push(...JSON.parse(ev.data)); if (LIVE.lines.length > 200) LIVE.lines = LIVE.lines.slice(-200); renderLiveLines(); });
+    es.addEventListener('hint', (ev) => { LIVE.hints.unshift(JSON.parse(ev.data)); renderLiveHints(); });
+    es.addEventListener('end', () => { LIVE.ended = true; LIVE.status = 'ended'; renderLivePane(); liveClose(8000); });
+    es.onerror = () => { if (LIVE.status === 'connecting') { LIVE.status = 'off'; renderLivePane(); } };
+  } catch (ex) { LIVE.status = 'off'; renderLivePane(); }
 }
+function liveClose(delay) { const es = LIVE.es; if (!es) return; LIVE.es = null; setTimeout(() => { try { es.close(); } catch {} }, delay || 0); }
+const LIVE_KIND = { objection: 'Indvending', question: 'Spørgsmål', cue: 'Åbning' };
+function liveHintHtml(h) { return `<div class="lh ${e(h.kind)}"><span class="lh-k">${e(LIVE_KIND[h.kind] || 'Hint')}${h.title ? ' · ' + e(h.title) : ''}</span><p>${e(h.text)}</p></div>`; }
+function liveLineHtml(x) { return `<div class="ll ${x.who === 'sdr' ? 'me' : ''}"><i>${x.who === 'sdr' ? 'Du' : 'Kunde'}</i><span>${e(x.text)}</span></div>`; }
+function renderLiveHints() { const el = $('live-hints'); if (!el) return; el.innerHTML = LIVE.hints.length ? LIVE.hints.slice(0, 4).map(liveHintHtml).join('') : `<div class="lh none"><span class="dial-ai-wait"><i class="spin"></i>Lytter - hints kommer, når der er noget at reagere på.</span></div>`; }
+function renderLiveLines() { const el = $('live-lines'); if (!el) return; el.innerHTML = LIVE.lines.slice(-8).map(liveLineHtml).join(''); el.scrollTop = el.scrollHeight; }
 function livePaneHtml(L) {
-  const CK = dcList(); const c = liveCk(L.cvr); const live = DIAL.state === 'live';
-  const item = (k, x) => `<button type="button" class="lck ${c[k][x.id] ? 'on' : ''}" onclick="liveToggle('${k}','${e(x.id)}')" title="${e(x.desc)}${x.how ? ' · ' + e(x.how) : ''}"><i></i>${e(x.short)}</button>`;
-  const obj = liveObjections();
-  return `<div class="live">
-    <div class="live-head"><span class="kicker">${live ? 'I samtale - sæt flueben, mens I taler' : 'Det skal du have afklaret'}</span>${live ? '<span class="live-on"><i class="dot"></i>optager</span>' : ''}</div>
-    <div class="lck-row"><span class="lck-k">Grundlag</span>${CK.basics.map((x) => item('basics', x)).join('')}</div>
-    <div class="lck-row"><span class="lck-k">Købssignaler</span>${CK.signals.map((x) => item('signals', x)).join('')}</div>
-    ${obj.length ? `<div class="live-obj"><span class="lck-k">Hvis de siger…</span>${obj.map((o) => `<details class="lobj"><summary>${e(o.q)}</summary><p>${e(o.a)}</p></details>`).join('')}</div>` : ''}
-    <p class="sub live-foot">${live ? 'Når du lægger på, læser AI\'en samtalen og foreslår resumé, tjekliste og mail.' : 'Fluebenene følger med over i "Demo booket". Pitchen ligger under Pitch, noterne under Noter.'}</p>
-  </div>`;
+  const on = !!(S.settings && S.settings.dialer_me && S.settings.dialer_me.enabled && S.settings.dialer_me.live !== false);
+  const inCall = DIAL.state === 'live' || DIAL.state === 'ringing' || DIAL.state === 'connecting';
+  if (!on) return `<div class="live idle"><span class="kicker">Samtalen</span><p>Når telefonen i browseren er slået til, lytter AI'en med under samtalen og skriver svar på indvendinger og det, du mangler at spørge om - her, mens I taler.</p></div>`;
+  if (inCall && LIVE.sid) return `<div class="live on">
+      <div class="live-head"><span class="kicker">AI lytter med</span><span class="live-on"><i class="dot"></i>${LIVE.status === 'live' ? 'live' : LIVE.status === 'off' ? 'ingen forbindelse' : 'forbinder…'}</span></div>
+      <div id="live-hints" class="live-hints"></div>
+      <div id="live-lines" class="live-lines"></div>
+    </div>`;
+  if (DIAL.state === 'ended' && (LIVE.lines.length || LIVE.hints.length)) return `<div class="live done">
+      <div class="live-head"><span class="kicker">Samtalen er slut</span><span class="sub">${LIVE.hints.length} hints · ${LIVE.lines.length} linjer</span></div>
+      <p class="sub">AI'en læser hele optagelsen nu - resuméet, tjeklisten og mailen kommer under opkaldet.</p>
+      ${LIVE.hints.length ? `<details class="live-past"><summary>Hints under samtalen</summary>${LIVE.hints.map(liveHintHtml).join('')}</details>` : ''}
+    </div>`;
+  return `<div class="live idle"><span class="kicker">AI lytter med</span><p>Når du ringer, lytter AI'en med og skriver svar på indvendinger og det, du mangler at spørge om - her, mens I taler. Pitchen ligger under Pitch.</p></div>`;
 }
-function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) p.innerHTML = livePaneHtml(L); }
+function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) { p.innerHTML = livePaneHtml(L); renderLiveHints(); renderLiveLines(); } }
+/* Notes live in the side column: the field, then the thread. */
+function renderNotes() {
+  const b = $('notebox'); const L = S.current; if (!b) return; b.hidden = !L; if (!L) return;
+  const prev = $('note') ? $('note').value : '';
+  const n = (L.note_thread || []).length;
+  b.innerHTML = `<h4>Noter${n ? `<span class="dn">${n}</span>` : ''}</h4>
+    <div class="composer" id="composer">
+      <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
+      <div class="cfoot"><span class="sub" id="note-state">Gemmes også, når du vælger et udfald</span><button class="pill sm violet" id="note-save" onclick="saveNote()" disabled>Gem note</button></div>
+    </div>
+    ${noteThreadHtml(L.note_thread)}`;
+  if (prev && $('note')) $('note').value = prev;
+}
 function pickScript(id) {
   scriptPickSet(id);
   const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);
@@ -2751,7 +2809,8 @@ function openSettings() {
         ${s.dialer_me && s.dialer_me.enabled ? `<section class="set-card">
           <div class="set-k">Telefon</div>
           <p class="set-help">Du ringer fra browseren på ${e(fmtPhone(s.dialer_me.number))}. Brug et headset med ledning eller USB - Bluetooth giver en fjern, tynd lyd. Tjek lyden her første gang: du hører dig selv bagefter.</p>
-          <div class="row" style="justify-content:flex-start;margin-top:8px"><button class="pill" onclick="$('settings').remove();dialStart('test')">Test lyd (ca. 15 sek.)</button><select id="dial-mic" onchange="dialSetMic(this.value)" style="max-width:260px"><option value="">Mikrofon: standard</option></select></div>
+          <div class="row" style="justify-content:flex-start;margin-top:8px"><button class="pill" onclick="$('settings').remove();dialStart('test')">Test lyd (ca. 15 sek.)</button><select id="dial-mic" onchange="dialSetMic(this.value)" style="max-width:260px"><option value="">Mikrofon: standard</option></select><select id="dial-proc" onchange="dialSetMicMode(this.value)"><option value="std" ${dialMicMode() === 'std' ? 'selected' : ''}>Lyd: standard (laptop-mikrofon)</option><option value="headset" ${dialMicMode() === 'headset' ? 'selected' : ''}>Lyd: headset (mindst bearbejdning)</option></select></div>
+          <div class="sub" style="margin-top:6px">Lyder du komprimeret eller "inde i en kasse"? Vælg Lyd: headset, når du bruger et kabel- eller USB-headset - så renser Chrome ikke lyden. En Bluetooth-mikrofon (AirPods o.l.) giver altid telefonkvalitet; brug Mac'ens mikrofon eller et kabelheadset.</div>
         </section>` : ''}
         <section class="set-card">
           <div class="set-k">Dagen</div>
@@ -2879,7 +2938,7 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '6') notRelevant();
   else if (ev.key === '7') disp('wrong-number');
   else if (ev.key === '8') disp('ivr');
-  else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = (cardTab('noter'), $('note')); if (n) n.focus(); }
+  else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();
 });
 
