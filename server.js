@@ -14948,9 +14948,12 @@ const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
 // "Fokus i dag" → Aktive Meta-annoncer: at least this many, verified in the
 // Ad Library. Replaced the Kontakt handle (Casper: nobody used it).
-const SDR_ADS_MIN = { any: "Har kørt annoncer (nu eller før)", "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer" };
+const SDR_ADS_MIN = { any: "Har kørt annoncer (nu eller før)", "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer", "0": "Ingen aktive annoncer lige nu" };
 function sdrLeadAds(l) { return l.adlib_status === "active" ? (Number(l.adlib_active) || 0) : 0; }
-function sdrAdsMatch(l, k) { return k === "any" ? (l.adlib_status === "active" || l.adlib_status === "past") : sdrLeadAds(l) >= Number(k); }
+// "0" = checked and found without active ads (paused or never) - a lane of
+// its own, so one SDR can work them with another pitch while the lists of
+// the others stay with the advertisers. Unchecked leads are in neither.
+function sdrAdsMatch(l, k) { return k === "any" ? (l.adlib_status === "active" || l.adlib_status === "past") : k === "0" ? (l.adlib_status === "past" || l.adlib_status === "none") : sdrLeadAds(l) >= Number(k); }
 function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
 // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
 const STORELEADS_USD_DKK = 6.9;
@@ -15410,7 +15413,7 @@ function buildSdrState(userId, d) {
   const cnt = (fn, skip) => { const m = {}; for (const l of focusBase) { if (skip && !okExcept(l, skip)) continue; const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
   const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size");
   // Thresholds are cumulative: "mindst 3" counts everything with 3 or more.
-  const adsKeys = ["any", "1", "3", "5", "10", "20"]; // numeric keys would otherwise sort first
+  const adsKeys = ["any", "1", "3", "5", "10", "20", "0"]; // numeric keys would otherwise sort first
   const adsN = Object.fromEntries(adsKeys.map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrAdsMatch(l, k)).length]));
   const focus = {
     current: L.focus || null, short: !!L.focus && !!L.focus_short,

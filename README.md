@@ -212,7 +212,8 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   aldrig har kørt en annonce allersidst. ⚙ → Regler kan skjule "aldrig" og
   "stoppet for over et år siden" helt (begge slået fra som standard). Fokus-
   håndtaget "Aktive Meta-annoncer" har også "Har kørt annoncer (nu eller før)"
-  til den SDR, der kun vil ringe til annoncører.
+  til den SDR, der kun vil ringe til annoncører - og "Ingen aktive annoncer lige
+  nu" (efterset: pauset eller aldrig) til den, der tager dem med en anden pitch.
 - **StoreLeads-estimatet er synligt.** For webshops fra StoreLeads (ca. 4 af 10 leads)
   står den anslåede årlige omsætning og månedlige besøg ("≈ 2,3 mio. kr/år · 972
   besøg/md · StoreLeads-estimat") på opkaldskortet under websitet, som hint på
