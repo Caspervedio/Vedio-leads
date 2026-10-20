@@ -181,6 +181,7 @@
 #settings .st-modal{max-width:820px;width:100%;max-height:92vh;padding:0;display:flex;flex-direction:column;overflow:hidden}
 #settings .st-head{padding:24px 28px 8px}
 #settings .st-head p{margin:2px 0 0}
+#settings .st-inline{display:inline-flex;align-items:center;gap:10px}
 #settings .st-tabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 20px}
 #settings .st-tabs button{border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:700;color:var(--txt-soft);padding:12px 12px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
 #settings .st-tabs button:hover{color:var(--txt)}
@@ -1502,6 +1503,8 @@ async function ckDecide(cvr, status) {
   if ($('ckmodal')) $('ckmodal').remove();
   await demoReview(cvr, status, { tier, reason });
 }
+/* ⚙ → Telefoni: is Twilio set up on the server? */
+async function twStatus() { const el = $('st-tw'); if (!el) return; try { const d = await get('/api/twilio/status'); el.textContent = d.ready ? 'Klar - nøgler, API-nøgle og TwiML-app er på plads.' : d.configured ? `Delvist sat op: ${!d.hasKey ? 'API-nøgle mangler' : ''}${!d.hasApp ? ' TwiML-app mangler' : ''}`.trim() : 'Ikke sat op - Twilio-nøglerne mangler på serveren.'; } catch (ex) { el.textContent = 'Kunne ikke hente: ' + ex.message; } }
 /* Ad Library coverage under ⚙ → Regler, and a manual sweep. */
 function adlibText(c) { return `${c.active} aktive · ${c.past} har kørt før${c.stale ? ` (${c.stale} stoppet for over et år siden)` : ''} · ${c.none} aldrig · ${c.unchecked} ikke efterset · ${c.no_page} uden Facebook-side (af ${c.total})`; }
 async function adlibStatus() { const el = $('st-adlib'); if (!el) return; try { const d = await get('/api/sdr/admin/adlib'); el.textContent = adlibText(d.coverage) + (d.running ? ' · kører nu' : ''); } catch (ex) { el.textContent = 'Kunne ikke hente: ' + ex.message; } }
@@ -1848,7 +1851,7 @@ function openSettings() {
   const pane = (k, lead, body, open) => `<div class="st-pane" data-k="${k}" ${open ? '' : 'hidden'}><p class="st-lead">${lead}</p>${body}</div>`;
   bg.innerHTML = `<div class="modal st-modal">
     <div class="st-head"><div><h3>Indstillinger</h3><p>Fælles for alle SDR'er. Ét Gem gemmer alle faner.</p></div></div>
-    <div class="st-tabs" id="st-tabs">${[['pool', 'Pulje & regler'], ['goals', 'Mål'], ['pay', 'Løn'], ['flow', 'Arbejdsgang'], ['pitch', 'Pitch & mails'], ['int', 'Integrationer']].map(([k, l], i) => `<button class="${i ? '' : 'on'}" onclick="stTab('${k}')" data-k="${k}">${l}</button>`).join('')}</div>
+    <div class="st-tabs" id="st-tabs">${[['pool', 'Pulje & regler'], ['goals', 'Mål'], ['pay', 'Løn'], ['flow', 'Arbejdsgang'], ['pitch', 'Pitch & mails'], ['tel', 'Telefoni'], ['int', 'Integrationer']].map(([k, l], i) => `<button class="${i ? '' : 'on'}" onclick="stTab('${k}')" data-k="${k}">${l}</button>`).join('')}</div>
     <div class="st-body">
     ${pane('pool', 'Hvad puljen må servere til SDR\'erne, og hvornår et lead hviler.', grp('Hvad SDR\'erne må få',
         row('Skjul leads, der aldrig har kørt annoncer', 'Slået fra: de serveres sidst - efter aktive, tidligere og ikke-efterset - så listerne aldrig løber tør. Slået til: de holdes helt ude.', sw('r-noads', r.hide_no_ads === true))
@@ -1892,6 +1895,12 @@ function openSettings() {
       <section class="st-grp"><h4>Mailskabeloner</h4><p class="st-hint">SDR\'en vælger én, når et lead beder om en mail. Felter: {fornavn} {firma} {sdr} {calendly} {note} {om}. Links som [tekst](https://…)</p>
         <div id="st-mails"></div>
         <button class="pill sm tertiary" style="margin-top:8px" onclick="mailTplAdd()">+ Tilføj skabelon</button></section>`)}
+    ${pane('tel', 'Telefonen i browseren (Twilio): SDR\'en ringer fra kortet på sit eget danske nummer, samtalen optages, og AI\'en skriver resumé, indvendinger, tjekliste og opfølgningsmail.', grp('Status',
+        row('Twilio', 'Nøglerne ligger som secrets på serveren. Uden dem er telefonen slået fra for alle.', `<span id="st-tw" class="st-note">Henter…</span>`))
+      + grp('Hvem ringer fra browseren', ((O.perUser || []).filter((u) => u.id && u.id !== 'admin')).map((u) => row(e(u.name), 'Slå til, og skriv det danske nummer, de ringer fra (Twilio-nummer eller et verificeret eget nummer).', `<span class="st-inline">${sw('tw-on-' + u.id, ((s.dialer || {}).users || []).includes(u.id))}<input id="tw-num-${u.id}" class="st-text" placeholder="+45 12 34 56 78" value="${e(((s.dialer || {}).numbers || {})[u.id] || '')}" style="max-width:190px"></span>`)).join(''))
+      + grp('Samtalen',
+        row('Samtykke til optagelse', 'SDR\'en siger det selv i starten af samtalen (står i pitchen), eller en kort besked afspilles for kunden, når de tager telefonen.', `<select id="tw-consent" class="st-text" style="max-width:320px"><option value="sdr" ${(s.dialer || {}).consent !== 'auto' ? 'selected' : ''}>SDR\'en siger det selv</option><option value="auto" ${(s.dialer || {}).consent === 'auto' ? 'selected' : ''}>Afspil besked til kunden</option></select>`)
+      + row('Slet lydoptagelser efter', 'Lyden slettes hos Twilio; transskript og resumé bliver på leadet.', num('tw-ret', (s.dialer || {}).retention_days ?? 30, { min: 1, max: 365, unit: 'dage' }))))}
     ${pane('int', 'Nøgler og priser på de værktøjer, puljen bygger på.', grp('Beskeder',
         row('Slack-webhook', 'Får en besked, når en demo bookes.', `<input id="st-hook" class="st-text" placeholder="https://hooks.slack.com/services/…" value="${e(s.demo_webhook_url || '')}">`))
       + grp('Abonnementer · bruges til pris pr. demo og pr. salg',
@@ -1904,7 +1913,7 @@ function openSettings() {
     <div class="st-foot"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 22px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
-  document.body.appendChild(bg); adlibStatus();
+  document.body.appendChild(bg); adlibStatus(); twStatus();
   mailTpls = JSON.parse(JSON.stringify(s.email_templates || []));
   mailTplRender();
 }
@@ -1934,6 +1943,7 @@ async function saveSettings() {
     cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
     sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45, ltv_dkk: Number($('st-ltv').value) || 0,
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), commission_tier2_dkk: Number($('st-comm2').value), tier1_min_signals: Number($('st-t1sig').value) || 2, base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
+    dialer: { users: [...document.querySelectorAll('[id^="tw-on-"]')].filter((x) => x.checked).map((x) => x.id.slice(6)), numbers: Object.fromEntries([...document.querySelectorAll('[id^="tw-num-"]')].map((x) => [x.id.slice(7), x.value.trim()]).filter(([, v]) => v)), consent: $('tw-consent').value, retention_days: Number($('tw-ret').value) || 30 },
     rules: { require_meta: $('r-meta').checked, hide_no_ads: $('r-noads').checked, hide_stale_ads: $('r-stale').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }

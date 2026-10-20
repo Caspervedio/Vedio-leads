@@ -978,3 +978,34 @@ main{transition:margin-right .46s var(--ease)}
 .chip.meta.soft{background:#f3efe9;color:var(--txt-soft)}
 .chip.noads{background:#f3efe9;color:var(--txt-faint)}
 .proof.off{color:var(--txt-faint)}.proof.off .shape{background:#cfc9bd}
+/* ─── Dialer (call in the browser) ─── */
+.dial{margin:10px 0 4px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--white);display:flex;flex-direction:column;gap:8px}
+.dial .dial-st{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-faint)}
+.dial .dial-st .dot{width:8px;height:8px;border-radius:50%;background:var(--txt-faint)}
+.dial.ringing .dial-st .dot,.dial.connecting .dial-st .dot{background:#C9974F;animation:dialpulse 1s infinite}
+.dial.live .dial-st{color:var(--approve)}.dial.live .dial-st .dot{background:var(--approve);animation:dialpulse 1.2s infinite}
+.dial.in{border-color:var(--violet);background:var(--violet-soft)}.dial.in .dial-st .dot{background:var(--violet);animation:dialpulse .8s infinite}
+.dial b{font-size:18px;letter-spacing:-.01em}
+.dial .row{justify-content:flex-start;gap:8px;margin-top:2px;flex-wrap:wrap}
+.dial .pill.danger{background:#B3352B;border-color:#B3352B;color:#fff}.dial .pill.danger:hover{background:#962a22}
+.dial .pill.on{background:var(--black);color:#fff;border-color:var(--black)}
+.dial-q{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--approve)}
+.dial-q::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.dial-q.warn{color:#9a5b00}.dial-q.bad{color:#B3352B}
+.dial-keys{display:grid;grid-template-columns:repeat(3,56px);gap:6px;margin-top:4px}
+.dial-keys button{font:inherit;font-size:16px;font-weight:700;padding:10px 0;border:1px solid var(--line);border-radius:10px;background:var(--paper);cursor:pointer}
+.dial-keys button:hover{background:var(--white)}
+.dial-ai-wait{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--txt-soft)}
+.dial-ai-wait .spin{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--violet);border-radius:50%;animation:dialspin .9s linear infinite}
+@keyframes dialpulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes dialspin{to{transform:rotate(360deg)}}
+.aipanel{margin-top:4px;padding:12px 14px;border-radius:12px;background:var(--violet-soft);display:flex;flex-direction:column;gap:8px}
+.aipanel .ai-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.aipanel .ai-top .kicker{color:var(--violet)}
+.aipanel .ai-sum{font-size:14px;line-height:1.5;margin:0}
+.aipanel .ai-obj{display:flex;flex-wrap:wrap;gap:6px}
+.aipanel .ai-obj span{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--white);border:1px solid #d9cff3;color:var(--violet-deep)}
+.aipanel .ai-next,.aipanel .ai-coach{font-size:13px;line-height:1.45;margin:0;color:var(--txt-soft)}
+.aipanel .ai-next b,.aipanel .ai-coach b{color:var(--txt);margin-right:6px}
+.aipanel .row{margin-top:4px}
+.mailbox .ai-draft{font-size:12.5px;color:var(--violet);background:var(--violet-soft);padding:8px 12px;border-radius:10px;margin-bottom:10px}

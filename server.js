@@ -18,6 +18,7 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 app.use(cors());
 app.use(express.json({ limit: "12mb" })); // voice debriefs arrive as base64 audio
+app.use("/api/twilio", express.urlencoded({ extended: false })); // Twilio posts form-encoded webhooks
 // Never cache the SPA shell (index.html) - it's a single-page app, so a
 // stale shell means the browser runs old in-memory JS after a deploy.
 // no-store guarantees a normal refresh always pulls the latest build.
@@ -3490,56 +3491,211 @@ registerCrud("scripts", "callScripts", "script_", {
 });
 
 // ── Twilio ────────────────────────────────────────────────────────────────────
+// ─── Dialer: calls from the browser via Twilio Voice, recorded, read by Gemini ───
+// Casper (Oct 2026): a "brain" in the tool. The SDR dials from the card on
+// their own Danish number, the call is recorded (dual channel, consent line
+// either spoken by the SDR or played to the lead), and when it ends Gemini
+// writes the transcript, a summary, the objections, a suggested checklist
+// and a follow-up mail - the SDR reads and approves. Who has the dialer, the
+// numbers, the consent mode and the retention are under ⚙ → Telefoni.
+// Audio is deleted after `retention_days` (cron recordings-prune); the
+// transcript and the summary stay on the lead.
+const PUBLIC_URL = (process.env.PUBLIC_URL || "https://leads-723660132735.europe-west1.run.app").replace(/\/$/, "");
+function twilioCfg() { return { sid: process.env.TWILIO_ACCOUNT_SID || "", token: process.env.TWILIO_AUTH_TOKEN || "", key: process.env.TWILIO_API_KEY || "", secret: process.env.TWILIO_API_SECRET || "", app: process.env.TWILIO_TWIML_APP_SID || "" }; }
+function twilioReady() { const c = twilioCfg(); return !!(c.sid && c.token && c.app && c.key && c.secret); }
+function sdrDialerSettings(settings) { return { ...SDR_DEFAULT_DIALER, ...((settings && settings.dialer) || {}) }; }
+function sdrDialerFor(userId, settings) {
+  const D = sdrDialerSettings(settings); const number = (D.numbers || {})[userId] || "";
+  return { configured: twilioReady(), enabled: twilioReady() && Array.isArray(D.users) && D.users.includes(userId) && !!number, number, consent: D.consent || "sdr" };
+}
+// Every webhook is signed by Twilio with our auth token over the exact URL + params.
+function twilioValid(req) {
+  if (process.env.TWILIO_SKIP_VALIDATE === "1") return true;
+  try { return require("twilio").validateRequest(twilioCfg().token, String(req.headers["x-twilio-signature"] || ""), PUBLIC_URL + req.originalUrl, req.body || {}); }
+  catch { return false; }
+}
+const twiml = (inner) => `<?xml version="1.0" encoding="UTF-8"?>\n<Response>${inner}</Response>`;
+const xesc = (v) => String(v == null ? "" : v).replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[c]));
+const twilioAuth = () => "Basic " + Buffer.from(`${twilioCfg().sid}:${twilioCfg().token}`).toString("base64");
 app.get("/api/twilio/status", authMiddleware, (req, res) => {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from  = process.env.TWILIO_FROM_NUMBER;
-  const appSid= process.env.TWILIO_TWIML_APP_SID;
-  const configured = !!(sid && token && from);
-  const ready      = !!(configured && appSid);
-  res.json({ configured, ready, from: from || null, hasAppSid: !!appSid });
+  const c = twilioCfg();
+  res.json({ configured: !!(c.sid && c.token), ready: twilioReady(), hasKey: !!(c.key && c.secret), hasApp: !!c.app, publicUrl: PUBLIC_URL, me: sdrDialerFor(req.userId, sdrSettings(loadPool())) });
 });
-
-// Browser capability token - lets the browser place outbound calls via Twilio Voice JS SDK
-app.get("/api/twilio/token", authMiddleware, async (req, res) => {
-  const sid    = process.env.TWILIO_ACCOUNT_SID;
-  const token  = process.env.TWILIO_AUTH_TOKEN;
-  const appSid = process.env.TWILIO_TWIML_APP_SID;
-  if (!sid || !token || !appSid) {
-    return res.status(503).json({ error: "Twilio ikke konfigureret" });
-  }
+// The browser's access token - tied to the logged-in SDR, one hour.
+app.get("/api/twilio/token", authMiddleware, (req, res) => {
   try {
-    // Dynamically require twilio only if credentials are present (optional dependency)
-    const twilio = require("twilio");
-    const AccessToken    = twilio.jwt.AccessToken;
-    const VoiceGrant     = AccessToken.VoiceGrant;
-    const voiceGrant = new VoiceGrant({ outgoingApplicationSid: appSid, incomingAllow: false });
-    const accessToken = new AccessToken(sid, token, process.env.TWILIO_API_KEY || token, {
-      identity: req.userId,
-      ttl: 3600
-    });
-    accessToken.addGrant(voiceGrant);
-    res.json({ token: accessToken.toJwt(), from: process.env.TWILIO_FROM_NUMBER });
-  } catch (err) {
-    res.status(500).json({ error: "Kunne ikke generere token: " + err.message });
-  }
+    const me = sdrDialerFor(req.userId, sdrSettings(loadPool()));
+    if (!me.configured) return res.status(503).json({ error: "Telefonen er ikke sat op på serveren (Twilio-nøgler mangler)" });
+    if (!me.enabled) return res.status(403).json({ error: "Telefonen er ikke slået til for dig" });
+    const c = twilioCfg(); const twilio = require("twilio");
+    const grant = new twilio.jwt.AccessToken.VoiceGrant({ outgoingApplicationSid: c.app, incomingAllow: true });
+    const tok = new twilio.jwt.AccessToken(c.sid, c.key, c.secret, { identity: req.userId, ttl: 3600 });
+    tok.addGrant(grant);
+    res.json({ ok: true, token: tok.toJwt(), number: me.number, consent: me.consent, edge: ["frankfurt", "dublin"] });
+  } catch (e) { sdrFail(res, e, "twilio/token"); }
 });
-
-// TwiML webhook - Twilio calls this to get instructions when a browser places a call
+// The Voice SDK, served from node_modules so no CDN is involved.
+app.get("/api/twilio/sdk.js", (req, res) => {
+  const f = path.join(__dirname, "node_modules", "@twilio", "voice-sdk", "dist", "twilio.min.js");
+  if (!fs.existsSync(f)) return res.status(404).send("// voice sdk not installed");
+  res.set("Cache-Control", "public, max-age=86400"); res.type("application/javascript"); res.sendFile(f);
+});
+// TwiML for a call. From the browser: dial the lead on the SDR's number, record
+// both channels, tell us when it is answered/ended and when the recording is
+// ready. "test" dials a sound check. From outside: an inbound call to one of
+// our numbers rings in the owner's browser.
 app.post("/api/twilio/voice", (req, res) => {
-  const to   = req.body.To   || req.query.To;
-  const from = process.env.TWILIO_FROM_NUMBER;
   res.type("text/xml");
-  if (to) {
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Dial callerId="${from}">
-    <Number>${to}</Number>
-  </Dial>
-</Response>`);
-  } else {
-    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say language="da-DK">Intet nummer angivet.</Say></Response>`);
-  }
+  if (!twilioValid(req)) return res.status(403).send(twiml(`<Say>Forbidden</Say>`));
+  try {
+    const b = req.body || {}; const d = loadPool(); const settings = sdrSettings(d); const D = sdrDialerSettings(settings);
+    const cb = (p) => xesc(PUBLIC_URL + p);
+    const from = String(b.From || ""); const to = String(b.To || "");
+    if (from.startsWith("client:")) {
+      const uid = from.slice(7); const me = sdrDialerFor(uid, settings);
+      if (!me.enabled) return res.send(twiml(`<Say language="da-DK">Telefonen er ikke slået til for dig.</Say>`));
+      if (to === "test") return res.send(twiml(`<Say language="da-DK">Dette er en lydtest. Tal efter tonen, og hør dig selv bagefter.</Say><Record maxLength="6" playBeep="true" action="${cb("/api/twilio/testcall")}" />`));
+      if (!isDkPhone(to)) return res.send(twiml(`<Say language="da-DK">Vi ringer kun til danske numre.</Say>`));
+      const cvr = String(b.cvr || "").slice(0, 80); const q = `?uid=${encodeURIComponent(uid)}&cvr=${encodeURIComponent(cvr)}`;
+      const rec = `record="record-from-answer-dual" recordingStatusCallback="${cb("/api/twilio/recording" + q)}" recordingStatusCallbackEvent="completed"`;
+      const whisper = D.consent === "auto" ? ` url="${cb("/api/twilio/whisper")}"` : "";
+      return res.send(twiml(`<Dial callerId="${xesc(me.number)}" answerOnBridge="true" timeout="35" ${rec}><Number statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed"${whisper}>${xesc(normDkPhone(to))}</Number></Dial>`));
+    }
+    const owner = Object.entries(D.numbers || {}).find(([id, n]) => (D.users || []).includes(id) && normDkPhone(n) === normDkPhone(to));
+    if (owner) {
+      const q = `?uid=${encodeURIComponent(owner[0])}&inbound=1&from=${encodeURIComponent(normDkPhone(from))}`;
+      const rec = `record="record-from-answer-dual" recordingStatusCallback="${cb("/api/twilio/recording" + q)}" recordingStatusCallbackEvent="completed"`;
+      return res.send(twiml(`<Dial timeout="25" ${rec}><Client statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed">${xesc(owner[0])}</Client></Dial><Say language="da-DK">Du har ringet til Vedio. Vi kunne ikke tage telefonen lige nu, men vi ringer tilbage.</Say>`));
+    }
+    return res.send(twiml(`<Say language="da-DK">Du har ringet til Vedio. Vi ringer tilbage.</Say>`));
+  } catch (e) { console.error("[twilio/voice]", e.message); res.send(twiml(`<Say language="da-DK">Der skete en fejl.</Say>`)); }
+});
+// Played to the lead the moment they answer, when consent is set to "auto".
+app.post("/api/twilio/whisper", (req, res) => {
+  res.type("text/xml"); if (!twilioValid(req)) return res.status(403).send(twiml(""));
+  res.send(twiml(`<Say language="da-DK">Hej. Samtalen optages til træningsformål.</Say>`));
+});
+app.post("/api/twilio/testcall", (req, res) => {
+  res.type("text/xml"); if (!twilioValid(req)) return res.status(403).send(twiml(""));
+  const url = String((req.body || {}).RecordingUrl || "");
+  res.send(twiml(`<Say language="da-DK">Sådan lød du.</Say>${url ? `<Play>${xesc(url)}</Play>` : ""}<Say language="da-DK">Farvel.</Say><Hangup/>`));
+});
+// Answered / ended: the real duration on the lead, and an inbound call noted.
+app.post("/api/twilio/status", (req, res) => {
+  if (!twilioValid(req)) return res.status(403).end();
+  res.status(204).end();
+  try {
+    const b = req.body || {}; const q = req.query || {}; const nowIso = new Date().toISOString();
+    const d = loadPool(); let lead = q.cvr ? (d.leads || []).find((l) => l.cvr === q.cvr) : null;
+    if (!lead && q.inbound && q.from) { const fromN = normDkPhone(q.from); lead = (d.leads || []).find((l) => sdrPhone(l).phone && normDkPhone(sdrPhone(l).phone) === fromN); }
+    if (!lead) return;
+    const sid = String(b.ParentCallSid || b.CallSid || ""); const status = String(b.CallStatus || "");
+    lead.dial_log = Array.isArray(lead.dial_log) ? lead.dial_log : [];
+    let e = lead.dial_log.find((x) => x.sid === sid);
+    if (!e) { e = { sid, by: String(q.uid || ""), at: nowIso, inbound: !!q.inbound }; lead.dial_log.push(e); if (lead.dial_log.length > 30) lead.dial_log = lead.dial_log.slice(-30); }
+    e.status = status; if (status === "completed") e.duration_s = Number(b.CallDuration) || 0; if (status === "in-progress" || status === "answered") e.answered_at = nowIso;
+    if (q.inbound && (status === "in-progress" || status === "answered" || status === "completed")) {
+      lead.last_inbound_at = nowIso;
+      if (status === "completed") { lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : []; lead.note_log.push({ at: nowIso, by: String(q.uid || ""), where: "call", text: `Ringede selv tilbage (${Math.round((Number(b.CallDuration) || 0) / 60)} min)` }); }
+    }
+    sdrTouch(lead); savePool(d);
+  } catch (e) { console.error("[twilio/status]", e.message); }
+});
+// The recording is ready: note it on the lead, then let Gemini read it.
+app.post("/api/twilio/recording", (req, res) => {
+  if (!twilioValid(req)) return res.status(403).end();
+  res.status(204).end();
+  try {
+    const b = req.body || {}; const q = req.query || {}; const nowIso = new Date().toISOString();
+    const d = loadPool(); let lead = q.cvr ? (d.leads || []).find((l) => l.cvr === q.cvr) : null;
+    if (!lead && q.inbound && q.from) { const fromN = normDkPhone(q.from); lead = (d.leads || []).find((l) => sdrPhone(l).phone && normDkPhone(sdrPhone(l).phone) === fromN); }
+    if (!lead) return;
+    const rec = { sid: String(b.RecordingSid || ""), call_sid: String(b.CallSid || ""), at: nowIso, by: String(q.uid || ""), inbound: !!q.inbound, duration_s: Number(b.RecordingDuration) || 0, url: String(b.RecordingUrl || ""), status: "pending" };
+    if (!rec.sid) return;
+    lead.recordings = Array.isArray(lead.recordings) ? lead.recordings.filter((r) => r.sid !== rec.sid) : [];
+    lead.recordings.push(rec); if (lead.recordings.length > 40) lead.recordings = lead.recordings.slice(-40);
+    sdrTouch(lead); savePool(d);
+    setImmediate(() => recordingAnalyse(lead.cvr, rec.sid).catch((e) => console.error("[recording/analyse]", e.message)));
+  } catch (e) { console.error("[twilio/recording]", e.message); }
+});
+const RECORDING_MIN_S = 20, RECORDING_MAX_B64 = 11 * 1024 * 1024;
+async function recordingFetchB64(url) {
+  const r = await fetch(url.endsWith(".mp3") || url.endsWith(".wav") ? url : url + ".mp3", { headers: /^https:\/\/api\.twilio\.com/.test(url) ? { Authorization: twilioAuth() } : {} });
+  if (!r.ok) throw new Error(`recording ${r.status}`);
+  return Buffer.from(await r.arrayBuffer()).toString("base64");
+}
+async function recordingAnalyse(cvr, rsid) {
+  const setRec = (fn) => { const d = loadPool(); const l = (d.leads || []).find((x) => x.cvr === cvr); const r = l && (l.recordings || []).find((x) => x.sid === rsid); if (!r) return null; fn(l, r, d); sdrTouch(l); savePool(d); return r; };
+  const d0 = loadPool(); const lead = (d0.leads || []).find((x) => x.cvr === cvr); const rec = lead && (lead.recordings || []).find((x) => x.sid === rsid);
+  if (!lead || !rec) return;
+  if (rec.duration_s < RECORDING_MIN_S) { setRec((l, r) => { r.status = "short"; }); return; }
+  let b64;
+  try { b64 = await recordingFetchB64(rec.url); } catch (e) { setRec((l, r) => { r.status = "error"; r.error = e.message; }); return; }
+  if (b64.length > RECORDING_MAX_B64) { setRec((l, r) => { r.status = "too-long"; }); return; }
+  const settings = sdrSettings(d0); const users = loadUsers(); const sdrName = (users.find((u) => u.id === rec.by) || {}).name || "SDR'en";
+  const c = sdrPrimaryContact(lead) || {}; const CK = SDR_CHECKLIST;
+  const prompt = [
+    `Du er salgscoach for Vedio (video-annoncer til Meta/TikTok; produktet "Vee" laver løbende nye annoncer, så de ikke bliver trætte). Vedhæftet er en optagelse af et ${rec.inbound ? "indgående" : "udgående"} salgsopkald på dansk. Venstre kanal er ${sdrName} (vores SDR), højre kanal er kunden${lead.name ? ` (${lead.name}${c.name ? ", " + c.name : ""})` : ""}.`,
+    `Svar KUN som JSON med præcis disse felter:
+{"transcript": "<samtalen ordret på dansk, med 'SDR:' og 'Kunde:' foran hver replik>",
+ "summary": "<2-3 sætninger: hvem talte SDR'en med, hvad er deres situation, hvad blev aftalt>",
+ "reached": "<person|switchboard|voicemail|none>",
+ "outcome_guess": "<demo|follow-up|email|not-now|not-relevant|no-answer>",
+ "no_demo_reason": "<budget|not-decider|has-agency|no-ads|timing|not-interested|unreachable|other|none>",
+ "objections": ["<kundens indvendinger, kort, ordret hvor muligt>"],
+ "next_step": "<det konkrete næste skridt, med dato/tid hvis nævnt>",
+ "coaching": "<1-2 sætninger til SDR'en: hvad gik godt, hvad bør gøres anderledes næste gang>",
+ "checklist": {"basics": {${CK.basics.map((x) => `"${x.id}": <true|false|null>`).join(", ")}}, "signals": {${CK.signals.map((x) => `"${x.id}": <true|false|null>`).join(", ")}}, "spend_band": "<${CK.spend_bands.map((x) => x.id).join("|")}|>"},
+ "email": {"subject": "<emne>", "body": "<kort opfølgningsmail på dansk fra ${sdrName}, 4-8 linjer, der refererer til det der blev sagt, uden pris, med en tydelig næste handling; skriv {calendly} hvor booking-linket skal stå; tom streng hvis en mail ikke giver mening>"}}`,
+    `Tjeklisten: grundlag = ${CK.basics.map((x) => `${x.id}: ${x.title}`).join("; ")}. Købssignaler = ${CK.signals.map((x) => `${x.id}: ${x.title}`).join("; ")}. Sæt kun true/false når samtalen faktisk afgør det, ellers null. spend_band ud fra hvad kunden selv siger om annoncebudget (kr/md), ellers tom.`,
+    `Hold dig til det, der blev sagt. Ingen antagelser om tal, der ikke blev nævnt.`,
+  ].join("\n\n");
+  let out;
+  try { out = await sdrGeminiJson(prompt, { data: b64, mime: "audio/mpeg" }); }
+  catch (e) { setRec((l, r) => { r.status = "error"; r.error = e.message.slice(0, 200); }); return; }
+  const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+  const ai = {
+    summary: str(out.summary, 700), reached: str(out.reached, 20), outcome_guess: str(out.outcome_guess, 20), no_demo_reason: str(out.no_demo_reason, 20),
+    objections: Array.isArray(out.objections) ? out.objections.map((x) => str(x, 200)).filter(Boolean).slice(0, 6) : [],
+    next_step: str(out.next_step, 200), coaching: str(out.coaching, 300),
+    checklist: (() => { const ck = out.checklist || {}; const pick = (list, src) => Object.fromEntries(list.map((x) => [x.id, typeof (src || {})[x.id] === "boolean" ? src[x.id] : null])); const band = spendBandOf(String(ck.spend_band || "")); return { basics: pick(CK.basics, ck.basics), signals: pick(CK.signals, ck.signals), spend_band: band ? band.id : "" }; })(),
+    email: { subject: str(out.email && out.email.subject, 150), body: str(out.email && out.email.body, 2000) },
+  };
+  const transcript = str(out.transcript, 12000);
+  setRec((l, r) => {
+    r.status = "ready"; r.transcript = transcript; r.ai = ai; r.ready_at = new Date().toISOString();
+    l.note_log = Array.isArray(l.note_log) ? l.note_log : [];
+    l.note_log.push({ at: r.ready_at, by: r.by, where: "call", text: `AI-resumé af opkaldet (${Math.round(r.duration_s / 60)} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` });
+  });
+  logActivity("sdr-call-ai", `${sdrName}: samtale med ${lead.name} læst af AI - ${ai.summary.slice(0, 80)}`, { cvr, userId: rec.by });
+}
+// The card polls this after hang-up until the summary is ready.
+app.get("/api/sdr/recording", authMiddleware, (req, res) => {
+  try {
+    const sid = String(req.query.sid || ""); const d = loadPool();
+    for (const l of d.leads || []) { const r = (l.recordings || []).find((x) => x.sid === sid || x.call_sid === sid); if (r) { if (r.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Ikke din samtale" }); return res.json({ ok: true, cvr: l.cvr, status: r.status, duration_s: r.duration_s, ai: r.status === "ready" ? r.ai : null, transcript: r.status === "ready" ? r.transcript : "" }); } }
+    res.json({ ok: true, status: "none" });
+  } catch (e) { sdrFail(res, e, "recording"); }
+});
+// Audio leaves Twilio after `retention_days`; what Gemini wrote stays.
+app.post("/api/cron/recordings-prune", async (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try {
+    if (!twilioReady()) return res.json({ ok: true, skipped: "twilio not configured" });
+    const d = loadPool(); const days = sdrDialerSettings(sdrSettings(d)).retention_days || 30; const cut = new Date(Date.now() - days * 86400e3);
+    const stats = { deleted: 0, errors: 0 };
+    // Everything on the account older than the cut - also sound checks, which sit on no lead.
+    let next = `https://api.twilio.com/2010-04-01/Accounts/${twilioCfg().sid}/Recordings.json?DateCreated%3C=${cut.toISOString().slice(0, 10)}&PageSize=100`;
+    for (let i = 0; i < 20 && next; i++) {
+      const r = await fetch(next, { headers: { Authorization: twilioAuth() } }); if (!r.ok) break; const j = await r.json();
+      for (const rec of j.recordings || []) { const del = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioCfg().sid}/Recordings/${rec.sid}.json`, { method: "DELETE", headers: { Authorization: twilioAuth() } }); if (del.ok || del.status === 404) stats.deleted++; else stats.errors++; }
+      next = j.next_page_uri ? "https://api.twilio.com" + j.next_page_uri : null;
+    }
+    for (const l of d.leads || []) for (const rec of l.recordings || []) if (rec.url && new Date(rec.at) < cut) { rec.url = null; rec.deleted_at = new Date().toISOString(); }
+    savePool(d);
+    logActivity("recordings-prune", `Optagelser slettet efter ${days} dage: ${stats.deleted}`, { stats });
+    res.json({ ok: true, stats });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -13777,7 +13933,10 @@ const SDR_DEFAULT_BENCH = { talk_avg_s: 180, calls_per_demo: 40, qual_rate_pct: 
 // What the paid tools cost - only used to price the month on Tilgang. Casper
 // corrects them under ⚙. apollo_credits 0 = monthly allowance not entered.
 const SDR_DEFAULT_TOOLS = { storeleads_usd: 250, apollo_usd: 65, apollo_credits: 0, fe_usd_per_credit: 0.0533, usd_dkk: 6.9 };
-const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, ltv_dkk: 19000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, commission_tier2_dkk: 500, tier1_min_signals: 2, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES };
+// Browser dialer (Twilio Voice): who has it, their outbound number, how the
+// consent line is given, and how long audio is kept. See the Dialer block.
+const SDR_DEFAULT_DIALER = { users: [], numbers: {}, consent: "sdr", retention_days: 30 };
+const SDR_DEFAULT_SETTINGS = { bench: SDR_DEFAULT_BENCH, base_salary_dkk: 15000, sale_nudge_days: 14, sale_stale_days: 45, ltv_dkk: 19000, daily_target: 60, calendly_url: "", list_size: 10, commission_dkk: 1000, commission_tier2_dkk: 500, tier1_min_signals: 2, pitch_text: SDR_DEFAULT_PITCH, demo_webhook_url: "", email_templates: SDR_DEFAULT_EMAIL_TEMPLATES, email_followup_days: 2, fresh_target: 450, no_answer_park_after: 3, no_answer_park_days: 60, onboarding_until: "2026-10-31", tools: SDR_DEFAULT_TOOLS, rules: SDR_DEFAULT_RULES, dialer: SDR_DEFAULT_DIALER };
 // Every lead that enters the pool starts costing money - a website read, a
 // people search, a Meta page check, sometimes a paid phone reveal - whether
 // or not anyone ever rings it. So the pool is topped up to a buffer of FRESH
@@ -14413,7 +14572,7 @@ function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(PO
 // Write-stamps: SDR/admin handlers mark what they changed so a background
 // job's stale copy can't overwrite it on save (merge below).
 function sdrTouch(l, contact) { const t = new Date().toISOString(); l.sdr_touched_at = t; if (contact) l.sdr_contact_touched_at = t; SDR_NO_VER++; }
-const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "demo_check", "demo_tier", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "sale_followup_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at"];
+const SDR_STATE_FIELDS = ["lastAction", "lastCallAt", "calls", "calls_count", "callback_at", "resurface_at", "archived_at", "archived_by", "deferred_until", "claimed_by", "claimed_at", "no_answer_count", "notes", "last_note", "demo_booked_at", "demo_booked_by", "demo_status", "demo_review_reason", "demo_reviewed_by", "demo_reviewed_at", "demo_qualified_at", "demo_check", "demo_tier", "commission_rate", "commission_period", "sale_status", "sale_at", "sale_by", "sale_value_dkk", "sale_reason", "sale_note", "sale_followup_at", "_undo", "debriefs", "needs_enrichment", "phone_wrong", "admin_edited_at", "last_call_started_at", "opened_at", "opened_by", "email_sent_at", "email_sent_by", "email_count", "email_template", "email_to", "note_saved_at", "note_saved_by", "note_log", "research_at", "research_by", "research_skipped_at", "research_skipped_by", "research_hold_by", "research_hold_at", "research_pass_at", "research_pass_by", "owner_override", "owner_override_at", "manual_by", "manual_at", "retry", "retry_pool", "retry_fed_at", "retry_fed_by", "retry_fed_to", "ivr_at", "ivr_count", "parked_at", "parked_reason", "screen_log", "sdr_touched_at", "recordings", "dial_log", "last_inbound_at"];
 const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_source", "preferred_contact_name", "ind", "web", "website", "city", "name", "renamed_from", "sdr_contact_touched_at"];
 // Called from saveUserData("pool", d): pull SDR-owned fields from the copy
 // on disk wherever disk was touched more recently than the copy in memory.
@@ -15452,6 +15611,7 @@ function buildSdrState(userId, d) {
     pitch_text: myPitch || settings.pitch_text, pitch_is_mine: !!myPitch, pitch_team: settings.pitch_text,
     email_templates: mineMail || settings.email_templates, mail_is_mine: !!mineMail, mail_team: settings.email_templates,
     checklist: SDR_CHECKLIST,
+    dialer_me: sdrDialerFor(userId, settings),
   };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
@@ -15611,14 +15771,16 @@ function sdrDispositionHandler(req, res) {
     // Either way 20 minutes is the ceiling.
     let duration_s = null;
     const active = Math.round(Number(req.body && req.body.active_s) || 0);
-    if (active > 0) duration_s = Math.min(active, 20 * 60);
+    const dialS = Math.round(Number(req.body && req.body.dial_s) || 0);
+    if (dialS > 0) duration_s = Math.min(dialS, 60 * 60); // the dialer knows exactly
+    else if (active > 0) duration_s = Math.min(active, 20 * 60);
     else {
       const startedAt = lead.opened_at || lead.last_call_started_at;
       if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 20 * 60000) duration_s = Math.round(s / 1000); }
     }
     lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
-    lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s });
+    lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s, ...(req.body && req.body.call_sid ? { call_sid: String(req.body.call_sid).slice(0, 40) } : {}) });
     let parkedAfter = 0;
     lead.owner_override = null; lead.owner_override_at = null; // the call is the owner now
     lead.retry_pool = false; // an outcome takes it out of Genopring, or a callback would never surface
@@ -19293,6 +19455,14 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
       }
       if (Number.isFinite(Number(b.commission_dkk)) && Number(b.commission_dkk) >= 0) d.sdr_settings.commission_dkk = Math.round(Number(b.commission_dkk));
       if (Number.isFinite(Number(b.commission_tier2_dkk)) && Number(b.commission_tier2_dkk) >= 0) d.sdr_settings.commission_tier2_dkk = Math.round(Number(b.commission_tier2_dkk));
+      if (b.dialer && typeof b.dialer === "object") {
+        const cur = { ...SDR_DEFAULT_DIALER, ...(d.sdr_settings.dialer || {}) }; const ids = loadUsers().map((u) => u.id);
+        if (Array.isArray(b.dialer.users)) cur.users = b.dialer.users.map(String).filter((id) => ids.includes(id));
+        if (b.dialer.numbers && typeof b.dialer.numbers === "object") { cur.numbers = {}; for (const [id, n] of Object.entries(b.dialer.numbers)) if (ids.includes(id) && isDkPhone(n)) cur.numbers[id] = normDkPhone(n); }
+        if (["sdr", "auto"].includes(b.dialer.consent)) cur.consent = b.dialer.consent;
+        if (Number.isFinite(Number(b.dialer.retention_days)) && Number(b.dialer.retention_days) >= 1) cur.retention_days = Math.min(365, Math.round(Number(b.dialer.retention_days)));
+        d.sdr_settings.dialer = cur;
+      }
       if (Number.isFinite(Number(b.tier1_min_signals)) && Number(b.tier1_min_signals) >= 1 && Number(b.tier1_min_signals) <= SDR_CHECKLIST.signals.length) d.sdr_settings.tier1_min_signals = Math.round(Number(b.tier1_min_signals));
       if (Number.isFinite(Number(b.base_salary_dkk)) && Number(b.base_salary_dkk) >= 0) d.sdr_settings.base_salary_dkk = Math.round(Number(b.base_salary_dkk));
       if (typeof b.onboarding_until === "string" && (b.onboarding_until === "" || /^\d{4}-\d{2}-\d{2}$/.test(b.onboarding_until))) d.sdr_settings.onboarding_until = b.onboarding_until;
@@ -19339,7 +19509,7 @@ app.listen(PORT, () => {
   console.log(`💾 Data gemmes i: ${DATA_FILE}`);
   if (process.env.CLEARBIT_KEY) console.log("✨ Clearbit enrichment: aktiveret");
   if (process.env.N8N_WEBHOOK_URL) console.log("⚡ n8n webhook: konfigureret");
-  if (process.env.TWILIO_ACCOUNT_SID) console.log(`📞 Twilio dialer: konfigureret (${process.env.TWILIO_FROM_NUMBER||'intet nummer'})`);
+  if (process.env.TWILIO_ACCOUNT_SID) console.log(`📞 Twilio dialer: ${twilioReady() ? "klar" : "delvist sat op (API-nøgle eller TwiML-app mangler)"}`);
   else console.log("📞 Twilio dialer: ikke konfigureret (tilføj TWILIO_* i .env for at aktivere browser-opkald)");
   console.log(`🔑 Datafordeler GraphQL: ${process.env.DATAFORDELER_KEY ? "API-nøgle konfigureret" : "⚠️  DATAFORDELER_KEY mangler i .env"}`);
   console.log(`🤖 Gemini AI enrichment: ${process.env.GEMINI_API_KEY ? "konfigureret" : "⚠️  GEMINI_API_KEY mangler"}`);

@@ -186,6 +186,25 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   eller en periode; den tælles i hverdage pr. lønperiode, står under lønnen og
   som "Sygedage" i Excel-arket, og ændrer ikke beløbene. Gemmes i
   `sdr_absence.json` (ikke i puljen).
+- **Telefonen i browseren (Twilio Voice) - "hjernen", trin 1.** Når admin har slået det til
+  for en SDR under ⚙ → Telefoni (og Twilio-nøglerne ligger som secrets:
+  `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY`, `TWILIO_API_SECRET`,
+  `TWILIO_TWIML_APP_SID`), ringer SDR'en fra kortet på sit eget danske nummer:
+  Frankfurt-edge, Opus først, ekko-dæmpning til og auto-gain fra, SDK'ens egne
+  advarsler som lydkvalitets-prik, tastatur til telefonmenuer, og "Test lyd"
+  under ⚙ (man hører sig selv). Samtalen optages i to kanaler (samtykke: SDR'en
+  siger det selv, eller en besked afspilles for kunden - valg under Telefoni), og
+  når røret lægges på, læser Gemini optagelsen (`/api/twilio/recording` →
+  `recordingAnalyse`): transskript, resumé, hvem man fik fat i, gæt på udfald og
+  "hvorfor ikke demo", indvendinger, næste skridt, coaching, forslag til
+  tjeklisten (grundlag, købssignaler, annoncebudget) og en opfølgningsmail.
+  Resuméet lander i notetråden; på kortet kan SDR'en bruge det som note, åbne
+  mailen klar til at sende, og tjeklisten forudfyldes ved "Demo booket". Udfaldet
+  gemmer den rigtige varighed (`dial_s`) og `call_sid`. Indgående opkald til et
+  SDR-nummer ringer i browseren og noteres på leadet ("Ringede selv tilbage").
+  Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
+  transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
+  (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
 - **Ad Library-tjek - er de annoncører?** Facebook-sidens "kører annoncer"-flag viste sig
   forkert på 10 af 14 leads på listerne (okt. 2026). Puljen efterses derfor i selve
   Meta Ad Library (sidens egne annoncer, alle lande) - lister først, dernæst puljen
