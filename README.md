@@ -254,6 +254,15 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   punktet (5-15 % af StoreLeads-omsætningen, kun når de kører annoncer). Svaret
   gemmes i `demo_check.spend_band`, står på demorækken, i admins vurdering, i
   Slack/Twenty-linjen og i Excel-kolonnen "Annoncebudget (SDR)".
+- **Opkaldskortet (okt. 2026).** Under kontaktpersonen ligger tre faner: **Samtale**
+  (det, der skal afklares - de seks grundlag og tre købssignaler som flueben, man
+  sætter mens man taler, og pitchens "Hvis de siger …"-svar foldet sammen; fluebenene
+  følger med over i "Demo booket"), **Pitch** (egen pitch eller et script) og **Noter**
+  (tråden og notefeltet). Højre kolonne viser **Historik** (opkald, udfald, noter,
+  AI-resuméer, mails, demo - nyeste først) og **Referencer**; "Næste på listen" og
+  "Opfølgninger der venter" er taget ud af kortet (de ligger på Ringelisten og under
+  Opfølgning). Træning- og mail-knapperne er væk; mailen skrives nu af AI'en efter
+  samtalen. Tastaturgenvejene virker stadig, hint-linjen er fjernet.
 - **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
   tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
   på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på

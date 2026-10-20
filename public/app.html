@@ -121,9 +121,10 @@
     <div class="ring">
       <div id="cardwrap"></div>
       <aside class="side">
-        <div class="box duebox" id="duebox" hidden><h4>Opfølgninger der venter<span class="dn" id="due-n"></span></h4><div class="upnext" id="due-side"></div></div>
-        <div class="box"><h4>Næste på listen</h4><div class="upnext" id="upnext"></div></div>
-        <div class="box" id="histbox" hidden><h4>Historik på leadet</h4><div class="history" id="history"></div></div>
+        <div class="box duebox" id="duebox" hidden style="display:none"><h4>Opfølgninger der venter<span class="dn" id="due-n"></span></h4><div class="upnext" id="due-side"></div></div>
+        <div class="box" style="display:none"><h4>Næste på listen</h4><div class="upnext" id="upnext"></div></div>
+        <div class="box" id="histbox" hidden><h4>Historik</h4><div class="history" id="history"></div></div>
+        <div class="box" id="refbox" hidden></div>
       </aside>
     </div>
   </section>
@@ -555,7 +556,8 @@ async function dialInit() {
     if (!window.Twilio) await new Promise((ok, fail) => { const sc = document.createElement('script'); sc.src = '/api/twilio/sdk.js'; sc.onload = ok; sc.onerror = () => fail(new Error('SDK kunne ikke hentes')); document.head.appendChild(sc); });
     const t = await get('/api/twilio/token');
     const dev = new Twilio.Device(t.token, { edge: t.edge || ['frankfurt', 'dublin'], codecPreferences: ['opus', 'pcmu'], logLevel: 'error', closeProtection: 'Du er i gang med et opkald' });
-    dev.audio.setAudioConstraints({ echoCancellation: true, noiseSuppression: true, autoGainControl: false });
+    dev.audio.setAudioConstraints({ echoCancellation: true, noiseSuppression: true, autoGainControl: true });
+    try { dev.audio.incoming(true); dev.audio.outgoing(true); dev.audio.disconnect(true); } catch {}
     dev.on('tokenWillExpire', async () => { try { const n = await get('/api/twilio/token'); dev.updateToken(n.token); } catch {} });
     dev.on('error', (err) => { console.warn('[dialer]', err); if (!DIAL.call) toast('Telefon: ' + (err.message || err.code), 5000); });
     dev.on('incoming', dialIncoming);
@@ -566,7 +568,7 @@ async function dialInit() {
     dialFillMics();
     if ($('ph-fab')) $('ph-fab').hidden = false;
     renderPhone();
-  } catch (ex) { console.warn('[dialer] init', ex); toast('Telefonen kunne ikke starte: ' + ex.message, 6000); }
+  } catch (ex) { console.warn('[dialer] init', ex); toast('Telefonen kunne ikke starte: ' + ((ex && ex.message) || ex || 'ukendt fejl'), 6000); }
   finally { DIAL.loading = false; }
 }
 async function dialFillMics() {
@@ -577,11 +579,11 @@ async function dialFillMics() {
 async function dialSetMic(id) { if (!DIAL.device) return; try { if (id) await DIAL.device.audio.setInputDevice(id); else await DIAL.device.audio.unsetInputDevice(); toast('Mikrofon valgt'); } catch (ex) { toast('Kunne ikke skifte mikrofon: ' + ex.message, 4000); } }
 function dialWire(call, cvr, label) {
   DIAL.call = call; DIAL.state = 'connecting'; DIAL.t0 = 0; DIAL.muted = false; DIAL.keypad = false; DIAL.quality = 'ok'; DIAL.warn = ''; DIAL.ai = null; DIAL.aiStatus = ''; DIAL.to = label || '';
-  call.on('ringing', () => { DIAL.state = 'ringing'; renderDial(); });
-  call.on('accept', () => { DIAL.state = 'live'; DIAL.t0 = Date.now(); DIAL.sid = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const t = $('dial-time'); if (t) t.textContent = dialFmt((Date.now() - DIAL.t0) / 1000); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
+  call.on('ringing', () => { DIAL.state = 'ringing'; phTone('ringback'); renderDial(); });
+  call.on('accept', () => { phTone(false); DIAL.state = 'live'; DIAL.t0 = Date.now(); DIAL.sid = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const t = $('dial-time'); if (t) t.textContent = dialFmt((Date.now() - DIAL.t0) / 1000); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
   call.on('warning', (name) => { DIAL.warn = name; DIAL.quality = /low-mos|high-packet-loss|high-packets-lost|high-jitter|high-rtt/.test(name) ? (/low-mos|high-packet/.test(name) ? 'bad' : 'warn') : DIAL.quality; renderDialQuality(); });
   call.on('warning-cleared', () => { DIAL.warn = ''; DIAL.quality = 'ok'; renderDialQuality(); });
-  const end = () => dialEnded(call, cvr);
+  const end = () => { phTone(false); dialEnded(call, cvr); };
   call.on('disconnect', end); call.on('cancel', end); call.on('reject', end); call.on('error', (err) => { toast('Opkald: ' + (err.message || err.code), 5000); end(); });
   renderDial();
 }
@@ -642,7 +644,7 @@ async function dialPoll(sid, cvr, t0) {
 function dialFmt(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 function renderDialQuality() { const q = $('dial-q'); if (!q) return; q.className = 'dial-q ' + DIAL.quality; q.title = DIAL.warn ? 'Netværk: ' + DIAL.warn : 'Lyden er god'; q.textContent = DIAL.quality === 'bad' ? 'Dårlig forbindelse' : DIAL.quality === 'warn' ? 'Ustabil' : 'God lyd'; }
 function renderDial() {
-  renderPhone();
+  renderPhone(); renderLivePane();
   const p = $('dialpanel'); if (!p) return;
   if (!dialerOn() && DIAL.state === 'idle') { p.hidden = true; return; }
   const L = S.current || {};
@@ -710,12 +712,25 @@ async function phOpenLead(cvr) {
     showTab('ring'); renderCard(); PH.open = false; renderPhone();
   } catch (ex) { toast(ex.message, 4000); }
 }
-/* A soft ring while a call is coming in: two short tones every three seconds. */
+/* Call tones, generated in the browser. "ringback" = what you hear while
+   their phone rings (Danish cadence: 425 Hz, 1 s on / 4 s off); "incoming"
+   = a brighter double ring every 3 s while someone calls us. */
+function phTone(kind) {
+  if (PH.toneT) { clearInterval(PH.toneT); PH.toneT = null; }
+  if (!kind) return;
+  const play = () => {
+    try {
+      const ctx = PH.ringCtx || (PH.ringCtx = new (window.AudioContext || window.webkitAudioContext)()); if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const tone = (at, dur, hz, vol) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = hz; g.gain.value = vol; o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + dur); };
+      if (kind === 'ringback') tone(0, 1.0, 425, 0.08);
+      else { tone(0, 0.4, 880, 0.16); tone(0.5, 0.4, 880, 0.16); tone(0, 0.4, 1320, 0.05); tone(0.5, 0.4, 1320, 0.05); }
+    } catch {}
+  };
+  play(); PH.toneT = setInterval(play, kind === 'ringback' ? 5000 : 3000);
+}
 function phRing(on) {
-  if (!on) { if (PH.ringT) { clearInterval(PH.ringT); PH.ringT = null; } document.title = document.title.replace(/^☎ .*? · /, ''); return; }
-  if (PH.ringT) return;
-  const beep = () => { try { const ctx = PH.ringCtx || (PH.ringCtx = new (window.AudioContext || window.webkitAudioContext)()); [0, 0.35].forEach((t) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 880; g.gain.value = 0.12; o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.25); }); } catch {} };
-  beep(); PH.ringT = setInterval(beep, 3000);
+  if (!on) { phTone(false); document.title = document.title.replace(/^☎ .*? · /, ''); return; }
+  phTone('incoming');
   if (!/^☎ /.test(document.title)) document.title = '☎ Indgående opkald · ' + document.title;
 }
 function renderPhone() {
@@ -831,8 +846,14 @@ function renderCard() {
       ${L.phone_label ? `<span class="tag">${e(L.phone_label)}</span>` : ''}${L.ivr_at && L.phone_label !== 'direkte' ? `<span class="tag warn" title="Sidst ramte dette nummer en telefonmenu (${L.ivr_count}×). Tryk dig igennem til salg eller marketing - eller find et direkte nummer i Research.">☎ Telefonmenu</span>` : ''}
       ${dk ? '' : `<span class="tag">ikke et DK-nummer</span>`}
     </div>
-    ${refsHtml(L)}
-    <details class="pitch" ${pitchOpen ? 'open' : ''} ontoggle="pitchOpen=this.open"><summary>Sådan åbner du</summary><div class="body" id="pitchbody">${pitchPanelHtml(L)}</div></details>
+    <div class="ctabs">
+      <button data-k="samtale" class="${cardTabK === 'samtale' ? 'on' : ''}" onclick="cardTab('samtale')">Samtale</button>
+      <button data-k="pitch" class="${cardTabK === 'pitch' ? 'on' : ''}" onclick="cardTab('pitch')">Pitch</button>
+      <button data-k="noter" class="${cardTabK === 'noter' ? 'on' : ''}" onclick="cardTab('noter')">Noter${(L.note_thread || []).length ? `<span class="n">${(L.note_thread || []).length}</span>` : ''}</button>
+    </div>
+    <div class="cpane" data-k="samtale" ${cardTabK === 'samtale' ? '' : 'hidden'}>${livePaneHtml(L)}</div>
+    <div class="cpane" data-k="pitch" ${cardTabK === 'pitch' ? '' : 'hidden'}><div class="pitchwrap" id="pitchbody">${pitchPanelHtml(L)}</div></div>
+    <div class="cpane" data-k="noter" ${cardTabK === 'noter' ? '' : 'hidden'}>
     ${noteThreadHtml(L && L.note_thread)}
     <div class="composer" id="composer">
       <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
@@ -840,6 +861,7 @@ function renderCard() {
         <span class="sub" id="note-state">Gemmes også automatisk, når du vælger et udfald</span>
         <button class="pill sm violet" id="note-save" onclick="saveNote()" disabled>Gem note</button>
       </div>
+    </div>
     </div>
     <div id="coach" hidden></div>
     <div class="actions">
@@ -865,10 +887,10 @@ function renderCard() {
       </div>
       <div id="chooser" hidden></div>
       <div id="mailbox" hidden></div>
-      <div class="hint"><span><kbd>space</kbd> ring</span><span><kbd>1</kbd>-<kbd>7</kbd> udfald</span><span><kbd>N</kbd> note</span><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
+      <div class="hint"><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
     </div>
   </div>`;
-  renderDial();
+  renderDial(); renderHistory(); renderRefs();
 }
 function toggleCedit() {
   const L = S.current; if (!L) return; const box = $('cedit'); ceditOpen = !ceditOpen; box.hidden = !ceditOpen; if (!ceditOpen) return;
@@ -925,11 +947,23 @@ function renderUpNext() {
   const u = S.upNext || [];
   $('upnext').innerHTML = u.length ? u.map((l) => `<div class="r" onclick="jumpTo('${e(l.cvr)}')" title="Spring til dette lead"><div><b>${e(l.name)}</b><span>${e(l.city || '')}${l.contact && l.contact.name ? ' · ' + e(l.contact.name) : ''}</span></div>${l.meta && l.meta.advertiser ? `<span class="ads">${(l.meta.adsMatched || 0) > 0 ? l.meta.adsMatched + ' ads' : 'Meta'}</span>` : ''}</div>`).join('') : `<div style="font-size:13px;color:var(--txt-faint)">Ikke flere på listen.</div>`;
 }
+let HIST_ALL = false;
 function renderHistory() {
-  const L = S.current; const h = (L && L.calls) || [];
-  $('histbox').hidden = !L || h.length === 0; if (!L || !h.length) return;
-  $('history').innerHTML = h.slice(-5).reverse().map((c) => `<div class="h"><time>${e(fmtAgo(c.at))}</time><div><b>${e(ACTION_LABEL[c.action] || c.action)}</b>${c.by_name ? ` · ${e(c.by_name)}` : ''}${c.duration_s ? ` · ${e(fmtDur(c.duration_s))}` : ''}${c.note ? `<div>${e(c.note)}</div>` : ''}</div></div>`).join('');
+  const L = S.current; const box = $('histbox'); if (!box) return;
+  if (!L) { box.hidden = true; return; }
+  const WHERE = { research: 'Research', list: 'Ringeliste', admin: 'Admin', results: 'Resultater', auto: 'Automatisk' };
+  const rows = [];
+  for (const c of (L.calls || [])) if (c && c.at) rows.push({ at: c.at, kind: 'call', text: `${ACTION_LABEL[c.action] || c.action}${c.by_name ? ' · ' + c.by_name : ''}${c.duration_s ? ' · ' + dialFmt(c.duration_s) : ''}`, note: c.note || '' });
+  for (const n of (L.note_thread || [])) if (n && n.at && n.kind !== 'call') rows.push({ at: n.at, kind: n.where === 'call' ? 'ai' : 'note', text: n.where === 'call' ? 'AI-resumé af samtalen' : `${n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || 'Note')}${n.where && WHERE[n.where] ? ' · ' + WHERE[n.where] : ''}`, note: n.text || '' });
+  if (L.email_sent_at) rows.push({ at: L.email_sent_at, kind: 'mail', text: `Mail sendt${L.email_template ? ' · ' + L.email_template : ''}`, note: '' });
+  if (L.demo_booked_at) rows.push({ at: L.demo_booked_at, kind: 'demo', text: `Demo booket${L.demo_booked_by_name ? ' af ' + L.demo_booked_by_name : ''}${L.demo_status && L.demo_status !== 'pending' ? ' · ' + ({ qualified: 'kvalificeret', unqualified: 'ikke kvalificeret' }[L.demo_status] || L.demo_status) : ''}`, note: '' });
+  rows.sort((a, b) => new Date(b.at) - new Date(a.at));
+  box.hidden = !rows.length; if (!rows.length) return;
+  const shown = HIST_ALL ? rows : rows.slice(0, 8);
+  $('history').innerHTML = shown.map((r) => `<div class="h ${r.kind}"><time title="${e(fmtWhen(r.at))}">${e(fmtAgo(r.at))}</time><div><b>${e(r.text)}</b>${r.note ? `<span class="hn">${e(r.note.length > 180 ? r.note.slice(0, 180) + '…' : r.note)}</span>` : ''}</div></div>`).join('')
+    + (rows.length > shown.length ? `<button class="linkbtn" onclick="HIST_ALL=true;renderHistory()">Vis alle ${rows.length} →</button>` : '');
 }
+function renderRefs() { const b = $('refbox'); const L = S.current; if (!b) return; b.hidden = !L; if (L) b.innerHTML = `<h4>Referencer</h4>${refsHtml(L)}`; }
 /* "Ingen svar" plants a retry on its own, and with ~30 of those in the list
    the calls they actually promised were hard to find. Agreed ones first. */
 let fuFilter = '';  // set on first render: "Venter nu" when something is due, else "Aftalt"
@@ -1448,6 +1482,7 @@ function openDemoCheck() {
   if (!dcList().basics.length) { disp('demo-booked'); return; } // an old server without the list
   DC.step = 1; DC.basics = {}; DC.signals = {}; DC.spend_band = ''; DC.fromCall = false;
   const ai = DIAL.ai; if (ai && DIAL.aiFor === L.cvr && ai.checklist) { for (const [k, v] of Object.entries(ai.checklist.basics || {})) if (v === true) DC.basics[k] = true; for (const [k, v] of Object.entries(ai.checklist.signals || {})) if (v === true) DC.signals[k] = true; DC.spend_band = ai.checklist.spend_band || ''; DC.fromCall = true; }
+  const lc = LIVE.ck[L.cvr]; if (lc) { for (const [k, v] of Object.entries(lc.basics)) if (v) DC.basics[k] = true; for (const [k, v] of Object.entries(lc.signals)) if (v) DC.signals[k] = true; if (Object.values(lc.basics).some(Boolean) || Object.values(lc.signals).some(Boolean)) DC.fromCall = true; }
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'dcheck';
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
@@ -1807,8 +1842,6 @@ function pitchPanelHtml(L) {
     .concat(SCRIPTS.map((s) => `<option value="${e(s.id)}" ${s.id === pick ? 'selected' : ''}>${e(s.id)} · ${e(capFirst(s.parsed.title))}</option>`)).join('');
   const bar = SCRIPTS.length ? `<div class="scr-bar">
       <select onchange="pickScript(this.value)" aria-label="Vælg manuskript">${opts}</select>
-      <button type="button" class="pill sm tertiary" onclick="openTraining()">📖 Træning</button>
-      ${GUIDE ? `<button type="button" class="pill sm tertiary" onclick="openTraining('mail')">📩 Når de vil have en mail</button>` : ''}
     </div>` : '';
   const s = pick && SCRIPT_BY_ID[pick];
   if (!s) return `${bar}<div class="pitchtext">${pitchFor(L)}</div>`;
@@ -1816,6 +1849,36 @@ function pitchPanelHtml(L) {
   const sw = !(L.contact && L.contact.name) ? `<div class="scr-sw">Omstilling: "Hej, det er ${e((me && me.name) || 'os')} fra Vedio. Hvem står for jeres markedsføring - må jeg tale med dem?"</div>` : '';
   return `${bar}${sw}<div class="scr">${scriptLadderHtml(s.parsed, L)}</div>`;
 }
+/* ─── Card tabs: Samtale (the live checklist while you talk) · Pitch · Noter ─── */
+let cardTabK = (() => { try { return localStorage.getItem('vl_card_tab') || 'samtale'; } catch { return 'samtale'; } })();
+function cardTab(k) {
+  cardTabK = ['samtale', 'pitch', 'noter'].includes(k) ? k : 'samtale'; try { localStorage.setItem('vl_card_tab', cardTabK); } catch {}
+  document.querySelectorAll('.ctabs button').forEach((b) => b.classList.toggle('on', b.dataset.k === cardTabK));
+  document.querySelectorAll('.cpane').forEach((p) => { p.hidden = p.dataset.k !== cardTabK; });
+}
+/* What you tick while talking is remembered per lead and carried into the
+   demo checklist, so "Demo booket" starts from what was actually covered. */
+const LIVE = { ck: {} };
+function liveCk(cvr) { return LIVE.ck[cvr] || (LIVE.ck[cvr] = { basics: {}, signals: {} }); }
+function liveToggle(k, id) { const L = S.current; if (!L) return; const c = liveCk(L.cvr); c[k][id] = !c[k][id]; renderLivePane(); }
+function liveObjections() {
+  const txt = String((S.settings && S.settings.pitch_text) || ''); const out = [];
+  for (const line of txt.split('\n')) { const m = line.match(/^\s*Hvis de siger\s*[“"']?(.+?)[”"']?\s*:\s*(.+)$/i); if (m) out.push({ q: m[1].trim(), a: m[2].trim() }); }
+  return out;
+}
+function livePaneHtml(L) {
+  const CK = dcList(); const c = liveCk(L.cvr); const live = DIAL.state === 'live';
+  const item = (k, x) => `<button type="button" class="lck ${c[k][x.id] ? 'on' : ''}" onclick="liveToggle('${k}','${e(x.id)}')" title="${e(x.desc)}${x.how ? ' · ' + e(x.how) : ''}"><i></i>${e(x.short)}</button>`;
+  const obj = liveObjections();
+  return `<div class="live">
+    <div class="live-head"><span class="kicker">${live ? 'I samtale - sæt flueben, mens I taler' : 'Det skal du have afklaret'}</span>${live ? '<span class="live-on"><i class="dot"></i>optager</span>' : ''}</div>
+    <div class="lck-row"><span class="lck-k">Grundlag</span>${CK.basics.map((x) => item('basics', x)).join('')}</div>
+    <div class="lck-row"><span class="lck-k">Købssignaler</span>${CK.signals.map((x) => item('signals', x)).join('')}</div>
+    ${obj.length ? `<div class="live-obj"><span class="lck-k">Hvis de siger…</span>${obj.map((o) => `<details class="lobj"><summary>${e(o.q)}</summary><p>${e(o.a)}</p></details>`).join('')}</div>` : ''}
+    <p class="sub live-foot">${live ? 'Når du lægger på, læser AI\'en samtalen og foreslår resumé, tjekliste og mail.' : 'Fluebenene følger med over i "Demo booket". Pitchen ligger under Pitch, noterne under Noter.'}</p>
+  </div>`;
+}
+function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) p.innerHTML = livePaneHtml(L); }
 function pickScript(id) {
   scriptPickSet(id);
   const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);
@@ -1826,7 +1889,7 @@ function scriptJump(id) {
     const el = $('tr-' + id); if (el) { el.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     return;
   }
-  const det = document.querySelector('details.pitch'); if (det) det.open = true;
+  cardTab('pitch');
   pickScript(id);
   toast('Skiftet til script ' + id);
 }
@@ -2816,7 +2879,7 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '6') notRelevant();
   else if (ev.key === '7') disp('wrong-number');
   else if (ev.key === '8') disp('ivr');
-  else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
+  else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = (cardTab('noter'), $('note')); if (n) n.focus(); }
   else if (ev.key === 'ArrowRight') skip();
 });
 
