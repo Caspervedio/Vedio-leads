@@ -221,6 +221,39 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Lead-kvalitet: hvem der faktisk booker kvalificerede demoer (okt. 2026).** De
+  1.096 StoreLeads-leads, der var ringet til, viste: Facebook-side + Meta-pixel + under
+  5 mio. kr i omsætning gav én kvalificeret demo pr. ca. 42 opkald; ingen side, ingen
+  pixel eller 5 mio.+ gav én pr. ca. 213 - og halvdelen af alle opkald gik dertil. De
+  største butikker (trafik-rang under 300k) gav 1 kvalificeret demo af 209. Derfor:
+  - **Svage leads sidst** (`sdrFitWeak`): uden Facebook-side (og uden verificerede
+    annoncer), uden Meta-pixel (medmindre de har aktive annoncer) eller over
+    omsætningsgrænsen. Køen har tre bånd: passer → svagt match → aldrig kørt annoncer;
+    inden for hvert bånd styrer Ad Library-vægten som før. Admin: "Svage leads sidst"
+    og "Omsætningsgrænse" (5 mio. kr) under Pulje & regler (`rules.rank_weak_last`,
+    `rules.weak_revenue_mio`). Kortet viser "Svagt match · <grund>".
+  - **Venter på Facebook-opslaget**: et nyt lead med et Facebook-link serveres ikke,
+    før sideopslaget (`/api/cron/meta-pages-check`, hver 2. time) har kørt - højst 48
+    timer (`sdrPagePending`). Uden siden kan annoncerne ikke tjekkes, og leadet ville
+    havne blandt de svage ved en fejl.
+  - **StoreLeads-indtag i den rigtige ende** (`storeLeadsReserveOrder`): butikker med
+    Facebook-side + pixel først, derefter dansk nummer, så trafik-båndet 700k-1,5M,
+    300k-700k, 1,5M-3M, 3M+. Butikker med rang under 300k
+    (`STORELEADS_PROMOTE_RANK_MIN`) eller over omsætningsgrænsen hentes ikke ind
+    (`storeLeadsPromotable`) - de bliver i reserven. Før gik de mest besøgte først,
+    og e-mail vejede tungere end en Facebook-side; de næste 80 havde ingen med side +
+    pixel, nu har alle 80. Alle stærke butikker med dansk nummer i båndene op til 3M
+    er allerede hentet ind; de næste er stærke butikker i 3M+-båndet (ingen
+    opkaldsdata endnu - hold øje). Stærke butikker uden nummer kommer efter dem
+    (CVR-opslaget finder sjældent et nummer).
+  - **"Ikke vores målgruppe" med begrundelse**: ét tryk (For stor, For lille / hobby,
+    Sælger ikke online, Service eller B2B, Har bureau eller eget team, Forkert branche,
+    Andet) gemmes på leadet (`icp_why`, også i `screen_log`) og i noten; Fortryd
+    gendanner den. Admin ser fordelingen de seneste 30 dage under Pulje & regler
+    (`GET /api/sdr/admin/icp-why`).
+  - NB: StoreLeads-kontoen har mistet API-adgang siden 21. okt. 2026 ("account no
+    longer has API access"), så reserven fyldes ikke op; indtaget kører videre fra de
+    ca. 34.700 butikker i reserven.
 - **Ad Library-tjekket læser ikke tomme sider som "aldrig" (okt. 2026).** SDR'erne
   klagede over, at listerne næsten ingen annoncører havde. Årsagen var tjekket selv:
   fra 16. okt. kl. 21:21 til det løb tør for leads dagen efter gav hver eneste

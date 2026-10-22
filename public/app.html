@@ -855,6 +855,7 @@ function renderCard() {
         <h2>${e(L.name || '-')}</h2>
         <div class="meta">${L.city ? `<span>${e(L.city)}</span>` : ''}${web ? `<span>·</span><a href="${e(/^https?:/.test(L.web) ? L.web : 'https://' + L.web)}" target="_blank" rel="noopener">${e(web)}</a>` : ''}${L.niche ? `<span>·</span><span>${e(L.niche)}</span>` : ''}</div>
         ${L.shop ? `<div class="shopline" title="StoreLeads' estimat af årlig omsætning og månedlige besøg${L.shop.platform ? ' · ' + e(shopPlatform(L.shop)) : ''}">${e(shopLine(L.shop))}<i>StoreLeads-estimat</i></div>` : ''}
+        ${L.fit_weak ? `<div class="fitweak" title="Leads som dette booker sjældent en kvalificeret demo, så de kommer efter de andre på listen.">Svagt match · ${e(L.fit_weak)}</div>` : ''}
       </div>
       <div class="proofwrap">${proof}${adAlt}</div>
     </div>
@@ -1227,18 +1228,29 @@ function toggleScreen(first) {
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
   c.innerHTML = `<div class="chooser screen">
     ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fravælg uden opkald</span>'}
-    <button class="pill" onclick="screen('icp')" title="Arkiveres - kommer ikke igen">Ikke vores målgruppe</button>
+    <button class="pill" onclick="screenIcpWhy()" title="Arkiveres - kommer ikke igen">Ikke vores målgruppe</button>
     <button class="pill" onclick="screen('weak')" title="Tilbage i puljen om 3 måneder, nederst">For svag lige nu</button>
     <button class="pill" onclick="screen('noads')" title="Du har set efter i Ad Library: ingen aktive annoncer. Gemmes på leadet, så det ikke serveres igen før om 3 måneder">Ingen aktive annoncer</button>
     <span class="screen-later">Ring senere: <button class="pill sm" onclick="screen('later','${at(7, 9)}')">Om 1 uge</button><button class="pill sm" onclick="screen('later','${at(14, 9)}')">Om 2 uger</button><button class="pill sm" onclick="screen('later','${at(30, 9)}')">Om 1 måned</button></span>
     <span class="sub" style="width:100%">Tæller ikke som et opkald. En note i feltet ovenfor gemmes med.</span>
   </div>`;
 }
-async function screen(reason, when) {
+/* One tap for why it isn't ours - what we learn here is filtered out at intake. */
+const ICP_WHY = [['big', 'For stor'], ['small', 'For lille / hobby'], ['noshop', 'Sælger ikke online'], ['service', 'Service eller B2B'], ['agency', 'Har bureau eller eget team'], ['niche', 'Forkert branche'], ['other', 'Andet']];
+function screenIcpWhy() {
+  const c = $('chooser'); if (!c) return;
+  c.innerHTML = `<div class="chooser screen">
+    <span class="kicker">Hvorfor ikke vores målgruppe?</span>
+    ${ICP_WHY.map(([k, l]) => `<button class="pill" onclick="screen('icp', null, '${k}')">${l}</button>`).join('')}
+    <button class="linkbtn" onclick="chooserOpen=false;toggleScreen()">Tilbage</button>
+    <span class="sub" style="width:100%">Arkiveres og kommer ikke igen. Begrundelsen bruges til at sortere den slags fra, før de kommer ind.</span>
+  </div>`;
+}
+async function screen(reason, when, why) {
   const L = S.current; if (!L || busy) return; busy = true;
   const note = noteVal(L);
   try {
-    apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note }));
+    apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note, why: why || '' }));
     const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', noads: 'Noteret: ingen aktive annoncer - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });

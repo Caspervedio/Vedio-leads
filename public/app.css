@@ -1127,3 +1127,5 @@ main{transition:margin-right .46s var(--ease)}
 .ph-link{display:block;width:100%;margin-top:8px;border:0;background:transparent;font:inherit;font-size:13px;font-weight:700;color:var(--txt-soft);cursor:pointer;padding:8px}
 .ph-link:hover{color:var(--txt)}
 @media (max-width:760px){.ph-fab{left:16px;bottom:16px}.ph-win{left:16px;bottom:78px}}
+/* weak match: no page, no pixel, or big - served after the rest */
+.fitweak{display:inline-flex;align-items:center;margin:6px 0 0;padding:3px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--txt-soft)}

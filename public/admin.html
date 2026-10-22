@@ -1508,6 +1508,7 @@ async function twStatus() { const el = $('st-tw'); if (!el) return; try { const 
 /* Ad Library coverage under ⚙ → Regler, and a manual sweep. */
 function adlibText(c) { return `${c.active} aktive · ${c.past} har kørt før${c.stale ? ` (${c.stale} stoppet for over et år siden)` : ''} · ${c.none} aldrig · ${c.unchecked} ikke efterset · ${c.no_page} uden Facebook-side (af ${c.total})`; }
 function adlibRunText(r) { if (!r) return ''; const t = new Date(r.at).toLocaleString('da-DK', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); return ` · Seneste kørsel ${t}: ${r.checked || 0} efterset` + (r.suspect ? ` - stoppet: ${r.suspect} tomme sider i træk (Meta svarede ikke normalt), prøver igen` : r.blocked ? ` · ${r.blocked} kunne ikke læses, prøves igen` : ''); }
+async function icpWhyStatus() { const el = $('st-icp'); if (!el) return; try { const d = await get('/api/sdr/admin/icp-why'); el.textContent = !d.total ? 'Ingen de seneste 30 dage.' : [...d.reasons.map((x) => `${x.label}: ${x.n}`), d.untagged ? `uden begrundelse: ${d.untagged}` : ''].filter(Boolean).join(' · ') + ` (af ${d.total})`; el.title = d.reasons.map((x) => `${x.label}: ${x.examples.join(', ')}`).join('\n'); } catch (ex) { el.textContent = 'Kunne ikke hente: ' + ex.message; } }
 async function adlibStatus() { const el = $('st-adlib'); if (!el) return; try { const d = await get('/api/sdr/admin/adlib'); el.textContent = adlibText(d.coverage) + (d.running ? ' · kører nu' : '') + adlibRunText(d.last_run); } catch (ex) { el.textContent = 'Kunne ikke hente: ' + ex.message; } }
 async function adlibRun() { const el = $('st-adlib'); if (el) el.textContent = 'Kører - ca. et minut…'; try { const d = await post('/api/sdr/admin/adlib/run', { batch: 20 }); const s = d.stats || {}; toast(s.skipped ? 'Tjekket kører allerede' : `✓ ${s.checked} efterset: ${s.active} aktive · ${s.past} har kørt før · ${s.none} aldrig${s.suspect ? ' · stoppet: Meta svarede med tomme sider' : ''}${s.blocked ? ' · ' + s.blocked + ' kunne ikke læses' : ''}`, 6000); if (el && d.coverage) el.textContent = adlibText(d.coverage); } catch (ex) { toast(ex.message, 5000); if (el) el.textContent = 'Fejl: ' + ex.message; } }
 async function demoReview(cvr, status, extra) {
@@ -1855,7 +1856,10 @@ function openSettings() {
     <div class="st-tabs" id="st-tabs">${[['pool', 'Pulje & regler'], ['goals', 'Mål'], ['pay', 'Løn'], ['flow', 'Arbejdsgang'], ['pitch', 'Pitch & mails'], ['tel', 'Telefoni'], ['int', 'Integrationer']].map(([k, l], i) => `<button class="${i ? '' : 'on'}" onclick="stTab('${k}')" data-k="${k}">${l}</button>`).join('')}</div>
     <div class="st-body">
     ${pane('pool', 'Hvad puljen må servere til SDR\'erne, og hvornår et lead hviler.', grp('Hvad SDR\'erne må få',
-        row('Skjul leads, der aldrig har kørt annoncer', 'Slået fra: de serveres sidst - efter aktive, tidligere og ikke-efterset - så listerne aldrig løber tør. Slået til: de holdes helt ude.', sw('r-noads', r.hide_no_ads === true))
+        row('Svage leads sidst', 'Leads uden Facebook-side eller Meta-pixel, eller over omsætningsgrænsen, serveres efter alle andre. De bookede én kvalificeret demo pr. ca. 213 opkald mod ca. 42 for leads med side, pixel og under grænsen (okt. 2026). Slået fra: kun annonce-status styrer rækkefølgen.', sw('r-weak', r.rank_weak_last !== false))
+      + row('Omsætningsgrænse', 'Butikker med højere estimeret årsomsætning (StoreLeads) regnes som svage og hentes ikke ind fra StoreLeads. Store butikker har typisk bureau eller eget team.', num('r-weakmio', r.weak_revenue_mio || 5, { min: 1, max: 500, unit: 'mio. kr' }))
+      + row('Hvorfor "ikke vores målgruppe"', 'SDR\'ernes begrundelser de seneste 30 dage - det, der går igen, kan sorteres fra ved import.', `<span id="st-icp" class="st-note">Henter…</span>`)
+      + row('Skjul leads, der aldrig har kørt annoncer', 'Slået fra: de serveres sidst - efter aktive, tidligere og ikke-efterset - så listerne aldrig løber tør. Slået til: de holdes helt ude.', sw('r-noads', r.hide_no_ads === true))
       + row('Skjul sider, der stoppede for over et år siden', 'Slået fra: de serveres, men langt nede. Slået til: en side, hvis sidste annonce er over 12 måneder gammel, holdes helt ude.', sw('r-stale', r.hide_stale_ads === true))
       + row('Ad Library-tjek', 'Puljen efterses løbende i Meta Ad Library (lister først). Tallene er friske leads med nummer, aldrig ringet.', `<span id="st-adlib" class="st-note">Henter…</span> <button class="pill sm tertiary" onclick="adlibRun()">Kør 20 nu</button>`)
       + row('Kun leads der kører Meta-annoncer', 'Alt andet holdes tilbage i puljen.', sw('r-meta', r.require_meta))
@@ -1915,7 +1919,7 @@ function openSettings() {
     <div class="st-foot"><button class="pill tertiary" onclick="$('settings').remove()">Annuller</button><button class="pill primary" style="padding:11px 22px;font-size:14px" onclick="saveSettings()">Gem</button></div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
-  document.body.appendChild(bg); adlibStatus(); twStatus();
+  document.body.appendChild(bg); adlibStatus(); icpWhyStatus(); twStatus();
   mailTpls = JSON.parse(JSON.stringify(s.email_templates || []));
   mailTplRender();
 }
@@ -1946,7 +1950,7 @@ async function saveSettings() {
     sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45, ltv_dkk: Number($('st-ltv').value) || 0,
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), commission_tier2_dkk: Number($('st-comm2').value), tier1_min_signals: Number($('st-t1sig').value) || 2, base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     dialer: { users: [...document.querySelectorAll('[id^="tw-on-"]')].filter((x) => x.checked).map((x) => x.id.slice(6)), numbers: Object.fromEntries([...document.querySelectorAll('[id^="tw-num-"]')].map((x) => [x.id.slice(7), x.value.trim()]).filter(([, v]) => v)), consent: $('tw-consent').value, retention_days: Number($('tw-ret').value) || 30, live: $('tw-live').checked },
-    rules: { require_meta: $('r-meta').checked, hide_no_ads: $('r-noads').checked, hide_stale_ads: $('r-stale').checked, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
+    rules: { require_meta: $('r-meta').checked, hide_no_ads: $('r-noads').checked, hide_stale_ads: $('r-stale').checked, rank_weak_last: $('r-weak').checked, weak_revenue_mio: Number($('r-weakmio').value) || 5, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },
   };
   try { await post('/api/sdr/settings', body); $('settings').remove(); toast('Gemt - reglerne gælder fra næste opdatering'); loadOverview(); if ($('view-leads').classList.contains('active')) leadsReload(); } catch (ex) { toast(ex.message, 4000); }
 }

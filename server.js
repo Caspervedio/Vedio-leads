@@ -7205,7 +7205,23 @@ function storeLeadsHost(u) { return String(u || "").toLowerCase().trim().replace
 // Best shops leave the reserve first: a Danish number means callable without
 // a paid reveal, the pixel and a Facebook page mean it probably advertises.
 function storeLeadsReserveScore(r) { return (isDkPhone(r.phone) ? 4 : 0) + (r.meta_pixel ? 3 : 0) + (r.facebook_url ? 2 : 0) + (r.email ? 1 : 0); }
-function storeLeadsReserveOrder(a, b) { return (a.tier || 1) - (b.tier || 1) || storeLeadsReserveScore(b) - storeLeadsReserveScore(a) || (a.rank || 9e9) - (b.rank || 9e9); }
+// Which reserve shops reach the pool first (Oct 2026, from the call data):
+// Facebook page + Meta pixel first, a Danish number next, then the traffic
+// band that books (rank 700k-1.5M, then 300k-700k, 1.5M-3M, 3M+). The biggest
+// shops - top traffic (1 qualified demo in 209 called) or over the revenue
+// line - are not promoted at all; they stay in the reserve.
+const STORELEADS_PROMOTE_RANK_MIN = 300000;
+function storeLeadsStrong(x) { return !!(x.facebook_url && x.meta_pixel); }
+function storeLeadsRankPref(rank) { const r = Number(rank) || 0; return !r ? 4 : r < 7e5 ? 1 : r < 1.5e6 ? 0 : r < 3e6 ? 2 : 3; }
+function storeLeadsPromotable(x) {
+  if (x.rank && Number(x.rank) < STORELEADS_PROMOTE_RANK_MIN) return false;
+  return (Number(x.sales) || 0) / 100 * STORELEADS_USD_DKK < sdrFitRules().weak_revenue_mio * 1e6;
+}
+function storeLeadsReserveOrder(a, b) {
+  const g = (x) => !storeLeadsPromotable(x) ? 3 : (x.tier || 1) >= 3 ? 2 : storeLeadsStrong(x) ? 0 : 1;
+  return g(a) - g(b) || ((isDkPhone(b.phone) ? 1 : 0) - (isDkPhone(a.phone) ? 1 : 0)) || storeLeadsRankPref(a.rank) - storeLeadsRankPref(b.rank)
+    || storeLeadsReserveScore(b) - storeLeadsReserveScore(a) || (a.rank || 9e9) - (b.rank || 9e9);
+}
 // Shops fetched per band. The v2 band ran before this counter existed, so it
 // starts from the scans stamped since that query went live.
 function storeLeadsBandPulled(state, key) {
@@ -7427,7 +7443,8 @@ app.post("/api/cron/storeleads-discover", async (req, res) => {
   const cap = PER_PLATFORM * 2;
   const n = FORCE ? cap : Math.min(cap, st.room);
   stats.promoteRoom = FORCE ? cap : (Number.isFinite(st.room) ? st.room : cap);
-  const picks = Object.values(reserve.items).sort(storeLeadsReserveOrder).slice(0, Math.max(0, n));
+  if (d0 && d0.sdr_settings) SDR_RULES_REF = d0.sdr_settings.rules || null;
+  const picks = Object.values(reserve.items).filter(storeLeadsPromotable).sort(storeLeadsReserveOrder).slice(0, Math.max(0, n));
   if (!picks.length && !FORCE) console.log("[intake-cap] storeleads promote skipped: " + sdrIntakeMsg(st));
   await storeLeadsPromote(picks, TARGET_USER, reserve, stats, checkedAt);
   stats.reserveSize = Object.keys(reserve.items).length;
@@ -9411,6 +9428,19 @@ app.post("/api/cron/adlib-repair", (req, res) => {
     if (!dry && (stats.reset || stats.past_recheck)) { savePool(d); logActivity("adlib-repair", `Ad Library: ${stats.reset} "aldrig"-svar fra den gamle læsning (${from.slice(0, 16)} - ${to.slice(0, 16)}) sat til "ikke efterset" igen; ${stats.past_recheck} "har kørt før" tjekkes igen`, { stats, from, to }); }
     res.json({ ok: true, dry, stats });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// Why leads were marked "not our target group", last 30 days - what to filter at intake.
+app.get("/api/sdr/admin/icp-why", authMiddleware, (req, res) => {
+  try {
+    if (!sdrAdminGuard(req, res)) return;
+    const d = loadPool(); const since = Date.now() - 30 * 86400e3; const by = {}; let total = 0, untagged = 0;
+    for (const l of d.leads || []) for (const x of l.screen_log || []) {
+      if (x.reason !== "icp" || new Date(x.at).getTime() < since) continue;
+      total++; if (!x.why) { untagged++; continue; }
+      const k = x.why; by[k] = by[k] || { label: SDR_ICP_WHY[k] || k, n: 0, examples: [] }; by[k].n++; if (by[k].examples.length < 4) by[k].examples.push(l.name);
+    }
+    res.json({ ok: true, total, untagged, reasons: Object.entries(by).sort((a, b) => b[1].n - a[1].n).map(([k, v]) => ({ id: k, ...v })) });
+  } catch (e) { sdrFail(res, e, "admin/icp-why"); }
 });
 app.get("/api/sdr/admin/adlib", authMiddleware, (req, res) => {
   try { if (!sdrAdminGuard(req, res)) return; const d = loadPool(); res.json({ ok: true, running: adlibRunning, coverage: adlibCoverage(d), last_run: d.adlib_last_run || null }); }
@@ -14145,7 +14175,7 @@ const SDR_DEFAULT_PITCH = [
   "Hvis de siger \"ikke lige nu\": Fair nok. Hvornår giver det bedre mening - om et par uger eller efter {måned}? Så ringer jeg der.",
   "Hvis de siger \"send mig en mail\": Det gør jeg med det samme. Hvad er den bedste adresse? Og må jeg ringe tilbage om et par dage, når du har kigget på den?",
 ].join("\n");
-const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, hide_no_ads: false, hide_stale_ads: false };
+const SDR_DEFAULT_RULES = { exclude_sources: [], exclude_niches: [], require_meta: false, min_ads: 0, hide_no_ads: false, hide_stale_ads: false, rank_weak_last: true, weak_revenue_mio: 5 };
 // "Send me an email" is the most common ask on a cold call. Templates are
 // filled client-side and opened in the SDR's own mail app, so the mail comes
 // from their vedio.dk address and replies land in their inbox.
@@ -14858,7 +14888,8 @@ async function sdrGeminiJson(prompt, audio, opts) {
 }
 // The latest pool and a change counter, for the "a no covers the company" index (sdrNoIndex).
 let SDR_NO_LEADS = null, SDR_NO_VER = 0, SDR_NO_CACHE = null;
-function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) { SDR_NO_LEADS = d.leads; SDR_LISTS_REF = d.sdr_lists || {}; SDR_LISTED.map = null; } return d; }
+function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) { SDR_NO_LEADS = d.leads; SDR_LISTS_REF = d.sdr_lists || {}; SDR_LISTED.map = null; SDR_RULES_REF = (d.sdr_settings && d.sdr_settings.rules) || null; } return d; }
+let SDR_RULES_REF = null;
 // Every SDR/admin save also stamps the meta (lists + settings) as freshest.
 function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(POOL_ID, d); }
 // Write-stamps: SDR/admin handlers mark what they changed so a background
@@ -15312,7 +15343,7 @@ function sdrSlim(l, nameById) {
   return {
     cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "",
     about: l.about || "",
-    shop: sdrShopOf(l),
+    shop: sdrShopOf(l), fit_weak: sdrFitWeak(l),
     niche: l.ind || l.industry || l.niche || "",
     phone: ph.phone, phone_label: ph.label,
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
@@ -15423,6 +15454,33 @@ function sdrShopOf(l) {
   const lo = sales_kr && ads ? Math.round(sales_kr / 12 * 0.05 / 1000) * 1000 : 0, hi = sales_kr && ads ? Math.round(sales_kr / 12 * 0.15 / 1000) * 1000 : 0;
   return { sales_kr, visits: visits || null, size: sdrLeadSize(l), platform: l.storeleads_platform || "", pulled_at: l.storeleads_pulled_at || null, ad_est: hi >= 2000 ? { lo: Math.max(1000, lo), hi } : null };
 }
+// ─── Fit: who actually books qualified demos ──────────────────────────────
+// The called StoreLeads leads (Oct 2026, 1,096 of them): a Facebook page +
+// a Meta pixel + under 5 mio kr a year took 42 dials per qualified demo; no
+// page, no pixel or 5 mio and up took 213 - and half of all dials went there.
+// Weak leads stay available but are served after everyone else (admin can
+// switch it off, and set the revenue line, under Pulje & regler).
+function sdrFitRules(settings) {
+  const r = (settings && settings.rules) || SDR_RULES_REF || {};
+  return { rank_weak_last: r.rank_weak_last !== false, weak_revenue_mio: Number(r.weak_revenue_mio) >= 1 ? Number(r.weak_revenue_mio) : 5 };
+}
+function sdrLeadRevenueKr(l) { return (Number(l.storeleads_estimated_sales_yearly) || 0) / 100 * STORELEADS_USD_DKK; }
+// Why a lead is a weak match ("" when it isn't) - on the card, and it ranks the lead last.
+function sdrFitWeak(l, settings) {
+  const f = sdrFitRules(settings); const ads = l.adlib_status === "active" || l.adlib_status === "past";
+  if (!(l.facebook_adlib_id || l.facebook_page_id) && !ads) return "Ingen Facebook-side";
+  if (l.meta_pixel === false && l.adlib_status !== "active") return "Ingen Meta-pixel på shoppen";
+  if (sdrLeadRevenueKr(l) >= f.weak_revenue_mio * 1e6) return `Over ${String(f.weak_revenue_mio).replace(".", ",")} mio. kr i omsætning`;
+  return "";
+}
+// A new lead with a Facebook link waits for the page lookup (every 2 hours)
+// before it is served: without the page we can't check its ads, and it would
+// land among the weak by mistake. Never longer than 48 hours.
+const SDR_PAGE_WAIT_MS = 48 * 3600e3;
+function sdrPagePending(l, now) {
+  return !!l.facebook_url && !l.facebook_adlib_id && !l.facebook_page_id && !l.meta_pages_checked_at && !l.manual_by
+    && (now - new Date(l.addedAt || l.discovered_at || 0).getTime()) < SDR_PAGE_WAIT_MS;
+}
 function sdrLeadSize(l) {
   const kr = (Number(l.storeleads_estimated_sales_yearly) || 0) / 100 * STORELEADS_USD_DKK;
   if (!kr) return "";
@@ -15455,8 +15513,11 @@ function sdrReservedFor(l) {
 function sdrQueue(d, userId, now, exclude, settings) {
   const ex = exclude || new Set();
   const s = settings || sdrSettings(d);
-  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !ex.has(l.cvr) && (() => { const r = sdrReservedFor(l); return !r || r === userId; })());
+  const eligible = (d.leads || []).filter((l) => sdrEligible(l, now) && sdrPassesRules(l, s) && (sdrReservedFor(l) === userId || !sdrPagePending(l, now)) && !sdrClaimedByOther(l, userId, now) && sdrFollowupMine(l, userId) && !ex.has(l.cvr) && (() => { const r = sdrReservedFor(l); return !r || r === userId; })());
   const due = eligible.filter((l) => sdrIsDue(l, now)).sort((a, b) => new Date(a.callback_at) - new Date(b.callback_at));
+  // 0 = fits, 1 = weak match (no page / no pixel / big), 2 = never ran ads.
+  const fit = sdrFitRules(s); const band = new Map();
+  for (const l of eligible) band.set(l.cvr, l.adlib_status === "none" ? 2 : fit.rank_weak_last && sdrFitWeak(l, s) ? 1 : 0);
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
     // My own research / own additions first - they're mine.
     const ar = sdrReservedFor(a) === userId ? 1 : 0, br = sdrReservedFor(b) === userId ? 1 : 0;
@@ -15471,6 +15532,8 @@ function sdrQueue(d, userId, now, exclude, settings) {
     // top, a page that paused last week above one with a single old ad, the
     // unchecked below, pages with no Facebook page at all last. (Never-ran
     // and long-stopped are filtered out by the rules.)
+    const ab = band.get(a.cvr), bb = band.get(b.cvr);
+    if (ab !== bb) return ab - bb;
     const as = adlibScore(a, now), bs = adlibScore(b, now);
     if (as !== bs) return bs - as;
     const ap = sdrHasPerson(a) ? 1 : 0, bp = sdrHasPerson(b) ? 1 : 0;
@@ -16193,6 +16256,8 @@ app.post("/api/sdr/admin/set-stage", authMiddleware, (req, res) => {
 // too weak right now, or ring later. Not a call: nothing in calls[], so it
 // never counts as a dial. Logged in screen_log (counted as "fjernet") and in
 // the note thread; "Fortryd" works as for an outcome.
+// Why a lead isn't ours - one tap, so the misses can be filtered out at intake.
+const SDR_ICP_WHY = { big: "For stor", small: "For lille / hobby", noshop: "Sælger ikke online", service: "Service eller B2B", agency: "Har bureau eller eget team", niche: "Forkert branche", other: "Andet" };
 const SDR_SCREEN = {
   icp: { label: "Ikke vores målgruppe" },
   weak: { label: "For svag lige nu", days: 90 },
@@ -16203,6 +16268,7 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
   try {
     const { cvr, reason, callback_at, note } = req.body || {};
     const R = SDR_SCREEN[reason]; if (!R) return res.status(400).json({ error: "Vælg hvorfor" });
+    const why = reason === "icp" && SDR_ICP_WHY[(req.body || {}).why] ? String(req.body.why) : "";
     const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
     const lead = (d.leads || []).find((l) => l.cvr === cvr);
     if (!lead) return res.status(404).json({ error: "Lead ikke fundet" });
@@ -16211,10 +16277,10 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
       when = callback_at ? new Date(callback_at) : null;
       if (!when || isNaN(when.getTime()) || when.getTime() < now - 60000) return res.status(400).json({ error: "Vælg en dato fremme i tiden" });
     }
-    const F = ["lastAction", "archived_at", "archived_by", "resurface_at", "callback_at", "deferred_until", "owner_override", "owner_override_at", "note_log", "last_note", "screen_log", "parked_at", "parked_reason", "adlib_status", "adlib_active", "adlib_checked_at", "adlib_by", "meta_verified_active", "meta_ads_active_now"];
+    const F = ["icp_why", "lastAction", "archived_at", "archived_by", "resurface_at", "callback_at", "deferred_until", "owner_override", "owner_override_at", "note_log", "last_note", "screen_log", "parked_at", "parked_reason", "adlib_status", "adlib_active", "adlib_checked_at", "adlib_by", "meta_verified_active", "meta_ads_active_now"];
     lead._undo = { at: nowIso, by: req.userId, kind: "screen", prev: Object.fromEntries(F.map((k) => [k, lead[k] === undefined ? null : JSON.parse(JSON.stringify(lead[k]))])) };
     const cleanNote = String(note || "").trim().slice(0, 2000);
-    if (reason === "icp") { lead.lastAction = "not-relevant"; lead.archived_at = nowIso; lead.archived_by = req.userId; lead.callback_at = null; }
+    if (reason === "icp") { lead.lastAction = "not-relevant"; lead.archived_at = nowIso; lead.archived_by = req.userId; lead.callback_at = null; if (why) lead.icp_why = why; else delete lead.icp_why; }
     else if (reason === "weak") { lead.callback_at = null; lead.resurface_at = new Date(now + R.days * 86400e3).toISOString(); lead.parked_at = nowIso; lead.parked_reason = "weak"; }
     // The SDR looked and saw no active ads: that is a check too. A page that
     // ran ads before stays "past" (interesting later); otherwise "none".
@@ -16226,11 +16292,11 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
     }
     else { lead.callback_at = when.toISOString(); lead.owner_override = req.userId; lead.owner_override_at = nowIso; lead.resurface_at = null; }
     lead.deferred_until = null; lead.opened_at = null; lead.opened_by = null; lead.last_call_started_at = null;
-    const label = R.label + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : (reason === "weak" || reason === "noads") ? " - tilbage i puljen om 3 måneder" : "");
+    const label = R.label + (why ? ` (${SDR_ICP_WHY[why]})` : "") + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : (reason === "weak" || reason === "noads") ? " - tilbage i puljen om 3 måneder" : "");
     lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
     lead.note_log.push({ at: nowIso, by: req.userId, where: "list", text: `Fravalgt uden opkald: ${label}${cleanNote ? " - " + cleanNote : ""}` });
     if (cleanNote) { lead.last_note = cleanNote; lead.note_saved_at = nowIso; lead.note_saved_by = req.userId; }
-    lead.screen_log = [...(Array.isArray(lead.screen_log) ? lead.screen_log : []), { at: nowIso, by: req.userId, reason }].slice(-20);
+    lead.screen_log = [...(Array.isArray(lead.screen_log) ? lead.screen_log : []), { at: nowIso, by: req.userId, reason, ...(why ? { why } : {}) }].slice(-20);
     sdrTouch(lead);
     const { list: L } = sdrEnsureList(d, req.userId, now, sdrSettings(d));
     L.cvrs = L.cvrs.filter((x) => x !== cvr);
@@ -19774,6 +19840,8 @@ app.post("/api/sdr/settings", authMiddleware, (req, res) => {
         if (typeof b.rules.hide_no_ads === "boolean") r.hide_no_ads = b.rules.hide_no_ads;
         if (typeof b.rules.hide_stale_ads === "boolean") r.hide_stale_ads = b.rules.hide_stale_ads;
         if (Number.isFinite(Number(b.rules.min_ads)) && Number(b.rules.min_ads) >= 0) r.min_ads = Math.round(Number(b.rules.min_ads));
+        if (typeof b.rules.rank_weak_last === "boolean") r.rank_weak_last = b.rules.rank_weak_last;
+        if (Number.isFinite(Number(b.rules.weak_revenue_mio)) && Number(b.rules.weak_revenue_mio) >= 1 && Number(b.rules.weak_revenue_mio) <= 500) r.weak_revenue_mio = Math.round(Number(b.rules.weak_revenue_mio) * 10) / 10;
         d.sdr_settings.rules = r;
       }
     }
