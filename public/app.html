@@ -405,7 +405,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0;
   if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; }
   renderList(); renderDue();
-  if (!keepCurrent) renderCard(); else if ($('note')) $('note').value = prevNote;
+  if (!keepCurrent) renderCard(); else if ($('note') && prevNote && $('notebox') && S.current && $('notebox').dataset.cvr === S.current.cvr) $('note').value = prevNote;
   dialInit();
   renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday(); renderFocus();
 }
@@ -591,7 +591,7 @@ function dialWire(call, cvr, label, name, num) {
   DIAL.toName = name || ''; DIAL.toNum = num || label || '';
   DIAL.call = call; DIAL.state = 'connecting'; DIAL.t0 = 0; DIAL.muted = false; DIAL.keypad = false; DIAL.quality = 'ok'; DIAL.warn = ''; DIAL.ai = null; DIAL.aiStatus = ''; DIAL.to = label || '';
   call.on('ringing', () => { DIAL.state = 'ringing'; phTone('ringback'); renderDial(); });
-  call.on('accept', () => { phTone(false); DIAL.state = 'live'; dialMicWarn(); const sid0 = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (sid0 && cvr) liveSubscribe(sid0); DIAL.t0 = Date.now(); DIAL.sid = (call.parameters && call.parameters.CallSid) || DIAL.sid; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const v = dialFmt((Date.now() - DIAL.t0) / 1000); document.querySelectorAll('.js-dial-time').forEach((t) => { t.textContent = v; }); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
+  call.on('accept', () => { phTone(false); DIAL.state = 'live'; dialMicWarn(); const parent = call.customParameters && call.customParameters.get ? call.customParameters.get('parent_sid') : ''; const sid0 = parent || (call.parameters && call.parameters.CallSid) || DIAL.sid; if (sid0 && cvr) liveSubscribe(sid0, cvr); DIAL.t0 = Date.now(); DIAL.sid = sid0; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const v = dialFmt((Date.now() - DIAL.t0) / 1000); document.querySelectorAll('.js-dial-time').forEach((t) => { t.textContent = v; }); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
   call.on('warning', (name) => { DIAL.warn = name; DIAL.quality = /low-mos|high-packet-loss|high-packets-lost|high-jitter|high-rtt/.test(name) ? (/low-mos|high-packet/.test(name) ? 'bad' : 'warn') : DIAL.quality; renderDialQuality(); });
   call.on('warning-cleared', () => { DIAL.warn = ''; DIAL.quality = 'ok'; renderDialQuality(); });
   const end = () => { phTone(false); dialEnded(call, cvr); };
@@ -637,9 +637,10 @@ function dialEnded(call, cvr) {
   if (DIAL.timer) { clearInterval(DIAL.timer); DIAL.timer = null; }
   DIAL.call = null; DIAL.state = 'ended'; DIAL.lastDur = dur; DIAL.lastSid = DIAL.sid || ((call.parameters && call.parameters.CallSid) || ''); DIAL.lastCvr = cvr || ''; DIAL.muted = false; DIAL.keypad = false;
   DIAL.lastManual = !!DIAL.manual; DIAL.manual = false;
-  LIVE.ended = true; liveClose(8000);
+  LIVE.ended = true; liveCloseLater();
   renderDial();
-  if (cvr && dur >= 20 && DIAL.lastSid) { DIAL.aiStatus = 'wait'; DIAL.aiFor = cvr; dialPoll(DIAL.lastSid, cvr, Date.now()); }
+  if (DIAL.aiStatus === 'ready' && DIAL.aiFor === cvr) { /* the live analysis landed first */ }
+  else if (cvr && dur >= 20 && DIAL.lastSid) { DIAL.aiStatus = 'wait'; DIAL.aiFor = cvr; dialPoll(DIAL.lastSid, cvr, Date.now()); }
   else if (cvr && dur > 0 && dur < 20) DIAL.aiStatus = 'short';
   renderDial();
 }
@@ -680,26 +681,14 @@ function renderDial() {
     </div>`;
     return;
   }
-  // ended: the call summary, then what Gemini made of it
-  const ai = DIAL.ai && DIAL.aiFor === L.cvr ? DIAL.ai : null;
+  // ended: the analysis shows in the Samtale pane; here only a pointer to it
+  // when another tab is open
+  if (DIAL.lastCvr === L.cvr && cardTabK === 'samtale') { p.hidden = true; p.innerHTML = ''; return; }
   const wait = DIAL.aiStatus === 'wait' && DIAL.aiFor === L.cvr;
   p.innerHTML = `<div class="dial ended">
     <span class="dial-st">Samtale slut${DIAL.lastDur ? ' · ' + dialFmt(DIAL.lastDur) : ''}</span>
     ${wait ? `<span class="dial-ai-wait"><i class="spin"></i>AI læser samtalen…</span>` : ''}
-    ${DIAL.aiStatus === 'short' ? `<span class="sub">For kort til et resumé.</span>` : DIAL.aiStatus === 'error' || DIAL.aiStatus === 'timeout' ? `<span class="sub">Resuméet kom ikke - skriv selv en note.</span>` : ''}
-    ${!wait && !ai && DIAL.lastCvr !== L.cvr ? `<button class="linkbtn" onclick="DIAL.state='idle';renderDial()">Luk</button>` : ''}
-    ${ai ? `<div class="aipanel">
-      <div class="ai-top"><span class="kicker">✦ Samtalen, læst af AI</span>${ai.no_demo_reason && ai.no_demo_reason !== 'none' ? `<span class="chip">${e(dialReasonLabel(ai.no_demo_reason))}</span>` : ''}</div>
-      <p class="ai-sum">${e(ai.summary)}</p>
-      ${ai.objections && ai.objections.length ? `<div class="ai-obj">${ai.objections.map((o) => `<span>${e(o)}</span>`).join('')}</div>` : ''}
-      ${ai.next_step ? `<p class="ai-next"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}
-      ${ai.coaching ? `<p class="ai-coach"><b>Til dig</b> ${e(ai.coaching)}</p>` : ''}
-      <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap">
-        <button class="pill sm" onclick="dialUseNote()">Brug som note</button>
-        ${ai.email && ai.email.body ? `<button class="pill sm violet" onclick="if(!mailOpen)toggleMail();mailPrefillFromCall(S.current)">Mail klar ✉</button>` : ''}
-        ${ai.checklist && (Object.values(ai.checklist.basics || {}).some((v) => v === true) || ai.checklist.spend_band) ? `<span class="sub">Tjeklisten forudfyldes, når du trykker Demo booket.</span>` : ''}
-      </div>
-    </div>` : ''}
+    <div class="row">${DIAL.lastCvr === L.cvr ? `<button class="pill sm" onclick="cardTab('samtale')">Se analysen →</button>` : ''}<button class="linkbtn" onclick="DIAL.state='idle';renderDial()">Luk</button></div>
   </div>`;
 }
 /* ─── The phone window: dial any number, see who is calling, open the lead ───
@@ -1245,7 +1234,7 @@ function toggleScreen(first) {
 }
 async function screen(reason, when) {
   const L = S.current; if (!L || busy) return; busy = true;
-  const note = ($('note') && $('note').value.trim()) || '';
+  const note = noteVal(L);
   try {
     apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note }));
     const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', noads: 'Noteret: ingen aktive annoncer - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
@@ -1275,14 +1264,14 @@ function fillMail(text, L) {
   if (!first) return String(text || '').replace(/\{fornavn\}/g, '').split('\n').map((s) => s.replace(/\s+$/, '')).join('\n')
     .replace(/\{firma\}/g, L.name || '').replace(/\{sdr\}/g, (me && me.name) || '')
     .replace(/\{calendly\}/g, (S.settings && S.settings.calendly_url) || '')
-    .replace(/\{note\}/g, ($('note') && $('note').value.trim()) || '')
+    .replace(/\{note\}/g, noteVal(L))
     .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
   return String(text || '')
     .replace(/\{fornavn\}/g, first)
     .replace(/\{firma\}/g, L.name || '')
     .replace(/\{sdr\}/g, (me && me.name) || '')
     .replace(/\{calendly\}/g, (S.settings && S.settings.calendly_url) || '')
-    .replace(/\{note\}/g, ($('note') && $('note').value.trim()) || '')
+    .replace(/\{note\}/g, noteVal(L))
     .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
 }
 /* "Mail sendt": the SDR writes the mail in their own Gmail (with their
@@ -1468,7 +1457,7 @@ function notRelevant() {
 }
 async function disp(action, callback_at, extra) {
   const L = S.current; if (!L || busy) return; busy = true;
-  const note = ($('note') && $('note').value.trim()) || '';
+  const note = noteVal(L);
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
     const dial = DIAL.lastCvr === L.cvr && DIAL.lastSid ? { call_sid: DIAL.lastSid, dial_s: DIAL.lastDur } : {};
@@ -1681,7 +1670,7 @@ function noteDirty() {
 }
 async function saveNote() {
   const L = S.current; if (!L || busy) return;
-  const txt = ($('note') && $('note').value.trim()) || '';
+  const txt = noteVal(L);
   if (!txt) { toast('Skriv en note først'); return; }
   busy = true;
   try {
@@ -1695,7 +1684,7 @@ async function saveNote() {
 }
 async function skip() {
   const L = S.current; if (!L || busy) return; busy = true;
-  try { apply(await post('/api/sdr/skip', { cvr: L.cvr, note: ($('note') && $('note').value.trim()) || '' })); toast('Flyttet nederst på listen'); }
+  try { apply(await post('/api/sdr/skip', { cvr: L.cvr, note: noteVal(L) })); toast('Flyttet nederst på listen'); }
   catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
 }
 async function jumpTo(cvr) {
@@ -1873,61 +1862,106 @@ function pitchPanelHtml(L) {
   const sw = !(L.contact && L.contact.name) ? `<div class="scr-sw">Omstilling: "Hej, det er ${e((me && me.name) || 'os')} fra Vedio. Hvem står for jeres markedsføring - må jeg tale med dem?"</div>` : '';
   return `${bar}${sw}<div class="scr">${scriptLadderHtml(s.parsed, L)}</div>`;
 }
-/* ─── Card tabs: Samtale (the live checklist while you talk) · Pitch · Noter ─── */
+/* ─── Card tabs: Samtale (the AI listening in) · Pitch ─── */
 let cardTabK = (() => { try { return localStorage.getItem('vl_card_tab') || 'samtale'; } catch { return 'samtale'; } })();
 function cardTab(k) {
   cardTabK = ['samtale', 'pitch'].includes(k) ? k : 'samtale'; try { localStorage.setItem('vl_card_tab', cardTabK); } catch {}
   document.querySelectorAll('.ctabs button').forEach((b) => b.classList.toggle('on', b.dataset.k === cardTabK));
   document.querySelectorAll('.cpane').forEach((p) => { p.hidden = p.dataset.k !== cardTabK; });
+  if (DIAL.state === 'ended') renderDial();
 }
-/* ─── Live: the AI listens while the call runs ───────────────────────────
-   The server forks the call's audio to Gemini in small chunks and pushes
-   the lines and, when there is something to react to, a hint - an answer
-   to an objection, a question to ask, an opening. The card subscribes by
-   call sid over SSE for the duration of the call. */
-const LIVE = { es: null, sid: '', lines: [], hints: [], ended: false, status: 'idle' };
-async function liveSubscribe(sid) {
+/* ─── Live: the call as it runs, and the analysis the moment it ends ─────
+   Every ~20 s the server sends the lines said and a running status: what is
+   covered on the checklist (with what the customer said), what is missing,
+   the objections so far with an answer, and the one thing to do next. At
+   hang-up it reads the whole transcript once more and pushes the finished
+   analysis - the same one the recording would give, seconds after the call. */
+const LIVE = { es: null, sid: '', cvr: '', lines: [], status: null, finalStatus: '', ended: false, state: 'idle', endT: null };
+async function liveSubscribe(sid, cvr) {
   liveClose();
-  LIVE.sid = sid; LIVE.lines = []; LIVE.hints = []; LIVE.ended = false; LIVE.status = 'connecting'; renderLivePane();
+  LIVE.sid = sid; LIVE.cvr = cvr || ''; LIVE.lines = []; LIVE.status = null; LIVE.finalStatus = ''; LIVE.ended = false; LIVE.state = 'connecting'; renderLivePane();
   try {
     const t = await post('/api/sdr/live/ticket', {});
     const es = new EventSource(`/api/sdr/live?sid=${encodeURIComponent(sid)}&ticket=${encodeURIComponent(t.ticket)}`);
     LIVE.es = es;
-    es.addEventListener('hello', (ev) => { const d = JSON.parse(ev.data); LIVE.lines = d.lines || []; LIVE.hints = (d.hints || []).slice().reverse(); LIVE.ended = !!d.ended; LIVE.status = 'live'; renderLivePane(); });
-    es.addEventListener('start', () => { LIVE.status = 'live'; renderLivePane(); });
-    es.addEventListener('lines', (ev) => { LIVE.lines.push(...JSON.parse(ev.data)); if (LIVE.lines.length > 200) LIVE.lines = LIVE.lines.slice(-200); renderLiveLines(); });
-    es.addEventListener('hint', (ev) => { LIVE.hints.unshift(JSON.parse(ev.data)); renderLiveHints(); });
-    es.addEventListener('end', () => { LIVE.ended = true; LIVE.status = 'ended'; renderLivePane(); liveClose(8000); });
-    es.onerror = () => { if (LIVE.status === 'connecting') { LIVE.status = 'off'; renderLivePane(); } };
-  } catch (ex) { LIVE.status = 'off'; renderLivePane(); }
+    es.addEventListener('hello', (ev) => { const d = JSON.parse(ev.data); LIVE.lines = d.lines || []; LIVE.status = d.status || null; LIVE.ended = !!d.ended; LIVE.state = LIVE.ended ? 'ended' : 'live'; if (d.final) liveFinalIn(d.final); renderLivePane(); });
+    es.addEventListener('start', () => { LIVE.state = 'live'; renderLivePane(); });
+    es.addEventListener('lines', (ev) => { LIVE.lines.push(...JSON.parse(ev.data)); if (LIVE.lines.length > 400) LIVE.lines = LIVE.lines.slice(-400); renderLiveLines(); });
+    es.addEventListener('status', (ev) => { LIVE.status = JSON.parse(ev.data); renderLivePane(); });
+    es.addEventListener('end', () => { LIVE.ended = true; LIVE.state = 'ended'; renderLivePane(); liveCloseLater(); });
+    es.addEventListener('final', (ev) => { liveFinalIn(JSON.parse(ev.data)); liveClose(1500); });
+    es.onerror = () => { if (LIVE.state === 'connecting') { LIVE.state = 'off'; renderLivePane(); } };
+  } catch (ex) { LIVE.state = 'off'; renderLivePane(); }
 }
-function liveClose(delay) { const es = LIVE.es; if (!es) return; LIVE.es = null; setTimeout(() => { try { es.close(); } catch {} }, delay || 0); }
-const LIVE_KIND = { objection: 'Indvending', question: 'Spørgsmål', cue: 'Åbning' };
-function liveHintHtml(h) { return `<div class="lh ${e(h.kind)}"><span class="lh-k">${e(LIVE_KIND[h.kind] || 'Hint')}${h.title ? ' · ' + e(h.title) : ''}</span><p>${e(h.text)}</p></div>`; }
+function liveClose(delay) { if (LIVE.endT) { clearTimeout(LIVE.endT); LIVE.endT = null; } const es = LIVE.es; if (!es) return; LIVE.es = null; setTimeout(() => { try { es.close(); } catch {} }, delay || 0); }
+function liveCloseLater() { if (!LIVE.endT) LIVE.endT = setTimeout(() => liveClose(), 120000); }
+/* The finished analysis lands where the recording's would: on DIAL, so the
+   card, the phone window and "Demo booket" all read the same thing. */
+function liveFinalIn(f) {
+  LIVE.finalStatus = f.status || '';
+  if (f.status === 'ready' && f.ai && LIVE.cvr) { DIAL.ai = f.ai; DIAL.aiFor = LIVE.cvr; DIAL.aiStatus = 'ready'; if (DIAL.poll) { clearTimeout(DIAL.poll); DIAL.poll = null; } }
+  else if (f.status === 'short' && DIAL.aiStatus === 'wait' && LIVE.ended && Math.round(DIAL.lastDur || 0) < 20) DIAL.aiStatus = 'short';
+  renderDial();
+}
 function liveLineHtml(x) { return `<div class="ll ${x.who === 'sdr' ? 'me' : ''}"><i>${x.who === 'sdr' ? 'Du' : 'Kunde'}</i><span>${e(x.text)}</span></div>`; }
-function renderLiveHints() { const el = $('live-hints'); if (!el) return; el.innerHTML = LIVE.hints.length ? LIVE.hints.slice(0, 4).map(liveHintHtml).join('') : `<div class="lh none"><span class="dial-ai-wait"><i class="spin"></i>Lytter - hints kommer, når der er noget at reagere på.</span></div>`; }
-function renderLiveLines() { const el = $('live-lines'); if (!el) return; el.innerHTML = LIVE.lines.slice(-8).map(liveLineHtml).join(''); el.scrollTop = el.scrollHeight; }
+function renderLiveLines() { const el = $('live-lines'); if (!el) return; el.innerHTML = LIVE.lines.slice(-10).map(liveLineHtml).join(''); el.scrollTop = el.scrollHeight; }
+function liveStatusHtml(st, faded) {
+  const CK = dcList(); const cov = st.covered || {};
+  const row = (x) => { const v = cov[x.id]; return `<div class="ls-row ${v ? 'ok' : ''}"><i></i><span>${e(x.short || x.title)}</span>${v ? `<em>${e(v)}</em>` : ''}</div>`; };
+  const band = st.spend_band && (CK.spend_bands || []).find((b) => b.id === st.spend_band);
+  const objs = (st.objections || []).slice().reverse();
+  return `<div class="ls ${faded ? 'faded' : ''}">
+    ${st.summary ? `<p class="ls-sum">${e(st.summary)}</p>` : ''}
+    <div class="ls-grid">
+      <div><h5>Grundlag</h5>${(CK.basics || []).map(row).join('')}${band ? `<div class="ls-row ok"><i></i><span>Annoncebudget</span><em>${e(band.label)}</em></div>` : ''}</div>
+      <div><h5>Købssignaler</h5>${(CK.signals || []).map(row).join('')}</div>
+    </div>
+    ${objs.length ? `<div class="ls-obj">${objs.map((o) => `<div class="lo"><b>„${e(o.said)}“</b>${o.answer ? `<p>${e(o.answer)}</p>` : ''}</div>`).join('')}</div>` : ''}
+    ${st.next && !faded ? `<div class="ls-next"><span>Nu</span>${e(st.next)}</div>` : ''}
+  </div>`;
+}
+function liveFinalHtml(ai) {
+  return `<div class="callai">
+      <div class="ai-top"><span class="kicker">✦ Samtalen, læst af AI</span>${ai.no_demo_reason && ai.no_demo_reason !== 'none' ? `<span class="chip">${e(dialReasonLabel(ai.no_demo_reason))}</span>` : ''}</div>
+      <p class="ai-sum">${e(ai.summary)}</p>
+      ${ai.objections && ai.objections.length ? `<div class="ai-obj">${ai.objections.map((o) => `<span>${e(o)}</span>`).join('')}</div>` : ''}
+      ${ai.next_step ? `<p class="ai-next"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}
+      ${ai.coaching ? `<p class="ai-coach"><b>Til dig</b> ${e(ai.coaching)}</p>` : ''}
+      <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap">
+        <button class="pill sm" onclick="dialUseNote()">Brug som note</button>
+        ${ai.email && ai.email.body ? `<button class="pill sm violet" onclick="if(!mailOpen)toggleMail();mailPrefillFromCall(S.current)">Mail klar ✉</button>` : ''}
+        ${ai.checklist && (Object.values(ai.checklist.basics || {}).some((v) => v === true) || ai.checklist.spend_band) ? `<span class="sub">Tjeklisten forudfyldes, når du trykker Demo booket.</span>` : ''}
+      </div>
+    </div>`;
+}
 function livePaneHtml(L) {
   const on = !!(S.settings && S.settings.dialer_me && S.settings.dialer_me.enabled && S.settings.dialer_me.live !== false);
   const inCall = DIAL.state === 'live' || DIAL.state === 'ringing' || DIAL.state === 'connecting';
-  if (!on) return `<div class="live idle"><span class="kicker">Samtalen</span><p>Når telefonen i browseren er slået til, lytter AI'en med under samtalen og skriver svar på indvendinger og det, du mangler at spørge om - her, mens I taler.</p></div>`;
+  if (!on) return `<div class="live idle"><span class="kicker">Samtalen</span><p>Når telefonen i browseren er slået til, lytter AI'en med under samtalen, holder styr på hvad der er afklaret og hvad der mangler, og laver analysen i det sekund, du lægger på.</p></div>`;
   if (inCall && LIVE.sid) return `<div class="live on">
-      <div class="live-head"><span class="kicker">AI lytter med</span><span class="live-on"><i class="dot"></i>${LIVE.status === 'live' ? 'live' : LIVE.status === 'off' ? 'ingen forbindelse' : 'forbinder…'}</span></div>
-      <div id="live-hints" class="live-hints"></div>
+      <div class="live-head"><span class="kicker">AI lytter med</span><span class="live-on"><i class="dot"></i>${LIVE.state === 'live' ? 'live' : LIVE.state === 'off' ? 'ingen forbindelse' : 'forbinder…'}</span></div>
+      ${LIVE.status ? liveStatusHtml(LIVE.status) : `<div class="lh none"><span class="dial-ai-wait"><i class="spin"></i>Lytter - første overblik om ca. 15 sek.</span></div>`}
       <div id="live-lines" class="live-lines"></div>
     </div>`;
-  if (DIAL.state === 'ended' && (LIVE.lines.length || LIVE.hints.length)) return `<div class="live done">
-      <div class="live-head"><span class="kicker">Samtalen er slut</span><span class="sub">${LIVE.hints.length} hints · ${LIVE.lines.length} linjer</span></div>
-      <p class="sub">AI'en læser hele optagelsen nu - resuméet, tjeklisten og mailen kommer under opkaldet.</p>
-      ${LIVE.hints.length ? `<details class="live-past"><summary>Hints under samtalen</summary>${LIVE.hints.map(liveHintHtml).join('')}</details>` : ''}
-    </div>`;
-  return `<div class="live idle"><span class="kicker">AI lytter med</span><p>Når du ringer, lytter AI'en med og skriver svar på indvendinger og det, du mangler at spørge om - her, mens I taler. Pitchen ligger under Pitch.</p></div>`;
+  // after the call: the finished analysis - or the wait for it
+  if (DIAL.state === 'ended' && DIAL.lastCvr === L.cvr) {
+    const ai = DIAL.ai && DIAL.aiFor === L.cvr ? DIAL.ai : null; const stt = DIAL.aiStatus;
+    const head = `<div class="live-head"><span class="kicker">Samtale slut${DIAL.lastDur ? ' · ' + dialFmt(DIAL.lastDur) : ''}</span>${ai ? '' : stt === 'wait' ? `<span class="dial-ai-wait"><i class="spin"></i>AI læser samtalen…</span>` : ''}</div>`;
+    if (ai) return `<div class="live done">${head}${liveFinalHtml(ai)}</div>`;
+    const note = stt === 'short' ? 'For kort til et resumé.' : stt === 'error' || stt === 'timeout' ? 'Resuméet kom ikke - skriv selv en note.' : stt === 'wait' ? '' : '';
+    return `<div class="live done">${head}${note ? `<p class="sub">${note}</p>` : ''}${LIVE.status ? liveStatusHtml(LIVE.status, true) : ''}</div>`;
+  }
+  return `<div class="live idle"><span class="kicker">AI lytter med</span><p>Når du ringer, lytter AI'en med og holder overblikket her: hvad er afklaret, hvad mangler, hvilke indvendinger kom - og hvad du kan svare. Når du lægger på, står analysen klar med det samme.</p></div>`;
 }
-function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) { p.innerHTML = livePaneHtml(L); renderLiveHints(); renderLiveLines(); } }
+function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) { p.innerHTML = livePaneHtml(L); renderLiveLines(); } }
 /* Notes live in the side column: the field, then the thread. */
+/* The draft belongs to the lead it was written on. A re-render of the same
+   lead (a poll, a saved contact) keeps it; the next lead starts empty -
+   otherwise an outcome there saved the previous lead's note on it. */
 function renderNotes() {
-  const b = $('notebox'); const L = S.current; if (!b) return; b.hidden = !L; if (!L) return;
-  const prev = $('note') ? $('note').value : '';
+  const b = $('notebox'); const L = S.current; if (!b) return; b.hidden = !L; if (!L) { b.dataset.cvr = ''; return; }
+  const prev = $('note') && b.dataset.cvr === L.cvr ? $('note').value : '';
+  b.dataset.cvr = L.cvr;
   const n = (L.note_thread || []).length;
   b.innerHTML = `<h4>Noter${n ? `<span class="dn">${n}</span>` : ''}</h4>
     <div class="composer" id="composer">
@@ -1935,8 +1969,10 @@ function renderNotes() {
       <div class="cfoot"><span class="sub" id="note-state">Gemmes også, når du vælger et udfald</span><button class="pill sm violet" id="note-save" onclick="saveNote()" disabled>Gem note</button></div>
     </div>
     ${noteThreadHtml(L.note_thread)}`;
-  if (prev && $('note')) $('note').value = prev;
+  if (prev && $('note')) { $('note').value = prev; noteDirty(); }
 }
+// The note text, only when the field was drawn for this lead.
+function noteVal(L) { const n = $('note'), b = $('notebox'); L = L || S.current; return n && b && L && b.dataset.cvr === L.cvr ? n.value.trim() : ''; }
 function pickScript(id) {
   scriptPickSet(id);
   const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);

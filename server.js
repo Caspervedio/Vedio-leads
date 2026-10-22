@@ -3598,7 +3598,7 @@ app.post("/api/twilio/voice", (req, res) => {
       const q = `?uid=${encodeURIComponent(owner[0])}&inbound=1&from=${encodeURIComponent(normDkPhone(from))}`;
       const rec = `record="record-from-answer-dual" recordingStatusCallback="${cb("/api/twilio/recording" + q)}" recordingStatusCallbackEvent="completed"`;
       const inLead = sdrLeadByPhone(d, from);
-      return res.send(twiml(`${liveStreamTwiml(D, owner[0], inLead ? inLead.cvr : "", "outbound")}<Dial timeout="25" ${rec}><Client statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed">${xesc(owner[0])}</Client></Dial><Say language="da-DK">Du har ringet til Vedio. Vi kunne ikke tage telefonen lige nu, men vi ringer tilbage.</Say>`));
+      return res.send(twiml(`${liveStreamTwiml(D, owner[0], inLead ? inLead.cvr : "", "outbound")}<Dial timeout="25" ${rec}><Client statusCallback="${cb("/api/twilio/status" + q)}" statusCallbackEvent="answered completed"><Identity>${xesc(owner[0])}</Identity><Parameter name="parent_sid" value="${xesc(String((req.body || {}).CallSid || ""))}"/></Client></Dial><Say language="da-DK">Du har ringet til Vedio. Vi kunne ikke tage telefonen lige nu, men vi ringer tilbage.</Say>`));
     }
     return res.send(twiml(`<Say language="da-DK">Du har ringet til Vedio. Vi ringer tilbage.</Say>`));
   } catch (e) { console.error("[twilio/voice]", e.message); res.send(twiml(`<Say language="da-DK">Der skete en fejl.</Say>`)); }
@@ -3643,26 +3643,37 @@ app.post("/api/twilio/recording", (req, res) => {
     const d = loadPool(); let lead = q.cvr ? (d.leads || []).find((l) => l.cvr === q.cvr) : null;
     if (!lead && q.inbound && q.from) lead = sdrLeadByPhone(d, q.from);
     if (!lead) return;
-    const rec = { sid: String(b.RecordingSid || ""), call_sid: String(b.CallSid || ""), at: nowIso, by: String(q.uid || ""), inbound: !!q.inbound, duration_s: Number(b.RecordingDuration) || 0, url: String(b.RecordingUrl || ""), status: "pending" };
-    if (!rec.sid) return;
-    lead.recordings = Array.isArray(lead.recordings) ? lead.recordings.filter((r) => r.sid !== rec.sid) : [];
-    lead.recordings.push(rec); if (lead.recordings.length > 40) lead.recordings = lead.recordings.slice(-40);
+    const fresh = { sid: String(b.RecordingSid || ""), call_sid: String(b.CallSid || ""), at: nowIso, by: String(q.uid || ""), inbound: !!q.inbound, duration_s: Number(b.RecordingDuration) || 0, url: String(b.RecordingUrl || ""), status: "pending" };
+    if (!fresh.sid) return;
+    lead.recordings = Array.isArray(lead.recordings) ? lead.recordings : [];
+    // The live listener may already have analysed this call (keyed by call sid):
+    // then the audio just attaches to it.
+    let rec = fresh.call_sid ? lead.recordings.find((r) => r.call_sid === fresh.call_sid) : null;
+    if (rec) { rec.sid = fresh.sid; rec.url = fresh.url; rec.duration_s = fresh.duration_s || rec.duration_s; if (!rec.by) rec.by = fresh.by; }
+    else { lead.recordings = lead.recordings.filter((r) => r.sid !== fresh.sid); lead.recordings.push(fresh); rec = fresh; }
+    if (lead.recordings.length > 40) lead.recordings = lead.recordings.slice(-40);
     sdrTouch(lead); savePool(d);
+    const live = LIVE_CALLS.get(fresh.call_sid);
+    if (rec.status === "ready" || (live && (live.finalStatus === "pending" || live.finalStatus === "running"))) return;
     setImmediate(() => recordingAnalyse(lead.cvr, rec.sid).catch((e) => console.error("[recording/analyse]", e.message)));
   } catch (e) { console.error("[twilio/recording]", e.message); }
 });
-// ─── Live listening: the call's audio, while it runs, to Gemini → hints ───
-// Casper: "AI listens to the live talk on the phone and comes with answers
-// on objections". Twilio forks both tracks of the call to a WebSocket here
-// (<Start><Stream>). Every few seconds the fresh audio goes to Gemini as a
-// stereo clip (left = SDR, right = customer) with the transcript so far and
-// the pitch's objection answers; it returns the new lines and, when there is
-// something to react to, one short hint. Lines and hints are pushed to the
-// SDR's card over SSE. Nothing is stored here - the recording is read in
-// full when the call ends.
+// ─── Live: the call as it runs, and the analysis the moment it ends ───────
+// Casper: hints that arrive 8-12 s late are no use mid-sentence. What helps
+// is an overview of the call as it goes - what is covered, what is missing,
+// which objections came and how to answer them - and the finished analysis
+// the second the call closes. Twilio forks both tracks (<Start><Stream>) to
+// the WebSocket here; every LIVE_CHUNK_MS the new audio goes to Gemini as a
+// stereo clip (left = SDR, right = customer) with the transcript so far, and
+// it returns the new lines plus an updated status. At "stop" the transcript
+// is read once more in full → the same analysis the recording would give
+// (summary, outcome, objections, next step, coaching, checklist, mail), stored
+// on the lead under the call sid, so the recording webhook only attaches the
+// audio afterwards. Status and analysis reach the SDR's card over SSE.
 const LIVE_CALLS = new Map();   // callSid → state
 const LIVE_TICKETS = new Map(); // one-time tickets for the SSE connection (EventSource can't send headers)
-const LIVE_CHUNK_MS = 5000, LIVE_KEEP_MS = 5 * 60e3, LIVE_MIN_BYTES = 8000 * 0.8; // 0.8 s of mulaw
+const LIVE_FINAL_THINKING = 512; // tokens Gemini may think before the finished analysis (0 = none)
+const LIVE_CHUNK_MS = 15000, LIVE_KEEP_MS = 5 * 60e3, LIVE_MIN_BYTES = 8000 * 0.8, LIVE_MIN_S = 20;
 function liveStreamTwiml(D, uid, cvr, sdrTrack) {
   if (D.live === false) return "";
   const url = xesc(PUBLIC_URL.replace(/^http/, "ws") + "/api/twilio/stream");
@@ -3683,10 +3694,11 @@ function wavStereo8k(left, right) {
 }
 function liveGet(sid, init) {
   let st = LIVE_CALLS.get(sid);
-  if (!st && init) { st = { sid, uid: "", cvr: "", sdrTrack: "inbound", buf: { inbound: [], outbound: [] }, lines: [], hints: [], subs: new Set(), timer: null, busy: false, started: Date.now(), ended: 0, name: "" }; LIVE_CALLS.set(sid, st); }
+  if (!st && init) { st = { sid, uid: "", cvr: "", sdrTrack: "inbound", inbound: false, buf: { inbound: [], outbound: [] }, lines: [], status: null, final: null, finalStatus: "", subs: new Set(), timer: null, busy: null, started: Date.now(), ended: 0 }; LIVE_CALLS.set(sid, st); }
   return st || null;
 }
 function liveSend(st, event, data) { const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const r of st.subs) { try { r.write(msg); } catch {} } }
+function liveTranscript(st, max) { return st.lines.map((x) => `${x.who === "sdr" ? "SDR" : "Kunde"}: ${x.text}`).join("\n").slice(-(max || 12000)); }
 // One Gemini call at a time per call; a tick that lands while one is running
 // leaves its audio in the buffer for the next.
 function liveFlush(st) { if (st.busy) return st.busy; st.busy = liveFlushRun(st).catch(() => {}).finally(() => { st.busy = null; }); return st.busy; }
@@ -3694,33 +3706,95 @@ async function liveFlushRun(st) {
   const take = (k) => { const b = Buffer.concat(st.buf[k]); st.buf[k] = []; return b; };
   const a = take("inbound"), b = take("outbound");
   if (a.length + b.length < LIVE_MIN_BYTES) return;
+  st.inflight = { inbound: a, outbound: b };
   try {
     const sdr = st.sdrTrack === "inbound" ? a : b, cust = st.sdrTrack === "inbound" ? b : a;
     const wav = wavStereo8k(mulawDecode(sdr), mulawDecode(cust)).toString("base64");
     const d = loadPool(); const settings = sdrSettings(d); const lead = st.cvr ? (d.leads || []).find((l) => l.cvr === st.cvr) : null;
-    const name = (loadUsers().find((u) => u.id === st.uid) || {}).name || "SDR'en";
+    const name = (loadUsers().find((u) => u.id === st.uid) || {}).name || "SDR'en"; const CK = SDR_CHECKLIST;
     const obj = String(settings.pitch_text || "").split("\n").filter((l) => /^\s*Hvis de siger/i.test(l)).slice(0, 8).join("\n");
-    const sofar = st.lines.slice(-14).map((x) => `${x.who === "sdr" ? name : "Kunde"}: ${x.text}`).join("\n");
+    const sofar = st.lines.slice(-40).map((x) => `${x.who === "sdr" ? name : "Kunde"}: ${x.text}`).join("\n");
     const prompt = [
-      `Du lytter med på et dansk salgsopkald, mens det foregår. ${name} fra Vedio (video-annoncer til Meta/TikTok; "Vee" laver løbende nye annoncer, så de ikke bliver trætte) ringer til ${lead ? lead.name : "en webshop"}. Vedhæftet er de seneste sekunder: venstre kanal er ${name}, højre kanal er kunden.`,
-      sofar ? `Samtalen indtil nu (seneste linjer):\n${sofar}` : "Samtalen er lige begyndt.",
-      obj ? `Pitchens svar på indvendinger:\n${obj}` : "",
-      `Tjeklisten, ${name} skal have afklaret: ${SDR_CHECKLIST.basics.map((x) => x.short).join(" · ")}. Købssignaler: ${SDR_CHECKLIST.signals.map((x) => x.short).join(" · ")}.`,
-      `Svar KUN som JSON: {"lines":[{"who":"sdr"|"kunde","text":"<ordret, kort>"}], "hint":{"kind":"objection"|"question"|"cue"|"none","title":"<3-5 ord, fx 'Indvending: har bureau'>","text":"<1-2 sætninger ${name} kan sige NU, på dansk - eller tom>"}}. Skriv kun det, der faktisk siges i klippet (tom liste hvis ingen tale). Giv kun et hint, når der er noget nyt at reagere på: en indvending, et spørgsmål, en åbning, eller noget vigtigt fra tjeklisten, der endnu ikke er afklaret. Ellers kind "none". Gentag ikke et hint, der allerede er givet.`,
-      st.hints.length ? `Hints allerede givet: ${st.hints.slice(-4).map((h) => h.title).join(" | ")}` : "",
+      `Du lytter med på et dansk salgsopkald, mens det foregår. ${name} fra Vedio (video-annoncer til Meta/TikTok; "Vee" laver løbende nye annoncer, så de ikke bliver trætte) ${st.inbound ? "taler med" : "ringer til"} ${lead ? lead.name : "en webshop"}. Vedhæftet er de seneste sekunder: venstre kanal er ${name}, højre kanal er kunden.`,
+      sofar ? `Samtalen indtil nu:\n${sofar}` : "Samtalen er lige begyndt.",
+      st.status ? `Dit seneste overblik (opdatér det): ${JSON.stringify({ summary: st.status.summary, covered: st.status.covered, objections: st.status.objections.map((o) => o.said) })}` : "",
+      obj ? `Pitchens egne svar på indvendinger (brug dem, når de passer):\n${obj}` : "",
+      `Tjeklisten, ${name} skal have afklaret (id: betydning). Grundlag: ${CK.basics.map((x) => `${x.id}: ${x.title}`).join("; ")}. Købssignaler: ${CK.signals.map((x) => `${x.id}: ${x.title}`).join("; ")}. Annoncebudget-bånd: ${CK.spend_bands.map((x) => `${x.id} = ${x.label}`).join(", ")}.`,
+      `Svar KUN som JSON: {"lines":[{"who":"sdr"|"kunde","text":"<ordret, kort>"}], "status":{"summary":"<1-2 sætninger: hvor er samtalen nu>", "covered":{"<id>":"<kort, hvad kunden sagde om det>"}, "spend_band":"<bånd-id eller tom>", "objections":[{"said":"<kundens indvending, kort>","answer":"<ét svar ${name} kan bruge, 1-2 sætninger på dansk>"}], "next":"<det ene ${name} bør gøre nu: det vigtigste punkt fra tjeklisten, der mangler, eller lukke mod en demo - 1 sætning>"}}. "lines" er kun det, der faktisk siges i klippet (tom liste, hvis ingen tale). "status" dækker hele samtalen indtil nu, ikke kun klippet. "covered" må kun indeholde punkter, kunden faktisk har afklaret - ingen antagelser.`,
     ].filter(Boolean).join("\n\n");
-    const out = await sdrGeminiJson(prompt, { data: wav, mime: "audio/wav" });
-    const lines = (Array.isArray(out.lines) ? out.lines : []).map((x) => ({ who: x.who === "sdr" ? "sdr" : "kunde", text: String(x.text || "").trim().slice(0, 300), at: Date.now() })).filter((x) => x.text);
-    if (lines.length) { st.lines.push(...lines); if (st.lines.length > 200) st.lines = st.lines.slice(-200); liveSend(st, "lines", lines); }
-    const h = out.hint && typeof out.hint === "object" ? out.hint : null;
-    if (h && h.kind && h.kind !== "none" && String(h.text || "").trim()) { const hint = { kind: String(h.kind).slice(0, 12), title: String(h.title || "").trim().slice(0, 60), text: String(h.text).trim().slice(0, 300), at: Date.now() }; st.hints.push(hint); liveSend(st, "hint", hint); }
+    const out = await sdrGeminiJson(prompt, { data: wav, mime: "audio/wav" }, { thinking: 0 });
+    // the call ended meanwhile: this audio went into the final analysis instead
+    if (st.ended) return;
+    const lines = (Array.isArray(out.lines) ? out.lines : []).map((x) => ({ who: x.who === "sdr" ? "sdr" : "kunde", text: String(x.text || "").trim().slice(0, 400), at: Date.now() })).filter((x) => x.text);
+    if (lines.length) { st.lines.push(...lines); if (st.lines.length > 600) st.lines = st.lines.slice(-600); liveSend(st, "lines", lines); }
+    if (out.status && typeof out.status === "object") { st.status = liveStatusMerge(st.status, out.status); liveSend(st, "status", st.status); }
   } catch (e) { console.warn("[live]", st.sid, e.message.slice(0, 120)); }
+  finally { if (!st.ended) st.inflight = null; }
+}
+// What is covered only grows; objections are kept once each, first answer wins.
+function liveStatusMerge(prev, s) {
+  const CK = SDR_CHECKLIST; const ids = new Set([...CK.basics, ...CK.signals].map((x) => x.id));
+  const covered = { ...((prev && prev.covered) || {}) };
+  for (const [k, v] of Object.entries(s.covered && typeof s.covered === "object" ? s.covered : {})) if (ids.has(k) && String(v || "").trim()) covered[k] = String(v).trim().slice(0, 120);
+  const seen = new Set(); const objections = [];
+  for (const o of [...((prev && prev.objections) || []), ...(Array.isArray(s.objections) ? s.objections : [])]) {
+    const said = String((o && o.said) || "").trim().slice(0, 160); if (!said) continue;
+    const key = said.toLowerCase().replace(/[^a-zæøå0-9]/g, "").slice(0, 30); if (seen.has(key)) continue; seen.add(key);
+    objections.push({ said, answer: String((o && o.answer) || "").trim().slice(0, 300) });
+  }
+  const band = s.spend_band && s.spend_band !== "unknown" ? spendBandOf(String(s.spend_band)) : null;
+  return { summary: String(s.summary || (prev && prev.summary) || "").trim().slice(0, 400), covered, spend_band: band ? band.id : ((prev && prev.spend_band) || ""), objections: objections.slice(-6), next: String(s.next || "").trim().slice(0, 240), at: Date.now() };
+}
+// The finished analysis from the transcript, stored like a recording's.
+async function liveFinal(st, tail) {
+  const dur = Math.round((st.ended - st.started) / 1000);
+  const fail = (status) => { st.finalStatus = status; liveRecordingFallback(st); liveSend(st, "final", { status }); };
+  if (dur < LIVE_MIN_S || (!st.lines.length && !tail)) return fail("short");
+  const d = loadPool(); const lead = st.cvr ? (d.leads || []).find((l) => l.cvr === st.cvr) : null;
+  if (!lead) return fail("nolead");
+  st.finalStatus = "running";
+  const sdrName = (loadUsers().find((u) => u.id === st.uid) || {}).name || "SDR'en";
+  let out;
+  try { out = await sdrGeminiJson(callAnalysisPrompt({ inbound: st.inbound, sdrName, lead, transcript: liveTranscript(st, 12000) || "(intet endnu - kun de vedhæftede sekunder)", tail: !!tail }), tail ? { data: tail, mime: "audio/wav" } : null, { thinking: LIVE_FINAL_THINKING }); }
+  catch (e) {
+    console.warn("[live/final]", st.sid, e.message.slice(0, 120)); return fail("error");
+  }
+  const { ai } = callAnalysisParse(out);
+  const tailLines = (Array.isArray(out.tail) ? out.tail : []).map((x) => ({ who: x && x.who === "sdr" ? "sdr" : "kunde", text: String((x && x.text) || "").trim().slice(0, 400), at: Date.now() })).filter((x) => x.text);
+  if (tailLines.length) { st.lines.push(...tailLines); liveSend(st, "lines", tailLines); }
+  const transcript = liveTranscript(st, 12000);
+  const now = new Date().toISOString();
+  const d2 = loadPool(); const l2 = (d2.leads || []).find((x) => x.cvr === st.cvr); if (!l2) return fail("nolead");
+  l2.recordings = Array.isArray(l2.recordings) ? l2.recordings : [];
+  let rec = l2.recordings.find((r) => r.call_sid === st.sid);
+  if (rec && rec.status === "ready") { st.final = rec.ai; st.finalStatus = "ready"; liveSend(st, "final", { status: "ready", ai: rec.ai }); return; }
+  if (!rec) { rec = { sid: "live:" + st.sid, call_sid: st.sid, at: now, by: st.uid, inbound: st.inbound, duration_s: dur, url: "", status: "pending" }; l2.recordings.push(rec); if (l2.recordings.length > 40) l2.recordings = l2.recordings.slice(-40); }
+  rec.status = "ready"; rec.source = "live"; rec.transcript = transcript; rec.ai = ai; rec.ready_at = now; if (!rec.duration_s) rec.duration_s = dur;
+  if (!rec.ai_noted) { rec.ai_noted = true; l2.note_log = Array.isArray(l2.note_log) ? l2.note_log : []; l2.note_log.push({ at: now, by: st.uid, where: "call", text: `AI-resumé af opkaldet (${Math.max(1, Math.round(rec.duration_s / 60))} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` }); }
+  sdrTouch(l2); savePool(d2);
+  logActivity("sdr-call-ai", `${sdrName}: samtale med ${l2.name} læst af AI - ${ai.summary.slice(0, 80)}`, { cvr: st.cvr, userId: st.uid });
+  st.final = ai; st.finalStatus = "ready"; liveSend(st, "final", { status: "ready", ai });
+}
+// The recording webhook skips its own analysis while the live one is on its
+// way; if that one doesn't land, the recording is read after all.
+function liveRecordingFallback(st) {
+  try {
+    const d = loadPool();
+    for (const l of d.leads || []) { const r = (l.recordings || []).find((x) => x.call_sid === st.sid); if (r) { if (r.url && r.status !== "ready" && !String(r.sid).startsWith("live:")) setImmediate(() => recordingAnalyse(l.cvr, r.sid).catch((e) => console.error("[recording/analyse]", e.message))); return; } }
+  } catch (e) { console.warn("[live/fallback]", e.message); }
 }
 function liveEnd(st) {
   if (st.timer) { clearInterval(st.timer); st.timer = null; }
-  st.ended = Date.now();
-  // the last seconds first, then "end" - so the card gets the final lines before it lets go
-  (async () => { try { await st.busy; await liveFlush(st); } catch {} liveSend(st, "end", { lines: st.lines.length, hints: st.hints.length }); })();
+  st.ended = Date.now(); st.finalStatus = "pending";
+  // the last seconds, then "end", then the finished analysis
+  (async () => {
+    const take = (k) => { const b = Buffer.concat([...(st.inflight ? [st.inflight[k]] : []), ...st.buf[k]]); st.buf[k] = []; return b; };
+    const a = take("inbound"), b = take("outbound");
+    const sdr = st.sdrTrack === "inbound" ? a : b, cust = st.sdrTrack === "inbound" ? b : a;
+    const tail = a.length + b.length >= LIVE_MIN_BYTES ? wavStereo8k(mulawDecode(sdr), mulawDecode(cust)).toString("base64") : null; st.inflight = null;
+    liveSend(st, "end", { lines: st.lines.length, s: Math.round((st.ended - st.started) / 1000) });
+    try { await liveFinal(st, tail); } catch (e) { console.warn("[live/final]", st.sid, e.message.slice(0, 120)); st.finalStatus = "error"; liveRecordingFallback(st); liveSend(st, "final", { status: "error" }); }
+  })();
   setTimeout(() => { for (const r of st.subs) { try { r.end(); } catch {} } LIVE_CALLS.delete(st.sid); }, LIVE_KEEP_MS);
 }
 // Twilio's media stream, one WebSocket per call.
@@ -3742,7 +3816,7 @@ function liveAttach(server) {
         let m; try { m = JSON.parse(raw.toString()); } catch { return; }
         if (m.event === "start") {
           const p = (m.start && m.start.customParameters) || {};
-          st = liveGet(m.start.callSid, true); st.uid = String(p.uid || ""); st.cvr = String(p.cvr || ""); st.sdrTrack = p.sdr === "outbound" ? "outbound" : "inbound";
+          st = liveGet(m.start.callSid, true); st.started = Date.now(); st.uid = String(p.uid || ""); st.cvr = String(p.cvr || ""); st.sdrTrack = p.sdr === "outbound" ? "outbound" : "inbound"; st.inbound = st.sdrTrack === "outbound";
           st.timer = setInterval(() => liveFlush(st), LIVE_CHUNK_MS);
           liveSend(st, "start", { at: st.started });
         } else if (m.event === "media" && st) {
@@ -3760,13 +3834,13 @@ app.post("/api/sdr/live/ticket", authMiddleware, (req, res) => {
   for (const [k, v] of LIVE_TICKETS) if (v.exp < Date.now()) LIVE_TICKETS.delete(k);
   res.json({ ok: true, ticket: t });
 });
-// The card listens here during a call: past lines first, then live.
+// The card listens here during a call: what is there already, then live.
 app.get("/api/sdr/live", (req, res) => {
   const tk = LIVE_TICKETS.get(String(req.query.ticket || "")); if (!tk || tk.exp < Date.now()) return res.status(403).end();
   const sid = String(req.query.sid || ""); if (!sid) return res.status(400).end();
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
   const st = liveGet(sid, true); st.subs.add(res);
-  res.write(`event: hello\ndata: ${JSON.stringify({ lines: st.lines.slice(-30), hints: st.hints.slice(-5), ended: !!st.ended })}\n\n`);
+  res.write(`event: hello\ndata: ${JSON.stringify({ lines: st.lines.slice(-40), status: st.status, ended: !!st.ended, final: st.finalStatus && st.finalStatus !== "running" ? { status: st.finalStatus, ai: st.final } : null })}\n\n`);
   const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 15000);
   req.on("close", () => { clearInterval(ping); st.subs.delete(res); });
 });
@@ -3776,21 +3850,18 @@ async function recordingFetchB64(url) {
   if (!r.ok) throw new Error(`recording ${r.status}`);
   return Buffer.from(await r.arrayBuffer()).toString("base64");
 }
-async function recordingAnalyse(cvr, rsid) {
-  const setRec = (fn) => { const d = loadPool(); const l = (d.leads || []).find((x) => x.cvr === cvr); const r = l && (l.recordings || []).find((x) => x.sid === rsid); if (!r) return null; fn(l, r, d); sdrTouch(l); savePool(d); return r; };
-  const d0 = loadPool(); const lead = (d0.leads || []).find((x) => x.cvr === cvr); const rec = lead && (lead.recordings || []).find((x) => x.sid === rsid);
-  if (!lead || !rec) return;
-  if (rec.duration_s < RECORDING_MIN_S) { setRec((l, r) => { r.status = "short"; }); return; }
-  let b64;
-  try { b64 = await recordingFetchB64(rec.url); } catch (e) { setRec((l, r) => { r.status = "error"; r.error = e.message; }); return; }
-  if (b64.length > RECORDING_MAX_B64) { setRec((l, r) => { r.status = "too-long"; }); return; }
-  const settings = sdrSettings(d0); const users = loadUsers(); const sdrName = (users.find((u) => u.id === rec.by) || {}).name || "SDR'en";
+// One analysis, two sources: the recording (audio attached) or the live
+// transcript (text). Same fields either way, so the card and the checklist
+// don't care which got there first.
+function callAnalysisPrompt({ inbound, sdrName, lead, transcript, tail }) {
   const c = sdrPrimaryContact(lead) || {}; const CK = SDR_CHECKLIST;
-  const prompt = [
-    `Du er salgscoach for Vedio (video-annoncer til Meta/TikTok; produktet "Vee" laver løbende nye annoncer, så de ikke bliver trætte). Vedhæftet er en optagelse af et ${rec.inbound ? "indgående" : "udgående"} salgsopkald på dansk. Venstre kanal er ${sdrName} (vores SDR), højre kanal er kunden${lead.name ? ` (${lead.name}${c.name ? ", " + c.name : ""})` : ""}.`,
+  const who = `${sdrName} (vores SDR)`, cust = `kunden${lead.name ? ` (${lead.name}${c.name ? ", " + c.name : ""})` : ""}`;
+  return [
+    `Du er salgscoach for Vedio (video-annoncer til Meta/TikTok; produktet "Vee" laver løbende nye annoncer, så de ikke bliver trætte). ${transcript ? `Herunder er transskriptionen af et ${inbound ? "indgående" : "udgående"} salgsopkald på dansk mellem ${who} og ${cust}.` : `Vedhæftet er en optagelse af et ${inbound ? "indgående" : "udgående"} salgsopkald på dansk. Venstre kanal er ${who}, højre kanal er ${cust}.`}`,
+    transcript ? `Samtalen:\n${transcript}` : "",
+    tail ? `Vedhæftet er samtalens sidste sekunder (venstre kanal = ${sdrName}, højre = kunden), som endnu ikke står i transskriptionen. Tag dem med i analysen - ofte er det her, aftalen bliver lavet.` : "",
     `Svar KUN som JSON med præcis disse felter:
-{"transcript": "<samtalen ordret på dansk, med 'SDR:' og 'Kunde:' foran hver replik>",
- "summary": "<2-3 sætninger: hvem talte SDR'en med, hvad er deres situation, hvad blev aftalt>",
+{${transcript ? "" : `"transcript": "<samtalen ordret på dansk, med 'SDR:' og 'Kunde:' foran hver replik>",\n `}${tail ? `"tail": [{"who": "sdr"|"kunde", "text": "<det, der siges i de vedhæftede sidste sekunder, ordret>"}],\n `: ""}"summary": "<2-3 sætninger: hvem talte SDR'en med, hvad er deres situation, hvad blev aftalt>",
  "reached": "<person|switchboard|voicemail|none>",
  "outcome_guess": "<demo|follow-up|email|not-now|not-relevant|no-answer>",
  "no_demo_reason": "<budget|not-decider|has-agency|no-ads|timing|not-interested|unreachable|other|none>",
@@ -3801,11 +3872,10 @@ async function recordingAnalyse(cvr, rsid) {
  "email": {"subject": "<emne>", "body": "<kort opfølgningsmail på dansk fra ${sdrName}, 4-8 linjer, der refererer til det der blev sagt, uden pris, med en tydelig næste handling; skriv {calendly} hvor booking-linket skal stå; tom streng hvis en mail ikke giver mening>"}}`,
     `Tjeklisten: grundlag = ${CK.basics.map((x) => `${x.id}: ${x.title}`).join("; ")}. Købssignaler = ${CK.signals.map((x) => `${x.id}: ${x.title}`).join("; ")}. Sæt kun true/false når samtalen faktisk afgør det, ellers null. spend_band ud fra hvad kunden selv siger om annoncebudget (kr/md), ellers tom.`,
     `Hold dig til det, der blev sagt. Ingen antagelser om tal, der ikke blev nævnt.`,
-  ].join("\n\n");
-  let out;
-  try { out = await sdrGeminiJson(prompt, { data: b64, mime: "audio/mpeg" }); }
-  catch (e) { setRec((l, r) => { r.status = "error"; r.error = e.message.slice(0, 200); }); return; }
-  const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+  ].filter(Boolean).join("\n\n");
+}
+function callAnalysisParse(out) {
+  const CK = SDR_CHECKLIST; const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
   const ai = {
     summary: str(out.summary, 700), reached: str(out.reached, 20), outcome_guess: str(out.outcome_guess, 20), no_demo_reason: str(out.no_demo_reason, 20),
     objections: Array.isArray(out.objections) ? out.objections.map((x) => str(x, 200)).filter(Boolean).slice(0, 6) : [],
@@ -3813,11 +3883,26 @@ async function recordingAnalyse(cvr, rsid) {
     checklist: (() => { const ck = out.checklist || {}; const pick = (list, src) => Object.fromEntries(list.map((x) => [x.id, typeof (src || {})[x.id] === "boolean" ? src[x.id] : null])); const band = spendBandOf(String(ck.spend_band || "")); return { basics: pick(CK.basics, ck.basics), signals: pick(CK.signals, ck.signals), spend_band: band ? band.id : "" }; })(),
     email: { subject: str(out.email && out.email.subject, 150), body: str(out.email && out.email.body, 2000) },
   };
-  const transcript = str(out.transcript, 12000);
+  return { ai, transcript: str(out.transcript, 12000) };
+}
+async function recordingAnalyse(cvr, rsid) {
+  const setRec = (fn) => { const d = loadPool(); const l = (d.leads || []).find((x) => x.cvr === cvr); const r = l && (l.recordings || []).find((x) => x.sid === rsid); if (!r) return null; fn(l, r, d); sdrTouch(l); savePool(d); return r; };
+  const d0 = loadPool(); const lead = (d0.leads || []).find((x) => x.cvr === cvr); const rec = lead && (lead.recordings || []).find((x) => x.sid === rsid);
+  if (!lead || !rec) return;
+  if (rec.duration_s < RECORDING_MIN_S) { setRec((l, r) => { r.status = "short"; }); return; }
+  let b64;
+  try { b64 = await recordingFetchB64(rec.url); } catch (e) { setRec((l, r) => { r.status = "error"; r.error = e.message; }); return; }
+  if (b64.length > RECORDING_MAX_B64) { setRec((l, r) => { r.status = "too-long"; }); return; }
+  const sdrName = (loadUsers().find((u) => u.id === rec.by) || {}).name || "SDR'en";
+  let out;
+  try { out = await sdrGeminiJson(callAnalysisPrompt({ inbound: rec.inbound, sdrName, lead }), { data: b64, mime: "audio/mpeg" }); }
+  catch (e) { setRec((l, r) => { r.status = "error"; r.error = e.message.slice(0, 200); }); return; }
+  const { ai, transcript } = callAnalysisParse(out);
   setRec((l, r) => {
-    r.status = "ready"; r.transcript = transcript; r.ai = ai; r.ready_at = new Date().toISOString();
+    r.status = "ready"; r.transcript = transcript; r.ai = ai; r.ready_at = new Date().toISOString(); delete r.source;
+    if (r.ai_noted) return; r.ai_noted = true;
     l.note_log = Array.isArray(l.note_log) ? l.note_log : [];
-    l.note_log.push({ at: r.ready_at, by: r.by, where: "call", text: `AI-resumé af opkaldet (${Math.round(r.duration_s / 60)} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` });
+    l.note_log.push({ at: r.ready_at, by: r.by, where: "call", text: `AI-resumé af opkaldet (${Math.max(1, Math.round(r.duration_s / 60))} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` });
   });
   logActivity("sdr-call-ai", `${sdrName}: samtale med ${lead.name} læst af AI - ${ai.summary.slice(0, 80)}`, { cvr, userId: rec.by });
 }
@@ -14702,14 +14787,14 @@ app.post("/api/cron/twenty-retry-sync", async (req, res) => {
 });
 // Gemini (2.5 Flash) JSON call with optional inline audio - used by the
 // post-call voice debrief. Returns parsed JSON or throws.
-async function sdrGeminiJson(prompt, audio) {
+async function sdrGeminiJson(prompt, audio, opts) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY mangler på serveren");
   const parts = [{ text: prompt }];
   if (audio && audio.data) parts.push({ inline_data: { mime_type: audio.mime || "audio/webm", data: audio.data } });
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: { responseMimeType: "application/json", temperature: 0.3 } }),
+    body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: { responseMimeType: "application/json", temperature: 0.3, ...(opts && Number.isFinite(opts.thinking) ? { thinkingConfig: { thinkingBudget: opts.thinking } } : {}) } }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Gemini ${r.status}: ${(j.error && j.error.message) || "ukendt fejl"}`);

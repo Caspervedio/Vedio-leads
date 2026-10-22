@@ -270,26 +270,54 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   og "Opfølgninger der venter" er taget ud af kortet (de ligger på Ringelisten og
   under Opfølgning). Træning- og mail-knapperne er væk; mailen skrives nu af AI'en
   efter samtalen. Tastaturgenvejene virker stadig, hint-linjen er fjernet.
-- **AI lytter med under samtalen (Samtale-fanen).** Mens opkaldet kører, forker Twilio
-  lyden til serveren (`<Start><Stream track="both_tracks">` → WebSocket
-  `/api/twilio/stream`, μ-law i 20 ms-pakker, begge kanaler). Hvert 5. sekund
-  (`LIVE_CHUNK_MS`) sendes de nye sekunder som stereo-WAV (venstre = SDR, højre =
-  kunde) til Gemini sammen med de seneste linjer, pitchens "Hvis de siger …"-svar og
-  tjeklisten, og den svarer med de linjer, der blev sagt, og højst ét hint, når der er
-  noget at reagere på: **Indvending** (et svar, SDR'en kan sige nu), **Spørgsmål**
-  (noget fra tjeklisten, der mangler) eller **Åbning** (et købssignal). Kortet
-  abonnerer pr. `CallSid` over SSE (`POST /api/sdr/live/ticket` → engangsbillet,
-  `GET /api/sdr/live?sid&ticket`: hello/start/lines/hint/end) og viser de nyeste
-  hints øverst med den rullende transskription under; ved "end" er alle linjer
-  sendt først (ét Gemini-kald ad gangen pr. samtale, det sidste før "end"). Ca.
-  8-12 s fra noget siges, til det står på kortet. Admin slår det fra under
-  Telefoni ("AI lytter med under samtalen", `dialer.live`), og så sendes ingen
-  Stream-TwiML. WebSocket-forbindelsen skal bære Twilios signatur (`X-Twilio-Signature`
-  over wss-adressen), ellers afvises den med 403, før den koster et Gemini-kald.
-  Kun samtalens linjer holdes i hukommelsen i 5 min efter opkaldet;
-  intet gemmes på leadet herfra (det gør optagelsens analyse bagefter). Cloud Run
-  holder WebSocket'en som ét request, så en samtale over 20 min (request-timeout)
-  mister live-delen, ikke opkaldet.
+- **AI lytter med under samtalen (Samtale-fanen).** Hints, der kommer 8-12 sekunder
+  efter noget er sagt, hjælper ikke midt i en sætning (Casper, okt. 2026), så fanen er
+  et **løbende overblik** plus **analysen ca. 7 sekunder efter, røret er lagt på**. Mens
+  opkaldet kører, forker Twilio lyden til serveren (`<Start><Stream track="both_tracks">`
+  → WebSocket `/api/twilio/stream`, μ-law i 20 ms-pakker, begge kanaler; forbindelsen
+  skal bære Twilios signatur over wss-adressen, ellers 403). Hvert 15. sekund
+  (`LIVE_CHUNK_MS`) sendes de nye sekunder som stereo-WAV (venstre = SDR, højre = kunde)
+  til Gemini 2.5 Flash uden "thinking" (svar på 3-5 s) sammen med linjerne indtil nu,
+  det forrige overblik, pitchens "Hvis de siger …"-svar og tjeklisten. Den svarer med de
+  linjer, der blev sagt, og et opdateret **status**-objekt: et par sætninger om hvor
+  samtalen er, hvilke tjeklistepunkter kunden faktisk har afklaret (med hvad de sagde -
+  et afklaret punkt bliver stående), annoncebudget-bånd ("ved ikke" tæller ikke),
+  indvendingerne indtil nu med ét svar til hver, og det ene, SDR'en bør gøre nu. Kortet
+  viser grundlag/købssignaler med flueben, indvendinger med svar, en "Nu"-linje og den
+  rullende transskription.
+  **Når røret lægges på**, venter serveren ikke på et klip, der er undervejs: dets lyd og
+  resten af bufferen sendes som de sidste sekunder sammen med hele transskriptionen i
+  ét kald (`liveFinal`, lille thinking-budget `LIVE_FINAL_THINKING` = 512), med samme
+  prompt som optagelsens analyse (`callAnalysisPrompt`/`callAnalysisParse`, delt mellem
+  de to) plus feltet `tail` (de sidste sekunders replikker, som lægges til
+  transskriptionen) → resumé, hvem man fik fat i, udfald, "hvorfor ikke demo",
+  indvendinger, næste skridt, coaching, tjeklisteforslag og opfølgningsmail. Den gemmes
+  på leadet under opkaldets `CallSid` (`recordings[]` med `source: "live"`,
+  `sid: "live:<CallSid>"` indtil optagelsen kommer) og skrives i notetråden (én note pr.
+  samtale, `ai_noted`).
+  **Optagelsen bagefter:** `/api/twilio/recording` hæfter lyden (sid, url, Twilios
+  varighed) på den eksisterende post og springer sin egen analyse over, så længe
+  live-analysen er undervejs (`finalStatus` pending/running). Fejler den, er samtalen
+  for kort (< 20 s) eller kom der ingen linjer, læses optagelsen som før
+  (`liveRecordingFallback`); er live-delen slået fra, sker det altid.
+  **Indgående opkald:** strømmen og optagelsen hører til det indgående hovedopkald, mens
+  browseren får et barnekald; TwiML'en giver derfor `parent_sid` med til browseren
+  (`<Client><Identity>…</Identity><Parameter name="parent_sid">`), og kortet abonnerer
+  og gemmer udfaldet på det.
+  Kortet abonnerer pr. `CallSid` over SSE (`POST /api/sdr/live/ticket` → engangsbillet,
+  `GET /api/sdr/live?sid&ticket`: hello/start/lines/status/end/final) og lægger analysen
+  samme sted, som optagelsens ville være endt (`DIAL.ai`), så Samtale-fanen,
+  telefonvinduet og "Demo booket" læser det samme. Admin slår det fra under Telefoni
+  ("AI lytter med under samtalen", `dialer.live`), og så sendes ingen Stream-TwiML.
+  Samtalens linjer holdes i hukommelsen i 5 min efter opkaldet. Cloud Run holder
+  WebSocket'en som ét request, så en samtale over 20 min (request-timeout) mister
+  live-delen, ikke opkaldet - optagelsen samler op.
+- **Notefeltet hører til ét lead.** Kladden i notefeltet følger det lead, den blev
+  skrevet på (`#notebox` husker `data-cvr`): en genopfrisk af samme lead (polling, gemt
+  kontakt) beholder teksten, men næste lead starter med et tomt felt, og udfald, skip,
+  fravalg og mailskabeloner læser kun noten gennem `noteVal(L)`, som er tom, hvis feltet
+  blev tegnet for et andet lead. (Fejlen kom, da Noter flyttede til højre kolonne:
+  teksten fulgte med til næste lead og blev gemt der ved udfaldet.)
 - **Tjekliste og tier ved "Demo booket".** Når en SDR trykker *Demo booket*, åbner en
   tjekliste i to trin, før udfaldet gemmes: først de **seks grundlag**, der skal være
   på plads for at demoen kan kvalificeres (sælger online · mindst 10.000 kr/md på
