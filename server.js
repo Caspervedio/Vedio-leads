@@ -9329,7 +9329,7 @@ function adlibDue(l, now) {
 function adlibCandidates(d, now) {
   const onList = new Set(Object.values(d.sdr_lists || {}).flatMap((L) => L.cvrs || []));
   return (d.leads || []).filter((l) => l.facebook_adlib_id && sdrIsActive(l) && !l.archived_at && !l.retry_pool && sdrCallable(l) && adlibDue(l, now) && !(now - (ADLIB_FAILED.get(l.cvr) || 0) < ADLIB_RETRY_MS))
-    .sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || ((a.lastCallAt ? 1 : 0) - (b.lastCallAt ? 1 : 0)) || ((b.meta_verified_active === true) - (a.meta_verified_active === true)) || ((sdrHasPerson(b) ? 1 : 0) - (sdrHasPerson(a) ? 1 : 0)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
+    .sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || ((a.lastCallAt ? 1 : 0) - (b.lastCallAt ? 1 : 0)) || (storeLeadsRankPref(a.storeleads_rank) - storeLeadsRankPref(b.storeleads_rank)) || ((b.meta_verified_active === true) - (a.meta_verified_active === true)) || ((sdrHasPerson(b) ? 1 : 0) - (sdrHasPerson(a) ? 1 : 0)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
 }
 function adlibCoverage(d) {
   const now = Date.now(); const c = { total: 0, active: 0, past: 0, stale: 0, none: 0, unchecked: 0, no_page: 0, due: 0 };
@@ -9368,10 +9368,19 @@ async function adlibSweep(batch) {
       console.log(`[adlib] ${flushed} gemt efter ${Math.round((Date.now() - t0) / 1000)} s · aktive ${stats.active} · før ${stats.past} · aldrig ${stats.none}`);
     };
     // "Never ran ads" answers wait in `held` until a page with ads shows the
-    // library is answering normally. ADLIB_NONE_STREAK in a row and nothing
-    // else is not a real run (about 4 in 10 pages are "never" when it works):
-    // they are thrown away and the run stops; the next tick tries again.
+    // library is answering normally. After ADLIB_NONE_STREAK in a row we ask a
+    // page we know advertises (the canary): if it reads as active, the streak
+    // is real - a batch of small shops that never advertised, which happens -
+    // and the answers are kept. If the canary also comes back empty, Meta is
+    // serving empty pages: the streak is thrown away and the run stops.
+    // (Without the canary the same 12 genuine "never" leads stopped every run.)
     const held = new Map(); let streak = 0, blockedRow = 0;
+    const canaryOk = async () => {
+      const dc = loadPool(); const c = (dc.leads || []).filter((x) => x.adlib_status === "active" && Number(x.adlib_active) >= 10 && x.facebook_adlib_id && !held.has(x.cvr))
+        .sort((a, b) => String(b.adlib_checked_at || "").localeCompare(String(a.adlib_checked_at || "")))[0];
+      if (!c) return false;
+      try { const r = await adlibCheckLead(lb.context, c); const ok = !!(r && !r.blocked && r.active > 0); console.log(`[adlib] kanarie ${c.name}: ${ok ? "aktiv - Meta svarer normalt" : "tom - Meta svarer ikke normalt"}`); return ok; } catch { return false; }
+    };
     for (const l of pick) {
       if (Date.now() - t0 > ADLIB_MAX_RUN_MS) { stats.cut = true; break; }
       try {
@@ -9381,7 +9390,10 @@ async function adlibSweep(batch) {
         blockedRow = 0; ADLIB_FAILED.delete(l.cvr);
         if (r.active === 0 && r.total === 0) {
           held.set(l.cvr, r); streak++;
-          if (streak >= ADLIB_NONE_STREAK) { stats.suspect = held.size; held.clear(); console.warn(`[adlib] ${streak} "aldrig" i træk - Meta svarer ikke normalt; stopper og prøver igen senere`); break; }
+          if (streak >= ADLIB_NONE_STREAK) {
+            if (await canaryOk()) { for (const [c, x] of held) results.set(c, x); held.clear(); streak = 0; stats.canary = (stats.canary || 0) + 1; }
+            else { stats.suspect = held.size; held.clear(); console.warn(`[adlib] ${ADLIB_NONE_STREAK} "aldrig" i træk og kanarien er tom - Meta svarer ikke normalt; stopper og prøver igen senere`); break; }
+          }
         } else { for (const [c, x] of held) results.set(c, x); held.clear(); streak = 0; results.set(l.cvr, r); }
       } catch (e) { stats.errors++; console.warn("[adlib]", l.name, e.message.slice(0, 120)); if (stats.errors >= 5) break; }
       if (results.size >= 8) flush();

@@ -271,9 +271,13 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
     den kaldes ulæselig - tunge sider med mange annoncer renderer langsomt på én CPU.
   - En kørsel stopper ved 4 ulæselige i træk (før: 3 i alt), og en side, der ikke
     kunne læses, venter 3 timer (`ADLIB_FAILED`, i hukommelsen).
-  - "Aldrig"-svar holdes tilbage under kørslen; 12 i træk uden et eneste aktivt
-    eller "har kørt før" (`ADLIB_NONE_STREAK`) betyder, at Meta ikke svarer normalt -
-    de kasseres, og kørslen stopper. Seneste kørsel gemmes (`adlib_last_run`) og
+  - "Aldrig"-svar holdes tilbage under kørslen. Efter 12 i træk (`ADLIB_NONE_STREAK`)
+    tjekkes en "kanarie" - en side, vi ved har mange aktive annoncer. Læses den som
+    aktiv, er stimen ægte (en klump små butikker uden annoncer) og svarene gemmes;
+    er den også tom, svarer Meta ikke normalt - stimen kasseres, og kørslen stopper.
+    (Uden kanarien stoppede hver kørsel på de samme 12 ægte "aldrig"-leads, 22. okt.)
+  - Rækkefølgen for tjek: leads på en liste, så dem der ikke er ringet til, så
+    trafik-båndet der booker (700k-1,5M først). Seneste kørsel gemmes (`adlib_last_run`) og
     vises under Indstillinger → Ad Library-status.
   - Leads, der ikke er ringet til, tjekkes før dem, der er.
   - Reparation: `POST /api/cron/adlib-repair?from&to[&dry=1]` (cron-secret) sætter
