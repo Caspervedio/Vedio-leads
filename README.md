@@ -251,9 +251,10 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
     Andet) gemmes på leadet (`icp_why`, også i `screen_log`) og i noten; Fortryd
     gendanner den. Admin ser fordelingen de seneste 30 dage under Pulje & regler
     (`GET /api/sdr/admin/icp-why`).
-  - NB: StoreLeads-kontoen har mistet API-adgang siden 21. okt. 2026 ("account no
-    longer has API access"), så reserven fyldes ikke op; indtaget kører videre fra de
-    ca. 34.700 butikker i reserven.
+  - StoreLeads-abonnementet er opsagt med vilje (okt. 2026) for at spare udgiften;
+    vi havde allerede hentet en stor reserve. Hentningen fejler derfor med "account no
+    longer has API access" - det er forventet. Indtaget kører videre fra de ca. 34.700
+    butikker i reserven, som ikke fyldes op igen.
 - **Ad Library-tjekket læser ikke tomme sider som "aldrig" (okt. 2026).** SDR'erne
   klagede over, at listerne næsten ingen annoncører havde. Årsagen var tjekket selv:
   fra 16. okt. kl. 21:21 til det løb tør for leads dagen efter gav hver eneste
