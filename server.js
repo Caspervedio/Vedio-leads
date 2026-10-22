@@ -9217,11 +9217,16 @@ function adLibraryAllUrl(pageId) { return `https://www.facebook.com/ads/library/
 // not served at all (rules.exclude_no_ads).
 const ADLIB_RECHECK_ACTIVE_MS = 14 * 86400e3, ADLIB_RECHECK_OTHER_MS = 30 * 86400e3;
 const ADLIB_MAX_RUN_MS = 12 * 60e3; // one run never holds the browser longer than this
+const ADLIB_NONE_STREAK = 12;      // this many "never ran ads" in a row = Meta isn't answering normally
+// A page we couldn't read waits a few hours before the next try, so one slow
+// page can't sit first in every run. In memory: a restart just retries sooner.
+const ADLIB_FAILED = new Map(), ADLIB_RETRY_MS = 3 * 3600e3;
 const ADLIB_MON = { jan: 0, feb: 1, mar: 2, apr: 3, maj: 4, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, okt: 9, oct: 9, nov: 10, dec: 11 };
 function adlibParse(text) {
   if (!text) return null;
   if (!/annoncebibliotek|ad library/i.test(text)) return null; // login wall / bot challenge
   if (/ingen annoncer matcher|no ads match/i.test(text)) return { count: 0, dates: [] };
+  if (/(?:^|\s)0\s*resultat|(?:^|\s)0\s*results?\b/i.test(text)) return { count: 0, dates: [] };
   const m = text.match(/(?:ca\.|~)\s*([\d.,\s]+?)\s*resultat/i) || text.match(/(?:about|~)\s*([\d.,\s]+?)\s*results?/i);
   // Every date on the page: "Begyndte at køre 7. okt. 2026" on active ads,
   // "22. jan. 2026 – 21. feb. 2026" on inactive ones (English: "Started
@@ -9234,6 +9239,11 @@ function adlibParse(text) {
   // No count line but ads on the page (a single ad shows no "~1 resultat" in
   // every locale): count the library ids we can see.
   const ids = (text.match(/biblioteks-id|library id/gi) || []).length;
+  // No count, no ads and no "no ads match": the results never loaded. On
+  // 16-17 Oct 2026 Meta served exactly that page (header, no results) to
+  // ~1,000 lookups in a row and every one was saved as "never ran ads".
+  // Unreadable is unreadable - the caller retries later.
+  if (!ids) return null;
   return { count: ids, dates, approx: true };
 }
 async function adlibCheckLead(context, l) {
@@ -9247,8 +9257,12 @@ async function adlibCheckLead(context, l) {
     // rather than a fixed pause; the page renders slowly on one CPU.
     await page.waitForFunction(() => /resultat|results|ingen annoncer matcher|no ads match/i.test(document.body.innerText || ""), null, { timeout: 25000 }).catch(() => {});
     await page.waitForTimeout(1500);
-    const text = await page.evaluate(() => document.body.innerText).catch(() => null);
-    const r = adlibParse(text);
+    let text = await page.evaluate(() => document.body.innerText).catch(() => null);
+    let r = adlibParse(text);
+    // Pages with many ads render slowly on one CPU: one more look before "unreadable".
+    if (!r) { await page.waitForTimeout(5000); text = await page.evaluate(() => document.body.innerText).catch(() => null); r = adlibParse(text); }
+    // "No ads" is the answer that hides a lead, so it gets a second look.
+    if (r && r.count === 0) { await page.waitForTimeout(2500); text = await page.evaluate(() => document.body.innerText).catch(() => null); const r2 = adlibParse(text); if (!r2 || r2.count > 0) r = r2; }
     if (!r) console.warn(`[adlib] blokeret? ${l.name}: ${await page.title().catch(() => "?")} · ${String(text || "").replace(/\s+/g, " ").slice(0, 160)}`);
     return r;
   };
@@ -9262,7 +9276,7 @@ async function adlibCheckLead(context, l) {
 function adlibApply(l, r, nowIso, by) {
   l.adlib_active = r.active; l.adlib_total = r.total;
   if (r.last) l.adlib_last_start = new Date(r.last).toISOString().slice(0, 10);
-  l.adlib_checked_at = nowIso; l.adlib_by = by || "cron";
+  l.adlib_checked_at = nowIso; l.adlib_by = by || "cron"; delete l.adlib_recheck;
   l.adlib_status = r.active > 0 ? "active" : r.total > 0 ? "past" : "none";
   // The page flag was the old truth - keep it in line for anything still reading it.
   l.meta_verified_active = r.active > 0; l.meta_verified_at = nowIso; l.meta_ads_active_now = r.active;
@@ -9291,14 +9305,14 @@ function adlibScore(l, now) {
   return l.facebook_adlib_id || l.facebook_url || l.facebook_page_id ? 80 : 40;
 }
 function adlibDue(l, now) {
-  if (!l.adlib_checked_at) return true;
+  if (!l.adlib_checked_at || l.adlib_recheck) return true;
   return now - new Date(l.adlib_checked_at).getTime() > (l.adlib_status === "active" ? ADLIB_RECHECK_ACTIVE_MS : ADLIB_RECHECK_OTHER_MS);
 }
 // Who first: what is on a list now, then the pool in the order it would be served.
 function adlibCandidates(d, now) {
   const onList = new Set(Object.values(d.sdr_lists || {}).flatMap((L) => L.cvrs || []));
-  return (d.leads || []).filter((l) => l.facebook_adlib_id && sdrIsActive(l) && !l.archived_at && !l.retry_pool && sdrCallable(l) && adlibDue(l, now))
-    .sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || ((b.meta_verified_active === true) - (a.meta_verified_active === true)) || ((sdrHasPerson(b) ? 1 : 0) - (sdrHasPerson(a) ? 1 : 0)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
+  return (d.leads || []).filter((l) => l.facebook_adlib_id && sdrIsActive(l) && !l.archived_at && !l.retry_pool && sdrCallable(l) && adlibDue(l, now) && !(now - (ADLIB_FAILED.get(l.cvr) || 0) < ADLIB_RETRY_MS))
+    .sort((a, b) => (onList.has(b.cvr) - onList.has(a.cvr)) || ((a.lastCallAt ? 1 : 0) - (b.lastCallAt ? 1 : 0)) || ((b.meta_verified_active === true) - (a.meta_verified_active === true)) || ((sdrHasPerson(b) ? 1 : 0) - (sdrHasPerson(a) ? 1 : 0)) || (new Date(b.addedAt || 0) - new Date(a.addedAt || 0)));
 }
 function adlibCoverage(d) {
   const now = Date.now(); const c = { total: 0, active: 0, past: 0, stale: 0, none: 0, unchecked: 0, no_page: 0, due: 0 };
@@ -9336,20 +9350,31 @@ async function adlibSweep(batch) {
       savePool(d); flushed += results.size; results.clear();
       console.log(`[adlib] ${flushed} gemt efter ${Math.round((Date.now() - t0) / 1000)} s · aktive ${stats.active} · før ${stats.past} · aldrig ${stats.none}`);
     };
+    // "Never ran ads" answers wait in `held` until a page with ads shows the
+    // library is answering normally. ADLIB_NONE_STREAK in a row and nothing
+    // else is not a real run (about 4 in 10 pages are "never" when it works):
+    // they are thrown away and the run stops; the next tick tries again.
+    const held = new Map(); let streak = 0, blockedRow = 0;
     for (const l of pick) {
       if (Date.now() - t0 > ADLIB_MAX_RUN_MS) { stats.cut = true; break; }
       try {
         const r = await adlibCheckLead(lb.context, l);
         if (!r) continue;
-        if (r.blocked) { stats.blocked++; if (stats.blocked >= 3) break; continue; }
-        results.set(l.cvr, r);
+        if (r.blocked) { stats.blocked++; ADLIB_FAILED.set(l.cvr, Date.now()); if (++blockedRow >= 4) break; continue; }
+        blockedRow = 0; ADLIB_FAILED.delete(l.cvr);
+        if (r.active === 0 && r.total === 0) {
+          held.set(l.cvr, r); streak++;
+          if (streak >= ADLIB_NONE_STREAK) { stats.suspect = held.size; held.clear(); console.warn(`[adlib] ${streak} "aldrig" i træk - Meta svarer ikke normalt; stopper og prøver igen senere`); break; }
+        } else { for (const [c, x] of held) results.set(c, x); held.clear(); streak = 0; results.set(l.cvr, r); }
       } catch (e) { stats.errors++; console.warn("[adlib]", l.name, e.message.slice(0, 120)); if (stats.errors >= 5) break; }
       if (results.size >= 8) flush();
       await new Promise((r) => setTimeout(r, 1500)); // a breath between pages
     }
+    for (const [c, x] of held) results.set(c, x);
     flush();
     stats.seconds = Math.round((Date.now() - t0) / 1000);
     console.log("[adlib] færdig:", JSON.stringify(stats));
+    try { const d = loadPool(); d.adlib_last_run = { at: new Date().toISOString(), ...stats }; saveUserData(POOL_ID, d); } catch {}
     logActivity("adlib-check", `Ad Library-tjek: ${stats.checked} efterset · ${stats.active} aktive · ${stats.past} tidligere · ${stats.none} ingen${stats.blocked ? ` · ${stats.blocked} blokeret` : ""}${stats.errors ? ` · ${stats.errors} fejl` : ""}`, { stats });
     return stats;
   } finally { adlibRunning = false; if (browser) await browser.close().catch(() => {}); }
@@ -9359,8 +9384,36 @@ app.post("/api/cron/adlib-check", async (req, res) => {
   try { res.json({ ok: true, stats: await adlibSweep(Math.max(1, Math.min(200, Number(req.query.batch) || 40))) }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+// One-off repair for a run that read empty pages as "never ran ads": the
+// leads it labelled in [from, to) go back to "not checked" - ranked above
+// leads without a Facebook page at once - and the sweep re-verifies them,
+// uncalled first. Only the sweep's own "never" verdicts in the window are
+// touched; an SDR's own "no active ads" and every active/paused result stay.
+// ?dry=1 counts without saving. The old verdict is kept on the lead.
+app.post("/api/cron/adlib-repair", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try {
+    const from = String(req.query.from || ""), to = String(req.query.to || ""), dry = req.query.dry === "1";
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(from) || !/^\d{4}-\d{2}-\d{2}T/.test(to) || !(from < to)) return res.status(400).json({ error: "from/to (ISO) mangler" });
+    const d = loadPool(); const nowIso = new Date().toISOString(); const stats = { reset: 0, uncalled: 0, called: 0, past_recheck: 0 };
+    for (const l of d.leads || []) {
+      if (l.adlib_by && l.adlib_by !== "cron") continue;
+      const at = String(l.adlib_checked_at || ""); if (!(at >= from && at < to)) continue;
+      // "Paused" can hide an advertiser too (the active view failed, the all
+      // view loaded): it keeps its label and rank, and is simply due again.
+      if (l.adlib_status === "past") { stats.past_recheck++; if (!dry) l.adlib_recheck = true; continue; }
+      if (l.adlib_status !== "none") continue;
+      stats.reset++; if (l.lastCallAt) stats.called++; else stats.uncalled++;
+      if (dry) continue;
+      l.adlib_prev = { status: l.adlib_status, checked_at: at, reset_at: nowIso, why: "tom side læst som 'aldrig'" };
+      for (const k of ["adlib_status", "adlib_active", "adlib_total", "adlib_last_start", "adlib_checked_at", "adlib_by", "meta_verified_active", "meta_verified_at", "meta_ads_active_now"]) delete l[k];
+    }
+    if (!dry && (stats.reset || stats.past_recheck)) { savePool(d); logActivity("adlib-repair", `Ad Library: ${stats.reset} "aldrig"-svar fra den gamle læsning (${from.slice(0, 16)} - ${to.slice(0, 16)}) sat til "ikke efterset" igen; ${stats.past_recheck} "har kørt før" tjekkes igen`, { stats, from, to }); }
+    res.json({ ok: true, dry, stats });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 app.get("/api/sdr/admin/adlib", authMiddleware, (req, res) => {
-  try { if (!sdrAdminGuard(req, res)) return; res.json({ ok: true, running: adlibRunning, coverage: adlibCoverage(loadPool()) }); }
+  try { if (!sdrAdminGuard(req, res)) return; const d = loadPool(); res.json({ ok: true, running: adlibRunning, coverage: adlibCoverage(d), last_run: d.adlib_last_run || null }); }
   catch (e) { sdrFail(res, e, "admin/adlib"); }
 });
 app.post("/api/sdr/admin/adlib/run", authMiddleware, async (req, res) => {
@@ -9368,7 +9421,9 @@ app.post("/api/sdr/admin/adlib/run", authMiddleware, async (req, res) => {
   catch (e) { sdrFail(res, e, "admin/adlib/run"); }
 });
 function adLibraryPageUrl(pageId) {
-  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`;
+  // Every country, like the check: a Danish shop advertising in Germany shows
+  // nothing under country=DK, and the SDR concluded "no ads".
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`;
 }
 function buildAdsLibraryUrl(brand) {
   const params = new URLSearchParams({

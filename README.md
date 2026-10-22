@@ -221,6 +221,38 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Ad Library-tjekket læser ikke tomme sider som "aldrig" (okt. 2026).** SDR'erne
+  klagede over, at listerne næsten ingen annoncører havde. Årsagen var tjekket selv:
+  fra 16. okt. kl. 21:21 til det løb tør for leads dagen efter gav hver eneste
+  opslag "har aldrig kørt annoncer" (1.070 i træk, nul aktive, nul "har kørt før").
+  Meta viste siden uden resultater (sandsynligvis throttling), og `adlibParse` læste
+  "ingen tæller og ingen annoncer" som nul annoncer; "aldrig" ligger nederst i
+  køen i 30 dage, så SDR'erne fik kun de få resterende annoncører og derefter
+  pausede og leads uden Facebook-side. Stikprøver i en rigtig browser: Moccatime
+  (ca. 120 annoncer), NordicHigh (73 aktive) og Hobbydrivhuse (78 aktive) stod alle
+  som "aldrig". Rettet sådan:
+  - En side uden tæller, uden annonce-id'er og uden "Ingen annoncer matcher" er
+    **ulæselig** (`null` → `blocked`) og prøves igen, aldrig "nul". "Ingen annoncer"
+    læses to gange (2,5 s imellem), og en langsom side får et ekstra kig (5 s), før
+    den kaldes ulæselig - tunge sider med mange annoncer renderer langsomt på én CPU.
+  - En kørsel stopper ved 4 ulæselige i træk (før: 3 i alt), og en side, der ikke
+    kunne læses, venter 3 timer (`ADLIB_FAILED`, i hukommelsen).
+  - "Aldrig"-svar holdes tilbage under kørslen; 12 i træk uden et eneste aktivt
+    eller "har kørt før" (`ADLIB_NONE_STREAK`) betyder, at Meta ikke svarer normalt -
+    de kasseres, og kørslen stopper. Seneste kørsel gemmes (`adlib_last_run`) og
+    vises under Indstillinger → Ad Library-status.
+  - Leads, der ikke er ringet til, tjekkes før dem, der er.
+  - Reparation: `POST /api/cron/adlib-repair?from&to[&dry=1]` (cron-secret) sætter
+    tjekkets egne "aldrig"-svar i vinduet tilbage til "ikke efterset" (rangeres
+    straks over leads uden Facebook-side; det gamle svar gemmes i `adlib_prev`) og
+    markerer "har kørt før"-svar til nyt tjek (`adlib_recheck`, beholder status og
+    plads, til de er tjekket igen - den gamle læsning kunne også gøre en aktiv til
+    "har kørt før", hvis kun aktiv-visningen fejlede). SDR'ernes egne "ingen aktive
+    annoncer" og alle "aktiv"-svar røres ikke. Kørt 22. okt. 2026 for hele
+    perioden med den gamle læsning.
+  - Linket til Ad Library på kortet viser nu alle lande (før kun Danmark - en dansk
+    butik, der annoncerer i Tyskland, så tom ud) og åbner de aktive annoncer, når
+    der er nogen.
 - **Ad Library-tjek - er de annoncører?** Facebook-sidens "kører annoncer"-flag viste sig
   forkert på 10 af 14 leads på listerne (okt. 2026). Puljen efterses derfor i selve
   Meta Ad Library (sidens egne annoncer, alle lande) - lister først, dernæst puljen

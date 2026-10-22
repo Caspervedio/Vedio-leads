@@ -370,7 +370,7 @@ function searchName(L) {
 // Library with the company name in the search field.
 function adLibNameUrl(L) {
   const q = searchName(L); if (!q) return '';
-  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all&search_type=keyword_exact_phrase&q=${encodeURIComponent('"' + q + '"')}`;
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&media_type=all&search_type=keyword_exact_phrase&q=${encodeURIComponent('"' + q + '"')}`;
 }
 function liPeopleUrl(q) { return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(q)}`; }
 function adLibUrl(L) {
@@ -379,15 +379,17 @@ function adLibUrl(L) {
   // on the company name misses plenty of advertisers, which is how the SDR
   // ended up on an empty Ad Library page. `search_type=page` opens the
   // advertiser; `all` also shows ads that stopped since our last check.
+  // Every country, like our check (a shop advertising in Germany shows nothing
+  // under Denmark), and straight to the active ads when we found some.
   if (m.adlibId) {
-    return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all`
+    return `https://www.facebook.com/ads/library/?active_status=${L.adlib_status === 'active' ? 'active' : 'all'}&ad_type=all&country=ALL&media_type=all`
       + `&search_type=page&view_all_page_id=${encodeURIComponent(m.adlibId)}`;
   }
   // No page id - fall back to the brand name. Page names often carry a
   // location suffix ("N'AGE | Copenhagen"), which no ad text contains.
   const q = String(m.pageName || L.name || '').split('|')[0].replace(/\s+/g, ' ').trim();
   if (!q) return '';
-  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=DK&media_type=all`
+  return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&media_type=all`
     + `&search_type=keyword_exact_phrase&q=${encodeURIComponent('"' + q + '"')}`;
 }
 
