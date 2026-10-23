@@ -2606,16 +2606,35 @@ function aiRender() {
   const box = $('ai-msgs'); const msgs = (AI.chat && AI.chat.messages) || [];
   $('ai-sub').textContent = AI.chat && AI.chat.id ? AI.chat.title : (AI.chat && AI.chat.title) || 'Ny samtale';
   if (!msgs.length) {
-    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - spørg som du ville spørge en kollega. Du kan også vedhæfte billeder, PDF'er, dokumenter og video.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Lav en one-pager om Vedio, jeg kan sende til et lead - som artefakt'].map((q) => `<button type="button" data-q="${e(q)}">${e(q)}</button>`).join('')}</div></div>`;
+    box.innerHTML = `<div class="ai-empty"><div class="ai-mark gem">${AI_GEM}</div><p>Hvad kan jeg hjælpe med?</p><span>Scripts, indvendinger, en åbning til det lead du har åbent - eller nye leads: "find 10 møbelbutikker i Aarhus", "flere som dette lead", "undersøg butik.dk". Spørg som du ville spørge en kollega. Du kan også vedhæfte billeder, PDF'er, dokumenter og video.</span><div class="ai-starters">${['Giv mig en bedre åbning til det lead, jeg har åbent', 'Hvordan svarer jeg på "send mig en mail"?', 'Gør script 01 kortere og mere naturligt', 'Lav en one-pager om Vedio, jeg kan sende til et lead - som artefakt'].map((q) => `<button type="button" data-q="${e(q)}">${e(q)}</button>`).join('')}</div></div>`;
     return;
   }
   const wait = AI.chat ? AI.waiting.get(AI.chat) : null;
   const USED = { my_list: 'din liste', my_followups: 'dine opfølgninger', my_stats: 'dine tal', recent_calls: 'dine seneste opkald' };
   box.innerHTML = msgs.map((m, i) => m.role === 'user'
     ? `<div class="ai-m user">${aiAttHtml(m.files)}${m.text ? `<div class="ai-b">${e(m.text).replace(/\n/g, '<br>')}</div>` : ''}${m.lead ? `<span class="sub">om ${e(m.lead)}</span>` : ''}</div>`
-    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div>${aiArtsHtml(m.artifacts)}${m.tools_used && m.tools_used.length ? `<span class="sub ai-used" title="Data slået op i platformen for at svare">Slog op: ${e(m.tools_used.map((t) => USED[t] || t.replace('search_leads', 'leads').replace('get_lead', 'lead')).join(' · '))}</span>` : ''}<div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}${!m.error && AI.chat.id && !(m.artifacts && m.artifacts.length) ? `<button class="linkbtn" onclick="aiSaveArt(${i})" title="Gem svaret som et dokument, du kan åbne stort, downloade og dele med et link">Gem som artefakt</button>` : ''}</div></div>`
+    : `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b">${aiMd(m.text)}</div>${aiArtsHtml(m.artifacts)}${aiLeadsHtml(m.leads, i)}${m.tools_used && m.tools_used.length ? `<span class="sub ai-used" title="Data slået op i platformen for at svare">Slog op: ${e(m.tools_used.map((t) => USED[t] || t.replace('search_leads', 'leads').replace('get_lead', 'lead')).join(' · '))}</span>` : ''}<div class="ai-acts"><button class="linkbtn" onclick="aiCopy(${i})">Kopiér</button>${$('view-ring').classList.contains('active') && S.current ? `<button class="linkbtn" onclick="aiToNote(${i})">Ind i noten</button>` : ''}${!m.error && AI.chat.id && !(m.artifacts && m.artifacts.length) ? `<button class="linkbtn" onclick="aiSaveArt(${i})" title="Gem svaret som et dokument, du kan åbne stort, downloade og dele med et link">Gem som artefakt</button>` : ''}</div></div>`
   ).join('') + (wait ? `<div class="ai-m bot"><i class="ai-av gem">${AI_GEM}</i><div class="ai-b ai-wait">${e(wait)}<span></span><span></span><span></span></div></div>` : '');
   box.scrollTop = box.scrollHeight;
+}
+/* Leads the chat found (stored StoreLeads shops, uncalled pool leads, a website
+   it read): the SDR puts them on the list with one click - the chat never does. */
+function aiLeadsHtml(leads, mi) {
+  if (!leads || !leads.length) return '';
+  AI.added = AI.added || new Set();
+  const host = (w) => String(w || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '');
+  const mine = new Set(((S.list && S.list.items) || []).flatMap((l) => [l.cvr, host(l.web)]).filter(Boolean));
+  return `<div class="ai-leads">${leads.map((x, j) => { const key = x.cvr || x.domain; const done = AI.added.has(key) || mine.has(x.cvr) || mine.has(host(x.domain));
+    const meta = [x.domain, x.city, x.category, x.rev_mio ? 'ca. ' + String(x.rev_mio).replace('.', ',') + ' mio. kr/år' : ''].filter(Boolean).map(e).join(' · ');
+    const chips = `${x.src === 'pool' ? '<i>i puljen</i>' : x.src === 'reserve' ? '<i class="new">ny butik</i>' : '<i class="new">fra hjemmesiden</i>'}${x.ads ? `<i>${e(x.ads)}</i>` : ''}${x.fb ? '<i>Facebook</i>' : ''}${x.pixel ? '<i>Meta-pixel</i>' : ''}${x.phone_ok || done ? '' : '<i class="warn">intet nummer</i>'}`;
+    return `<div class="ai-lead"><div class="al-t"><b>${e(x.name)}</b><span class="sub">${meta}</span><span class="al-chips">${chips}</span></div>${done ? '<span class="al-done">✓ På din liste</span>' : `<button class="pill sm" ${x.phone_ok ? '' : 'disabled title="Der er ikke et dansk nummer"'} onclick="aiAddLead(${mi},${j})">Tilføj til min liste</button>`}</div>`; }).join('')}</div>`;
+}
+async function aiAddLead(mi, j) {
+  const x = AI.chat && AI.chat.messages[mi] && (AI.chat.messages[mi].leads || [])[j]; if (!x) return;
+  try {
+    const r = x.src === 'web' ? await post('/api/sdr/lead', { name: x.name, web: x.domain, phone: x.phone }) : await post('/api/sdr/chat/add-lead', { cvr: x.cvr || '', domain: x.domain, phone: x.phone || '' });
+    AI.added = AI.added || new Set(); AI.added.add(x.cvr || x.domain); apply(r, { keepCurrent: true }); aiRender(); toast(`${x.name} ligger nu øverst på din liste`);
+  } catch (ex) { toast(ex.message, 5000); }
 }
 function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
 function aiToNote(i) { const m = AI.chat.messages[i]; if (!m) return; noteModal(m.text.trim()); return; const n = null; if (!n) return; n.dispatchEvent(new Event('input')); toast('Lagt i noten - husk Gem note'); }

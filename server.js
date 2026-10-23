@@ -16990,14 +16990,7 @@ app.post("/api/sdr/lead", authMiddleware, (req, res) => {
     // Never say "it's on your list" unless the list will actually keep it -
     // nothing has been saved yet, so refusing here changes nothing.
     if (!sdrEligible(lead, now)) return res.status(409).json({ error: `${lead.name} kan ikke komme på listen lige nu${sdrIsCurrentCustomer(lead) ? " - de er allerede Vedio-kunde" : !sdrCallable(lead) ? " - der mangler et dansk nummer" : ""}.` });
-    // Top of my list, claimed, off everyone else's.
-    d.sdr_lists = d.sdr_lists || {};
-    for (const [uid, Lst] of Object.entries(d.sdr_lists)) if (uid !== me) Lst.cvrs = (Lst.cvrs || []).filter((x) => x !== lead.cvr);
-    const L = d.sdr_lists[me] = d.sdr_lists[me] || { date: sdrDayKey(now), cvrs: [], done: [] };
-    L.cvrs = [lead.cvr, ...(L.cvrs || []).filter((x) => x !== lead.cvr)];
-    L.done = (L.done || []).filter((x) => x !== lead.cvr);
-    sdrClaim(lead, me, now);
-    lead.owner_override = me; lead.owner_override_at = nowIso;
+    sdrPutOnMyList(d, lead, me, now);
     const note = str(b.note, 2000);
     sdrAppendNote(lead, me, created ? `Tilføjet manuelt af ${nameById[me] || me}${note ? ": " + note : ""}` : `Hentet ind manuelt af ${nameById[me] || me}${note ? ": " + note : ""}`, "list");
     // Two companies on one number: say so on both, so the next caller knows -
@@ -17008,6 +17001,47 @@ app.post("/api/sdr/lead", authMiddleware, (req, res) => {
     logActivity("sdr-manual-lead", `${nameById[me] || me} ${created ? "tilføjede" : "hentede"} ${lead.name}`, { cvr: lead.cvr, userId: me });
     sdrRespond(res, me, d, { added: { cvr: lead.cvr, name: lead.name, created } });
   } catch (e) { sdrFail(res, e, "lead"); }
+});
+// Top of my list, claimed, off everyone else's - the manual add and the AI chat.
+function sdrPutOnMyList(d, lead, me, now) {
+  d.sdr_lists = d.sdr_lists || {};
+  for (const [uid, Lst] of Object.entries(d.sdr_lists)) if (uid !== me) Lst.cvrs = (Lst.cvrs || []).filter((x) => x !== lead.cvr);
+  const L = d.sdr_lists[me] = d.sdr_lists[me] || { date: sdrDayKey(now), cvrs: [], done: [] };
+  L.cvrs = [lead.cvr, ...(L.cvrs || []).filter((x) => x !== lead.cvr)];
+  L.done = (L.done || []).filter((x) => x !== lead.cvr);
+  sdrClaim(lead, me, now);
+  lead.owner_override = me; lead.owner_override_at = new Date(now).toISOString();
+}
+// The AI chat's "Tilføj til min liste": a pool lead, or a stored StoreLeads shop
+// (promoted into the pool first, with its StoreLeads data). A website the chat
+// researched goes through POST /api/sdr/lead like any manual add.
+app.post("/api/sdr/chat/add-lead", authMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {}; const me = req.userId; const host = storeLeadsHost(b.domain || "");
+    if (sdrIsAdmin(me)) return res.status(400).json({ error: "Admin har ingen ringeliste" });
+    const find = (d) => (b.cvr ? (d.leads || []).find((l) => l.cvr === String(b.cvr)) : null) || (host ? (d.leads || []).find((l) => storeLeadsHost(l.web || l.website) === host) : null);
+    let d = loadPool(); let lead = find(d);
+    if (!lead && host) {
+      const reserve = loadStoreLeadsReserve(); const rec = (reserve.items || {})[host] || Object.values(reserve.items || {}).find((x) => storeLeadsHost(x.domain) === host);
+      if (!rec) return res.status(404).json({ error: "Butikken findes ikke længere i reserven" });
+      await storeLeadsPromote([rec], POOL_ID, reserve, { saved: 0, promoted: 0, dfMatched: 0, dfNoMatch: 0, errors: 0, skippedDuplicates: 0 }, new Date().toISOString());
+      d = loadPool(); lead = find(d);
+    }
+    if (!lead) return res.status(404).json({ error: "Kunne ikke finde eller oprette leadet" });
+    const now = Date.now();
+    if (sdrClaimedByOther(lead, me, now)) return res.status(409).json({ error: `${lead.name} ligger allerede hos ${(loadUsers().find((u) => u.id === lead.claimed_by) || {}).name || "en anden SDR"}` });
+    if (lead.callback_at && !sdrFollowupMine(lead, me)) return res.status(409).json({ error: `${lead.name} er en opfølgning hos en anden SDR` });
+    const webPhone = String(b.phone || "").trim().slice(0, 30);
+    if (!sdrCallable(lead) && isDkPhone(webPhone)) { lead.phone = normDkPhone(webPhone); lead.ph = lead.phone; lead.phone_source = "website-ai-chat"; }
+    lead.manual_by = me; lead.manual_at = new Date(now).toISOString();
+    if (!sdrEligible(lead, now)) return res.status(409).json({ error: `${lead.name} kan ikke komme på listen lige nu: ${sdrOutWhy(lead, me, sdrSettings(d), now)}` });
+    sdrPutOnMyList(d, lead, me, now);
+    const nm = (loadUsers().find((u) => u.id === me) || {}).name || me;
+    sdrAppendNote(lead, me, `Lagt på listen fra AI-chatten af ${nm}`, "list");
+    sdrTouch(lead); savePool(d);
+    logActivity("sdr-manual-lead", `${nm} hentede ${lead.name} fra AI-chatten`, { cvr: lead.cvr, userId: me });
+    sdrRespond(res, me, d, { added: { cvr: lead.cvr, name: lead.name } });
+  } catch (e) { sdrFail(res, e, "chat/add-lead"); }
 });
 // "Spring over": show me a different one. The old button just re-fetched, and
 // since the lead was held by me it came straight back - so it did nothing.
@@ -19179,6 +19213,7 @@ function sdrChatSystemPrompt(d, userId, lead) {
     `Filer: SDR'en kan vedhæfte billeder, skærmbilleder, PDF'er, Word/PowerPoint/Excel, lyd og video. Se grundigt på dem og svar konkret ud fra indholdet (fx "i 0:12 siger hun …", "på slide 3 står der …"). Kan en fil ikke læses, så sig det i stedet for at gætte.`,
     `Artefakter: Med create_artifact laver du et selvstændigt stykke indhold, der vises stort, kan downloades og deles med et link - fx en one-pager til et lead, et mailudkast, et opkaldsscript, et oplæg, en tjekliste eller en side, der kan sendes til en kunde. Brug det, når SDR'en beder om noget, der skal bruges videre eller sendes til andre, eller nævner artefakt, dokument eller side. Almindelige svar og korte råd er IKKE artefakter. Type "dokument" = markdown (overskrifter, punkter, tabeller). Type "side" = én komplet, selvstændig HTML-fil med al CSS inline (ingen eksterne scripts; Google Fonts er ok), mobilvenlig og i Vedios stil: baggrund #F4F2EE, tekst #0E0E0C, lilla accent #7C3AED, fonten Inter. Skriv på dansk, medmindre andet ønskes. Ret et eksisterende artefakt med update_artifact i stedet for at lave et nyt. Efter et artefakt svarer du kort (1-2 sætninger) og gentager ikke indholdet. Artefakter kan blive delt med kunder: skriv aldrig interne noter, provision, telefonnumre eller andre leads' data ind i dem, medmindre SDR'en beder om det.`,
     (() => { const o = sdrOnboarding(settings); return o ? SDR_ONBOARDING_LINE(o) : ""; })(),
+    `Nye leads: find_shops finder webshops, vi ikke har ringet til (vores gemte StoreLeads-butikker og puljen), og research_website læser en hjemmeside (nummer, Facebook, pixel). "Flere som dette lead" = find_shops med like_cvr og uden q. Resultaterne vises med en knap "Tilføj til min liste" - du lægger aldrig selv noget på listen.`,
     `Data fra platformen: Du har værktøjer, der slår op i Vedio Ring - search_leads (alle leads på navn/website/by/person/nummer), get_lead (alt om ét lead), my_list (SDR'ens ringeliste i rækkefølge), my_followups, my_stats (dagens/ugens tal, provision) og recent_calls (seneste udfald og noter). Brug dem, så snart et spørgsmål handler om konkrete leads, personer, numre, tal eller lister - gæt aldrig på data, og find aldrig selv på firmaer eller tal. Til rene sparringsspørgsmål (replikker, indvendinger, scripts) behøver du ikke slå op. Nævn gerne kort hvad du slog op ("Jeg kiggede på din liste…"). Tidspunkter i data er UTC - dansk tid er 2 timer foran om sommeren.`,
     `Om Vedio: Vedio laver videoannoncer til virksomheder, der annoncerer på Meta (Facebook/Instagram). Kernen i pitchen: annoncer bliver trætte ("ad fatigue") og mister effekt, så der skal hele tiden nye varianter til - Vedio leverer dem hurtigt og billigt ud fra kundens eget materiale, så kunden slipper for selv at producere. SDR'ens mål er at booke en 20-minutters demo (ikke at sælge i telefonen). Lov aldrig konkrete resultater (fx "20 % billigere klik") - hold dig til det, pitchen og scripts siger.`,
     pitch ? `SDR'ens pitch (den de faktisk bruger):\n${pitch}` : "",
@@ -19203,6 +19238,27 @@ function sdrChatSystemPrompt(d, userId, lead) {
     ].filter(Boolean).join("\n"));
   }
   return parts.filter(Boolean).join("\n\n");
+}
+// What an SDR types ("møbelbutikker i aarhus") against StoreLeads' English
+// categories ("/Home & Garden/Home Furnishings"): filler words drop out, a
+// Danish stem brings its English category words along. Each group must match.
+const CHAT_SHOP_SYN = [
+  [/^m(ø|o)bel/, ["møbel", "furniture", "home furnishings"]], [/^cyk(e)?l/, ["cykel", "cykl", "bicycl", "cycling", "bike"]],
+  [/^(tøj|beklædning|mode)/, ["tøj", "apparel", "clothing", "fashion"]], [/^sko/, ["sko", "footwear", "shoe"]], [/^smykke/, ["smykke", "jewel"]],
+  [/^(kosmetik|makeup|hudpleje|skønhed)/, ["kosmetik", "beauty", "cosmetic", "skin care", "makeup"]], [/^legetøj/, ["legetøj", "toys"]],
+  [/^(fødevare|mad|delikatesse)/, ["food", "fødevare", "delikatesse", "gourmet"]], [/^kaffe/, ["kaffe", "coffee"]], [/^vin/, ["vin", "wine"]],
+  [/^have/, ["have", "garden"]], [/^(hund|kat|dyr|kæledyr)/, ["pet", "hund", "kat", "dyr"]], [/^(sport|træning|fitness)/, ["sport", "fitness", "exercise"]],
+  [/^(børn|baby)/, ["baby", "kids", "children", "børn"]], [/^(lampe|belysning)/, ["lamp", "lighting", "belysning"]],
+  [/^(bolig|interiør|indretning)/, ["home decor", "interior", "home & garden", "bolig", "interiør"]], [/^bog|^bøger/, ["books", "bog"]],
+  [/^elektronik/, ["electronics", "elektronik"]], [/^gave/, ["gift", "gave"]], [/^tekstil/, ["textile", "linen", "tekstil"]],
+];
+const CHAT_SHOP_STOP = new Set(["butik", "butikker", "webshop", "webshops", "shop", "shops", "forretning", "forretninger", "firma", "firmaer", "virksomhed", "virksomheder", "mellemstore", "store", "små", "danske", "dansk", "nye", "flere", "med", "som", "der", "til", "og", "eller", "i", "på", "fra"]);
+function chatShopTerms(q) {
+  return String(q || "").toLowerCase().split(/[\s,]+/).map((w) => w.replace(/[^a-zæøå0-9&-]/g, "")).filter((w) => w.length >= 3 && !CHAT_SHOP_STOP.has(w)).map((w) => {
+    const stem = w.replace(/(butikker|butik|erne|ene|er)$/, "") || w;
+    const syn = CHAT_SHOP_SYN.find(([re]) => re.test(stem) || re.test(w));
+    return syn ? syn[1] : [stem.length >= 3 ? stem : w];
+  });
 }
 // What the model may look up in the platform, on the SDR's behalf: their
 // list, follow-ups, numbers and recent calls, and any lead by name, website
@@ -19269,6 +19325,65 @@ function sdrChatTools(d, userId, ctx) {
       parameters: { type: "OBJECT", properties: {} },
       run: () => { const st = buildSdrState(userId, d); return { tal: st.stats, provision: st.commission, dagligt_maal: (st.settings || {}).daily_target }; },
     },
+    // ── Find new leads (Oct 2026): the stored StoreLeads shops and the uncalled pool ──
+    find_shops: {
+      description: "Find nye leads til SDR'ens liste: danske webshops, vi ikke har ringet til - fra vores gemte StoreLeads-butikker (ca. 34.000, som ikke er i puljen endnu) og fra puljens leads, ingen har ringet til. Brug til 'find 10 butikker som X', 'find møbelbutikker i Aarhus', 'flere i samme branche som det lead, jeg har åbent'. Butikker med Facebook-side, Meta-pixel og dansk nummer kommer først. Resultaterne vises med en knap, så SDR'en selv lægger dem på sin liste - du lægger intet på listen.",
+      parameters: { type: "OBJECT", properties: {
+        q: { type: "STRING", description: "ord at søge på: branche, produkt, by eller navn (fx 'møbler', 'cykler aarhus')" },
+        like_cvr: { type: "STRING", description: "cvr på et lead: find butikker i samme branche" },
+        size: { type: "STRING", description: "'small' (under 1 mio. kr/år), 'medium' (1-5 mio.), 'large' (over 5 mio.)" },
+        limit: { type: "INTEGER", description: "antal, standard 10, højst 25" } } },
+      run: ({ q, like_cvr, size, limit }) => {
+        const n = Math.max(1, Math.min(25, Number(limit) || 10));
+        let groups = chatShopTerms(q);
+        const like = like_cvr ? (d.leads || []).find((l) => l.cvr === String(like_cvr)) : null;
+        const cat = like ? String(like.ind || like.industry || "").split("/").filter(Boolean).slice(0, 2).join("/").toLowerCase() : "";
+        const kr = (cents) => (Number(cents) || 0) / 100 * STORELEADS_USD_DKK;
+        const sizeOk = (k) => !size || (size === "small" ? k > 0 && k < 1e6 : size === "medium" ? k >= 1e6 && k < 5e6 : size === "large" ? k >= 5e6 : true);
+        const hit = (txt) => groups.every((g) => g.some((t) => txt.includes(t))) && (!cat || txt.includes(cat));
+        const hosts = new Set((d.leads || []).map((l) => storeLeadsHost(l.web || l.website)).filter(Boolean));
+        const resAll = Object.values(loadStoreLeadsReserve().items || {}).filter((x) => storeLeadsPromotable(x) && !hosts.has(storeLeadsHost(x.domain)) && sizeOk(kr(x.sales)));
+        const poolAll = (d.leads || []).filter((l) => !l.lastCallAt && l.cvr !== (like && like.cvr) && sdrEligible(l, now) && !sdrClaimedByOther(l, userId, now) && sizeOk(sdrLeadRevenueKr(l)));
+        const pick = () => [resAll.filter((x) => hit([x.name, x.domain, x.city, x.category].join(" ").toLowerCase())), poolAll.filter((l) => hit([l.name, l.web, l.city, l.ind, l.industry].join(" ").toLowerCase()))];
+        let [reserve, pool] = pick();
+        // "More like this lead" plus a word of the model's own that matches
+        // nothing: the lead's category alone is what was asked for.
+        if (cat && groups.length && !reserve.length && !pool.length) { groups = []; [reserve, pool] = pick(); }
+        reserve.sort(storeLeadsReserveOrder);
+        pool.sort((a, b) => adlibScore(b, now) - adlibScore(a, now));
+        const nye = reserve.slice(0, n).map((x) => ({ src: "reserve", domain: storeLeadsHost(x.domain), name: x.name, city: x.city || "", category: String(x.category || "").split("/").filter(Boolean).slice(-1)[0] || "", rev_mio: kr(x.sales) ? Math.round(kr(x.sales) / 1e5) / 10 : null, fb: !!x.facebook_url, pixel: !!x.meta_pixel, phone_ok: isDkPhone(x.phone) }));
+        const ipul = pool.slice(0, n).map((l) => ({ src: "pool", cvr: l.cvr, domain: storeLeadsHost(l.web || l.website), name: l.name, city: l.city || "", category: String(l.ind || "").split("/").filter(Boolean).slice(-1)[0] || "", rev_mio: sdrLeadRevenueKr(l) ? Math.round(sdrLeadRevenueKr(l) / 1e5) / 10 : null, fb: !!(l.facebook_adlib_id || l.facebook_page_id), pixel: l.meta_pixel === true, phone_ok: sdrCallable(l), ads: l.adlib_status === "active" ? `${l.adlib_active} aktive annoncer` : l.adlib_status === "past" ? "har kørt annoncer" : l.adlib_status === "none" ? "ingen annoncer" : "" }));
+        const both = [...ipul, ...nye].sort((a, b) => b.phone_ok - a.phone_ok).slice(0, n);
+        if (ctx) ctx.found = [...(ctx.found || []), ...both].slice(0, 40);
+        if (!both.length) return { fundet: 0, søgte_efter: groups.map((g) => g[0]), besked: "INGEN FUNDET. Sig det ærligt - lad være med at sige, at du har fundet noget - og foreslå et bredere eller andet søgeord (fx en branche i stedet for et produkt)." };
+        return { fundet: both.length, i_puljen_ikke_ringet: both.filter((x) => x.src === "pool").length, nye_butikker: both.filter((x) => x.src === "reserve").length, uden_nummer: both.filter((x) => !x.phone_ok).length, ialt_matcher: { reserve: reserve.length, pulje: pool.length }, butikker: both.map((x) => `${x.name} (${x.domain}${x.city ? ", " + x.city : ""}${x.rev_mio ? ", ca. " + x.rev_mio + " mio." : ""}${x.ads ? ", " + x.ads : ""}${x.phone_ok ? "" : ", intet nummer endnu"})`), besked: `De ${both.length} vises med knapper under dit svar. Nævn kort, hvad du fandt, og hvorfor de passer - opfind ikke flere detaljer, og nævn kun butikker fra listen. Butikker uden nummer kan undersøges med research_website.` };
+      },
+    },
+    research_website: {
+      description: "Undersøg en webshop ud fra dens hjemmeside: telefonnummer (kun et nummer der står som telefon på siden), e-mail, Facebook-side, om de har Meta-pixel, og om vi allerede har dem som lead. Brug når SDR'en nævner en hjemmeside eller vil tilføje et firma, vi ikke har. Resultatet vises med en knap til at lægge det på listen.",
+      parameters: { type: "OBJECT", properties: { url: { type: "STRING", description: "hjemmesiden, fx 'butik.dk'" } }, required: ["url"] },
+      run: async ({ url }) => {
+        const host = storeLeadsHost(url); if (!/^[a-z0-9æøå.-]+\.[a-z]{2,}$/.test(host)) return { fejl: "Det ligner ikke en hjemmeside" };
+        const ex = (d.leads || []).find((l) => storeLeadsHost(l.web || l.website) === host);
+        const res = { domæne: host, findes_som_lead: ex ? { cvr: ex.cvr, navn: ex.name, status: ex.lastAction || (ex.lastCallAt ? "ringet" : "ikke ringet"), ligger_hos: ex.claimed_by ? who(ex.claimed_by) : null } : null };
+        let html = "";
+        try { const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 10000); const r = await fetch(`https://${host}`, { signal: ctl.signal, redirect: "follow", headers: { "User-Agent": "Mozilla/5.0 (compatible; VedioLeads/1.0; +https://vedio.dk)", "Accept-Language": "da-DK,da;q=0.9" } }).finally(() => clearTimeout(t)); if (r.ok) html = (await r.text()).slice(0, 600000); } catch (e) { res.fejl_side = "Siden svarede ikke"; }
+        const title = ((html.match(/<title[^>]*>([^<]{2,120})<\/title>/i) || [])[1] || "").replace(/\s+/g, " ").trim();
+        const desc = ((html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']{10,300})/i) || [])[1] || "").trim();
+        const fb = (html.match(/https?:\/\/(?:www\.)?facebook\.com\/(?!sharer|share|plugins|dialog|tr\b)[A-Za-z0-9.\-_/]{2,80}/i) || [])[0] || "";
+        const pixel = /connect\.facebook\.net\/[^"']*fbevents\.js|fbq\(\s*['"]init/i.test(html);
+        const mail = ((html.match(/mailto:([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i) || [])[1] || "").toLowerCase();
+        let phone = null;
+        for (const p of ["", "/kontakt", "/kontakt-os", "/pages/kontakt", "/pages/kontakt-os", "/contact", "/pages/contact"]) { const f = await fetchAndExtractPhone(`https://${host}${p}`).catch(() => null); if (f && f.phone) { phone = f.phone; break; } }
+        const name = (title.split(/[|–—-]/)[0] || host).trim().slice(0, 80) || host;
+        Object.assign(res, { navn: name, beskrivelse: desc.slice(0, 200), telefon: phone, email: mail || null, facebook: fb || null, meta_pixel: pixel ? true : "ikke set på forsiden (kan være indlæst på anden vis - sig ikke, at de ikke har en)" });
+        const rs = !ex ? Object.values(loadStoreLeadsReserve().items || {}).find((x) => storeLeadsHost(x.domain) === host) : null;
+        const rsKr = rs ? (Number(rs.sales) || 0) / 100 * STORELEADS_USD_DKK : 0;
+        if (rs) Object.assign(res, { i_vores_storeleads_reserve: true, kategori: rs.category || null, omsætning_mio_kr: rsKr ? Math.round(rsKr / 1e5) / 10 : null, facebook: res.facebook || rs.facebook_url || null });
+        if (ctx) ctx.found = [...(ctx.found || []), { src: ex ? "pool" : rs ? "reserve" : "web", cvr: ex ? ex.cvr : undefined, domain: host, name: ex ? ex.name : rs && rs.name || name, city: ex ? ex.city || "" : rs && rs.city || "", category: rs ? String(rs.category || "").split("/").filter(Boolean).slice(-1)[0] || "" : "", rev_mio: rsKr ? Math.round(rsKr / 1e5) / 10 : null, fb: !!fb || !!(rs && rs.facebook_url), pixel: pixel || !!(rs && rs.meta_pixel), phone_ok: !!phone || (ex ? sdrCallable(ex) : false), phone: phone || "" }].slice(0, 40);
+        return { ...res, besked: phone ? "Knappen til at lægge den på listen vises under dit svar." : "Der stod ikke et telefonnummer på siden - uden et dansk nummer kan den ikke komme på listen. Sig det, og foreslå at finde nummeret i Research." };
+      },
+    },
     recent_calls: {
       description: "SDR'ens seneste registrerede opkald (udfald + note), nyeste først. Brug til 'hvem talte jeg med', 'hvad sagde de'.",
       parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER", description: "standard 20" }, days: { type: "INTEGER", description: "kun de sidste N dage, standard 7" } } },
@@ -19314,7 +19429,7 @@ function sdrChatTools(d, userId, ctx) {
   }
   return {
     declarations: Object.entries(tools).map(([name, t]) => ({ name, description: t.description, parameters: t.parameters })),
-    run: (name, args) => { const t = tools[name]; if (!t) return { fejl: "ukendt værktøj " + name }; try { return t.run(args || {}); } catch (e) { return { fejl: e.message }; } },
+    run: async (name, args) => { const t = tools[name]; if (!t) return { fejl: "ukendt værktøj " + name }; try { return await t.run(args || {}); } catch (e) { return { fejl: e.message }; } },
     quiet: new Set(["create_artifact", "update_artifact"]),
     fallback: () => (ctx && ctx.created && ctx.created.length ? `Her er "${ctx.created[ctx.created.length - 1].title}" - åbn det herunder.` : ""),
   };
@@ -19345,7 +19460,7 @@ async function geminiChat(system, messages, tools) {
     const calls = parts.filter((p) => p.functionCall);
     if (calls.length && tools) {
       contents.push({ role: "model", parts: calls.map((p) => ({ functionCall: p.functionCall })) });
-      contents.push({ role: "user", parts: calls.map((p) => { const name = p.functionCall.name; const args = p.functionCall.args || {}; if (!(tools.quiet && tools.quiet.has(name))) used.push(name + (args.q ? `("${String(args.q).slice(0, 40)}")` : args.cvr ? `(${args.cvr})` : "")); return { functionResponse: { name, response: { result: tools.run(name, args) } } }; }) });
+      contents.push({ role: "user", parts: await Promise.all(calls.map(async (p) => { const name = p.functionCall.name; const args = p.functionCall.args || {}; if (!(tools.quiet && tools.quiet.has(name))) used.push(name + (args.q ? `("${String(args.q).slice(0, 40)}")` : args.cvr ? `(${args.cvr})` : args.url ? `(${String(args.url).slice(0, 40)})` : "")); return { functionResponse: { name, response: { result: await tools.run(name, args) } } }; })) });
       continue;
     }
     let text = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("").trim();
@@ -19422,7 +19537,7 @@ app.post("/api/sdr/chat", authMiddleware, async (req, res) => {
       chat.updated_at = nowIso; chatPut(req.userId, chat);
       return res.status(502).json({ error: "Kunne ikke få svar: " + e.message, chat_id: chat.id });
     }
-    chat.messages.push({ role: "assistant", text: reply.text, at: new Date().toISOString(), ...(reply.tools_used.length ? { tools_used: reply.tools_used } : {}), ...(ctx.created.length ? { artifacts: ctx.created } : {}) });
+    chat.messages.push({ role: "assistant", text: reply.text, at: new Date().toISOString(), ...(reply.tools_used.length ? { tools_used: reply.tools_used } : {}), ...(ctx.created.length ? { artifacts: ctx.created } : {}), ...(ctx.found && ctx.found.length ? { leads: ctx.found } : {}) });
     while (chat.messages.length > CHAT_MAX_MESSAGES) chat.messages.shift();
     chat.updated_at = new Date().toISOString();
     chatPut(req.userId, chat);

@@ -1191,3 +1191,11 @@ main{transition:margin-right .46s var(--ease)}
 .mc-avg{font-size:13px;color:var(--txt-soft);margin-bottom:4px}
 .mc{display:flex;align-items:flex-start;gap:12px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--white);padding:10px 12px;font:inherit;cursor:pointer}
 .mc:hover{background:var(--paper)}.mc .mc-t{display:flex;flex-direction:column;gap:2px}.mc .mc-i{font-size:12.5px;color:var(--txt-soft);line-height:1.4}
+/* leads the AI chat found */
+.ai-leads{display:flex;flex-direction:column;gap:6px;margin:8px 0 2px 40px}
+.ai-lead{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:12px;background:var(--white);border:1px solid var(--line)}
+.ai-lead .al-t{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}.ai-lead .al-t b{font-size:13.5px}
+.ai-lead .sub{font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.al-chips{display:flex;flex-wrap:wrap;gap:4px}.al-chips i{font-style:normal;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--paper);color:var(--txt-soft)}
+.al-chips i.new{background:var(--violet-soft);color:var(--violet)}.al-chips i.warn{background:#fdecec;color:#B3352B}
+.al-done{font-size:12px;font-weight:700;color:var(--approve);white-space:nowrap}

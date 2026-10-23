@@ -591,6 +591,21 @@ hvad den slog op. Samtaler gemmes pr. SDR (`chats/chats_<id>.json`), kan
 genåbnes og slettes. Svar kan
 kopieres eller lægges direkte i noten.
 
+*Find nye leads:* "find 10 møbelbutikker i Aarhus", "flere som det her lead" eller
+"undersøg butik.dk". `find_shops` søger i de gemte StoreLeads-butikker (reserven,
+som ikke er i puljen endnu) og i puljens leads, ingen har ringet til — danske ord
+oversættes til StoreLeads' engelske kategorier (møbler → furniture/home
+furnishings, cykler → cycling …), og butikker med dansk nummer kommer først.
+"Flere som dette" bruger leadets kategori. `research_website` læser forsiden og
+kontaktsiden (nummer — kun et der står som telefon —, e-mail, Facebook, pixel). Finder den
+intet, siger den det og foreslår et andet søgeord. Resultaterne vises som kort
+under svaret med **Tilføj til min liste** (`POST /api/sdr/chat/add-lead`): et
+lead fra puljen lægges øverst på listen; en butik fra reserven hentes først ind i
+puljen (samme vej som den daglige StoreLeads-oprykning) og et nummer fundet på
+hjemmesiden gemmes på den. Et lead, der ligger hos en anden SDR eller er en
+andens opfølgning, kan ikke tages. Uden dansk nummer er knappen slået fra.
+Gemini lægger aldrig selv noget på listen.
+
 *Filer:* 📎, træk ind eller indsæt et skærmbillede. Billeder, PDF, lyd og video
 (op til 1 GB) sendes i stykker á 8 MB videre til Geminis Files API, som gemmer
 dem i 48 timer; Word/PowerPoint/Excel og tekstfiler læses på serveren og gives
