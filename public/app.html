@@ -767,6 +767,9 @@ function renderPhone() {
   w.hidden = false;
   const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
   const myNum = S.settings && S.settings.dialer_me && S.settings.dialer_me.number;
+  // The SDR's own number sits at the foot of the window: next to the number
+  // field it read as something to call (Casper, Oct 2026).
+  const foot = myNum ? `<div class="ph-foot" title="Det nummer, kunderne ser og kan ringe tilbage til">Dit nummer <b>${e(fmtPhone(myNum))}</b></div>` : '';
   const head = (t, pill) => `<div class="ph-head"><span class="ph-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>${t}</span>${pill ? `<span class="ph-pill ${pill[1]}">${pill[0]}</span>` : ''}<button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
   const who = (name, num, sub) => `<div class="ph-who"><span class="ph-av">${e(phInitials(name || num))}</span><div><b>${e(name || num)}</b>${name ? `<span>${e(num)}</span>` : ''}${sub ? `<span>${e(sub)}</span>` : ''}</div></div>`;
   if (st === 'incoming') {
@@ -790,7 +793,6 @@ function renderPhone() {
         <span class="ph-av lg ${st === 'live' ? 'live' : 'ring'}">${e(phInitials(name || num))}</span>
         <b>${e(name || num)}</b>
         ${name ? `<span class="ph-num">${e(num)}</span>` : ''}
-        ${myNum ? `<span class="ph-from">fra ${e(fmtPhone(myNum))}</span>` : ''}
         ${st === 'live' ? `<span class="ph-time js-dial-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span><span class="dial-q js-dial-q ${DIAL.quality}">${dialQualityLabel()}</span>` : `<span class="ph-wait"><i></i><i></i><i></i></span>`}
       </div>
       ${st === 'live' && DIAL.keypad ? `<div class="ph-keys">${keys.map(([k]) => `<button onclick="dialDigit('${k}')"><b>${k}</b></button>`).join('')}</div>` : ''}
@@ -798,7 +800,7 @@ function renderPhone() {
         ${st === 'live' ? `<button class="${DIAL.muted ? 'on' : ''}" onclick="dialMute()"><span class="ic">${DIAL.muted ? IC.micoff : IC.mic}</span><small>${DIAL.muted ? 'Lyd til' : 'Mute'}</small></button>
         <button class="${DIAL.keypad ? 'on' : ''}" onclick="DIAL.keypad=!DIAL.keypad;renderDial()"><span class="ic">${IC.grid}</span><small>Tastatur</small></button>` : ''}
         <button class="stop" onclick="dialHangup()"><span class="ic">${IC.end}</span><small>Læg på</small></button>
-      </div>`;
+      </div>${foot}`;
     return;
   }
   const ended = st === 'ended' && (DIAL.lastManual || DIAL.lastCvr);
@@ -816,14 +818,13 @@ function renderPhone() {
       <button class="ph-link" onclick="DIAL.state='idle';DIAL.lastManual=false;renderPhone()">Ny samtale</button>`;
     return;
   }
-  w.innerHTML = `${head('Telefon', ['klar', 'ok'])}
-    ${myNum ? `<div class="ph-mine" title="Det nummer, kunderne ser og kan ringe tilbage til">Du ringer fra <b>${e(fmtPhone(myNum))}</b></div>` : ''}
+  w.innerHTML = `${head('Telefon', null)}
     <div class="ph-dial">
       <input id="ph-num" type="tel" placeholder="+45 12 34 56 78" value="${e(PH.num)}" oninput="phInput(this.value)" onkeydown="if(event.key==='Enter')phDial()" autocomplete="off">
       <div id="ph-matchbox"></div>
       <div class="ph-keys">${keys.map(([k, l]) => `<button onclick="phKey('${k}')"><b>${k}</b>${l ? `<small>${l}</small>` : '<small>&nbsp;</small>'}</button>`).join('')}</div>
       <div class="ph-actions"><button class="ph-btn" onclick="PH.num='';renderPhone();$('ph-num').focus()">Ryd</button><button class="ph-btn go" id="ph-call" onclick="phDial()" ${isDk(PH.num) && !busyCall ? '' : 'disabled'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>Ring op</button></div>
-    </div>`;
+    </div>${foot}`;
   renderPhoneMatch();
 }
 function dialReasonLabel(k) { return { budget: 'Intet budget', 'not-decider': 'Ikke beslutningstager', 'has-agency': 'Har bureau', 'no-ads': 'Kører ikke annoncer', timing: 'Timing', 'not-interested': 'Ikke interesseret', unreachable: 'Fik ikke fat', other: 'Andet' }[k] || k; }

@@ -1180,7 +1180,7 @@ main{transition:margin-right .46s var(--ease)}
 .history .h.link{cursor:pointer}.history .h.link:hover b{text-decoration:underline}
 .ck-ai{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--violet-soft);color:var(--violet);font-style:normal;font-size:10px;font-weight:800;letter-spacing:.06em;vertical-align:middle}
 .ph-mine{margin:-6px 0 10px;font-size:12.5px;color:var(--txt-soft)}.ph-mine b{color:var(--txt)}
-.ph-from{font-size:12px;color:var(--txt-faint);margin-top:4px}
+.ph-foot{margin-top:14px;padding-top:11px;border-top:1px solid var(--line);font-size:12px;color:var(--txt-faint);text-align:center}.ph-foot b{color:var(--txt-soft);font-weight:600;margin-left:4px}
 .mycalls{display:flex;flex-direction:column;gap:6px;padding:4px 24px 16px}
 .mc-avg{font-size:13px;color:var(--txt-soft);margin-bottom:4px}
 .mc{display:flex;align-items:flex-start;gap:12px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--white);padding:10px 12px;font:inherit;cursor:pointer}
