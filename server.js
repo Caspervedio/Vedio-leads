@@ -14612,7 +14612,7 @@ app.post("/api/cron/twenty-demo-sync", async (req, res) => {
   // longest unchecked first. Nothing is written to Twenty from this step.
   stats.read = 0; stats.fromTwenty = 0;
   try {
-    const open = (d.leads || []).filter((l) => saleIsOpen(l) && ledger[l.cvr] && ledger[l.cvr].opp_id)
+    const open = (d.leads || []).filter((l) => saleIsOpen(l) && ledger[l.cvr] && ledger[l.cvr].opp_id && !ledger[l.cvr].opp_missing_at)
       .sort((a, b) => String(ledger[a.cvr].stage_checked_at || "").localeCompare(String(ledger[b.cvr].stage_checked_at || ""))).slice(0, 10);
     const back = {}; for (const [k, v] of Object.entries(SALE_REASON_DEFS)) if (v.twenty && !back[v.twenty]) back[v.twenty] = k;
     const found = [];
@@ -14622,7 +14622,11 @@ app.post("/api/cron/twenty-demo-sync", async (req, res) => {
         const j = await twentyCall("GET", `opportunities/${e.opp_id}`); const o = (j && j.data && (j.data.opportunity || j.data)) || {};
         e.stage_checked_at = new Date().toISOString(); e.stage = o.stage || null; stats.read++;
         if (o.stage === "WON" || o.stage === "LOST") found.push({ cvr: l.cvr, o });
-      } catch (err) { e.stage_checked_at = new Date().toISOString(); console.warn("[twenty-demo/stage]", l.name, err.message); }
+      } catch (err) {
+        e.stage_checked_at = new Date().toISOString();
+        // Deleted or merged in Twenty: stop asking. The decision then lives here only.
+        if (/ 404/.test(String(err.message))) e.opp_missing_at = e.stage_checked_at; else console.warn("[twenty-demo/stage]", l.name, err.message);
+      }
     }
     saveTwentyLedger(ledger);
     if (found.length) {
@@ -17299,7 +17303,7 @@ function saleFlag(l, settings, now) {
 // The decision, mirrored onto the deal in Twenty (stage, close date, lost reason, amount).
 async function twentyPushOutcome(cvr) {
   if (!twentyReady()) return;
-  const e0 = loadTwentyLedger()[cvr]; if (!e0 || !e0.opp_id) return;
+  const e0 = loadTwentyLedger()[cvr]; if (!e0 || !e0.opp_id || e0.opp_missing_at) return;
   const l = (loadPool().leads || []).find((x) => x.cvr === cvr); if (!l) return;
   const body = {};
   if (l.sale_status === "won") { body.stage = "WON"; body.closeDate = l.sale_at; if (l.sale_value_dkk != null) body.amount = { amountMicros: Math.round(Number(l.sale_value_dkk) * 1e6), currencyCode: "DKK" }; }

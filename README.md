@@ -247,7 +247,8 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
     NO_RESPONSE), Forlæng → closeDate = ny frist, Fortryd → tilbage til Demo Booked.
     Omvendt læser `twenty-demo-sync` (hvert 5. min.) 10 åbne deals pr. kørsel; står en på
     WON eller LOST i Twenty, markeres den her også (`sale_by: "twenty"`, lostReason
-    oversat tilbage).
+    oversat tilbage). En deal, der er slettet eller flettet i Twenty (404), huskes
+    (`opp_missing_at`) og spørges ikke om igen; afgørelsen ligger så kun her.
 - **Lead-kvalitet: hvem der faktisk booker kvalificerede demoer (okt. 2026).** De
   1.096 StoreLeads-leads, der var ringet til, viste: Facebook-side + Meta-pixel + under
   5 mio. kr i omsætning gav én kvalificeret demo pr. ca. 42 opkald; ingen side, ingen
