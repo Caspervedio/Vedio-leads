@@ -144,6 +144,18 @@
 #sale-card tr.sale-stale td:first-child{box-shadow:inset 4px 0 0 #D9534F}
 #sale-card tr.sale-nudge td:first-child{box-shadow:inset 4px 0 0 #E0A93B}
 #sale-card tr.sale-parked{opacity:.65}
+#sale-card .due{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;padding:5px 11px 5px 9px;border-radius:999px;background:var(--white);border:1px solid var(--line);line-height:1;font-variant-numeric:tabular-nums}
+#sale-card .due i{width:7px;height:7px;border-radius:50%;background:#B9B3A8;flex:0 0 7px}
+#sale-card .due b{font-size:13px;font-weight:800;color:var(--txt);letter-spacing:-.01em}
+#sale-card .due small{font-size:11.5px;font-weight:600;color:var(--txt-faint)}
+#sale-card .due.red{border-color:#F1C9C5;background:linear-gradient(180deg,#FFF8F7,#FDEEEC)}
+#sale-card .due.red i{background:#C9372C;box-shadow:0 0 0 3px rgba(201,55,44,.14)}
+#sale-card .due.red b{color:#A2271D}
+#sale-card .due.red small{color:#B8645C}
+#sale-card .due.amber{border-color:#F0DDB5;background:linear-gradient(180deg,#FFFCF4,#FDF5E2)}
+#sale-card .due.amber i{background:#D69A2D;box-shadow:0 0 0 3px rgba(214,154,45,.15)}
+#sale-card .due.amber b{color:#8A5F12}
+#sale-card .due.amber small{color:#A98742}
 #salemodal .sm-reasons{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px}
 #salemodal .sm-reasons .chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--txt);margin:0}
 #salemodal .sm-reasons input{width:auto}
@@ -1410,8 +1422,10 @@ function renderSales() {
     const due = l.sale_due_at ? new Date(l.sale_due_at) : null; const due0 = due ? new Date(due) : null; if (due0) due0.setHours(0, 0, 0, 0);
     const dd = due0 ? Math.round((due0 - today0) / dayMs) : null;
     const lvl = l.sale_flag === 'red' ? 'stale' : l.sale_flag === 'amber' ? 'nudge' : '';
-    const dueTxt = !due ? '' : l.sale_flag === 'red' ? `<span class="age stale" title="Fristen var ${e(fmtDate(l.sale_due_at))} - markér Solgt, Ikke solgt eller Forlæng">Afgør nu${dd < 0 ? ` · ${-dd} d over` : ''}</span>`
-      : `<span class="age ${lvl}" title="Frist for afgørelse">${dd === 0 ? 'I dag' : dd === 1 ? 'I morgen' : e(fmtDate(l.sale_due_at))}</span>`;
+    // One line: a dot, the number that matters, a quiet caption.
+    const dueTxt = !due ? '' : l.sale_flag === 'red'
+      ? `<span class="due red" title="Fristen var ${e(fmtDate(l.sale_due_at))} - markér Solgt, Ikke solgt eller Forlæng"><i></i><b>${dd < 0 ? `${-dd} ${-dd === 1 ? 'dag' : 'dage'}` : 'I dag'}</b><small>${dd < 0 ? 'over fristen' : 'frist'}</small></span>`
+      : `<span class="due ${l.sale_flag === 'amber' ? 'amber' : ''}" title="Frist for afgørelse"><i></i><b>${dd === 0 ? 'I dag' : dd === 1 ? 'I morgen' : e(fmtDate(l.sale_due_at))}</b><small>frist</small></span>`;
     const ext = l.sale_extensions ? `<span class="sub">Forlænget ${l.sale_extensions}×${l.sale_note ? ' · venter på: ' + e(l.sale_note) : ''}</span>` : '';
     const tail = saleFilter === 'open'
       ? `<td>${dueTxt}${ext}</td>
