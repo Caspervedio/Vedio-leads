@@ -273,6 +273,13 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   forsøg i træk (`no_answer_park_after`, 60 dage) er uændret. Engangs-flytning af dem, der
   allerede ventede: `POST /api/cron/no-answer-to-pool[?dry=1]` (cron-secret; en ventetid,
   der stadig er fremme, beholdes som hvil; et lead åbent i et opkald lige nu springes over).
+- **Fravalg uden opkald sendt tilbage i puljen (23. okt.).** `POST /api/cron/screened-to-pool[?dry=1][&uids=u1,u2]`
+  (cron-secret): alt, Christian og Marcus fravalgte uden opkald (ikke vores målgruppe, for
+  svag, ingen aktive annoncer, ring senere), kommer tilbage til alle - kun hvor fravalget
+  stadig er det, der holder leadet (ingen har ringet siden, ikke på nogens liste). "Ikke
+  relevant" efter et rigtigt opkald røres ikke. Reservationen til den, der fravalgte, fjernes,
+  "ingen aktive annoncer" får et nyt annoncetjek, og det gamle står på leadet (`repool.prev`)
+  plus en note i historikken.
 - **Hvorfor et lead forsvandt fra listen.** Hver gang et lead forlader en SDR's liste, uden at
   SDR'en har sat et udfald, skrives det på leadet (`list_log`, de seneste 12) med grunden
   (`sdrOutWhy`): ikke længere ringbart (demo booket, hviler til X, udskudt til i morgen,

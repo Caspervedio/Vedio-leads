@@ -9704,6 +9704,58 @@ app.post("/api/cron/no-answer-to-pool", (req, res) => {
     res.json({ ok: true, dry, stats });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+// One-off (23 Oct 2026), Casper: every lead Christian and Marcus screened out
+// without a call ("Fravalgt uden opkald": not our target group, too weak, no
+// active ads, ring later) goes back to the shared pool. Only where the screen
+// is still what holds the lead - nobody has called it since, it is not on
+// anyone's list, and a later archive, rest or follow-up was not set by someone
+// else. "Ikke relevant" after a real call is left alone: that was a person
+// saying no on the phone. No-ads leads get a fresh ad check. What was changed
+// is kept on the lead (repool.prev). ?uids=u1,u2 (default), ?dry=1 counts.
+app.post("/api/cron/screened-to-pool", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try {
+    const dry = req.query.dry === "1"; const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
+    const uids = new Set(String(req.query.uids || "u1,u2").split(",").map((x) => x.trim()).filter(Boolean));
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const settings = sdrSettings(d);
+    const onList = new Set(Object.values(d.sdr_lists || {}).flatMap((L) => L.cvrs || []));
+    const stats = { moved: 0, by: {}, reason: {}, callable_now: 0, skipped: { called_since: 0, changed_since: 0, demo: 0, on_list: 0, open: 0, phone_no: 0 } };
+    const F = ["lastAction", "archived_at", "archived_by", "icp_why", "resurface_at", "parked_at", "parked_reason", "callback_at", "owner_override", "owner_override_at", "claimed_by", "claimed_at", "adlib_recheck"];
+    const day = (iso) => new Date(iso).toLocaleDateString("da-DK", { day: "numeric", month: "short", timeZone: "Europe/Copenhagen" });
+    for (const l of d.leads || []) {
+      const s = (Array.isArray(l.screen_log) ? l.screen_log : []).slice(-1)[0];
+      if (!s || !uids.has(s.by) || !SDR_SCREEN[s.reason]) continue;
+      const t = new Date(s.at).getTime(); const last = (l.calls || []).slice(-1)[0];
+      if ((l.calls || []).some((c) => c && new Date(c.at).getTime() > t)) { stats.skipped.called_since++; continue; }
+      if (l.lastAction === "demo-booked" || l.twenty_opportunity_id) { stats.skipped.demo++; continue; }
+      if (last && last.action === "not-relevant") { stats.skipped.phone_no++; continue; }
+      if (l.last_call_started_at && now - new Date(l.last_call_started_at).getTime() < 20 * 60e3) { stats.skipped.open++; continue; }
+      const future = (iso) => !!iso && new Date(iso).getTime() > now;
+      const holds = s.reason === "icp" ? l.lastAction === "not-relevant" && l.archived_by === s.by
+        : s.reason === "later" ? future(l.callback_at) && l.owner_override === s.by
+        : future(l.resurface_at) && l.parked_reason === s.reason;
+      if (!holds) { stats.skipped.changed_since++; continue; }
+      if (onList.has(l.cvr)) { stats.skipped.on_list++; continue; }
+      const who = nameById[s.by] || s.by;
+      stats.moved++; stats.by[who] = (stats.by[who] || 0) + 1; stats.reason[s.reason] = (stats.reason[s.reason] || 0) + 1;
+      if (dry) continue;
+      l.repool = { at: nowIso, screen: { at: s.at, by: s.by, reason: s.reason }, prev: Object.fromEntries(F.map((k) => [k, l[k] === undefined ? null : l[k]])) };
+      if (s.reason === "icp") { l.lastAction = last ? last.action : null; l.archived_at = null; l.archived_by = null; delete l.icp_why; }
+      else if (s.reason === "later") { l.callback_at = null; l.owner_override = null; l.owner_override_at = null; }
+      else { l.resurface_at = null; l.parked_at = null; l.parked_reason = null; if (s.reason === "noads") l.adlib_recheck = true; }
+      // Back to everyone: not reserved to the SDR who screened it out.
+      l.owner_override = null; l.owner_override_at = null;
+      if (l.claimed_by) sdrUnclaim(l);
+      l.note_log = Array.isArray(l.note_log) ? l.note_log : [];
+      l.note_log.push({ at: nowIso, by: "admin", where: "list", text: `Tilbage i puljen (admin): ${who} fravalgte det uden opkald ${day(s.at)} - ${SDR_SCREEN[s.reason].label}` });
+      sdrTouch(l);
+      if (sdrEligible(l, now) && sdrPassesRules(l, settings)) stats.callable_now++;
+    }
+    if (!dry && stats.moved) { savePool(d); logActivity("sdr-admin", `Fravalg: ${stats.moved} leads fravalgt uden opkald sendt tilbage til puljen`, { stats }); }
+    res.json({ ok: true, dry, stats });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // One-off repair for a run that read empty pages as "never ran ads": the
 // leads it labelled in [from, to) go back to "not checked" - ranked above
 // leads without a Facebook page at once - and the sweep re-verifies them,
@@ -15903,10 +15955,12 @@ function sdrFocusMatch(l, f) {
 // A lead an SDR researched or added themselves is theirs until it has been
 // called (Casper: "the lead being researched by one SDR follows that SDR") -
 // also when the 10-lead list sends it back to the pool for a while.
+// Sent back to the pool by admin after that (repool) = everyone's again.
 function sdrReservedFor(l) {
   if (l.owner_override) return l.owner_override;
-  if (l.research_by && l.research_at && !(l.lastCallAt && l.lastCallAt > l.research_at)) return l.research_by;
-  if (l.manual_by && !l.lastCallAt) return l.manual_by;
+  const back = l.repool && l.repool.at;
+  if (l.research_by && l.research_at && !(l.lastCallAt && l.lastCallAt > l.research_at) && !(back && back > l.research_at)) return l.research_by;
+  if (l.manual_by && !l.lastCallAt && !(back && back > (l.manual_at || ""))) return l.manual_by;
   return null;
 }
 function sdrQueue(d, userId, now, exclude, settings) {
