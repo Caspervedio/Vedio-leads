@@ -87,7 +87,7 @@
       <button data-sub="declined" onclick="listSub('declined')">Sagt nej til<span class="n" id="sn-dec">0</span></button>
       <div class="search listsearch"><input id="list-q" placeholder="Søg firma, person, nummer…" oninput="listSearch()"></div>
       <button class="addlead refresh" onclick="openListRefresh()" title="Byt listen ud med nye leads fra puljen. Dem du ikke har ringet til, kommer tilbage i puljen i morgen.">↻ Nye leads</button>
-      <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - oprettes som nyt lead">+ Nyt lead</button>
+      <button class="addlead" onclick="openAddLead()" title="Et firma du selv har fundet og vil prøve - eller mange på én gang fra en CSV-fil">+ Nyt lead</button>
     </div>
     <div id="sub-list">
       <div class="duelane" id="duelane" hidden></div>
@@ -2237,7 +2237,10 @@ function listSub(which) {
 function openAddLead() {
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'addlead';
   bg.innerHTML = `<div class="modal wide">
-    <h3>Nyt lead</h3><p>Et firma du selv har fundet og vil give et forsøg. Det oprettes som et nyt lead øverst på din liste. Har vi allerede firmaet (samme hjemmeside eller CVR), får du det, der er. Vil du rette et lead, du allerede har åbent, så brug <b>✎ Ret lead</b> på kortet.</p>
+    <h3>Nyt lead</h3>
+    <div class="al-tabs"><button class="on" data-t="one" onclick="alTab('one')">Ét lead</button><button data-t="csv" onclick="alTab('csv')">Fra CSV-fil</button></div>
+    <div id="al-one">
+    <p>Et firma du selv har fundet og vil give et forsøg. Det oprettes som et nyt lead øverst på din liste. Har vi allerede firmaet (samme hjemmeside eller CVR), får du det, der er. Vil du rette et lead, du allerede har åbent, så brug <b>✎ Ret lead</b> på kortet.</p>
     <div class="al-grid">
       <div class="full"><label>Firma *</label><input id="al-name" placeholder="fx Nordisk Kaffe ApS" autocomplete="off"></div>
       <div><label>Hovednummer</label><input id="al-phone" placeholder="+45 …" autocomplete="off"></div>
@@ -2254,10 +2257,17 @@ function openAddLead() {
     <div class="sub" style="margin-top:8px">Der skal være mindst ét dansk nummer - hovednummer eller kontaktens.</div>
     <div id="al-match" hidden></div>
     <div class="row"><button class="pill tertiary" onclick="$('addlead').remove()">Annuller</button><button class="pill primary" id="al-save" style="padding:11px 20px;font-size:14px" onclick="saveAddLead()">Opret lead på min liste</button></div>
+    </div>
+    <div id="al-csv" hidden>${alCsvHtml()}</div>
   </div>`;
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
+  AL = null; alDrop();
   setTimeout(() => { const n = $('al-name'); if (n) n.focus(); }, 30);
+}
+function alTab(t) {
+  document.querySelectorAll('#addlead .al-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  $('al-one').hidden = t !== 'one'; $('al-csv').hidden = t !== 'csv';
 }
 /* `extra` carries the SDR's answer when the number is already on another
    lead: { use_existing: cvr } to take that one, or { force_new: true } to
@@ -2291,6 +2301,142 @@ async function saveAddLead(extra) {
     if (btn) { btn.disabled = false; btn.textContent = 'Opret lead på min liste'; }
     toast(ex.message, 7000);
   }
+}
+/* ─── "Fra CSV-fil": many leads at once ────────────────────────────────────
+   The file is read here (UTF-8, or Windows-1252 as Danish Excel saves it;
+   ; , or tab), its columns matched to the form's fields - the SDR can correct
+   each one - and every row checked as the form would before anything is sent.
+   The server runs each row through the same rules as "+ Nyt lead". */
+let AL = null; // { file, head, rows, map }
+const AL_FIELDS = [
+  ['name', 'Firma *'], ['phone', 'Hovednummer'], ['web', 'Hjemmeside'], ['city', 'By'], ['cvr', 'CVR'],
+  ['contact_name', 'Kontaktperson'], ['contact_title', 'Titel'], ['contact_phone', 'Direkte nummer'], ['contact_email', 'Email'], ['note', 'Note'],
+];
+const AL_SYN = {
+  name: ['firma', 'firmanavn', 'virksomhed', 'virksomhedsnavn', 'company', 'companyname', 'account', 'accountname', 'organisation', 'organization', 'butik', 'kunde'],
+  phone: ['telefon', 'telefonnummer', 'telefonnr', 'tlf', 'tlfnr', 'tel', 'phone', 'phonenumber', 'companyphone', 'corporatephone', 'hovednummer', 'nummer'],
+  web: ['hjemmeside', 'website', 'websiteurl', 'companywebsite', 'web', 'url', 'domæne', 'domaene', 'domain', 'site', 'webshop'],
+  city: ['by', 'city', 'postby', 'bynavn', 'town'],
+  cvr: ['cvr', 'cvrnummer', 'cvrnr', 'vat', 'vatnumber', 'momsnummer'],
+  contact_name: ['kontaktperson', 'kontakt', 'kontaktnavn', 'contact', 'contactname', 'fuldenavn', 'fullname', 'person'],
+  contact_title: ['titel', 'title', 'stilling', 'jobtitle', 'position', 'rolle', 'role'],
+  contact_phone: ['direktenummer', 'direkte', 'mobil', 'mobilnummer', 'mobiltelefon', 'mobile', 'mobilephone', 'contactphone', 'directphone', 'personalphone'],
+  contact_email: ['email', 'emailadresse', 'mail', 'epost', 'contactemail'],
+  note: ['note', 'noter', 'kommentar', 'kommentarer', 'comment', 'comments', 'notes', 'bemærkning', 'bemærkninger', 'hvorfor'],
+};
+function alCsvHtml() {
+  return `<p>Mange firmaer på én gang: én række pr. firma, overskrifter i første række. Fra Excel: <b>Filer → Gem som → CSV</b>. Hver række tjekkes som i formularen - der skal være et dansk nummer, og firmaer vi har i forvejen (samme hjemmeside eller CVR) bliver dine i stedet for at blive oprettet igen.</p>
+    <label class="al-drop" id="al-drop"><input type="file" accept=".csv,.txt,text/csv" hidden onchange="alCsvPick(this.files && this.files[0]); this.value = ''">
+      <b>Vælg en CSV-fil</b><span>eller træk den herind</span></label>
+    <div class="sub" id="al-tpl" style="margin-top:8px"><a href="#" class="linkbtn" onclick="alCsvTemplate(event)">Hent en skabelon</a> med de rigtige kolonner.</div>
+    <div id="al-csvbody"></div>`;
+}
+function alDrop() {
+  const z = $('al-drop'); if (!z) return;
+  z.addEventListener('dragover', (ev) => { ev.preventDefault(); z.classList.add('over'); });
+  z.addEventListener('dragleave', () => z.classList.remove('over'));
+  z.addEventListener('drop', (ev) => { ev.preventDefault(); z.classList.remove('over'); const f = ev.dataTransfer.files && ev.dataTransfer.files[0]; if (f) alCsvPick(f); });
+}
+function alCsvTemplate(ev) {
+  ev.preventDefault();
+  const rows = ['Firma;Telefon;Hjemmeside;By;CVR;Kontaktperson;Titel;Direkte nummer;Email;Note', 'Nordisk Kaffe ApS;+45 12 34 56 78;nordiskkaffe.dk;Aarhus;;Mette Jensen;Ejer;;mette@nordiskkaffe.dk;Kører samme video i flere måneder'];
+  const url = URL.createObjectURL(new Blob(['﻿' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  const lnk = document.createElement('a'); lnk.href = url; lnk.download = 'leads-skabelon.csv'; document.body.appendChild(lnk); lnk.click(); lnk.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function alCsvParse(text) {
+  text = text.replace(/^﻿/, '');
+  const first = text.split(/\r?\n/, 1)[0] || '';
+  const outside = (ch) => { let q = false, n = 0; for (const c of first) { if (c === '"') q = !q; else if (!q && c === ch) n++; } return n; };
+  const delim = [';', ',', '\t'].sort((x, y) => outside(y) - outside(x))[0];
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === delim) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some((c) => c.trim())) rows.push(row); row = []; }
+    else cell += ch;
+  }
+  row.push(cell); if (row.some((c) => c.trim())) rows.push(row);
+  return rows.map((r) => r.map((c) => c.trim()));
+}
+// Each field takes the best column once: an exact header first, then one that
+// contains the word. "Navn" is the person's name when there is a firm column.
+function alCsvAutoMap(head) {
+  const norm = head.map((h) => String(h || '').toLowerCase().replace(/[^a-z0-9æøå]/g, ''));
+  const used = new Set(); const map = {};
+  const take = (f, test) => { if (map[f] != null) return; const i = norm.findIndex((h, k) => !used.has(k) && h && test(h)); if (i >= 0) { map[f] = i; used.add(i); } };
+  for (const [f] of AL_FIELDS) take(f, (h) => AL_SYN[f].includes(h));
+  for (const [f] of AL_FIELDS) take(f, (h) => AL_SYN[f].some((w) => w.length >= 4 && h.includes(w)));
+  const navn = norm.findIndex((h, k) => !used.has(k) && (h === 'navn' || h === 'name'));
+  if (navn >= 0) { if (map.name == null) map.name = navn; else if (map.contact_name == null) map.contact_name = navn; used.add(navn); }
+  if (map.contact_name == null) {
+    const fn = norm.findIndex((h) => h === 'fornavn' || h === 'firstname'), ln = norm.findIndex((h) => h === 'efternavn' || h === 'lastname' || h === 'surname');
+    if (fn >= 0 && ln >= 0) map.contact_name = `${fn}+${ln}`;
+  }
+  return map;
+}
+function alDk(p) { const x = String(p || '').replace(/^\s*00/, '+').replace(/[^0-9+]/g, ''); return /^(\+45|45)?\d{8}$/.test(x); }
+function alDom(w) { return String(w || '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, ''); }
+// One row as the form would send it, plus what the form would object to.
+function alCsvRow(r) {
+  const m = AL.map; const get = (f) => { const v = m[f]; if (v == null || v === '') return ''; if (String(v).includes('+')) return String(v).split('+').map((k) => r[+k] || '').join(' ').trim(); return r[+v] || ''; };
+  const o = Object.fromEntries(AL_FIELDS.map(([f]) => [f, get(f).trim()]));
+  const warn = [];
+  o.phone = o.phone.replace(/^00/, '+'); o.contact_phone = o.contact_phone.replace(/^00/, '+');
+  if (o.phone && !alDk(o.phone)) { warn.push('hovednummeret er ikke dansk'); o.phone = ''; }
+  if (o.contact_phone && !alDk(o.contact_phone)) { warn.push('det direkte nummer er ikke dansk'); o.contact_phone = ''; }
+  if (o.contact_phone && !o.contact_name) { if (!o.phone) o.phone = o.contact_phone; else warn.push('direkte nummer uden navn er ikke med'); o.contact_phone = ''; }
+  const cvr = o.cvr.replace(/\D/g, ''); o.cvr = cvr.length === 8 ? cvr : ''; if (cvr && cvr.length !== 8) warn.push('CVR er ikke 8 cifre - ikke med');
+  if (o.web && !/^[a-z0-9æøå.-]+\.[a-z]{2,}$/.test(alDom(o.web))) { warn.push('hjemmesiden ser forkert ud - ikke med'); o.web = ''; }
+  const known = o.web || o.cvr; // no number: still fine if we have the firm already (the server checks)
+  const why = o.name.length < 2 ? 'mangler firmanavn' : !o.phone && !o.contact_phone && !known ? 'intet dansk nummer' : '';
+  if (!why && !o.phone && !o.contact_phone) warn.push('intet nummer - kommer kun med, hvis vi har firmaet i forvejen');
+  return { o, why, warn };
+}
+async function alCsvPick(f) {
+  if (!f) return;
+  const buf = await f.arrayBuffer();
+  let text; try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { text = new TextDecoder('windows-1252').decode(buf); }
+  const rows = alCsvParse(text);
+  if (rows.length < 2) { $('al-csvbody').innerHTML = `<div class="al-choice">Der er ingen rækker i ${e(f.name)} - der skal være en overskriftsrække og mindst ét firma.</div>`; return; }
+  AL = { file: f.name, head: rows[0], rows: rows.slice(1), map: alCsvAutoMap(rows[0]) };
+  alCsvRender();
+}
+function alCsvSet(f, v) { AL.map[f] = v === '' ? null : v; alCsvRender(); }
+function alCsvRender() {
+  const box = $('al-csvbody'); if (!box || !AL) return;
+  const checked = AL.rows.map(alCsvRow);
+  const okN = checked.filter((x) => !x.why).length;
+  const ifKnown = checked.filter((x) => !x.why && !x.o.phone && !x.o.contact_phone).length;
+  const whys = {}; for (const x of checked) if (x.why) whys[x.why] = (whys[x.why] || 0) + 1;
+  const target = (S.list && S.list.target) || 10;
+  const opts = (f) => { const v = AL.map[f]; const fl = typeof v === 'string' && v.includes('+') ? `<option value="${e(v)}" selected>${e(v.split('+').map((k) => AL.head[+k]).join(' + '))}</option>` : '';
+    return `<option value="">- ikke med -</option>${fl}${AL.head.map((h, i) => `<option value="${i}" ${String(v) === String(i) ? 'selected' : ''}>${e(h || 'Kolonne ' + (i + 1))}</option>`).join('')}`; };
+  const prev = checked.slice(0, 6).map((x) => `<tr><td><b>${e(x.o.name || '-')}</b>${x.o.city ? `<span class="sub"> · ${e(x.o.city)}</span>` : ''}</td><td>${e(x.o.phone || x.o.contact_phone || '-')}</td><td>${e(alDom(x.o.web) || '-')}</td><td>${e(x.o.contact_name || '-')}</td><td>${x.why ? `<span class="al-st bad">${e(x.why)}</span>` : `<span class="al-st ok">✓</span>`}${x.warn.length ? `<span class="al-st warn" title="${e(x.warn.join(', '))}">!</span>` : ''}</td></tr>`).join('');
+  const warnN = checked.filter((x) => !x.why && x.warn.length && (x.o.phone || x.o.contact_phone)).length;
+  $('al-drop').hidden = true; $('al-tpl').hidden = true;
+  box.innerHTML = `<div class="al-file"><b>${e(AL.file)}</b><span class="sub">${AL.rows.length} rækker</span><button class="linkbtn" onclick="$('al-drop').querySelector('input').click()">Skift fil</button></div>
+    <div class="al-map">${AL_FIELDS.map(([f, label]) => `<div><label>${label}</label><select onchange="alCsvSet('${f}', this.value)">${opts(f)}</select></div>`).join('')}</div>
+    <div class="al-sum"><b>${okN - ifKnown} klar</b>${ifKnown ? ` · ${ifKnown} uden dansk nummer - kommer kun med, hvis vi har firmaet i forvejen` : ''}${Object.entries(whys).map(([w, n]) => ` · ${n} ${e(w)}`).join('')}${warnN ? ` · ${warnN} med en rettelse (!)` : ''}</div>
+    <div class="al-prev"><table><colgroup><col style="width:30%"><col style="width:19%"><col style="width:21%"><col style="width:15%"><col style="width:15%"></colgroup><thead><tr><th>Firma</th><th>Nummer</th><th>Hjemmeside</th><th>Kontakt</th><th></th></tr></thead><tbody>${prev}</tbody></table>${AL.rows.length > 6 ? `<div class="sub">… og ${AL.rows.length - 6} til</div>` : ''}</div>
+    <div class="sub">De første ${target} lægges øverst på din liste. Resten er reserveret til dig og kommer først, efterhånden som listen fyldes op.</div>
+    <div class="row"><button class="pill tertiary" onclick="$('addlead').remove()">Annuller</button><button class="pill primary" id="al-csvsave" style="padding:11px 20px;font-size:14px" ${okN ? '' : 'disabled'} onclick="alCsvSave()">Opret leads fra ${okN} rækker</button></div>`;
+}
+async function alCsvSave() {
+  const rows = AL.rows.map((r, i) => ({ ...alCsvRow(r), line: i + 2 })).filter((x) => !x.why).map((x) => ({ ...x.o, _row: x.line })); // line 1 is the header
+  if (!rows.length) return;
+  if (rows.length > 1000) { toast('Højst 1.000 rækker ad gangen - del filen op', 5000); return; }
+  const btn = $('al-csvsave'); if (btn) { btn.disabled = true; btn.textContent = `Opretter…`; }
+  try {
+    const d = await post('/api/sdr/leads/import', { rows });
+    apply(d, { keepCurrent: true });
+    const st = d.import.stats, skipped = d.import.results.filter((x) => x.status === 'skipped');
+    $('al-csvbody').innerHTML = `<div class="al-result"><h4>✓ ${st.created + st.taken} leads er dine</h4>
+      <p>${st.created} nye${st.taken ? ` · ${st.taken} fandtes i forvejen og er nu dine` : ''}${st.duplicate ? ` · ${st.duplicate} stod der to gange` : ''}${skipped.length ? ` · ${skipped.length} sprunget over` : ''}. ${st.on_list} ligger øverst på din liste${st.queued ? `, ${st.queued} venter i din kø` : ''}.</p>
+      ${skipped.length ? `<div class="al-skip"><div class="k">Sprunget over</div>${skipped.map((x) => `<div><b>${e(x.name || 'Række ' + x.row)}</b> <span class="sub">række ${x.row}</span> - ${e(x.why)}</div>`).join('')}</div><div class="sub" style="margin-top:6px">Et firma med et nummer, vi har på et andet firma, kan du oprette under "Ét lead" - så bliver du spurgt.</div>` : ''}</div>
+      <div class="row"><button class="pill primary" style="padding:11px 20px;font-size:14px" onclick="$('addlead').remove()">Luk</button></div>`;
+  } catch (ex) { if (btn) { btn.disabled = false; btn.textContent = `Opret leads fra ${rows.length} rækker`; } toast(ex.message, 6000); }
 }
 /* Clock icon in the header: everything this SDR has done, newest first. */
 function openActivity() {

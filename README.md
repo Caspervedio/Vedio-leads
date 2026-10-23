@@ -85,7 +85,21 @@ på Ringelisten) bytter hele den friske del af listen ud med de næste fra pulje
 de fravalgte hviler til i morgen som ved "Ikke i dag". Opfølgninger, det lead der
 er en samtale i gang på, og leads SDR'en selv har researchet eller tilføjet bliver.
 Højst 5 gange om dagen pr. SDR, og hvert byt logges. Leads en SDR selv har researchet eller tilføjet,
-er reserveret til dem (andre får dem ikke) og kommer først. **Fokus i dag**
+er reserveret til dem (andre får dem ikke) og kommer først.
+**+ Nyt lead** har to faner: *Ét lead* (formularen) og *Fra CSV-fil* - mange firmaer på én
+gang. Filen læses i browseren (UTF-8 eller Windows-1252, som dansk Excel gemmer; `;`, `,`
+eller tab), kolonnerne genkendes på danske og engelske overskrifter (Firma/Company,
+Telefon/Phone, Hjemmeside/Website, Fornavn + Efternavn …) og kan rettes én for én, og en
+forhåndsvisning viser, hvilke rækker der kommer med. "Hent en skabelon" giver en tom fil
+med de rigtige kolonner. `POST /api/sdr/leads/import` (højst 1.000 rækker) kører hver række
+gennem præcis samme tjek som formularen (`sdrManualLead`): dansk nummer, samme CVR eller
+hjemmeside = samme firma, et lead hos en anden SDR, en booket demo eller en andens
+"ikke nu" røres ikke. To forskelle: et nummer, et andet firma har, springes over (formularen
+spørger), og en række uden nummer kommer med, hvis vi har firmaet i forvejen, og det kan
+ringes op. De første `list_size` lægges øverst på listen i filens rækkefølge, resten er
+reserveret til SDR'en og kommer først, efterhånden som listen fyldes op. Bagefter vises
+hvad der blev oprettet, hvad der fandtes, og hvorfor hver sprunget række blev sprunget over.
+**Fokus i dag**
 over listen: branche, webshop-størrelse (StoreLeads' anslåede omsætning) og
 aktive Meta-annoncer (mindst 1 · 3 · 5 · 10 · 20, efterset i Ad Library) - listen
 fyldes fra fokus først og fra resten, når fokus er tomt. (Kontakt-håndtaget

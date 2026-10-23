@@ -16976,123 +16976,194 @@ app.post("/api/sdr/research/save", authMiddleware, (req, res) => {
 // company on their own, that they want to give a try". It goes to the top of
 // their own list. If the company is already in the pool it is not duplicated:
 // a free one is handed to them, one that is taken is explained instead.
+// Everything "+ Nyt lead" checks and does, for one row - shared by the form and
+// the CSV upload. Returns { lead, created } or { fail: { status, body } }; the
+// caller saves. opts: idx (sdrLeadIndex, for many rows), list (false = reserve
+// to me without putting it on today's list), via (how the note says it came).
+function sdrManualLead(d, me, b, now, opts = {}) {
+  let snap = null, made = null;
+  const fail = (status, out) => {
+    if (snap) { for (const k of Object.keys(snap.lead)) delete snap.lead[k]; Object.assign(snap.lead, JSON.parse(snap.json)); }
+    if (made) { const at = (d.leads || []).indexOf(made); if (at >= 0) d.leads.splice(at, 1); }
+    return { fail: { status, body: out } };
+  };
+  const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+  const name = str(b.name, 120);
+  const mainPhone = str(b.phone, 30), contactPhone = str(b.contact_phone, 30);
+  const contactName = str(b.contact_name, 120);
+  const realCvr = str(b.cvr, 12).replace(/\s/g, "");
+  const webIn = str(b.web, 200);
+  const dom = webIn.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+  if (name.length < 2) return fail(400, { error: "Skriv firmaets navn" });
+  // Only Danish numbers are ever called - same rule as everywhere else.
+  // A CSV row may name a firm we already have (website or CVR) without a
+  // number: it is taken if that lead can be called - checked once it is found.
+  const noPhoneOk = opts.noPhoneIfKnown && (realCvr || dom);
+  if (!mainPhone && !contactPhone && !noPhoneOk) return fail(400, { error: "Der skal være et dansk telefonnummer - hovednummer eller kontaktens" });
+  if (mainPhone && !isDkPhone(mainPhone)) return fail(400, { error: "Hovednummeret skal være dansk (+45)" });
+  if (contactPhone && !isDkPhone(contactPhone)) return fail(400, { error: "Kontaktens nummer skal være dansk (+45)" });
+  if (contactPhone && !contactName) return fail(400, { error: "Skriv kontaktens navn til det direkte nummer" });
+  if (realCvr && !/^\d{8}$/.test(realCvr)) return fail(400, { error: "CVR skal være 8 cifre" });
+  if (dom && !/^[a-z0-9æøå.-]+\.[a-z]{2,}$/.test(dom)) return fail(400, { error: "Hjemmesiden ser ikke rigtig ud" });
+
+  const nowIso = new Date(now).toISOString();
+  const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+  const digits = sdrPhoneDigits;
+  const phonesIn = [mainPhone, contactPhone].filter(Boolean).map(digits);
+  const domOf = sdrDomOf, phonesOf = sdrPhonesOf;
+  // Same CVR or website = the same company, always. A shared phone number
+  // is not: one owner with two shops (Aya House rang on terrassevarmer.dk's
+  // number, and the tool quietly turned the new shop into the old lead). So a
+  // number-only match is put to the SDR - use the existing lead, or create the
+  // new one anyway (`force_new`) - unless they already answered.
+  const who = (id) => nameById[id] || id;
+  const useCvr = str(b.use_existing, 80);
+  const ix = opts.idx; // a CSV upload looks up hundreds of rows: one index instead of a scan each
+  const same = ix ? (realCvr && ix.cvr.get(realCvr)) || (dom && ix.dom.get(dom)) || null : (d.leads || []).find((l) => (realCvr && l.cvr === realCvr) || (dom && domOf(l) === dom));
+  const sharesNumber = !same ? (ix ? phonesIn.map((p) => ix.phone.get(p)).find(Boolean) || null : (d.leads || []).find((l) => phonesOf(l).some((p) => p && phonesIn.includes(p)))) : null;
+  let existing = same || (useCvr ? (d.leads || []).find((l) => l.cvr === useCvr) : null);
+  if (!existing && !mainPhone && !contactPhone) return fail(400, { error: "Intet dansk nummer, og vi har ikke firmaet i forvejen" });
+  if (!existing && sharesNumber && b.force_new !== true) {
+    return fail(409, {
+      error: `${sharesNumber.name} har allerede nummeret ${sharesNumber.phone || contactPhone || mainPhone}.`,
+      match: { cvr: sharesNumber.cvr, name: sharesNumber.name, city: sharesNumber.city || "", web: sharesNumber.web || "", status: sharesNumber.lastAction === "not-relevant" ? "arkiveret" : sharesNumber.lastAction === "demo-booked" ? "demo booket" : sdrClaimActive(sharesNumber, now) ? `hos ${who(sharesNumber.claimed_by)}` : "i puljen" },
+      can_force: true,
+    });
+  }
+
+  let lead, created = false;
+  // Nothing is saved on a refusal - but a CSV upload saves once for all
+  // rows, so a refused row must leave the lead exactly as it found it.
+  if (existing) snap = { lead: existing, json: JSON.stringify(existing) };
+  if (existing) {
+    if (existing.lastAction === "demo-booked") return fail(409, { error: `${existing.name} findes allerede - der er booket en demo${existing.demo_booked_by ? " af " + who(existing.demo_booked_by) : ""}.` });
+    if (existing.lastAction === "not-relevant") {
+      // Most archived leads were binned by the pipeline's own filters, not
+      // by a person - an SDR with a reason to try one may. A "no" said by
+      // another SDR on the phone, or by admin, stands.
+      const last = (existing.calls || []).slice(-1)[0];
+      const humanNo = (last && last.action === "not-relevant" && last.by) || existing.archived_by || null;
+      if (humanNo && humanNo !== me) return fail(409, { error: `${existing.name} findes allerede og er arkiveret som ikke relevant af ${who(humanNo)}. Admin kan genåbne det.` });
+      existing.lastAction = null; existing.archived_at = null; existing.archived_by = null; existing.resurface_at = null; existing.deferred_until = null;
+    }
+    if (sdrClaimedByOther(existing, me, now)) return fail(409, { error: `${existing.name} findes allerede og ligger hos ${who(existing.claimed_by)}.` });
+    if (existing.callback_at && !sdrFollowupMine(existing, me)) return fail(409, { error: `${existing.name} findes allerede som opfølgning hos ${who(sdrFollowupOwner(existing))}.` });
+    if (existing.twenty_opportunity_id) return fail(409, { error: `${existing.name} findes allerede i det gamle CRM (Twenty).` });
+    // Parked with "Ikke nu": the customer told someone not now. If that was
+    // me, I may pull it forward; if it was the other SDR, it stays parked -
+    // otherwise one SDR rings a customer who just told the other "not now".
+    const parkedUntil = [existing.resurface_at, existing.deferred_until].filter((x) => x && new Date(x).getTime() > now).sort().pop();
+    if (parkedUntil) {
+      const last = (existing.calls || []).slice(-1)[0];
+      if (last && last.by && last.by !== me) {
+        const dt = new Date(parkedUntil).toLocaleDateString("da-DK", { day: "numeric", month: "long" });
+        return fail(409, { error: `${existing.name} findes allerede - de sagde "ikke nu" til ${who(last.by)}, og det kommer selv tilbage ${dt}.` });
+      }
+      existing.resurface_at = null; existing.deferred_until = null;
+    }
+    // My own callback in the future: I'm choosing to ring now instead.
+    if (existing.callback_at && new Date(existing.callback_at).getTime() > now) existing.callback_at = null;
+    if (existing.apollo_enrichment_pending === true) existing.apollo_enrichment_pending = false;
+    lead = existing;
+  } else {
+    const slug = (dom || name).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "lead";
+    lead = {
+      cvr: realCvr || `manual-${slug}-${crypto.randomBytes(2).toString("hex")}`,
+      name, city: str(b.city, 80), ind: "",
+      web: dom ? `https://${dom}` : "", website: dom ? `https://${dom}` : "",
+      phone: mainPhone ? normDkPhone(mainPhone) : "", ph: mainPhone ? normDkPhone(mainPhone) : "",
+      phone_source: mainPhone ? "sdr-manual-main" : undefined,
+      contacts: [],
+      source: "manual-sdr", source_label: "Tilføjet af SDR",
+      addedAt: nowIso, discovered_at: nowIso,
+    };
+    d.leads.push(lead); created = true; made = lead;
+  }
+  // What the SDR knows goes onto the lead, new or existing - without
+  // overwriting a contact that is already there under the same name.
+  if (contactName) {
+    lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
+    let c = lead.contacts.find((x) => x && x.name && x.name.trim().toLowerCase() === contactName.toLowerCase());
+    if (!c) { c = { name: contactName, source_discovery: "sdr-manual", addedAt: nowIso, added_by: me }; lead.contacts.unshift(c); }
+    if (str(b.contact_title, 120)) c.title = str(b.contact_title, 120);
+    if (str(b.contact_email, 160)) c.email = str(b.contact_email, 160);
+    if (contactPhone) { const np = normDkPhone(contactPhone); c.phone = np; c.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; c.source_phone = "sdr-manual"; }
+    lead.preferred_contact_name = contactName;
+  }
+  if (!created && mainPhone && !isDkPhone(lead.phone || lead.ph)) { lead.phone = normDkPhone(mainPhone); lead.ph = lead.phone; lead.phone_source = "sdr-manual-main"; }
+  lead.manual_by = me; lead.manual_at = nowIso;
+  lead.needs_enrichment = false;
+  // Never say "it's on your list" unless the list will actually keep it -
+  // nothing has been saved yet, so refusing here changes nothing.
+  if (!sdrEligible(lead, now)) return fail(409, { error: `${lead.name} kan ikke komme på listen lige nu${sdrIsCurrentCustomer(lead) ? " - de er allerede Vedio-kunde" : !sdrCallable(lead) ? " - der mangler et dansk nummer" : ""}.` });
+  if (opts.list === false) { lead.owner_override = me; lead.owner_override_at = nowIso; } // reserved: first in my queue as the list refills
+  else sdrPutOnMyList(d, lead, me, now);
+  const note = str(b.note, 2000);
+  if (!(opts.seen && opts.seen.has(lead))) sdrAppendNote(lead, me, `${created ? "Tilføjet" : "Hentet ind"} ${opts.via || "manuelt"} af ${nameById[me] || me}${note ? ": " + note : ""}`, "list");
+  // Two companies on one number: say so on both, so the next caller knows -
+  // and last, so it is the note the card shows.
+  if (created && sharesNumber) { sdrAppendNote(lead, me, `Samme nummer som ${sharesNumber.name}`, "list"); sdrAppendNote(sharesNumber, me, `Samme nummer som ${name} (tilføjet af ${who(me)})`, "list"); sdrTouch(sharesNumber); }
+  sdrTouch(lead, true);
+  if (ix && created) sdrLeadIndexAdd(ix, lead);
+  return { lead, created };
+}
+const sdrPhoneDigits = (p) => String(p || "").replace(/\D/g, "").replace(/^45(?=\d{8}$)/, "");
+const sdrDomOf = (l) => String(l.web || l.website || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
+const sdrPhonesOf = (l) => [l.phone, l.ph, ...(l.contacts || []).flatMap((c) => c ? [c.phone, c.direct_phone, c.mobile] : [])].filter(Boolean).map(sdrPhoneDigits);
+function sdrLeadIndexAdd(ix, l) {
+  if (l.cvr && !ix.cvr.has(l.cvr)) ix.cvr.set(l.cvr, l);
+  const dm = sdrDomOf(l); if (dm && !ix.dom.has(dm)) ix.dom.set(dm, l);
+  for (const p of sdrPhonesOf(l)) if (p && !ix.phone.has(p)) ix.phone.set(p, l);
+}
+function sdrLeadIndex(d) { const ix = { cvr: new Map(), dom: new Map(), phone: new Map() }; for (const l of d.leads || []) sdrLeadIndexAdd(ix, l); return ix; }
 app.post("/api/sdr/lead", authMiddleware, (req, res) => {
   try {
-    const b = req.body || {};
-    const str = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
-    const name = str(b.name, 120);
-    const mainPhone = str(b.phone, 30), contactPhone = str(b.contact_phone, 30);
-    const contactName = str(b.contact_name, 120);
-    const realCvr = str(b.cvr, 12).replace(/\s/g, "");
-    const webIn = str(b.web, 200);
-    const dom = webIn.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
-    if (name.length < 2) return res.status(400).json({ error: "Skriv firmaets navn" });
-    // Only Danish numbers are ever called - same rule as everywhere else.
-    if (!mainPhone && !contactPhone) return res.status(400).json({ error: "Der skal være et dansk telefonnummer - hovednummer eller kontaktens" });
-    if (mainPhone && !isDkPhone(mainPhone)) return res.status(400).json({ error: "Hovednummeret skal være dansk (+45)" });
-    if (contactPhone && !isDkPhone(contactPhone)) return res.status(400).json({ error: "Kontaktens nummer skal være dansk (+45)" });
-    if (contactPhone && !contactName) return res.status(400).json({ error: "Skriv kontaktens navn til det direkte nummer" });
-    if (realCvr && !/^\d{8}$/.test(realCvr)) return res.status(400).json({ error: "CVR skal være 8 cifre" });
-    if (dom && !/^[a-z0-9æøå.-]+\.[a-z]{2,}$/.test(dom)) return res.status(400).json({ error: "Hjemmesiden ser ikke rigtig ud" });
-
-    const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
-    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
-    const me = req.userId;
-    const digits = (p) => String(p || "").replace(/\D/g, "").replace(/^45(?=\d{8}$)/, "");
-    const phonesIn = [mainPhone, contactPhone].filter(Boolean).map(digits);
-    const domOf = (l) => String(l.web || l.website || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/[/?#].*$/, "");
-    const phonesOf = (l) => [l.phone, l.ph, ...(l.contacts || []).flatMap((c) => c ? [c.phone, c.direct_phone, c.mobile] : [])].filter(Boolean).map(digits);
-    // Same CVR or website = the same company, always. A shared phone number
-    // is not: one owner with two shops (Aya House rang on terrassevarmer.dk's
-    // number, and the tool quietly turned the new shop into the old lead). So a
-    // number-only match is put to the SDR - use the existing lead, or create the
-    // new one anyway (`force_new`) - unless they already answered.
-    const who = (id) => nameById[id] || id;
-    const useCvr = str(b.use_existing, 80);
-    const same = (d.leads || []).find((l) => (realCvr && l.cvr === realCvr) || (dom && domOf(l) === dom));
-    const sharesNumber = !same ? (d.leads || []).find((l) => phonesOf(l).some((p) => p && phonesIn.includes(p))) : null;
-    let existing = same || (useCvr ? (d.leads || []).find((l) => l.cvr === useCvr) : null);
-    if (!existing && sharesNumber && b.force_new !== true) {
-      return res.status(409).json({
-        error: `${sharesNumber.name} har allerede nummeret ${sharesNumber.phone || contactPhone || mainPhone}.`,
-        match: { cvr: sharesNumber.cvr, name: sharesNumber.name, city: sharesNumber.city || "", web: sharesNumber.web || "", status: sharesNumber.lastAction === "not-relevant" ? "arkiveret" : sharesNumber.lastAction === "demo-booked" ? "demo booket" : sdrClaimActive(sharesNumber, now) ? `hos ${who(sharesNumber.claimed_by)}` : "i puljen" },
-        can_force: true,
-      });
-    }
-
-    let lead, created = false;
-    if (existing) {
-      if (existing.lastAction === "demo-booked") return res.status(409).json({ error: `${existing.name} findes allerede - der er booket en demo${existing.demo_booked_by ? " af " + who(existing.demo_booked_by) : ""}.` });
-      if (existing.lastAction === "not-relevant") {
-        // Most archived leads were binned by the pipeline's own filters, not
-        // by a person - an SDR with a reason to try one may. A "no" said by
-        // another SDR on the phone, or by admin, stands.
-        const last = (existing.calls || []).slice(-1)[0];
-        const humanNo = (last && last.action === "not-relevant" && last.by) || existing.archived_by || null;
-        if (humanNo && humanNo !== me) return res.status(409).json({ error: `${existing.name} findes allerede og er arkiveret som ikke relevant af ${who(humanNo)}. Admin kan genåbne det.` });
-        existing.lastAction = null; existing.archived_at = null; existing.archived_by = null; existing.resurface_at = null; existing.deferred_until = null;
-      }
-      if (sdrClaimedByOther(existing, me, now)) return res.status(409).json({ error: `${existing.name} findes allerede og ligger hos ${who(existing.claimed_by)}.` });
-      if (existing.callback_at && !sdrFollowupMine(existing, me)) return res.status(409).json({ error: `${existing.name} findes allerede som opfølgning hos ${who(sdrFollowupOwner(existing))}.` });
-      if (existing.twenty_opportunity_id) return res.status(409).json({ error: `${existing.name} findes allerede i det gamle CRM (Twenty).` });
-      // Parked with "Ikke nu": the customer told someone not now. If that was
-      // me, I may pull it forward; if it was the other SDR, it stays parked -
-      // otherwise one SDR rings a customer who just told the other "not now".
-      const parkedUntil = [existing.resurface_at, existing.deferred_until].filter((x) => x && new Date(x).getTime() > now).sort().pop();
-      if (parkedUntil) {
-        const last = (existing.calls || []).slice(-1)[0];
-        if (last && last.by && last.by !== me) {
-          const dt = new Date(parkedUntil).toLocaleDateString("da-DK", { day: "numeric", month: "long" });
-          return res.status(409).json({ error: `${existing.name} findes allerede - de sagde "ikke nu" til ${who(last.by)}, og det kommer selv tilbage ${dt}.` });
-        }
-        existing.resurface_at = null; existing.deferred_until = null;
-      }
-      // My own callback in the future: I'm choosing to ring now instead.
-      if (existing.callback_at && new Date(existing.callback_at).getTime() > now) existing.callback_at = null;
-      if (existing.apollo_enrichment_pending === true) existing.apollo_enrichment_pending = false;
-      lead = existing;
-    } else {
-      const slug = (dom || name).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "lead";
-      lead = {
-        cvr: realCvr || `manual-${slug}-${crypto.randomBytes(2).toString("hex")}`,
-        name, city: str(b.city, 80), ind: "",
-        web: dom ? `https://${dom}` : "", website: dom ? `https://${dom}` : "",
-        phone: mainPhone ? normDkPhone(mainPhone) : "", ph: mainPhone ? normDkPhone(mainPhone) : "",
-        phone_source: mainPhone ? "sdr-manual-main" : undefined,
-        contacts: [],
-        source: "manual-sdr", source_label: "Tilføjet af SDR",
-        addedAt: nowIso, discovered_at: nowIso,
-      };
-      d.leads.push(lead); created = true;
-    }
-    // What the SDR knows goes onto the lead, new or existing - without
-    // overwriting a contact that is already there under the same name.
-    if (contactName) {
-      lead.contacts = Array.isArray(lead.contacts) ? lead.contacts : [];
-      let c = lead.contacts.find((x) => x && x.name && x.name.trim().toLowerCase() === contactName.toLowerCase());
-      if (!c) { c = { name: contactName, source_discovery: "sdr-manual", addedAt: nowIso, added_by: me }; lead.contacts.unshift(c); }
-      if (str(b.contact_title, 120)) c.title = str(b.contact_title, 120);
-      if (str(b.contact_email, 160)) c.email = str(b.contact_email, 160);
-      if (contactPhone) { const np = normDkPhone(contactPhone); c.phone = np; c.phones = [{ number: np, type: "mobile", typeLabel: "Manuel" }]; c.source_phone = "sdr-manual"; }
-      lead.preferred_contact_name = contactName;
-    }
-    if (!created && mainPhone && !isDkPhone(lead.phone || lead.ph)) { lead.phone = normDkPhone(mainPhone); lead.ph = lead.phone; lead.phone_source = "sdr-manual-main"; }
-    lead.manual_by = me; lead.manual_at = nowIso;
-    lead.needs_enrichment = false;
-    // Never say "it's on your list" unless the list will actually keep it -
-    // nothing has been saved yet, so refusing here changes nothing.
-    if (!sdrEligible(lead, now)) return res.status(409).json({ error: `${lead.name} kan ikke komme på listen lige nu${sdrIsCurrentCustomer(lead) ? " - de er allerede Vedio-kunde" : !sdrCallable(lead) ? " - der mangler et dansk nummer" : ""}.` });
-    sdrPutOnMyList(d, lead, me, now);
-    const note = str(b.note, 2000);
-    sdrAppendNote(lead, me, created ? `Tilføjet manuelt af ${nameById[me] || me}${note ? ": " + note : ""}` : `Hentet ind manuelt af ${nameById[me] || me}${note ? ": " + note : ""}`, "list");
-    // Two companies on one number: say so on both, so the next caller knows -
-    // and last, so it is the note the card shows.
-    if (created && sharesNumber) { sdrAppendNote(lead, me, `Samme nummer som ${sharesNumber.name}`, "list"); sdrAppendNote(sharesNumber, me, `Samme nummer som ${name} (tilføjet af ${who(me)})`, "list"); sdrTouch(sharesNumber); }
-    sdrTouch(lead, true);
+    const d = loadPool(); const now = Date.now(); const me = req.userId;
+    const r = sdrManualLead(d, me, req.body || {}, now);
+    if (r.fail) return res.status(r.fail.status).json(r.fail.body);
+    const { lead, created } = r;
     savePool(d);
-    logActivity("sdr-manual-lead", `${nameById[me] || me} ${created ? "tilføjede" : "hentede"} ${lead.name}`, { cvr: lead.cvr, userId: me });
+    logActivity("sdr-manual-lead", `${(loadUsers().find((u) => u.id === me) || {}).name || me} ${created ? "tilføjede" : "hentede"} ${lead.name}`, { cvr: lead.cvr, userId: me });
     sdrRespond(res, me, d, { added: { cvr: lead.cvr, name: lead.name, created } });
   } catch (e) { sdrFail(res, e, "lead"); }
+});
+// "+ Nyt lead" → "Fra CSV-fil": many rows through the very same checks as the
+// form. The first rows go on top of today's list (it holds list_size), the rest
+// are reserved to the SDR and come first as the list refills. A row the form
+// would refuse is skipped with the form's reason; so is a number another
+// company already has (the form asks - an upload can't), to be added by hand.
+const SDR_CSV_MAX = 1000;
+const SDR_CSV_KEYS = ["name", "phone", "web", "city", "cvr", "contact_name", "contact_title", "contact_phone", "contact_email", "note"];
+app.post("/api/sdr/leads/import", authMiddleware, (req, res) => {
+  try {
+    const me = req.userId;
+    if (sdrIsAdmin(me)) return res.status(400).json({ error: "Admin har ingen ringeliste - brug Importér leads under Drift" });
+    const rows = Array.isArray((req.body || {}).rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ error: "Filen har ingen rækker" });
+    if (rows.length > SDR_CSV_MAX) return res.status(413).json({ error: `Højst ${SDR_CSV_MAX.toLocaleString("da-DK")} rækker ad gangen` });
+    const d = loadPool(); const now = Date.now(); const ix = sdrLeadIndex(d);
+    const target = Math.max(1, Number(sdrSettings(d).list_size) || SDR_DEFAULT_SETTINGS.list_size);
+    const results = []; const ok = []; const seen = new Set(); // a firm twice in the file: one lead, one note
+    rows.forEach((row, i) => {
+      const b = Object.fromEntries(SDR_CSV_KEYS.map((k) => [k, row && row[k] != null ? String(row[k]) : ""]));
+      const r = sdrManualLead(d, me, b, now, { idx: ix, list: false, via: "fra CSV", seen, noPhoneIfKnown: true });
+      const line = Number(row && row._row) || i + 1; // the row's line in the SDR's file
+      if (r.fail) { results.push({ row: line, name: b.name, status: "skipped", why: r.fail.body.error || "Kunne ikke oprettes" }); return; }
+      const dup = seen.has(r.lead);
+      results.push({ row: line, name: r.lead.name, cvr: r.lead.cvr, status: dup ? "duplicate" : r.created ? "created" : "taken" });
+      if (!dup) { ok.push(r.lead); seen.add(r.lead); }
+    });
+    // Top of the list in the file's order: the first row ends up first.
+    for (const l of ok.slice(0, target).reverse()) sdrPutOnMyList(d, l, me, now);
+    const n = (st) => results.filter((x) => x.status === st).length;
+    const stats = { rows: rows.length, created: n("created"), taken: n("taken"), skipped: n("skipped"), duplicate: n("duplicate"), on_list: Math.min(ok.length, target), queued: Math.max(0, ok.length - target) };
+    if (ok.length) {
+      savePool(d);
+      const nm = (loadUsers().find((u) => u.id === me) || {}).name || me;
+      logActivity("sdr-manual-lead", `${nm} uploadede ${rows.length} leads fra CSV: ${stats.created} nye, ${stats.taken} fandtes, ${stats.skipped} sprunget over`, { userId: me, stats });
+    }
+    sdrRespond(res, me, d, { import: { stats, results } });
+  } catch (e) { sdrFail(res, e, "leads/import"); }
 });
 // Top of my list, claimed, off everyone else's - the manual add and the AI chat.
 function sdrPutOnMyList(d, lead, me, now) {
