@@ -10,6 +10,9 @@ const path = require("path");
 const crypto = require("crypto");
 
 const app = express();
+// The SDR state is 0.5-1 MB of JSON on every click; gzip makes it ~10x smaller
+// on the wire. Server-sent events (the live call feed) must not be buffered.
+app.use(require("compression")({ filter: (req, res) => !String(req.headers.accept || "").includes("text/event-stream") && !req.path.startsWith("/api/sdr/live") && require("compression").filter(req, res) }));
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
@@ -41,9 +44,23 @@ app.use(express.static(path.join(__dirname, "public")));
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 function loadJsonFile(filePath, defaultValue) {
   try {
+    if (filePath === _poolCache.file) { const raw = poolRawRead(); if (raw != null) return JSON.parse(raw); return defaultValue; }
     if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch (e) { console.error("loadJsonFile failed:", filePath, e.message); }
   return defaultValue;
+}
+// The pool file lives on the GCS bucket mount: reading it downloaded ~25 MB
+// on every request, and every save read it once more to merge. One instance
+// (maxScale 1) writes it, so the last text read or written is kept in memory
+// and reused while the file's mtime and size are unchanged.
+const _poolCache = { file: "", raw: null, mtimeMs: 0, size: 0 };
+function poolStat() { try { const st = fs.statSync(_poolCache.file); return { mtimeMs: st.mtimeMs, size: st.size }; } catch { return null; } }
+function poolRawRead() {
+  const st = poolStat(); if (!st) return null;
+  if (_poolCache.raw != null && st.mtimeMs === _poolCache.mtimeMs && st.size === _poolCache.size) return _poolCache.raw;
+  const raw = fs.readFileSync(_poolCache.file, "utf-8"); const st2 = poolStat() || st;
+  Object.assign(_poolCache, { raw, mtimeMs: st2.mtimeMs, size: st2.size });
+  return raw;
 }
 
 async function callAnthropic(apiKey, prompt, maxTokens = 600) {
@@ -268,14 +285,20 @@ function loadUsers() {
 function getUserDataFile(userId) {
   return path.join(DATA_DIR, `data_${userId}.json`);
 }
+_poolCache.file = getUserDataFile("pool");
 
 // Which leads each loaded copy of the pool started with - see the end of
 // sdrMergeBeforeSave. Keyed by the object, so it goes when the copy does.
 const _poolLoadedCvrs = new WeakMap();
+const _poolLoadedAt = new WeakMap(); // the file version a loaded pool copy was parsed from
+// Which deploy is running (Cloud Run sets K_REVISION). An open app that sees a
+// new one reloads itself between calls - a fix otherwise only reached an SDR
+// whenever they happened to reload the page.
+const APP_BUILD = process.env.K_REVISION || `local-${Date.now()}`;
 function loadUserData(userId) {
   const file = getUserDataFile(userId);
   const d = loadJsonFile(file, null);
-  if (d && userId === "pool" && Array.isArray(d.leads)) _poolLoadedCvrs.set(d, new Set(d.leads.map((l) => l && l.cvr)));
+  if (d && userId === "pool" && Array.isArray(d.leads)) { _poolLoadedCvrs.set(d, new Set(d.leads.map((l) => l && l.cvr))); _poolLoadedAt.set(d, { mtimeMs: _poolCache.mtimeMs, size: _poolCache.size }); }
   if (d) {
     // Migrate old flat pipeline to dual pipelines if needed
     if (!d.pipelines && d.pipeline) {
@@ -316,7 +339,13 @@ function saveUserData(userId, d) {
   // SDR-owned fields from disk first (see sdrMergeBeforeSave).
   if (userId === "pool" && typeof sdrMergeBeforeSave === "function") { try { sdrMergeBeforeSave(d); } catch (e) { console.warn("[pool-merge]", e.message); } }
   // The pool is rewritten on every SDR click; indentation made it ~30% bigger.
-  fs.writeFileSync(getUserDataFile(userId), userId === "pool" ? JSON.stringify(d) : JSON.stringify(d, null, 2));
+  if (userId === "pool") {
+    const raw = JSON.stringify(d); fs.writeFileSync(_poolCache.file, raw);
+    const st = poolStat(); if (st) Object.assign(_poolCache, { raw, mtimeMs: st.mtimeMs, size: st.size }); else _poolCache.raw = null;
+    _poolLoadedAt.set(d, st || { mtimeMs: 0, size: 0 });
+    return;
+  }
+  fs.writeFileSync(getUserDataFile(userId), JSON.stringify(d, null, 2));
 }
 
 function authMiddleware(req, res, next) {
@@ -4058,6 +4087,19 @@ app.get("/api/sdr/recording", authMiddleware, (req, res) => {
     res.json({ ok: true, status: "none" });
   } catch (e) { sdrFail(res, e, "recording"); }
 });
+// Dead weight in the pool: an undo snapshot is only usable for
+// SDR_UNDO_WINDOW_MS (10 min) but stayed on the lead forever (~1.4 MB in Oct
+// 2026). Dropped after a day; runs with the nightly recordings prune.
+function poolTidy(d) {
+  const cut = Date.now() - 86400e3; let undo = 0;
+  for (const l of d.leads || []) { if (l._undo && !(new Date(l._undo.at || 0).getTime() > cut)) { delete l._undo; undo++; } }
+  return { undo };
+}
+app.post("/api/cron/pool-tidy", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try { const d = loadPool(); const before = JSON.stringify(d).length; const stats = poolTidy(d); if (stats.undo) saveUserData(POOL_ID, d); res.json({ ok: true, stats, mb_before: Math.round(before / 1e5) / 10, mb_after: Math.round(JSON.stringify(d).length / 1e5) / 10 }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // Audio leaves Twilio after `retention_days`; what Gemini wrote stays.
 app.post("/api/cron/recordings-prune", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
@@ -4073,6 +4115,7 @@ app.post("/api/cron/recordings-prune", async (req, res) => {
       next = j.next_page_uri ? "https://api.twilio.com" + j.next_page_uri : null;
     }
     for (const l of d.leads || []) for (const rec of l.recordings || []) if (rec.url && new Date(rec.at) < cut) { rec.url = null; rec.deleted_at = new Date().toISOString(); }
+    poolTidy(d);
     savePool(d);
     logActivity("recordings-prune", `Optagelser slettet efter ${days} dage: ${stats.deleted}`, { stats });
     res.json({ ok: true, stats });
@@ -9567,6 +9610,40 @@ app.post("/api/cron/adlib-check", async (req, res) => {
   if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
   try { res.json({ ok: true, stats: await adlibSweep(Math.max(1, Math.min(200, Number(req.query.batch) || 40))) }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+// One-off: from 20 Oct 15:30 until the fix reached every browser on 22 Oct, the
+// note field kept its text when the next lead opened, and outcomes saved it
+// there too. The same SDR's note on 2+ leads in that window is a copy except on
+// the first lead; the copies are removed (outcome note, screen-out note, last
+// note). ?dry=1 lists them.
+app.post("/api/cron/note-copy-cleanup", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try {
+    const dry = req.query.dry === "1"; const from = "2026-10-20T13:00:00Z", to = "2026-10-22T09:00:00Z"; const d = loadPool();
+    const SCREEN = /^Fravalgt uden opkald: (Ikke vores målgruppe|For svag lige nu|Ingen aktive annoncer|Ring senere)( \([^)]*\))?( - tilbage i puljen om 3 måneder)?( [a-zæøå]+\.? \d{1,2}\. [a-zæøå]+\.?)?/i;
+    const ev = [];
+    for (const l of d.leads || []) {
+      for (const c of l.calls || []) if (c.at >= from && c.at <= to && String(c.note || "").trim().length >= 8) ev.push({ l, at: c.at, by: c.by, note: String(c.note).trim(), ref: c, kind: "call" });
+      for (const n of l.note_log || []) if (n.at >= from && n.at <= to && SCREEN.test(n.text || "")) { const t = String(n.text).replace(SCREEN, "").replace(/^ - /, "").trim(); if (t.length >= 8) ev.push({ l, at: n.at, by: n.by, note: t, ref: n, kind: "screen" }); }
+    }
+    const groups = {}; for (const e of ev) { const k = e.by + "|" + e.note.toLowerCase(); (groups[k] = groups[k] || []).push(e); }
+    const out = [];
+    for (const g of Object.values(groups)) {
+      if (new Set(g.map((e) => e.l.cvr)).size < 2) continue;
+      g.sort((a, b) => a.at.localeCompare(b.at)); const origin = g[0].l.cvr;
+      for (const e of g) {
+        if (e.l.cvr === origin) continue;
+        out.push({ lead: e.l.name, note: e.note.slice(0, 60), from: g[0].l.name, kind: e.kind });
+        if (dry) continue;
+        if (e.kind === "call") e.ref.note = "";
+        else e.ref.text = String(e.ref.text).replace(` - ${e.note}`, "");
+        if (String(e.l.last_note || "").trim() === e.note) e.l.last_note = "";
+        sdrTouch(e.l);
+      }
+    }
+    if (!dry && out.length) { savePool(d); logActivity("sdr-admin", `Noter kopieret til forkerte leads fjernet: ${out.length}`, { n: out.length }); }
+    res.json({ ok: true, dry, removed: out.length, items: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 // One-off (Oct 2026): no-answer follow-ups that were waiting in Opfølgning go
 // back to the shared pool - a retry time still ahead is kept as the rest.
@@ -15139,7 +15216,10 @@ const SDR_CONTACT_FIELDS = ["contacts", "phone", "ph", "phone_missing", "phone_s
 function sdrMergeBeforeSave(d) {
   const file = getUserDataFile(POOL_ID);
   if (!fs.existsSync(file)) return;
-  let disk; try { disk = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; }
+  // Nobody wrote the pool since this copy was loaded: nothing to merge.
+  const at = _poolLoadedAt.get(d); const st = poolStat();
+  if (at && st && at.mtimeMs === st.mtimeMs && at.size === st.size) return;
+  let disk; try { disk = JSON.parse(poolRawRead()); } catch { return; }
   const byCvr = new Map((disk.leads || []).map((l) => [l.cvr, l]));
   let merged = 0;
   for (const L of d.leads || []) {
@@ -15583,6 +15663,18 @@ function sdrNoteThread(l, nameById) {
   }
   out.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
   return out.slice(-40);
+}
+// What the follow-up and demo tables use (and the search over them) - a tenth
+// of a full card row.
+function sdrRowLite(l, nameById) {
+  const f = sdrSlim(l, nameById);
+  return {
+    cvr: f.cvr, name: f.name, city: f.city, web: f.web, niche: f.niche, phone: f.phone, phone_label: f.phone_label, main_phone: f.main_phone,
+    contact: f.contact, contacts: (f.contacts || []).map((c) => ({ name: c.name })), last_note: f.last_note, renamed_from: f.renamed_from,
+    callback_at: f.callback_at, lastAction: f.lastAction, lastCallAt: f.lastCallAt, email_sent_at: f.email_sent_at,
+    demo_booked_at: f.demo_booked_at, demo_booked_by: f.demo_booked_by, demo_booked_by_name: f.demo_booked_by_name, demo_status: f.demo_status,
+    demo_review_reason: f.demo_review_reason, demo_tier: f.demo_tier, sale_status: f.sale_status, customer: f.customer, lite: true,
+  };
 }
 function sdrSlim(l, nameById) {
   const c = sdrPrimaryContact(l);
@@ -16253,14 +16345,17 @@ function buildSdrState(userId, d) {
   };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
+    build: APP_BUILD,
     settings: settingsOut, stats, commission,
     onboarding: sdrOnboarding(settings, now),
     list: { date: L.date, items: items.map((l) => ({ ...sdrSlim(l, nameById), in_focus: L.focus ? sdrFocusMatch(l, L.focus) : null })), doneCount: (L.done || []).length, target: Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size) },
     focus,
     current: current ? sdrSlim(current, nameById) : null,
     upNext: upNext.map((l) => sdrSlim(l, nameById)),
-    followups: followups.map((l) => sdrSlim(l, nameById)),
-    demos: demos.map((l) => sdrSlim(l, nameById)),
+    // An SDR's tables only list these; the card always gets the full lead from
+    // claim / open-lead. Admin keeps the full rows (review, Salg).
+    followups: followups.map((l) => isAdmin ? sdrSlim(l, nameById) : sdrRowLite(l, nameById)),
+    demos: (isAdmin ? demos : demos.filter((l) => l.demo_booked_by === userId)).map((l) => isAdmin ? sdrSlim(l, nameById) : sdrRowLite(l, nameById)),
     todayCalls,
     research: sdrIsAdmin(userId) ? { remaining: 0, fixedToday: 0 } : sdrResearchStats(d, userId, now),
     // This week's coaching lines from my own debriefs (newest first).

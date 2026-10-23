@@ -299,6 +299,7 @@ async function loadState({ keepCurrent = false } = {}) {
     if (still) { S.current = still; held = true; }
   }
   renderAll({ keepCurrent: held || (keepCurrent && S.current && S.current.cvr === prevCvr), prevNote });
+  buildCheck();
 }
 async function get(path) {
   const r = await fetch(path, { headers: ah() });
@@ -314,7 +315,18 @@ async function post(path, body) {
   if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
   return d;
 }
-function apply(d, opts) { if (d && d.state) { STATE_GEN++; S = d.state; renderAll(opts || {}); dialInit(); } }
+function apply(d, opts) { if (d && d.state) { STATE_GEN++; S = d.state; renderAll(opts || {}); dialInit(); buildCheck(); } }
+/* A new deploy: reload between calls, so a fix reaches every SDR at once - never
+   mid-call, with a window open, or while something is being typed. */
+let BUILD0 = '', BUILD_PENDING = false;
+function buildCheck() {
+  if (!S || !S.build) return;
+  if (!BUILD0) { BUILD0 = S.build; return; }
+  if (S.build === BUILD0) return;
+  const busyNow = DIAL.call || ['incoming', 'connecting', 'ringing', 'live'].includes(DIAL.state) || document.querySelector('.modalbg') || (document.activeElement && /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName) && document.activeElement.value) || (DIAL.mailEdit && DIAL.state === 'ended');
+  if (busyNow) { if (!BUILD_PENDING) { BUILD_PENDING = true; toast('En ny version er klar - siden opdateres, når du er færdig her', 6000); } return; }
+  toast('Ny version - opdaterer…', 1500); setTimeout(() => location.reload(), 1200);
+}
 
 /* ─── Helpers ──────────────────────────────────────────────────────────── */
 function fmtPhone(p) {

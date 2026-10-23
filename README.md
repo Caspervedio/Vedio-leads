@@ -221,6 +221,21 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Hastighed (okt. 2026).** At åbne et lead tog ~4 s (median, 6 s for de langsomste) og sendte
+  ~950 KB retur; tilstanden hvert 20. sek. ~1,2 s. Puljefilen (25 MB) ligger på GCS-mounten,
+  så hver læsning hentede hele filen, og hver gemning læste den én gang til for at flette.
+  Nu: puljens tekst holdes i hukommelsen og genbruges, så længe filens mtime og størrelse er
+  uændret (`_poolCache`, én instans skriver); hvert request får stadig sit eget parsede objekt.
+  Fletningen før gem springes over, når ingen har skrevet siden kopien blev læst
+  (`_poolLoadedAt`). Svar komprimeres med gzip (`compression`, ikke live-feedet). SDR'ens
+  Opfølgning og demoer sendes som lette rækker (`sdrRowLite`; kun egne demoer) - kortet får
+  altid hele leadet fra claim/open-lead. Tilstanden for en SDR: 583 KB → 27 KB over nettet.
+  Fortrydelses-snapshots ældre end et døgn slettes (`poolTidy`, med den natlige recordings-prune).
+- **Appen opdaterer sig selv ved ny version.** Tilstanden har `build` (Cloud Runs `K_REVISION`);
+  ser en åben app en ny, genindlæses den - ikke midt i et opkald, med et vindue åbent eller
+  mens der skrives (så venter den og siger det).
+- **Noter kopieret til forkerte leads (20.-22. okt.)** fjernet: `POST /api/cron/note-copy-cleanup[?dry=1]`
+  (samme SDR's note på 2+ leads i vinduet er en kopi undtagen på det første lead).
 - **Ingen svar går tilbage til puljen (okt. 2026).** Et "Ingen svar" lægger ikke længere en
   opfølgning i SDR'ens Opfølgning: leadet slippes og hviler til senere samme dag (opkald før
   kl. 13 + 3 timer) eller næste hverdag om morgenen (`resurface_at`), og så kan alle SDR'er få
