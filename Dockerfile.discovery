@@ -14,11 +14,13 @@
 # is ~120 MB instead of ~1.5 GB. Old base was
 # mcr.microsoft.com/playwright:v1.60.0-jammy.
 
-FROM node:20-slim
+# Node 20 is end-of-life and got no fix for the 21 Oct 2026 security release;
+# 24.22.1 is the patched LTS. No package install scripts (npm worms run there).
+FROM node:24.22.1-slim
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY scripts/discover-ads.js ./scripts/discover-ads.js
 COPY scripts/discover-advertisers.js ./scripts/discover-advertisers.js

@@ -719,6 +719,15 @@ videre. Hentes igen hver mandag.
 **Cloud Run** i `europe-west1`, projekt `vedio-444210`. Én instans, altid
 tændt. Data ligger i GCS-bucket'en `vedio-leads-data`, monteret på `/data`.
 
+**Node.js** er låst til en rettet version: `ARG NODE_VERSION` i `Dockerfile` (oven på
+Playwright-billedet, tjekket mod nodejs.org's SHA-256-liste) og `node:<version>-slim` i
+`Dockerfile.discovery`. 24.22.1 fra 21. okt. 2026 (sikkerhedsrettelsen, bl.a. Brotli-
+fejlen CVE-2026-111497 - vi henter og pakker vilkårlige webshops ud). Opdatér begge
+ved næste sikkerhedsudgivelse; loggen siger ved opstart, hvilken version der kører
+(`[boot] Node vX`). `npm ci --ignore-scripts`: ingen pakke må køre kode under
+installationen (der løb npm-ormene i okt. 2026). Tjek `npm audit --omit=dev` (0 ved
+opdateringen); nye pakkeversioner: se udgivelsesdato og provenance, før de tages ind.
+
 **Filer i bucket'en**
 
 | Fil | Indhold |

@@ -20604,6 +20604,7 @@ if (process.env.ADLIB_SWEEP === "1") {
 const httpServer = app.listen(PORT, () => {
   console.log(`\n🎯 Vedio Sales kører på http://localhost:${PORT}`);
   console.log(`📡 CVR-provider: datafordeler`);
+  console.log(`[boot] Node ${process.version}`); // the Dockerfile pins a patched release - this shows it took
   console.log(`💾 Data gemmes i: ${DATA_FILE}`);
   if (process.env.CLEARBIT_KEY) console.log("✨ Clearbit enrichment: aktiveret");
   if (process.env.N8N_WEBHOOK_URL) console.log("⚡ n8n webhook: konfigureret");
