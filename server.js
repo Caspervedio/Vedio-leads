@@ -9776,6 +9776,9 @@ app.post("/api/cron/repool-return", (req, res) => {
       if ((l.screen_log || []).some((x) => x && new Date(x.at).getTime() > t)) { stats.skipped.screened_again++; continue; }
       if (l.lastAction === "demo-booked" || l.lastAction === "not-relevant" || l.twenty_opportunity_id) { stats.skipped.closed++; continue; }
       const on = listOf.get(l.cvr); const who = nameById[owner] || owner;
+      // Open on the other SDR's screen or on a call right now: not pulled away mid-call.
+      const openNow = [...SDR_OPEN.entries()].some(([u, o]) => u !== owner && o.cvr === l.cvr) || (l.last_call_started_at && now - new Date(l.last_call_started_at).getTime() < 20 * 60e3);
+      if (on && on !== owner && openNow) { stats.skipped.open_now = (stats.skipped.open_now || 0) + 1; continue; }
       stats.returned++; stats.by[who] = (stats.by[who] || 0) + 1;
       if (on && on !== owner) stats.from_other++; else if (on === owner) stats.on_own_list++;
       if (dry) continue;
