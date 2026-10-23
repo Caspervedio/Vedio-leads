@@ -3774,6 +3774,7 @@ async function liveFinal(st, tail) {
   sdrTouch(l2); savePool(d2);
   logActivity("sdr-call-ai", `${sdrName}: samtale med ${l2.name} læst af AI - ${ai.summary.slice(0, 80)}`, { cvr: st.cvr, userId: st.uid });
   st.final = ai; st.finalStatus = "ready"; liveSend(st, "final", { status: "ready", ai });
+  try { const mail = await mailDraftFor(st.cvr, st.sid); if (mail) liveSend(st, "mail", mail); } catch (e) { console.warn("[mail/draft]", e.message); }
 }
 // The recording webhook skips its own analysis while the live one is on its
 // way; if that one doesn't land, the recording is read after all.
@@ -3869,7 +3870,7 @@ function callAnalysisPrompt({ inbound, sdrName, lead, transcript, tail }) {
  "next_step": "<det konkrete næste skridt, med dato/tid hvis nævnt>",
  "coaching": "<1-2 sætninger til SDR'en: hvad gik godt, hvad bør gøres anderledes næste gang>",
  "checklist": {"basics": {${CK.basics.map((x) => `"${x.id}": <true|false|null>`).join(", ")}}, "signals": {${CK.signals.map((x) => `"${x.id}": <true|false|null>`).join(", ")}}, "spend_band": "<${CK.spend_bands.map((x) => x.id).join("|")}|>"},
- "email": {"subject": "<emne>", "body": "<kort opfølgningsmail på dansk fra ${sdrName}, 4-8 linjer, der refererer til det der blev sagt, uden pris, med en tydelig næste handling; skriv {calendly} hvor booking-linket skal stå; tom streng hvis en mail ikke giver mening>"}}`,
+ "interest": <1-10: hvor interesseret kunden lød>}`,
     `Tjeklisten: grundlag = ${CK.basics.map((x) => `${x.id}: ${x.title}`).join("; ")}. Købssignaler = ${CK.signals.map((x) => `${x.id}: ${x.title}`).join("; ")}. Sæt kun true/false når samtalen faktisk afgør det, ellers null. spend_band ud fra hvad kunden selv siger om annoncebudget (kr/md), ellers tom.`,
     `Hold dig til det, der blev sagt. Ingen antagelser om tal, der ikke blev nævnt.`,
   ].filter(Boolean).join("\n\n");
@@ -3879,11 +3880,129 @@ function callAnalysisParse(out) {
   const ai = {
     summary: str(out.summary, 700), reached: str(out.reached, 20), outcome_guess: str(out.outcome_guess, 20), no_demo_reason: str(out.no_demo_reason, 20),
     objections: Array.isArray(out.objections) ? out.objections.map((x) => str(x, 200)).filter(Boolean).slice(0, 6) : [],
-    next_step: str(out.next_step, 200), coaching: str(out.coaching, 300),
+    next_step: str(out.next_step, 200), coaching: str(out.coaching, 300), interest: Math.max(0, Math.min(10, Math.round(Number(out.interest) || 0))) || null,
     checklist: (() => { const ck = out.checklist || {}; const pick = (list, src) => Object.fromEntries(list.map((x) => [x.id, typeof (src || {})[x.id] === "boolean" ? src[x.id] : null])); const band = spendBandOf(String(ck.spend_band || "")); return { basics: pick(CK.basics, ck.basics), signals: pick(CK.signals, ck.signals), spend_band: band ? band.id : "" }; })(),
     email: { subject: str(out.email && out.email.subject, 150), body: str(out.email && out.email.body, 2000) },
   };
   return { ai, transcript: str(out.transcript, 12000) };
+}
+// ─── The follow-up mail, written from the call (Oct 2026) ─────────────────
+// Built on an SDR's own mail method (Marcus) and fed by the call itself - the
+// transcript and the analysis, not typed notes. Written right after the
+// analysis, so it is ready in the Samtale tab seconds after hang-up. The
+// rules from his method; the hard ones are checked in code (one rewrite,
+// then what's left is shown as a warning). What the SDR changes before
+// sending becomes rules for their future mails (mailLearn).
+const MAIL_TELLS = [
+  [/\bgratis\b/i, 'ordet "gratis"'], [/jeg håber,? (at )?(mailen|du har det|alt er vel)/i, '"jeg håber, mailen finder dig vel"'],
+  [/\b(spændende|sømløs\w*|unik\w*|værdifuld\w*|banebrydende|revolutionerende)\b/i, "reklameord"], [/tøv ikke/i, '"tøv ikke"'],
+  [/ikke bare .{2,40}, men/i, '"ikke bare X, men Y"'], [/\b(platform|ROI)\b/i, '"platform" eller "ROI"'], [/(^|\s)AI(\s|$|[.,])/, '"AI"'],
+  [/!{2,}/, "flere udråbstegn"], [/^\s*[-•*]\s/m, "punktliste"], [/https?:\/\//i, "et link"],
+  [/\b(eksempler|ideer|idéer|koncepter)\b/i, '"eksempler/ideer/koncepter" - det vises på mødet'],
+  [/^hej[^\n]*\n+\s*tak for (snakken|samtalen|opkaldet)/i, 'at åbne med "Tak for snakken" - start med deres situation'],
+  [/\b(hører vi (tit|ofte)|vi hører det (tit|ofte))\b/i, '"det hører vi tit"'],
+];
+function mailClean(t) {
+  return String(t || "").replace(/\s*[–—]\s*/g, ", ").replace(/\*\*/g, "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function mailWords(t) { return String(t || "").split(/\s+/).filter(Boolean).length; }
+// Two meeting times: the 3rd working day at 13 and the 4th at 11 (Danish time).
+function mailTimes(now) {
+  const p = new Date(now || Date.now()).toLocaleDateString("sv-SE", { timeZone: "Europe/Copenhagen" }).split("-").map(Number);
+  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)); const out = []; let n = 0;
+  while (out.length < 2) { d.setUTCDate(d.getUTCDate() + 1); const wd = d.getUTCDay(); if (wd === 0 || wd === 6) continue; n++; if (n === 3) out.push({ d: new Date(d), h: 13 }); else if (n === 4) out.push({ d: new Date(d), h: 11 }); }
+  return out.map(({ d: x, h }) => ({ weekday: x.toLocaleDateString("da-DK", { weekday: "long", timeZone: "UTC" }), label: `${x.toLocaleDateString("da-DK", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })} kl. ${h}` }));
+}
+function mailCheck(m, ctx) {
+  const fails = []; const text = `${m.subject}\n${m.body}`;
+  for (const [re, label] of MAIL_TELLS) if (re.test(text)) fails.push(`Undgå ${label}`);
+  const w = mailWords(m.body); if (w > 170) fails.push(`For lang: ${w} ord (højst ca. 150)`);
+  if (mailWords(m.subject) > 5) fails.push("Emnelinjen er over 5 ord");
+  if (m.kind === "followup") {
+    if (!/\bmøde/i.test(m.body)) fails.push('Ordet "møde" mangler ved tiderne');
+    for (const t of ctx.times) if (!new RegExp(t.weekday, "i").test(m.body)) fails.push(`Tiden ${t.label} mangler`);
+  }
+  const low = m.body.toLowerCase(); const allowed = new Set(ctx.cases.map((c) => c.name.toLowerCase()));
+  const named = ctx.customerNames.filter((n) => n.length >= 4 && new RegExp(`(^|[^a-zæøå0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-zæøå0-9]|$)`, "i").test(low));
+  for (const n of named) if (!allowed.has(n)) fails.push(`Nævner ${n}, som ikke er en godkendt reference i samme branche`);
+  return fails;
+}
+async function mailDraftFor(cvr, callSid) {
+  const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === cvr); if (!lead) return null;
+  const rec = (lead.recordings || []).find((r) => r.call_sid === callSid || r.sid === callSid); if (!rec || !rec.ai) return null;
+  const ai = rec.ai; const users = loadUsers(); const by = rec.by || lead.claimed_by || "";
+  const sdrName = (users.find((u) => u.id === by) || {}).name || "SDR'en"; const first = sdrName.split(" ")[0];
+  const c = sdrPrimaryContact(lead) || {}; const firstName = String(c.name || "").split(" ")[0];
+  const put = (mail) => { const d2 = loadPool(); const l2 = (d2.leads || []).find((x) => x.cvr === cvr); const r2 = l2 && (l2.recordings || []).find((r) => r.call_sid === callSid || r.sid === callSid); if (!r2) return; r2.mail = mail; if (mail.status === "ready" && r2.ai) r2.ai.email = { subject: mail.subject, body: mail.body }; sdrTouch(l2); savePool(d2); };
+  if (ai.reached && ["voicemail", "none"].includes(ai.reached)) { const m = { status: "none", why: "Ingen samtale med en person", at: new Date().toISOString() }; put(m); return m; }
+  const cases = sdrRefCustomers(lead).filter((x) => x.status !== "former").slice(0, 3);
+  const customerNames = [...new Set(((loadCustomers().items) || []).map((x) => String(x.name || "").toLowerCase().trim()).filter((n) => n && !/^vedio\b/.test(n)))]; // our own name is not a case
+  const times = mailTimes(); const settings = sdrSettings(d);
+  const tpl = (((d.sdr_mail || {})[by]) || settings.email_templates || [])[0] || null;
+  const rules = ((d.sdr_mail_rules || {})[by] || []).map((r) => r.text);
+  const sent = (d.leads || []).flatMap((l) => (l.recordings || []).filter((r) => r.by === by && r.mail && r.mail.final && r.mail.final.body).map((r) => r.mail.final)).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 3);
+  const transcript = String(rec.transcript || "").slice(-6000);
+  const prompt = [
+    `Du skriver den opfølgningsmail, ${sdrName} fra Vedio sender lige efter et koldt opkald til ${lead.name}${c.name ? ` (${c.name}${c.title ? ", " + c.title : ""})` : ""}. Vedio laver video-annoncer til Meta og TikTok som abonnement: vi redigerer video ud fra kundens materiale, vi laver ikke kundens produkter, det koster ca. en fjerdedel af et bureau, og der er ingen regning pr. video. Vi arbejder med over 110 brands.`,
+    `Samtalen (SDR = ${sdrName}):\n${transcript || "(ingen transskription)"}`,
+    `Analysen af samtalen: ${JSON.stringify({ resume: ai.summary, udfald: ai.outcome_guess, hvorfor_ikke_demo: ai.no_demo_reason, indvendinger: ai.objections, naeste_skridt: ai.next_step, interesse: ai.interest })}`,
+    rules.length ? `REGLER LÆRT AF ${sdrName.toUpperCase()}S EGNE RETTELSER - de vinder over alt andet:\n${rules.map((r) => "- " + r).join("\n")}` : "",
+    `Mailtype: "followup" når kunden skal have et kort møde med os; "demo" når demoen er booket i opkaldet (bekræft tid og hvad de får at se - ingen nye tider); "none" når en mail ikke giver mening (kunden sagde klart nej, eller bad om ikke at få mails).`,
+    `Regler:
+1. Første sætning handler om dem og det, de sagde - med deres egne ord fra samtalen. Ikke om Vedio, og ikke "Tak for snakken".
+2. 80-150 ord. Korte afsnit på 1-3 sætninger, talesprog, du-form. Skriv til den person, ${sdrName} faktisk talte med i samtalen, og start med "Hej <deres fornavn>,". Kontaktpersonen i vores data er ${c.name || "ukendt"} - brug kun det navn, hvis det er den samme person, eller hvis samtalen ikke nævner et navn (så "Hej${firstName ? " " + firstName : ""},"). Slut med "Mvh.\\n${first}".
+3. Ingen pitch og ingen featureliste - forklar ikke konceptet. Sig deres udfordring med deres ord, og skriv så, at det har vi lavet løsningen på.
+4. Social proof: højst én kunde fra samme branche, kun som "vi laver også video for X". Skriv intet om kundens oplevelser, udfordringer eller resultater - det ved du ikke. Vælg KUN blandt: ${cases.length ? cases.map((x) => x.name).join(", ") : "(ingen - nævn intet kundenavn, skriv i stedet at vi arbejder med over 110 brands)"}.
+5. Én opfordring (followup): et kort møde, hvor vi viser, hvad vi kan lave for netop dem, som et enten-eller mellem ${times[0].label} og ${times[1].label}. Ordet "møde" står med.
+6. Emnelinje: 2-4 ord, små bogstaver, gerne et af deres egne ord. Ingen tal, intet fornavn.
+7. Ingen links, ingen vedhæftninger, intet "gratis", ingen emojis, punktlister, fed skrift, tankestreger eller udråbstegn. Undgå "platform", "AI", "ROI" og reklameord. Send aldrig "eksempler", "ideer" eller "koncepter" - det vises på mødet.
+8. Spurgte de til pris: giv rammen (ca. en fjerdedel af et bureau, abonnement uden regning pr. video) og tag detaljerne på mødet.
+9. Påstå aldrig en samtale med en person, ${sdrName} ikke har talt med. Var det en receptionist eller kollega, så skriv, så det giver mening for den rette, og sig hvem du talte med.
+10. Ingen sætning må kunne sendes til et andet firma (heller ikke "det hører vi tit").`,
+    `Vælg én løftestang ud fra samtalen og byg mailen op om den uden at nævne den: dårlig erfaring eller frygt (brændt af et bureau, bundet af kontrakt) -> sig det med deres ord og fjern risikoen (ingen binding, ingen regning pr. video); pris -> kontrast bureau mod Vedio i tid og pris, slut med "hvad skulle tale imod at se det an?"; "har allerede nogen / gør det selv" -> det, der føles trygt, er det, der koster mest; gatekeeper -> skriv til den rette; nysgerrig -> kunden fra samme branche.
+Tone efter interesse: lav (1-3) kort og uden pres, tiderne som en mulighed; middel (4-7) byg videre på det, de sagde; høj (8-10) direkte og varm, bed dem vælge en af tiderne.`,
+    tpl && tpl.body ? `${sdrName}s egen skabelon - behold rækkefølge, vendinger og tone, men skriv hvert afsnit om til netop denne modtager (felter som {fornavn} udfyldes, {calendly} og links droppes):\n${String(tpl.body).slice(0, 1200)}` : "",
+    sent.length ? `Mails ${sdrName} selv har sendt (skriv i samme stil):\n${sent.map((m) => `Emne: ${m.subject}\n${m.body}`).join("\n---\n")}` : "",
+    `Svar KUN som JSON: {"kind":"followup|demo|none","subject":"","body":"","understood":"<én linje: hvad du forstod om kunden og deres behov>","lever":"<løftestang og evt. kunde, og hvorfor>","case":"<kundenavn eller tom>","consent":<true hvis kunden sagde ja til en mail, false hvis nej, null hvis det ikke blev nævnt>}`,
+  ].filter(Boolean).join("\n\n");
+  const norm = (o) => ({ kind: ["followup", "demo", "none"].includes(o.kind) ? o.kind : "followup", subject: mailClean(o.subject).slice(0, 120), body: mailClean(o.body).slice(0, 3000), understood: String(o.understood || "").trim().slice(0, 300), lever: String(o.lever || "").trim().slice(0, 300), case: String(o.case || "").trim().slice(0, 80), consent: typeof o.consent === "boolean" ? o.consent : null });
+  const ctx = { times, cases, customerNames };
+  let m, fails;
+  try {
+    m = norm(await sdrGeminiJson(prompt, null, { thinking: 512 }));
+    if (m.kind === "none" || !m.body) { const out = { status: "none", why: m.understood || "En mail giver ikke mening efter samtalen", consent: m.consent, at: new Date().toISOString() }; put(out); return out; }
+    fails = mailCheck(m, ctx);
+    if (fails.length) {
+      const m2 = norm(await sdrGeminiJson(`${prompt}\n\nDit udkast:\n${JSON.stringify({ subject: m.subject, body: m.body })}\n\nDet fejlede disse kontroller - ret dem, og svar med samme JSON:\n${fails.map((f) => "- " + f).join("\n")}`, null, { thinking: 512 }));
+      const f2 = m2.body ? mailCheck(m2, ctx) : fails;
+      if (m2.body && f2.length <= fails.length) { m = m2; fails = f2; }
+    }
+  } catch (e) { const out = { status: "error", error: String(e.message).slice(0, 160), at: new Date().toISOString() }; put(out); return out; }
+  const out = { status: "ready", kind: m.kind, subject: m.subject, body: m.body, understood: m.understood, lever: m.lever, case: m.case, consent: m.consent, warnings: fails, times: m.kind === "followup" ? times.map((t) => t.label) : [], to: c.email || lead.email_to || "", at: new Date().toISOString() };
+  put(out); return out;
+}
+// What the SDR changed before sending, turned into rules for their next mails.
+async function mailLearn(userId, draft, final) {
+  try {
+    // Spell out the change - what went, what came - so the model can't read it backwards.
+    const lines = (t) => String(t || "").split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    const dl = lines(draft.body), fl = lines(final.body); const fs_ = new Set(fl), ds = new Set(dl);
+    const removed = dl.filter((x) => !fs_.has(x)), added = fl.filter((x) => !ds.has(x));
+    const subj = String(draft.subject || "").trim() !== String(final.subject || "").trim() ? `Emnelinjen blev ændret fra "${draft.subject}" til "${final.subject}".` : "";
+    if (!removed.length && !added.length && !subj) return;
+    const out = await sdrGeminiJson(`En sælger rettede en mail, som en AI havde skrevet, før han sendte den. Find højst 2 GENERELLE regler, som han tydeligvis vil have i alle fremtidige mails (stil, ord, opbygning, noget der skal med eller ud). Ignorer alt, der kun handler om netop denne kunde (navne, fakta, tider). Er der ingen generel regel, så svar med en tom liste. Formulér reglen, så den beskriver det, sælgeren GJORDE.\n\n${removed.length ? `Det fjernede han:\n${removed.map((x) => "- " + x).join("\n")}\n\n` : ""}${added.length ? `Det tilføjede han:\n${added.map((x) => "+ " + x).join("\n")}\n\n` : ""}${subj}\n\nHele mailen, som han sendte den:\nEmne: ${final.subject}\n${final.body}\n\nSvar KUN som JSON: {"rules":["<kort regel på dansk, imperativ>"]}`, null, { thinking: 0 });
+    const rules = (Array.isArray(out.rules) ? out.rules : []).map((r) => String(r || "").trim().slice(0, 240)).filter((r) => r.length > 8).slice(0, 2);
+    if (!rules.length) return;
+    const d = loadPool(); d.sdr_mail_rules = d.sdr_mail_rules || {}; const list = d.sdr_mail_rules[userId] = d.sdr_mail_rules[userId] || [];
+    const key = (t) => new Set(String(t).toLowerCase().replace(/[^a-zæøå0-9 ]/g, "").split(/\s+/).filter((w) => w.length > 3));
+    for (const r of rules) {
+      const k = key(r); const dup = list.some((x) => { const kx = key(x.text); const inter = [...k].filter((w) => kx.has(w)).length; return inter / Math.max(1, Math.min(k.size, kx.size)) > 0.6; });
+      if (!dup) list.push({ text: r, at: new Date().toISOString() });
+    }
+    if (list.length > 25) d.sdr_mail_rules[userId] = list.slice(-25);
+    savePool(d);
+  } catch (e) { console.warn("[mail/learn]", e.message); }
 }
 async function recordingAnalyse(cvr, rsid) {
   const setRec = (fn) => { const d = loadPool(); const l = (d.leads || []).find((x) => x.cvr === cvr); const r = l && (l.recordings || []).find((x) => x.sid === rsid); if (!r) return null; fn(l, r, d); sdrTouch(l); savePool(d); return r; };
@@ -3905,12 +4024,37 @@ async function recordingAnalyse(cvr, rsid) {
     l.note_log.push({ at: r.ready_at, by: r.by, where: "call", text: `AI-resumé af opkaldet (${Math.max(1, Math.round(r.duration_s / 60))} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` });
   });
   logActivity("sdr-call-ai", `${sdrName}: samtale med ${lead.name} læst af AI - ${ai.summary.slice(0, 80)}`, { cvr, userId: rec.by });
+  mailDraftFor(cvr, rsid).catch((e) => console.warn("[mail/draft]", e.message));
 }
+// The SDR opens the mail in Gmail (or copies it): this is the version that goes
+// out. Changed from the draft -> learn general rules from the difference.
+app.post("/api/sdr/mail/final", authMiddleware, (req, res) => {
+  try {
+    const { cvr, sid, subject, body } = req.body || {};
+    const d = loadPool(); const l = (d.leads || []).find((x) => x.cvr === cvr); const r = l && (l.recordings || []).find((x) => x.call_sid === sid || x.sid === sid);
+    if (!r || !r.mail || r.mail.status !== "ready") return res.status(404).json({ error: "Ingen mail fra den samtale" });
+    const final = { subject: String(subject || "").slice(0, 200), body: String(body || "").slice(0, 4000), at: new Date().toISOString(), by: req.userId };
+    const changed = final.body.replace(/\s+/g, " ").trim() !== String(r.mail.body || "").replace(/\s+/g, " ").trim() || final.subject.trim() !== String(r.mail.subject || "").trim();
+    r.mail.final = final; sdrTouch(l); savePool(d);
+    if (changed) setImmediate(() => mailLearn(req.userId, { subject: r.mail.subject, body: r.mail.body }, final));
+    res.json({ ok: true, learned: changed });
+  } catch (e) { sdrFail(res, e, "mail/final"); }
+});
+app.get("/api/sdr/mail/rules", authMiddleware, (req, res) => {
+  try { const d = loadPool(); res.json({ ok: true, rules: ((d.sdr_mail_rules || {})[req.userId] || []) }); } catch (e) { sdrFail(res, e, "mail/rules"); }
+});
+app.post("/api/sdr/mail/rules/delete", authMiddleware, (req, res) => {
+  try {
+    const d = loadPool(); const list = ((d.sdr_mail_rules || {})[req.userId] || []); const i = Number((req.body || {}).i);
+    if (!(i >= 0 && i < list.length)) return res.status(400).json({ error: "Ukendt regel" });
+    list.splice(i, 1); savePool(d); res.json({ ok: true, rules: list });
+  } catch (e) { sdrFail(res, e, "mail/rules/delete"); }
+});
 // The card polls this after hang-up until the summary is ready.
 app.get("/api/sdr/recording", authMiddleware, (req, res) => {
   try {
     const sid = String(req.query.sid || ""); const d = loadPool();
-    for (const l of d.leads || []) { const r = (l.recordings || []).find((x) => x.sid === sid || x.call_sid === sid); if (r) { if (r.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Ikke din samtale" }); return res.json({ ok: true, cvr: l.cvr, status: r.status, duration_s: r.duration_s, ai: r.status === "ready" ? r.ai : null, transcript: r.status === "ready" ? r.transcript : "" }); } }
+    for (const l of d.leads || []) { const r = (l.recordings || []).find((x) => x.sid === sid || x.call_sid === sid); if (r) { if (r.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Ikke din samtale" }); return res.json({ ok: true, cvr: l.cvr, status: r.status, duration_s: r.duration_s, ai: r.status === "ready" ? r.ai : null, transcript: r.status === "ready" ? r.transcript : "", mail: r.mail || null }); } }
     res.json({ ok: true, status: "none" });
   } catch (e) { sdrFail(res, e, "recording"); }
 });

@@ -591,7 +591,7 @@ function dialMicWarn() { if (DIAL.btWarned || !dialMicIsBt()) return; DIAL.btWar
 async function dialSetMic(id) { if (!DIAL.device) return; try { if (id) await DIAL.device.audio.setInputDevice(id); else await DIAL.device.audio.unsetInputDevice(); toast('Mikrofon valgt'); } catch (ex) { toast('Kunne ikke skifte mikrofon: ' + ex.message, 4000); } }
 function dialWire(call, cvr, label, name, num) {
   DIAL.toName = name || ''; DIAL.toNum = num || label || '';
-  DIAL.call = call; DIAL.state = 'connecting'; DIAL.t0 = 0; DIAL.muted = false; DIAL.keypad = false; DIAL.quality = 'ok'; DIAL.warn = ''; DIAL.ai = null; DIAL.aiStatus = ''; DIAL.to = label || '';
+  DIAL.call = call; DIAL.state = 'connecting'; DIAL.t0 = 0; DIAL.muted = false; DIAL.keypad = false; DIAL.quality = 'ok'; DIAL.warn = ''; DIAL.ai = null; DIAL.aiStatus = ''; DIAL.mail = null; DIAL.mailEdit = null; DIAL.to = label || '';
   call.on('ringing', () => { DIAL.state = 'ringing'; phTone('ringback'); renderDial(); });
   call.on('accept', () => { phTone(false); DIAL.state = 'live'; dialMicWarn(); const parent = call.customParameters && call.customParameters.get ? call.customParameters.get('parent_sid') : ''; const sid0 = parent || (call.parameters && call.parameters.CallSid) || DIAL.sid; if (sid0 && cvr) liveSubscribe(sid0, cvr); DIAL.t0 = Date.now(); DIAL.sid = sid0; if (DIAL.timer) clearInterval(DIAL.timer); DIAL.timer = setInterval(() => { const v = dialFmt((Date.now() - DIAL.t0) / 1000); document.querySelectorAll('.js-dial-time').forEach((t) => { t.textContent = v; }); }, 1000); if (cvr) { calling = true; calledCvr = cvr; post('/api/sdr/call-started', { cvr }).catch(() => {}); } renderDial(); });
   call.on('warning', (name) => { DIAL.warn = name; DIAL.quality = /low-mos|high-packet-loss|high-packets-lost|high-jitter|high-rtt/.test(name) ? (/low-mos|high-packet/.test(name) ? 'bad' : 'warn') : DIAL.quality; renderDialQuality(); });
@@ -650,7 +650,11 @@ async function dialPoll(sid, cvr, t0) {
   if (DIAL.poll) clearTimeout(DIAL.poll);
   try {
     const r = await get('/api/sdr/recording?sid=' + encodeURIComponent(sid));
-    if (r.status === 'ready') { DIAL.ai = r.ai; DIAL.aiFor = cvr; DIAL.aiStatus = 'ready'; renderDial(); return; }
+    if (r.status === 'ready') {
+      DIAL.ai = r.ai; DIAL.aiFor = cvr; DIAL.aiStatus = 'ready'; if (r.mail) mailDraftIn(r.mail, cvr, sid); renderDial();
+      if (r.mail || Date.now() - t0 > 240e3) return;
+      DIAL.poll = setTimeout(() => dialPoll(sid, cvr, t0), 3000); return;
+    }
     if (r.status === 'short' || r.status === 'error' || r.status === 'too-long') { DIAL.aiStatus = r.status; renderDial(); return; }
   } catch {}
   if (Date.now() - t0 > 150e3) { DIAL.aiStatus = 'timeout'; renderDial(); return; }
@@ -1903,7 +1907,8 @@ async function liveSubscribe(sid, cvr) {
     es.addEventListener('lines', (ev) => { LIVE.lines.push(...JSON.parse(ev.data)); if (LIVE.lines.length > 400) LIVE.lines = LIVE.lines.slice(-400); renderLiveLines(); });
     es.addEventListener('status', (ev) => { LIVE.status = JSON.parse(ev.data); renderLivePane(); });
     es.addEventListener('end', () => { LIVE.ended = true; LIVE.state = 'ended'; renderLivePane(); liveCloseLater(); });
-    es.addEventListener('final', (ev) => { liveFinalIn(JSON.parse(ev.data)); liveClose(1500); });
+    es.addEventListener('final', (ev) => { liveFinalIn(JSON.parse(ev.data)); });
+    es.addEventListener('mail', (ev) => { mailDraftIn(JSON.parse(ev.data), LIVE.cvr, LIVE.sid); liveClose(500); });
     es.onerror = () => { if (LIVE.state === 'connecting') { LIVE.state = 'off'; renderLivePane(); } };
   } catch (ex) { LIVE.state = 'off'; renderLivePane(); }
 }
@@ -1943,7 +1948,6 @@ function liveFinalHtml(ai) {
       ${ai.coaching ? `<p class="ai-coach"><b>Til dig</b> ${e(ai.coaching)}</p>` : ''}
       <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap">
         <button class="pill sm" onclick="dialUseNote()">Brug som note</button>
-        ${ai.email && ai.email.body ? `<button class="pill sm violet" onclick="if(!mailOpen)toggleMail();mailPrefillFromCall(S.current)">Mail klar ✉</button>` : ''}
         ${ai.checklist && (Object.values(ai.checklist.basics || {}).some((v) => v === true) || ai.checklist.spend_band) ? `<span class="sub">Tjeklisten forudfyldes, når du trykker Demo booket.</span>` : ''}
       </div>
     </div>`;
@@ -1961,11 +1965,54 @@ function livePaneHtml(L) {
   if (DIAL.state === 'ended' && DIAL.lastCvr === L.cvr) {
     const ai = DIAL.ai && DIAL.aiFor === L.cvr ? DIAL.ai : null; const stt = DIAL.aiStatus;
     const head = `<div class="live-head"><span class="kicker">Samtale slut${DIAL.lastDur ? ' · ' + dialFmt(DIAL.lastDur) : ''}</span>${ai ? '' : stt === 'wait' ? `<span class="dial-ai-wait"><i class="spin"></i>AI læser samtalen…</span>` : ''}</div>`;
-    if (ai) return `<div class="live done">${head}${liveFinalHtml(ai)}</div>`;
+    if (ai) return `<div class="live done">${head}${liveFinalHtml(ai)}${mailDraftHtml(L)}</div>`;
     const note = stt === 'short' ? 'For kort til et resumé.' : stt === 'error' || stt === 'timeout' ? 'Resuméet kom ikke - skriv selv en note.' : stt === 'wait' ? '' : '';
     return `<div class="live done">${head}${note ? `<p class="sub">${note}</p>` : ''}${LIVE.status ? liveStatusHtml(LIVE.status, true) : ''}</div>`;
   }
   return `<div class="live idle"><span class="kicker">AI lytter med</span><p>Når du ringer, lytter AI'en med og holder overblikket her: hvad er afklaret, hvad mangler, hvilke indvendinger kom - og hvad du kan svare. Når du lægger på, står analysen klar med det samme.</p></div>`;
+}
+/* ─── The follow-up mail, ready when the call ends ─────────────────────────
+   Written by the server from the call (rules from an SDR's own method, hard
+   rules checked in code). The SDR reads it here, adjusts it, and opens it in
+   Gmail - their signature comes with it there. What they change before
+   opening is sent back, and the AI learns general rules from it. */
+function mailDraftIn(m, cvr, sid) { if (!m) return; DIAL.mail = m; DIAL.mailFor = cvr; DIAL.mailSid = sid || DIAL.mailSid || ''; DIAL.mailEdit = null; renderDial(); }
+function mailDraftEdit() { DIAL.mailEdit = { to: $('md-to').value, subject: $('md-sub').value, body: $('md-body').value }; }
+function mailDraftHtml(L) {
+  const m = DIAL.mail && DIAL.mailFor === L.cvr ? DIAL.mail : null;
+  if (!m) return DIAL.ai && DIAL.aiFor === L.cvr ? `<div class="maildraft wait"><span class="dial-ai-wait"><i class="spin"></i>Mailen skrives ud fra samtalen…</span></div>` : '';
+  if (m.status === 'none') return `<div class="maildraft none"><span class="kicker">Mail</span><span class="sub">Ingen mail denne gang${m.why ? ' - ' + e(m.why) : ''}.</span></div>`;
+  if (m.status !== 'ready') return `<div class="maildraft none"><span class="kicker">Mail</span><span class="sub">Mailen kunne ikke skrives - brug din skabelon.</span></div>`;
+  const ed = DIAL.mailEdit || {}; const to = ed.to ?? (m.to || (L.contact && L.contact.email) || L.email_to || '');
+  const sub = ed.subject ?? m.subject, body = ed.body ?? m.body;
+  const consent = m.consent === true ? '<span class="md-chip ok">Ja til mail</span>' : m.consent === false ? '<span class="md-chip warn">Sagde nej til mail</span>' : '<span class="md-chip" title="AI\'en hørte ikke et tydeligt ja til en mail i samtalen - spørg næste gang">Ja til mail ikke hørt</span>';
+  return `<div class="maildraft">
+    <div class="md-head"><span class="kicker">✉ Mail klar</span>${m.kind === 'demo' ? '<span class="md-chip">Bekræfter demoen</span>' : ''}${consent}</div>
+    ${m.understood ? `<p class="md-why"><b>Forstået</b>${e(m.understood)}</p>` : ''}${m.lever ? `<p class="md-why"><b>Vinkel</b>${e(m.lever)}</p>` : ''}
+    <div class="md-fields">
+      <label>Til</label><input id="md-to" type="email" value="${e(to)}" placeholder="navn@firma.dk" oninput="mailDraftEdit()">
+      <label>Emne</label><input id="md-sub" value="${e(sub)}" oninput="mailDraftEdit()">
+    </div>
+    <textarea id="md-body" rows="${Math.min(18, Math.max(8, String(body).split('\n').length + 2))}" oninput="mailDraftEdit()">${e(body)}</textarea>
+    ${(m.warnings || []).length ? `<div class="md-warn">${m.warnings.map((w) => `<span>${e(w)}</span>`).join('')}</div>` : ''}
+    <div class="md-act">
+      <button class="pill primary" onclick="mailDraftSend()">Åbn i Gmail</button>
+      <button class="pill" onclick="mailDraftSend(true)">Kopiér</button>
+      <button class="pill tertiary" onclick="markMailSent()">Markér mail sendt</button>
+      <span class="sub">Det, du retter her, lærer AI'en til dine næste mails.</span>
+    </div>
+  </div>`;
+}
+async function mailDraftSend(copyOnly) {
+  const L = S.current; const m = DIAL.mail; if (!L || !m) return;
+  const to = $('md-to').value.trim(), subject = $('md-sub').value, body = $('md-body').value;
+  if (!copyOnly && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv modtagerens mailadresse', 3500); $('md-to').focus(); return; }
+  post('/api/sdr/mail/final', { cvr: L.cvr, sid: DIAL.mailSid, subject, body }).catch(() => {});
+  if (to && L.contact && L.contact.name && to !== (L.contact.email || '')) post('/api/sdr/contact', { cvr: L.cvr, name: L.contact.name, title: L.contact.title || '', email: to }).catch(() => {});
+  if (copyOnly) { try { await navigator.clipboard.writeText(`${subject}\n\n${body}`); toast('Emne og mail er kopieret'); } catch { toast('Kunne ikke kopiere - markér teksten og kopiér selv', 4000); } return; }
+  const au = gmailAddr ? '&authuser=' + encodeURIComponent(gmailAddr) : '';
+  window.open(`https://mail.google.com/mail/?view=cm&fs=1${au}&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+  toast('Mailen er åbnet i Gmail - send den, og tryk "Markér mail sendt"', 5000);
 }
 function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) { p.innerHTML = livePaneHtml(L); renderLiveLines(); } }
 /* Notes live in the side column: the field, then the thread. */
@@ -2885,6 +2932,8 @@ function openSettings() {
         <section class="set-card">
           <div class="set-row"><div class="set-k">Mailskabeloner</div><span class="chip sm ${s.mail_is_mine ? 'mine' : ''}">${s.mail_is_mine ? 'Dine' : 'Holdets'}</span>${s.mail_is_mine && !isAdmin ? `<button class="linkbtn" onclick="resetMailTpls()">Hent holdets tilbage</button>` : ''}<button class="pill xs tertiary" style="margin-left:auto" onclick="mailTplAdd()">+ Tilføj</button></div>
           <div id="st-mails" class="set-mails"></div>
+          <div class="set-row" style="margin-top:14px"><div class="set-k">Lært af dine rettelser</div></div>
+          <div id="st-mailrules" class="set-mailrules"><span class="sub">Henter…</span></div>
           <div class="set-help">Det SDR'en vælger, når et lead beder om en mail. Felter: <code>{fornavn}</code> <code>{firma}</code> <code>{sdr}</code> <code>{calendly}</code> <code>{note}</code> <code>{om}</code>. Links skrives som [tekst](https://…)</div>
         </section>
       </div>
@@ -2896,7 +2945,12 @@ function openSettings() {
   mailTpls = JSON.parse(JSON.stringify(s.email_templates || []));
   mailTplRender();
   renderGmailBox();
+  mailRulesLoad();
 }
+/* The rules the AI took from what I changed in its mails - mine to delete. */
+async function mailRulesLoad() { const el = $('st-mailrules'); if (!el) return; try { const d = await get('/api/sdr/mail/rules'); mailRulesRender(d.rules || []); } catch (ex) { el.innerHTML = `<span class="sub">Kunne ikke hente: ${e(ex.message)}</span>`; } }
+function mailRulesRender(rules) { const el = $('st-mailrules'); if (!el) return; el.innerHTML = rules.length ? rules.map((r, i) => `<div class="mailrule"><span>${e(r.text)}</span><button class="linkbtn del" onclick="mailRuleDel(${i})">Slet</button></div>`).join('') : `<span class="sub">Ingen endnu. Når du retter i en mail fra samtalen, før du åbner den i Gmail, lærer AI'en reglen og skriver sådan næste gang.</span>`; }
+async function mailRuleDel(i) { try { const d = await post('/api/sdr/mail/rules/delete', { i }); mailRulesRender(d.rules || []); } catch (ex) { toast(ex.message, 4000); } }
 /* The SDR's own mail templates. Same deal as the pitch: editing here makes
    them theirs, and nobody else's change. */
 let mailTpls = [];

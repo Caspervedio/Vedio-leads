@@ -221,6 +221,43 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Mailen efter opkaldet, klar når røret lægges på (okt. 2026).** Bygget på en SDR's egen
+  mailmetode (Marcus) og fodret med selve samtalen i stedet for skrevne noter. Lige efter
+  samtaleanalysen kører et eget mail-trin (`mailDraftFor`) - fra live-analysen (SSE-event
+  `mail`, typisk 5 s efter analysen, ca. 11 s efter røret er lagt på) eller fra
+  optagelsens analyse (kortets poll venter på `mail`). Analysen skriver ikke længere selv
+  mailen, men giver en interesse 1-10 med.
+  - **Input**: transskriptionen (kundens egne ord), analysen (resumé, indvendinger, næste
+    skridt, hvorfor ikke demo, interesse), SDR'ens egen første mailskabelon som stil,
+    de 3 seneste mails, SDR'en selv har sendt, og reglerne lært af SDR'ens rettelser
+    (vinder over alt). Typer: `followup` (kort møde), `demo` (bekræft den bookede demo),
+    `none` (nej tak, telefonsvarer, ingen samtale).
+  - **Regler** (fra metoden): første sætning om dem med deres ord (ikke "Tak for
+    snakken"), 80-150 ord, du-form, til den person der faktisk blev talt med, ingen pitch
+    eller featureliste, højst én kunde fra samme branche - kun blandt de godkendte
+    referencer på kortet (`sdrRefCustomers`, ikke tidligere kunder) og kun som "vi laver
+    også video for X", ellers "over 110 brands" - én opfordring: et kort møde med to tider
+    (3. hverdag kl. 13, 4. hverdag kl. 11, `mailTimes`), emnelinje 2-4 ord med små
+    bogstaver, ingen links. Løftestang efter indvendingen (dårlig erfaring, pris, "har
+    allerede nogen", gatekeeper, nysgerrig) og tone efter interesse.
+  - **Kontrol i koden** (`mailCheck`): "gratis", AI-tegn (reklameord, "jeg håber mailen
+    finder dig vel", "ikke bare X, men Y", punktlister, links, flere udråbstegn), "eksempler/
+    ideer", over 170 ord, emnelinje over 5 ord, manglende tider eller "møde", og ethvert
+    kundenavn fra kundelisten, der ikke er en godkendt reference. Tankestreger, fed skrift
+    og emojis retter koden selv. Fejler noget: én omskrivning, derefter vises resten som
+    advarsel.
+  - **Kortet** (Samtale-fanen efter opkaldet): "Mail klar" med hvad AI'en forstod, vinklen,
+    om kunden sagde ja til en mail (fra samtalen; kun en markering, ingen blokering),
+    redigerbar modtager, emne og tekst, og **Åbn i Gmail** (compose med til/emne/tekst,
+    så SDR'ens signatur kommer med), **Kopiér** og **Markér mail sendt**.
+  - **Selvlæring**: det, SDR'en ændrer, før mailen åbnes i Gmail eller kopieres, sendes til
+    `POST /api/sdr/mail/final`; koden finder, hvad der blev fjernet og tilføjet, og
+    Gemini laver højst 2 generelle regler ud af det (`mailLearn`, gemt pr. SDR i
+    `sdr_mail_rules`, højst 25, dubletter springes over). SDR'en ser og sletter dem under ⚙
+    → Mailskabeloner → "Lært af dine rettelser".
+  - Udeladt fra metoden: noter og interesse-score skrevet i hånden (samtalen erstatter
+    dem), samtykke som hård blokering, og automatiske mail 2 og 3 (vores opfølgning er et
+    opkald).
 - **Billed-tunge annoncører (okt. 2026, en SDR's idé).** Ad Library-tjekket tæller nu
   for hver aktiv annoncør, hvor mange af de aktive annoncer der er billeder og hvor mange
   video (`adLibraryMediaUrl`, `adlib_img`/`adlib_vid`; to ekstra opslag pr. aktiv side;
