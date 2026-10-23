@@ -9756,6 +9756,42 @@ app.post("/api/cron/screened-to-pool", (req, res) => {
     res.json({ ok: true, dry, stats });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+// One-off (23 Oct 2026), Casper: the leads sent back to the pool this morning
+// go back to the SDR who had them - Christian's to Christian, Marcus's to
+// Marcus - and at the bottom of their queue, not next up. Reserved to them
+// (owner_override); one the other SDR picked up and hasn't called moves back;
+// one somebody called or screened out again since stays as it is. ?dry=1 counts.
+app.post("/api/cron/repool-return", (req, res) => {
+  if (process.env.CRON_SECRET && req.headers["x-cron-secret"] !== process.env.CRON_SECRET) return res.status(401).json({ error: "Invalid cron secret" });
+  try {
+    const dry = req.query.dry === "1"; const d = loadPool(); const now = Date.now(); const nowIso = new Date(now).toISOString();
+    const users = loadUsers(); const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+    const listOf = new Map(); for (const [uid, L] of Object.entries(d.sdr_lists || {})) for (const c of (L.cvrs || [])) listOf.set(c, uid);
+    const stats = { returned: 0, by: {}, from_other: 0, on_own_list: 0, skipped: { done_before: 0, called_since: 0, screened_again: 0, closed: 0 } };
+    for (const l of d.leads || []) {
+      const rp = l.repool; const owner = rp && rp.screen && rp.screen.by; if (!owner) continue;
+      if (rp.back_at) { stats.skipped.done_before++; continue; }
+      const t = new Date(rp.at).getTime();
+      if ((l.calls || []).some((c) => c && new Date(c.at).getTime() > t)) { stats.skipped.called_since++; continue; }
+      if ((l.screen_log || []).some((x) => x && new Date(x.at).getTime() > t)) { stats.skipped.screened_again++; continue; }
+      if (l.lastAction === "demo-booked" || l.lastAction === "not-relevant" || l.twenty_opportunity_id) { stats.skipped.closed++; continue; }
+      const on = listOf.get(l.cvr); const who = nameById[owner] || owner;
+      stats.returned++; stats.by[who] = (stats.by[who] || 0) + 1;
+      if (on && on !== owner) stats.from_other++; else if (on === owner) stats.on_own_list++;
+      if (dry) continue;
+      if (on && on !== owner) { const L = d.sdr_lists[on]; L.cvrs = (L.cvrs || []).filter((x) => x !== l.cvr); sdrListOut(l, on, `lagt tilbage hos ${who}, som havde det før`); }
+      if (on === owner) { const L = d.sdr_lists[owner]; L.cvrs = [...L.cvrs.filter((x) => x !== l.cvr), l.cvr]; } // already on their list: to the bottom of it
+      if (l.claimed_by && l.claimed_by !== owner) sdrUnclaim(l);
+      l.owner_override = owner; l.owner_override_at = nowIso;
+      l.repool.back_at = nowIso; l.repool.back_to = owner;
+      l.note_log = Array.isArray(l.note_log) ? l.note_log : [];
+      l.note_log.push({ at: nowIso, by: "admin", where: "list", text: `Tilbage hos ${who} (admin) - nederst i køen` });
+      sdrTouch(l);
+    }
+    if (!dry && stats.returned) { savePool(d); logActivity("sdr-admin", `Fravalg: ${stats.returned} leads lagt tilbage hos den SDR, der havde dem - nederst i køen`, { stats }); }
+    res.json({ ok: true, dry, stats });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // One-off repair for a run that read empty pages as "never ran ads": the
 // leads it labelled in [from, to) go back to "not checked" - ranked above
 // leads without a Facebook page at once - and the sweep re-verifies them,
@@ -15952,6 +15988,9 @@ function sdrReservedFor(l) {
   if (l.manual_by && !l.lastCallAt && !(back && back > (l.manual_at || ""))) return l.manual_by;
   return null;
 }
+// A lead handed back to the SDR who screened it out (repool.back_at) waits at
+// the bottom of their queue until somebody calls it.
+function sdrBackLast(l) { const at = l.repool && l.repool.back_at; return at && !(l.lastCallAt && l.lastCallAt > at) ? 1 : 0; }
 function sdrQueue(d, userId, now, exclude, settings) {
   const ex = exclude || new Set();
   const s = settings || sdrSettings(d);
@@ -15960,9 +15999,13 @@ function sdrQueue(d, userId, now, exclude, settings) {
   // 0 = fits, 1 = weak match (no page / no pixel / big), 2 = never ran ads.
   const fit = sdrFitRules(s); const band = new Map();
   for (const l of eligible) band.set(l.cvr, l.adlib_status === "none" ? 2 : fit.rank_weak_last && sdrFitWeak(l, s) ? 1 : 0);
-  const score = new Map(), person = new Map();
-  for (const l of eligible) if (!l.callback_at) { score.set(l.cvr, adlibScore(l, now)); person.set(l.cvr, sdrHasPerson(l) ? 1 : 0); }
+  const score = new Map(), person = new Map(), last = new Map();
+  for (const l of eligible) if (!l.callback_at) { score.set(l.cvr, adlibScore(l, now)); person.set(l.cvr, sdrHasPerson(l) ? 1 : 0); last.set(l.cvr, sdrBackLast(l)); }
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
+    // Given back to the SDR who once screened them out (23 Oct): theirs, but
+    // after everything else - not what comes next (Casper).
+    const al = last.get(a.cvr), bl = last.get(b.cvr);
+    if (al !== bl) return al - bl;
     // My own research / own additions first - they're mine.
     const ar = sdrReservedFor(a) === userId ? 1 : 0, br = sdrReservedFor(b) === userId ? 1 : 0;
     if (ar !== br) return br - ar;

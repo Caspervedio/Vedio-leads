@@ -320,6 +320,10 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   relevant" efter et rigtigt opkald røres ikke. Reservationen til den, der fravalgte, fjernes,
   "ingen aktive annoncer" får et nyt annoncetjek, og det gamle står på leadet (`repool.prev`)
   plus en note i historikken.
+  Samme dag lagt tilbage hos den SDR, der havde dem (`POST /api/cron/repool-return[?dry=1]`):
+  reserveret til dem igen, men **nederst i deres kø** (`sdrBackLast`, til nogen har ringet
+  til leadet) - de kommer, når alt andet friskt er ringet. Et lead den anden SDR havde
+  samlet op uden at ringe, flyttes tilbage; et der er ringet til siden, bliver.
 - **Hvorfor et lead forsvandt fra listen.** Hver gang et lead forlader en SDR's liste, uden at
   SDR'en har sat et udfald, skrives det på leadet (`list_log`, de seneste 12) med grunden
   (`sdrOutWhy`): ikke længere ringbart (demo booket, hviler til X, udskudt til i morgen,
