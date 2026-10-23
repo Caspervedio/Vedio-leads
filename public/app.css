@@ -1168,3 +1168,26 @@ main{transition:margin-right .46s var(--ease)}
 .notemodal textarea:focus{outline:none;border-color:var(--violet)}
 .notemodal .row{display:flex;align-items:center;gap:8px;justify-content:flex-end}.notemodal .row .sub{margin-right:auto;font-size:12px}
 .history .h.list b{color:var(--txt-soft)}
+/* the call review: the SDR, the customer, the demo */
+.cr{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.cr-sec{padding:10px 12px;border-radius:12px;background:var(--white);border:1px solid var(--line)}
+.cr-sec.demo{background:#f4faf6;border-color:#bfe3cc}
+.cr-sec p{margin:4px 0;font-size:13px;line-height:1.5;color:var(--txt)}.cr-sec p b{margin-right:6px}
+.cr-sec ul{margin:2px 0 6px 18px;padding:0;font-size:13px;line-height:1.5}.cr-sec ul.quotes li{font-style:italic;color:var(--txt-soft)}
+.cr-h{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.cr-score{display:inline-flex;align-items:center;justify-content:center;min-width:42px;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:800;background:var(--paper);color:var(--txt-soft)}
+.cr-score.shi{background:#e6f6ec;color:var(--approve)}.cr-score.smid{background:#fdf3dc;color:#8A5F12}.cr-score.slo{background:#fdecec;color:#B3352B}
+.cr-obj{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.cr-obj>div{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:10px;background:#fff6ea;border:1px solid #f3dfbe;font-size:12.5px;line-height:1.45}
+.cr-obj .q{font-weight:700;color:#7a4700}.cr-obj .a{color:var(--txt-soft)}.cr-obj .b{color:var(--txt)}
+.callrev{max-width:760px;width:100%;max-height:88vh;overflow:auto}
+.callrev .cr-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.callrev h3{margin:0}
+.cr-tr summary{cursor:pointer;font-weight:700;font-size:13px;margin-top:10px}.cr-tr pre{white-space:pre-wrap;font:inherit;font-size:12.5px;line-height:1.55;background:var(--paper);padding:12px;border-radius:10px;max-height:340px;overflow:auto}
+.history .h.link{cursor:pointer}.history .h.link:hover b{text-decoration:underline}
+.ck-ai{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--violet-soft);color:var(--violet);font-style:normal;font-size:10px;font-weight:800;letter-spacing:.06em;vertical-align:middle}
+.ph-mine{margin:-6px 0 10px;font-size:12.5px;color:var(--txt-soft)}.ph-mine b{color:var(--txt)}
+.ph-from{font-size:12px;color:var(--txt-faint);margin-top:4px}
+.mycalls{display:flex;flex-direction:column;gap:6px;padding:4px 24px 16px}
+.mc-avg{font-size:13px;color:var(--txt-soft);margin-bottom:4px}
+.mc{display:flex;align-items:flex-start;gap:12px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--white);padding:10px 12px;font:inherit;cursor:pointer}
+.mc:hover{background:var(--paper)}.mc .mc-t{display:flex;flex-direction:column;gap:2px}.mc .mc-i{font-size:12.5px;color:var(--txt-soft);line-height:1.4}

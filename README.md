@@ -221,6 +221,25 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Samtalens analyse: SDR'en, kunden og demoen (okt. 2026).** Den færdige analyse efter et
+  opkald (live eller fra optagelsen) har ud over resumé, udfald, indvendinger, næste skridt,
+  coaching og tjekliste nu også `sdr_review` (score 1-10, hvad der gik godt, hvad der kan gøres
+  bedre, åbning, spørgsmål, lukning, ca. taleandel og hver indvending med SDR'ens svar og et
+  bedre svar - skrevet direkte til SDR'en), `customer` (forretning, situation i dag, behov,
+  problemer med deres egne ord, timing, beslutning, personer) og `demo_brief` (3-5 linjer til
+  den, der tager demoen, når en demo blev booket). Samtale-fanen viser det efter opkaldet;
+  bagefter ligger samtalen på leadet: kortets Historik har "Samtale analyseret · 9/10", som
+  åbner hele analysen og samtalen (`callReviewOpen`). En demo-leads samtaler kan læses af hele
+  holdet (konteksten til demoen); andre kun af den, der ringede, og admin. SDR'en har "Dine
+  samtaler" under Dine tal (14 dage, score og hvad der kan gøres bedre) til træning.
+- **Kvalificering fra samtalen.** "Demo booket"-tjeklisten forudfyldes fra analysen - eller fra
+  live-overblikket, hvis analysen ikke er klar - og punkter sat af AI'en har mærket "AI", så
+  SDR'en kan fjerne dem. Kommer analysen efter, at demoen er booket (inden for 2 timer), gemmes
+  AI'ens tjekliste ved siden af SDR'ens (`demo_check_ai`), og den udfylder `demo_check` og tier,
+  hvis SDR'en lod den stå tom. Admin ser "AI ✓ / AI –" ved hvert punkt og "Se samtalen" i
+  gennemgangen og kan altid ændre det.
+- **Telefonvinduet viser SDR'ens eget nummer** ("Du ringer fra …", under opkald og ved
+  indgående "Ringer til dit nummer …").
 - **Hastighed (okt. 2026).** At åbne et lead tog ~4 s (median, 6 s for de langsomste) og sendte
   ~950 KB retur; tilstanden hvert 20. sek. ~1,2 s. Puljefilen (25 MB) ligger på GCS-mounten,
   så hver læsning hentede hele filen, og hver gemning læste den én gang til for at flette.

@@ -165,6 +165,10 @@
     <div class="onboard" id="onboard" hidden></div>
     <div class="pay" id="pay" hidden></div>
     <div class="tiles" id="tiles"></div>
+    <div class="tablewrap" id="mycallswrap" hidden>
+      <div class="thead"><div><h3>Dine samtaler</h3><p>De seneste 14 dages samtaler, læst af AI: hvordan det gik, og hvad du kan gøre bedre. Klik for hele analysen og samtalen.</p></div></div>
+      <div id="mycalls" class="mycalls"></div>
+    </div>
     <div class="tablewrap" id="coachwrap" hidden>
       <div class="thead"><div><h3>Til dine næste opkald</h3><p>Fra dine debriefs i denne uge - én ting ad gangen.</p></div></div>
       <div id="coachlist" style="padding:6px 24px 10px"></div>
@@ -763,12 +767,14 @@ function renderPhone() {
   if (!PH.open) { w.hidden = true; return; }
   w.hidden = false;
   const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
+  const myNum = S.settings && S.settings.dialer_me && S.settings.dialer_me.number;
   const head = (t, pill) => `<div class="ph-head"><span class="ph-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>${t}</span>${pill ? `<span class="ph-pill ${pill[1]}">${pill[0]}</span>` : ''}<button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
   const who = (name, num, sub) => `<div class="ph-who"><span class="ph-av">${e(phInitials(name || num))}</span><div><b>${e(name || num)}</b>${name ? `<span>${e(num)}</span>` : ''}${sub ? `<span>${e(sub)}</span>` : ''}</div></div>`;
   if (st === 'incoming') {
     const m = DIAL.incomingLead;
     w.innerHTML = `${head('Indgående opkald', ['ringer', 'ring'])}
       ${who(m ? m.name : '', DIAL.to, m ? [m.city, m.contact && m.contact.name, phStatus(m.status)].filter(Boolean).join(' · ') : 'Slår nummeret op…')}
+      ${myNum ? `<div class="ph-mine">Ringer til dit nummer <b>${e(fmtPhone(myNum))}</b></div>` : ''}
       <div class="ph-actions"><button class="ph-btn go" onclick="dialAccept()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>Besvar</button><button class="ph-btn stop" onclick="dialReject()">Afvis</button></div>`;
     return;
   }
@@ -785,6 +791,7 @@ function renderPhone() {
         <span class="ph-av lg ${st === 'live' ? 'live' : 'ring'}">${e(phInitials(name || num))}</span>
         <b>${e(name || num)}</b>
         ${name ? `<span class="ph-num">${e(num)}</span>` : ''}
+        ${myNum ? `<span class="ph-from">fra ${e(fmtPhone(myNum))}</span>` : ''}
         ${st === 'live' ? `<span class="ph-time js-dial-time">${dialFmt((Date.now() - DIAL.t0) / 1000)}</span><span class="dial-q js-dial-q ${DIAL.quality}">${dialQualityLabel()}</span>` : `<span class="ph-wait"><i></i><i></i><i></i></span>`}
       </div>
       ${st === 'live' && DIAL.keypad ? `<div class="ph-keys">${keys.map(([k]) => `<button onclick="dialDigit('${k}')"><b>${k}</b></button>`).join('')}</div>` : ''}
@@ -811,6 +818,7 @@ function renderPhone() {
     return;
   }
   w.innerHTML = `${head('Telefon', ['klar', 'ok'])}
+    ${myNum ? `<div class="ph-mine" title="Det nummer, kunderne ser og kan ringe tilbage til">Du ringer fra <b>${e(fmtPhone(myNum))}</b></div>` : ''}
     <div class="ph-dial">
       <input id="ph-num" type="tel" placeholder="+45 12 34 56 78" value="${e(PH.num)}" oninput="phInput(this.value)" onkeydown="if(event.key==='Enter')phDial()" autocomplete="off">
       <div id="ph-matchbox"></div>
@@ -988,13 +996,14 @@ function renderHistory() {
   const rows = [];
   for (const c of (L.calls || [])) if (c && c.at) rows.push({ at: c.at, kind: 'call', text: `${ACTION_LABEL[c.action] || c.action}${c.by_name ? ' · ' + c.by_name : ''}${c.duration_s ? ' · ' + dialFmt(c.duration_s) : ''}`, note: c.note || '' });
   for (const n of (L.note_thread || [])) if (n && n.at && n.kind !== 'call') rows.push({ at: n.at, kind: /^AI-resumé/.test(String(n.text || '')) ? 'ai' : 'note', text: /^AI-resumé/.test(String(n.text || '')) ? 'AI-resumé af samtalen' : `${n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || 'Note')}${n.where && WHERE[n.where] ? ' · ' + WHERE[n.where] : ''}`, note: n.text || '' });
+  for (const x of (L.calls_ai || [])) if (x && x.at) rows.push({ at: x.at, kind: 'ai', text: `Samtale analyseret${x.by ? ' · ' + x.by : ''}${x.score ? ' · ' + x.score + '/10' : ''}`, note: x.summary || '', sid: x.sid });
   for (const x of (L.list_log || [])) if (x && x.at) rows.push({ at: x.at, kind: 'list', text: `Væk fra ${x.who ? (/s$/i.test(x.who) ? x.who + "'" : x.who + 's') : 'en'} liste`, note: x.why || '' });
   if (L.email_sent_at) rows.push({ at: L.email_sent_at, kind: 'mail', text: `Mail sendt${L.email_template ? ' · ' + L.email_template : ''}`, note: '' });
   if (L.demo_booked_at) rows.push({ at: L.demo_booked_at, kind: 'demo', text: `Demo booket${L.demo_booked_by_name ? ' af ' + L.demo_booked_by_name : ''}${L.demo_status && L.demo_status !== 'pending' ? ' · ' + ({ qualified: 'kvalificeret', unqualified: 'ikke kvalificeret' }[L.demo_status] || L.demo_status) : ''}`, note: '' });
   rows.sort((a, b) => new Date(b.at) - new Date(a.at));
   box.hidden = !rows.length; if (!rows.length) return;
   const shown = HIST_ALL ? rows : rows.slice(0, 8);
-  $('history').innerHTML = shown.map((r) => `<div class="h ${r.kind}"><time title="${e(fmtWhen(r.at))}">${e(fmtAgo(r.at))}</time><div><b>${e(r.text)}</b>${r.note ? `<span class="hn">${e(r.note.length > 180 ? r.note.slice(0, 180) + '…' : r.note)}</span>` : ''}</div></div>`).join('')
+  $('history').innerHTML = shown.map((r) => `<div class="h ${r.kind}${r.sid ? ' link' : ''}"${r.sid ? ` onclick="callReviewOpen('${e(r.sid)}')" title="Se analysen og hele samtalen"` : ''}><time title="${e(fmtWhen(r.at))}">${e(fmtAgo(r.at))}</time><div><b>${e(r.text)}</b>${r.note ? `<span class="hn">${e(r.note.length > 180 ? r.note.slice(0, 180) + '…' : r.note)}</span>` : ''}</div></div>`).join('')
     + (rows.length > shown.length ? `<button class="linkbtn" onclick="HIST_ALL=true;renderHistory()">Vis alle ${rows.length} →</button>` : '');
 }
 function renderRefs() { const b = $('refbox'); const L = S.current; if (!b) return; b.hidden = !L; if (L) b.innerHTML = `<h4>Referencer</h4>${refsHtml(L)}`; }
@@ -1111,7 +1120,17 @@ function renderCoaching() {
   w.hidden = rows.length === 0; if (!rows.length) return;
   $('coachlist').innerHTML = rows.map((c) => `<div class="coach" style="margin:8px 0"><span class="k">${e(c.lead)}</span><span>${e(c.coaching)}${c.next_step ? ` <span style="color:var(--txt-soft)">· Næste: ${e(c.next_step)}</span>` : ''}</span></div>`).join('');
 }
+function renderMyCalls() {
+  const w = $('mycallswrap'), b = $('mycalls'); if (!w || !b) return; const xs = S.my_calls || [];
+  w.hidden = !xs.length; if (!xs.length) return;
+  const scores = xs.map((x) => x.score).filter(Boolean); const avg = scores.length ? (scores.reduce((s, x) => s + x, 0) / scores.length).toFixed(1) : null;
+  b.innerHTML = (avg ? `<div class="mc-avg">Gennemsnit <b>${avg}/10</b> over ${scores.length} samtaler</div>` : '') + xs.map((x) => `<button class="mc" onclick="callReviewOpen('${e(x.sid)}')">
+      <span class="cr-score s${!x.score ? 'na' : x.score >= 7 ? 'hi' : x.score >= 4 ? 'mid' : 'lo'}">${x.score ? x.score + '/10' : '-'}</span>
+      <span class="mc-t"><b>${e(x.name)}</b><span class="sub">${e(fmtAgo(x.at))}${x.dur ? ' · ' + dialFmt(x.dur) : ''}${x.outcome ? ' · ' + e(({ demo: 'demo', 'follow-up': 'følg op', email: 'mail', 'not-now': 'ikke nu', 'not-relevant': 'ikke relevant', 'no-answer': 'ingen svar' })[x.outcome] || x.outcome) : ''}</span>${x.improve ? `<span class="mc-i">${e(x.improve)}</span>` : ''}</span>
+    </button>`).join('');
+}
 function renderResults() {
+  renderMyCalls();
   const st = S.stats || {};
   // October is a learning month: say it where the numbers are, so nobody
   // reads them against a fully run-in team.
@@ -1526,7 +1545,9 @@ function openDemoCheck() {
   const L = S.current; if (!L || busy || $('dcheck')) return;
   if (!dcList().basics.length) { disp('demo-booked'); return; } // an old server without the list
   DC.step = 1; DC.basics = {}; DC.signals = {}; DC.spend_band = ''; DC.fromCall = false;
-  const ai = DIAL.ai; if (ai && DIAL.aiFor === L.cvr && ai.checklist) { for (const [k, v] of Object.entries(ai.checklist.basics || {})) if (v === true) DC.basics[k] = true; for (const [k, v] of Object.entries(ai.checklist.signals || {})) if (v === true) DC.signals[k] = true; DC.spend_band = ai.checklist.spend_band || ''; DC.fromCall = true; }
+  DC.ai = { basics: {}, signals: {} };
+  const ai = DIAL.ai; if (ai && DIAL.aiFor === L.cvr && ai.checklist) { for (const [k, v] of Object.entries(ai.checklist.basics || {})) if (v === true) { DC.basics[k] = true; DC.ai.basics[k] = true; } for (const [k, v] of Object.entries(ai.checklist.signals || {})) if (v === true) { DC.signals[k] = true; DC.ai.signals[k] = true; } DC.spend_band = ai.checklist.spend_band || ''; DC.fromCall = true; }
+  else if (LIVE.status && LIVE.cvr === L.cvr && LIVE.status.covered) { const CK0 = dcList(); for (const k of Object.keys(LIVE.status.covered)) { const grp = CK0.basics.some((x) => x.id === k) ? 'basics' : CK0.signals.some((x) => x.id === k) ? 'signals' : ''; if (grp) { DC[grp][k] = true; DC.ai[grp][k] = true; } } if (LIVE.status.spend_band) DC.spend_band = LIVE.status.spend_band; DC.fromCall = true; }
   const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'dcheck';
   bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
   document.body.appendChild(bg);
@@ -1543,7 +1564,7 @@ function renderDemoCheck() {
   const hint = (x) => x.id === 'live' && L.shop ? `StoreLeads: ${shopLine(L.shop)}` : x.id === 'spend' ? [est, ads].filter(Boolean).join(' · ') || (x.how || '') : x.id === 'volume' && ads ? `${ads} · ${x.how || ''}` : (x.how || '');
   // Item 2 also asks for the number: one tap on what they say they spend.
   const bands = (x) => x.id !== 'spend' ? '' : `<span class="bands"><i>Hvad siger de selv?</i>${(CK.spend_bands || []).map((b) => `<button type="button" class="${DC.spend_band === b.id ? 'on' : ''}" onclick="dcBand(event,'${e(b.id)}')">${e(b.label)}</button>`).join('')}</span>`;
-  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}${bands(x)}</span></label>`;
+  const item = (k, x, i) => `<label class="ck"><input type="checkbox" data-k="${k}" data-id="${e(x.id)}" ${DC[k][x.id] ? 'checked' : ''} onchange="dcToggle(this)"><span class="ck-box"></span><span class="ck-txt"><b>${e(x.title)}${DC.ai && DC.ai[k] && DC.ai[k][x.id] ? '<i class="ck-ai" title="Sat af AI ud fra samtalen - fjern fluebenet, hvis det ikke passer">AI</i>' : ''}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}${bands(x)}</span></label>`;
   const head = (step, h, p) => `<div class="dc-head"><div><span class="dc-kicker">Demo booket med ${e(L.name || '')} · trin ${step} af 2${DC.fromCall ? ' · forudfyldt fra samtalen' : ''}</span><h3>${h}</h3><p>${p}</p></div><span class="dc-steps"><i class="${step === 1 ? 'on' : 'done'}"></i><i class="${step === 2 ? 'on' : ''}"></i></span></div>`;
   if (DC.step === 1) {
     bg.innerHTML = `<div class="modal wide dcheck">
@@ -1952,6 +1973,39 @@ function liveStatusHtml(st, faded) {
     ${st.next && !faded ? `<div class="ls-next"><span>Nu</span>${e(st.next)}</div>` : ''}
   </div>`;
 }
+// The SDR's review, the customer's picture and the demo brief - shown after
+// the call and in the call review window later.
+function callReviewHtml(ai) {
+  const r = ai.sdr_review || {}; const c = ai.customer || {};
+  const list = (xs) => (xs || []).map((x) => `<li>${e(x)}</li>`).join('');
+  const sdr = (r.score || r.went_well || r.improve || (r.objections || []).length) ? `<div class="cr-sec"><div class="cr-h"><span class="kicker">Din samtale</span>${r.score ? `<span class="cr-score s${r.score >= 7 ? 'hi' : r.score >= 4 ? 'mid' : 'lo'}">${r.score}/10</span>` : ''}${r.talk_share != null ? `<span class="sub">Du talte ca. ${r.talk_share}% af tiden</span>` : ''}</div>
+      ${r.went_well ? `<p><b>Godt</b> ${e(r.went_well)}</p>` : ''}${r.improve ? `<p><b>Gør bedre</b> ${e(r.improve)}</p>` : ''}
+      ${r.questions ? `<p><b>Spørgsmål</b> ${e(r.questions)}</p>` : ''}${r.closing ? `<p><b>Lukning</b> ${e(r.closing)}</p>` : ''}
+      ${(r.objections || []).length ? `<div class="cr-obj">${r.objections.map((o) => `<div><span class="q">„${e(o.said)}“</span>${o.answered ? `<span class="a">Du: ${e(o.answered)}</span>` : ''}${o.better ? `<span class="b">Bedre: ${e(o.better)}</span>` : ''}</div>`).join('')}</div>` : ''}</div>` : '';
+  const cust = (c.business || c.situation || (c.needs || []).length || (c.pains || []).length) ? `<div class="cr-sec"><div class="cr-h"><span class="kicker">Kunden</span></div>
+      ${c.business ? `<p><b>Forretning</b> ${e(c.business)}</p>` : ''}${c.situation ? `<p><b>I dag</b> ${e(c.situation)}</p>` : ''}
+      ${(c.needs || []).length ? `<p><b>Behov</b></p><ul>${list(c.needs)}</ul>` : ''}${(c.pains || []).length ? `<p><b>Med deres ord</b></p><ul class="quotes">${list(c.pains)}</ul>` : ''}
+      ${c.timing ? `<p><b>Timing</b> ${e(c.timing)}</p>` : ''}${c.decision ? `<p><b>Beslutning</b> ${e(c.decision)}</p>` : ''}
+      ${(c.people || []).length ? `<p><b>Personer</b> ${c.people.map((p) => e(p.name + (p.role ? ' (' + p.role + ')' : ''))).join(', ')}</p>` : ''}</div>` : '';
+  const demo = ai.demo_brief ? `<div class="cr-sec demo"><div class="cr-h"><span class="kicker">Til demoen</span></div><p>${e(ai.demo_brief)}</p></div>` : '';
+  return sdr || cust || demo ? `<div class="cr">${demo}${cust}${sdr}</div>` : '';
+}
+/* A call, later: the whole analysis and the conversation, from the lead's history
+   or from "Dine samtaler". The team can read the calls of a lead with a demo. */
+async function callReviewOpen(sid) {
+  if (!sid) return; const old = $('callrev'); if (old) old.remove();
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'callrev';
+  bg.innerHTML = `<div class="modal wide callrev"><span class="dial-ai-wait"><i class="spin"></i>Henter samtalen…</span></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); }); document.body.appendChild(bg);
+  try {
+    const r = await get('/api/sdr/recording?sid=' + encodeURIComponent(sid)); const ai = r.ai;
+    const box = bg.querySelector('.callrev'); if (!ai) { box.innerHTML = `<p>Samtalen er ikke analyseret${r.status === 'short' ? ' - den var for kort' : ''}.</p>`; return; }
+    box.innerHTML = `<div class="cr-top"><div><h3>${e(r.name || 'Samtale')}</h3><p class="sub">${e(fmtWhen(r.at))}${r.by ? ' · ' + e(r.by) : ''}${r.duration_s ? ' · ' + dialFmt(r.duration_s) : ''}</p></div><button class="pill tertiary" onclick="$('callrev').remove()">Luk</button></div>
+      <p class="ai-sum">${e(ai.summary || '')}</p>${ai.next_step ? `<p class="ai-next"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}
+      ${callReviewHtml(ai)}
+      ${r.transcript ? `<details class="cr-tr"><summary>Hele samtalen</summary><pre>${e(r.transcript)}</pre></details>` : ''}`;
+  } catch (ex) { bg.querySelector('.callrev').innerHTML = `<p>Kunne ikke hente samtalen: ${e(ex.message)}</p><button class="pill tertiary" onclick="$('callrev').remove()">Luk</button>`; }
+}
 function liveFinalHtml(ai) {
   return `<div class="callai">
       <div class="ai-top"><span class="kicker">✦ Samtalen, læst af AI</span>${ai.no_demo_reason && ai.no_demo_reason !== 'none' ? `<span class="chip">${e(dialReasonLabel(ai.no_demo_reason))}</span>` : ''}</div>
@@ -1959,6 +2013,7 @@ function liveFinalHtml(ai) {
       ${ai.objections && ai.objections.length ? `<div class="ai-obj">${ai.objections.map((o) => `<span>${e(o)}</span>`).join('')}</div>` : ''}
       ${ai.next_step ? `<p class="ai-next"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}
       ${ai.coaching ? `<p class="ai-coach"><b>Til dig</b> ${e(ai.coaching)}</p>` : ''}
+      ${callReviewHtml(ai)}
       <div class="row" style="justify-content:flex-start;gap:8px;flex-wrap:wrap">
         <button class="pill sm" onclick="dialUseNote()">Brug som note</button>
         ${ai.checklist && (Object.values(ai.checklist.basics || {}).some((v) => v === true) || ai.checklist.spend_band) ? `<span class="sub">Tjeklisten forudfyldes, når du trykker Demo booket.</span>` : ''}

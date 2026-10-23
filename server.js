@@ -3799,6 +3799,7 @@ async function liveFinal(st, tail) {
   if (rec && rec.status === "ready") { st.final = rec.ai; st.finalStatus = "ready"; liveSend(st, "final", { status: "ready", ai: rec.ai }); return; }
   if (!rec) { rec = { sid: "live:" + st.sid, call_sid: st.sid, at: now, by: st.uid, inbound: st.inbound, duration_s: dur, url: "", status: "pending" }; l2.recordings.push(rec); if (l2.recordings.length > 40) l2.recordings = l2.recordings.slice(-40); }
   rec.status = "ready"; rec.source = "live"; rec.transcript = transcript; rec.ai = ai; rec.ready_at = now; if (!rec.duration_s) rec.duration_s = dur;
+  demoCheckFromAi(l2, ai, rec.at);
   if (!rec.ai_noted) { rec.ai_noted = true; l2.note_log = Array.isArray(l2.note_log) ? l2.note_log : []; l2.note_log.push({ at: now, by: st.uid, where: "call", text: `AI-resumé af opkaldet (${Math.max(1, Math.round(rec.duration_s / 60))} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` }); }
   sdrTouch(l2); savePool(d2);
   logActivity("sdr-call-ai", `${sdrName}: samtale med ${l2.name} læst af AI - ${ai.summary.slice(0, 80)}`, { cvr: st.cvr, userId: st.uid });
@@ -3880,6 +3881,19 @@ async function recordingFetchB64(url) {
   if (!r.ok) throw new Error(`recording ${r.status}`);
   return Buffer.from(await r.arrayBuffer()).toString("base64");
 }
+// The AI's checklist from the call, kept with a demo booked on that call (or
+// booked from it within two hours): demo_check_ai sits next to the SDR's own
+// ticks for admin's review, and fills demo_check when the SDR left it empty.
+// Admin can always change it when qualifying.
+function demoCheckFromAi(lead, ai, callAt) {
+  if (!lead || !ai || !ai.checklist || lead.lastAction !== "demo-booked" || !lead.demo_booked_at) return false;
+  if (Math.abs(new Date(lead.demo_booked_at).getTime() - new Date(callAt || Date.now()).getTime()) > 2 * 3600e3) return false;
+  const c = demoCheckClean({ basics: ai.checklist.basics, signals: ai.checklist.signals, spend_band: ai.checklist.spend_band });
+  if (!c) return false;
+  lead.demo_check_ai = { ...c, at: new Date().toISOString() };
+  if (!lead.demo_check || !Object.values(lead.demo_check.basics || {}).some(Boolean)) { lead.demo_check = { ...c, by: "ai" }; lead.demo_tier = demoTierOf(lead.demo_check, sdrSettings(loadPool())); }
+  return true;
+}
 // One analysis, two sources: the recording (audio attached) or the live
 // transcript (text). Same fields either way, so the card and the checklist
 // don't care which got there first.
@@ -3899,9 +3913,13 @@ function callAnalysisPrompt({ inbound, sdrName, lead, transcript, tail }) {
  "next_step": "<det konkrete næste skridt, med dato/tid hvis nævnt>",
  "coaching": "<1-2 sætninger til SDR'en: hvad gik godt, hvad bør gøres anderledes næste gang>",
  "checklist": {"basics": {${CK.basics.map((x) => `"${x.id}": <true|false|null>`).join(", ")}}, "signals": {${CK.signals.map((x) => `"${x.id}": <true|false|null>`).join(", ")}}, "spend_band": "<${CK.spend_bands.map((x) => x.id).join("|")}|>"},
- "interest": <1-10: hvor interesseret kunden lød>}`,
+ "interest": <1-10: hvor interesseret kunden lød>,
+ "sdr_review": {"score": <1-10: hvor godt samtalen blev ført>, "went_well": "<1-2 sætninger: det, SDR'en gjorde godt>", "improve": "<1-2 sætninger: det vigtigste at gøre bedre næste gang>", "opening": "<kort: virkede åbningen?>", "questions": "<stillede SDR'en de rigtige spørgsmål - og hvilke manglede?>", "objections": [{"said": "<kundens indvending, kort>", "answered": "<hvad SDR'en svarede, kort>", "better": "<et bedre svar, 1-2 sætninger på dansk>"}], "closing": "<forsøgte SDR'en at booke et møde, og hvordan>", "talk_share": <0-100: ca. hvor stor en del af tiden SDR'en talte>},
+ "customer": {"business": "<hvad de sælger og til hvem>", "situation": "<annoncering i dag: kanaler, bureau eller selv, budget, video>", "needs": ["<et behov>"], "pains": ["<et problem med deres egne ord - gerne et citat>"], "timing": "<hvornår, og hvorfor>", "decision": "<hvem beslutter, og hvem skal med>", "people": [{"name": "<navn>", "role": "<rolle>"}]},
+ "demo_brief": "<kun hvis en demo blev booket: 3-5 linjer til den, der tager demoen - hvem de er, hvad de vil se, hvad der er vigtigt for dem, og hvad man skal passe på; ellers tom>"}`,
     `Tjeklisten: grundlag = ${CK.basics.map((x) => `${x.id}: ${x.title}`).join("; ")}. Købssignaler = ${CK.signals.map((x) => `${x.id}: ${x.title}`).join("; ")}. Sæt kun true/false når samtalen faktisk afgør det, ellers null. spend_band ud fra hvad kunden selv siger om annoncebudget (kr/md), ellers tom.`,
     `Hold dig til det, der blev sagt. Ingen antagelser om tal, der ikke blev nævnt.`,
+    `"coaching" og "sdr_review" læses af ${sdrName} selv: skriv direkte til ${sdrName} i du-form ("Du var god til...", "Næste gang kan du..."), aldrig "han", "hun" eller "SDR'en". Ved tjeklisten: null, når samtalen ikke afgør punktet - ikke false.`,
   ].filter(Boolean).join("\n\n");
 }
 function callAnalysisParse(out) {
@@ -3910,6 +3928,9 @@ function callAnalysisParse(out) {
     summary: str(out.summary, 700), reached: str(out.reached, 20), outcome_guess: str(out.outcome_guess, 20), no_demo_reason: str(out.no_demo_reason, 20),
     objections: Array.isArray(out.objections) ? out.objections.map((x) => str(x, 200)).filter(Boolean).slice(0, 6) : [],
     next_step: str(out.next_step, 200), coaching: str(out.coaching, 300), interest: Math.max(0, Math.min(10, Math.round(Number(out.interest) || 0))) || null,
+    sdr_review: (() => { const r = out.sdr_review && typeof out.sdr_review === "object" ? out.sdr_review : {}; const n = Math.round(Number(r.score) || 0); return { score: n >= 1 && n <= 10 ? n : null, went_well: str(r.went_well, 300), improve: str(r.improve, 300), opening: str(r.opening, 200), questions: str(r.questions, 300), closing: str(r.closing, 200), talk_share: Number(r.talk_share) >= 0 && Number(r.talk_share) <= 100 ? Math.round(Number(r.talk_share)) : null, objections: (Array.isArray(r.objections) ? r.objections : []).map((o) => ({ said: str(o && o.said, 200), answered: str(o && o.answered, 200), better: str(o && o.better, 300) })).filter((o) => o.said).slice(0, 6) }; })(),
+    customer: (() => { const c = out.customer && typeof out.customer === "object" ? out.customer : {}; const arr = (a, n) => (Array.isArray(a) ? a : []).map((x) => str(x, n)).filter(Boolean).slice(0, 6); return { business: str(c.business, 300), situation: str(c.situation, 300), needs: arr(c.needs, 200), pains: arr(c.pains, 240), timing: str(c.timing, 200), decision: str(c.decision, 200), people: (Array.isArray(c.people) ? c.people : []).map((p) => ({ name: str(p && p.name, 60), role: str(p && p.role, 80) })).filter((p) => p.name).slice(0, 5) }; })(),
+    demo_brief: str(out.demo_brief, 700),
     checklist: (() => { const ck = out.checklist || {}; const pick = (list, src) => Object.fromEntries(list.map((x) => [x.id, typeof (src || {})[x.id] === "boolean" ? src[x.id] : null])); const band = spendBandOf(String(ck.spend_band || "")); return { basics: pick(CK.basics, ck.basics), signals: pick(CK.signals, ck.signals), spend_band: band ? band.id : "" }; })(),
     email: { subject: str(out.email && out.email.subject, 150), body: str(out.email && out.email.body, 2000) },
   };
@@ -4048,6 +4069,7 @@ async function recordingAnalyse(cvr, rsid) {
   const { ai, transcript } = callAnalysisParse(out);
   setRec((l, r) => {
     r.status = "ready"; r.transcript = transcript; r.ai = ai; r.ready_at = new Date().toISOString(); delete r.source;
+    demoCheckFromAi(l, ai, r.at);
     if (r.ai_noted) return; r.ai_noted = true;
     l.note_log = Array.isArray(l.note_log) ? l.note_log : [];
     l.note_log.push({ at: r.ready_at, by: r.by, where: "call", text: `AI-resumé af opkaldet (${Math.max(1, Math.round(r.duration_s / 60))} min): ${ai.summary}${ai.next_step ? " Næste skridt: " + ai.next_step : ""}` });
@@ -4083,7 +4105,7 @@ app.post("/api/sdr/mail/rules/delete", authMiddleware, (req, res) => {
 app.get("/api/sdr/recording", authMiddleware, (req, res) => {
   try {
     const sid = String(req.query.sid || ""); const d = loadPool();
-    for (const l of d.leads || []) { const r = (l.recordings || []).find((x) => x.sid === sid || x.call_sid === sid); if (r) { if (r.by !== req.userId && !sdrIsAdmin(req.userId)) return res.status(403).json({ error: "Ikke din samtale" }); return res.json({ ok: true, cvr: l.cvr, status: r.status, duration_s: r.duration_s, ai: r.status === "ready" ? r.ai : null, transcript: r.status === "ready" ? r.transcript : "", mail: r.mail || null }); } }
+    for (const l of d.leads || []) { const r = (l.recordings || []).find((x) => x.sid === sid || x.call_sid === sid); if (r) { if (r.by !== req.userId && !sdrIsAdmin(req.userId) && l.lastAction !== "demo-booked") return res.status(403).json({ error: "Ikke din samtale" }); return res.json({ ok: true, cvr: l.cvr, name: l.name || "", at: r.at, by: (loadUsers().find((u) => u.id === r.by) || {}).name || r.by || "", status: r.status, duration_s: r.duration_s, ai: r.status === "ready" ? r.ai : null, transcript: r.status === "ready" ? r.transcript : "", mail: r.mail || null }); } }
     res.json({ ok: true, status: "none" });
   } catch (e) { sdrFail(res, e, "recording"); }
 });
@@ -15684,6 +15706,8 @@ function sdrSlim(l, nameById) {
     cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "",
     about: l.about || "",
     shop: sdrShopOf(l), fit_weak: sdrFitWeak(l),
+    calls_ai: (l.recordings || []).filter((r) => r.status === "ready" && r.ai).slice(-8).map((r) => ({ sid: r.call_sid || r.sid, at: r.at, by: (nameById || {})[r.by] || r.by || "", dur: r.duration_s || null, summary: String(r.ai.summary || "").slice(0, 180), score: (r.ai.sdr_review || {}).score || null })),
+    demo_check_ai: l.demo_check_ai || null,
     list_log: (l.list_log || []).slice(-8).map((x) => ({ at: x.at, who: (nameById || {})[x.uid] || x.uid || "", why: x.why })),
     sale_due_at: saleIsOpen(l) ? saleDueAt(l, SDR_SETTINGS_REF) : null, sale_flag: saleFlag(l, SDR_SETTINGS_REF), sale_extensions: Number(l.sale_extensions) || 0,
     niche: l.ind || l.industry || l.niche || "",
@@ -16346,6 +16370,7 @@ function buildSdrState(userId, d) {
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
     build: APP_BUILD,
+    my_calls: isAdmin ? [] : (() => { const since = now - 14 * 864e5; const out = []; for (const l of leads) for (const r of l.recordings || []) if (r.by === userId && r.status === "ready" && r.ai && new Date(r.at || 0).getTime() >= since) out.push({ sid: r.call_sid || r.sid, cvr: l.cvr, name: l.name || "", at: r.at, dur: r.duration_s || null, score: (r.ai.sdr_review || {}).score || null, improve: String((r.ai.sdr_review || {}).improve || r.ai.coaching || "").slice(0, 200), outcome: r.ai.outcome_guess || "" }); return out.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 30); })(),
     settings: settingsOut, stats, commission,
     onboarding: sdrOnboarding(settings, now),
     list: { date: L.date, items: items.map((l) => ({ ...sdrSlim(l, nameById), in_focus: L.focus ? sdrFocusMatch(l, L.focus) : null })), doneCount: (L.done || []).length, target: Math.max(1, Number(settings.list_size) || SDR_DEFAULT_SETTINGS.list_size) },

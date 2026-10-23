@@ -159,6 +159,8 @@
 #salemodal .sm-reasons{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px}
 #salemodal .sm-reasons .chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--txt);margin:0}
 #salemodal .sm-reasons input{width:auto}
+.ck-ai.off{background:var(--paper);color:var(--txt-faint)}
+.dc-call{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 4px;padding:10px 12px;border-radius:12px;background:var(--violet-soft);font-size:13px;font-weight:600}
 #salemodal .sm-group{margin:10px 0 2px}#salemodal .sm-group .k{display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint)}
 #salemodal .sm-quick{display:flex;gap:6px;margin:4px 0}#salemodal .sm-warn{background:#fdf3dc;color:#7a5a12;padding:8px 12px;border-radius:10px;font-weight:600}
 #sale-card .filters .n.red{background:#fdecec;color:#B3352B;margin-left:4px}
@@ -1503,6 +1505,34 @@ function saleLost(cvr) {
 }
 /* The SDR's checklist from the call, read-only, with the tier choice and the
    decision. "Kvalificeret" always comes through here, so the tier is seen. */
+/* A call: the analysis (the customer, the demo brief, the SDR) and the conversation. */
+function callReviewHtml(ai) {
+  const r = ai.sdr_review || {}; const c = ai.customer || {};
+  const list = (xs) => (xs || []).map((x) => `<li>${e(x)}</li>`).join('');
+  const sdr = (r.score || r.went_well || r.improve || (r.objections || []).length) ? `<div class="cr-sec"><div class="cr-h"><span class="kicker">SDR'ens samtale</span>${r.score ? `<span class="cr-score s${r.score >= 7 ? 'hi' : r.score >= 4 ? 'mid' : 'lo'}">${r.score}/10</span>` : ''}</div>
+      ${r.went_well ? `<p><b>Godt</b> ${e(r.went_well)}</p>` : ''}${r.improve ? `<p><b>Gør bedre</b> ${e(r.improve)}</p>` : ''}
+      ${(r.objections || []).length ? `<div class="cr-obj">${r.objections.map((o) => `<div><span class="q">„${e(o.said)}“</span>${o.answered ? `<span class="a">Svar: ${e(o.answered)}</span>` : ''}${o.better ? `<span class="b">Bedre: ${e(o.better)}</span>` : ''}</div>`).join('')}</div>` : ''}</div>` : '';
+  const cust = (c.business || c.situation || (c.needs || []).length || (c.pains || []).length) ? `<div class="cr-sec"><div class="cr-h"><span class="kicker">Kunden</span></div>
+      ${c.business ? `<p><b>Forretning</b> ${e(c.business)}</p>` : ''}${c.situation ? `<p><b>I dag</b> ${e(c.situation)}</p>` : ''}
+      ${(c.needs || []).length ? `<p><b>Behov</b></p><ul>${list(c.needs)}</ul>` : ''}${(c.pains || []).length ? `<p><b>Med deres ord</b></p><ul class="quotes">${list(c.pains)}</ul>` : ''}
+      ${c.timing ? `<p><b>Timing</b> ${e(c.timing)}</p>` : ''}${c.decision ? `<p><b>Beslutning</b> ${e(c.decision)}</p>` : ''}
+      ${(c.people || []).length ? `<p><b>Personer</b> ${c.people.map((p) => e(p.name + (p.role ? ' (' + p.role + ')' : ''))).join(', ')}</p>` : ''}</div>` : '';
+  const demo = ai.demo_brief ? `<div class="cr-sec demo"><div class="cr-h"><span class="kicker">Til demoen</span></div><p>${e(ai.demo_brief)}</p></div>` : '';
+  return `<div class="cr">${demo}${cust}${sdr}</div>`;
+}
+async function callReviewOpen(sid) {
+  if (!sid) return; const old = $('callrev'); if (old) old.remove();
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'callrev'; bg.style.zIndex = 70;
+  bg.innerHTML = `<div class="modal wide callrev"><p class="sub">Henter samtalen…</p></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); }); document.body.appendChild(bg);
+  try {
+    const r = await get('/api/sdr/recording?sid=' + encodeURIComponent(sid)); const ai = r.ai; const box = bg.querySelector('.callrev');
+    if (!ai) { box.innerHTML = `<p>Samtalen er ikke analyseret.</p><button class="pill tertiary" onclick="$('callrev').remove()">Luk</button>`; return; }
+    box.innerHTML = `<div class="cr-top"><div><h3>${e(r.name || 'Samtale')}</h3><p class="sub">${e(fmtDate(r.at))}${r.by ? ' · ' + e(r.by) : ''}</p></div><button class="pill tertiary" onclick="$('callrev').remove()">Luk</button></div>
+      <p>${e(ai.summary || '')}</p>${ai.next_step ? `<p class="sub"><b>Næste skridt</b> ${e(ai.next_step)}</p>` : ''}${callReviewHtml(ai)}
+      ${r.transcript ? `<details class="cr-tr"><summary>Hele samtalen</summary><pre>${e(r.transcript)}</pre></details>` : ''}`;
+  } catch (ex) { bg.querySelector('.callrev').innerHTML = `<p>Kunne ikke hente samtalen: ${e(ex.message)}</p><button class="pill tertiary" onclick="$('callrev').remove()">Luk</button>`; }
+}
 function ckSummary(l) {
   const CK = O.settings && O.settings.checklist; const c = l.demo_check;
   if (!CK || !c || !c.basics) return 'Booket uden tjekliste';
@@ -1524,7 +1554,7 @@ function openDemoCheck(cvr) {
   const bandTxt = band ? `${band.label}${band.id === 'unknown' ? '' : ' kr/md'}` : '';
   const est = l.shop && l.shop.ad_est ? `anslået ${Math.round(l.shop.ad_est.lo / 1000)}-${Math.round(l.shop.ad_est.hi / 1000)}.000 kr/md ud fra omsætningen` : '';
   const hint = (x) => x.id === 'live' && l.shop ? `StoreLeads: ${shopLine(l.shop)}` : x.id === 'spend' ? [band ? `SDR'en fik: ${bandTxt}` : '', est, ads].filter(Boolean).join(' · ') : x.id === 'volume' && ads ? ads : '';
-  const item = (k, x, i) => { const on = !!(c && c[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}</span></div>`; };
+  const aiC = l.demo_check_ai; const item = (k, x, i) => { const on = !!(c && c[k][x.id]); const aiOn = !!(aiC && aiC[k] && aiC[k][x.id]); return `<div class="ck ro ${on ? 'yes' : 'no'}"><span class="ck-box ${on ? 'yes' : 'no'}"></span><span class="ck-txt"><b>${e(x.title)}${aiC ? (aiOn ? '<i class="ck-ai" title="AI\'en hørte det i samtalen">AI ✓</i>' : '<i class="ck-ai off" title="AI\'en hørte det ikke i samtalen">AI –</i>') : ''}</b><span>${e(x.desc)}</span>${hint(x) ? `<em class="how">${e(hint(x))}</em>` : ''}</span></div>`; };
   const facts = [l.shop ? `StoreLeads: ${shopLine(l.shop)}${l.shop.platform ? ' · ' + shopPlatform(l.shop) : ''}` : '', ads, band ? `Annoncer: ${bandTxt} (SDR)` : ''].filter(Boolean);
   const status = st === 'qualified' ? `Kvalificeret${l.commission_rate != null ? ' · ' + fmtKr(l.commission_rate) + ' i provision' : ''}` : st === 'unqualified' ? `Ikke kvalificeret${l.demo_review_reason ? ' · ' + l.demo_review_reason : ''}` : 'Afventer din vurdering';
   const inp = 'width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;background:var(--paper);font:inherit;font-size:14px';
@@ -1532,6 +1562,7 @@ function openDemoCheck(cvr) {
   bg.innerHTML = `<div class="modal wide dcheck">
     <div class="dc-head"><div><span class="dc-kicker">Demo · booket ${e(fmtDate(l.demo_booked_at))} af ${e(l.demo_booked_by_name || '')}${c ? " · SDR'ens tjekliste" : ' · uden tjekliste'}</span><h3>${e(l.name)}</h3><p>${e(status)}</p></div>${c ? `<span class="dc-step">${n('basics')} af ${CK.basics.length} grundlag</span>` : ''}</div>
     ${facts.length ? `<div class="dc-facts">${facts.map((f) => `<span>${e(f)}</span>`).join('')}</div>` : ''}
+    ${(l.calls_ai || []).length ? `<div class="dc-call"><span>${l.calls_ai.length === 1 ? 'Samtalen er analyseret af AI' : l.calls_ai.length + ' samtaler er analyseret af AI'}${(l.demo_check || {}).by === 'ai' ? ' · tjeklisten er udfyldt af AI\'en' : ''}</span><button class="pill sm" onclick="callReviewOpen('${e(l.calls_ai[l.calls_ai.length - 1].sid)}')">Se samtalen</button></div>` : ''}
     ${c ? `<div class="dc-k">Grundlag - skal være på plads for at kvalificere</div><div class="ck-list">${CK.basics.map((x, i) => item('basics', x, i)).join('')}</div>
     <div class="dc-k">Købssignaler - ${n('signals')} af ${CK.signals.length}</div><div class="ck-list">${CK.signals.map((x, i) => item('signals', x, i)).join('')}</div>`
     : `<p class="sub">Demoen blev booket, før tjeklisten fandtes. Vælg tier ud fra det, du ved.</p>`}
