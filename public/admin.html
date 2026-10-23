@@ -147,6 +147,21 @@
 #salemodal .sm-reasons{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 4px}
 #salemodal .sm-reasons .chk{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:var(--txt);margin:0}
 #salemodal .sm-reasons input{width:auto}
+#salemodal .sm-group{margin:10px 0 2px}#salemodal .sm-group .k{display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint)}
+#salemodal .sm-quick{display:flex;gap:6px;margin:4px 0}#salemodal .sm-warn{background:#fdf3dc;color:#7a5a12;padding:8px 12px;border-radius:10px;font-weight:600}
+#sale-card .filters .n.red{background:#fdecec;color:#B3352B;margin-left:4px}
+#sale-why{padding:0 24px 8px}
+#sale-why .why-grid{display:grid;grid-template-columns:1fr 1fr 2fr;gap:12px;margin-bottom:12px}
+#sale-why .why-box{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--white);display:flex;flex-direction:column;gap:4px}
+#sale-why .why-box.red{border-color:#f1c6c3;background:#fdf6f5}
+#sale-why .why-box .k{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint)}
+#sale-why .why-box>b{font-size:24px;letter-spacing:-.02em}
+#sale-why .why-row{display:grid;grid-template-columns:minmax(150px,1.2fr) 32px 1fr;gap:4px 10px;align-items:center;font-size:13px;padding:3px 0}
+#sale-why .why-row .sub{grid-column:1/-1;font-size:12px;color:var(--txt-soft)}
+#sale-why .why-row .bar{height:6px;border-radius:3px;background:var(--paper);overflow:hidden}#sale-why .why-row .bar i{display:block;height:100%;background:#D9534F}
+#sale-why .why-tables{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:8px}
+#sale-why .why-tables table{font-size:13px}
+@media (max-width:900px){#sale-why .why-grid,#sale-why .why-tables{grid-template-columns:1fr}}
 #view-demos .res-head{display:flex;flex-direction:column;gap:14px;margin-bottom:18px}
 #view-demos .res-head h2{font-size:26px;font-weight:800;letter-spacing:-.02em}
 #view-demos .res-head p{font-size:13px;color:var(--txt-soft);margin-top:2px}
@@ -679,7 +694,8 @@ td .tag.warn{background:#fdf3e2;color:#9a5b00}
       <div class="conv" id="conv"><p class="sub" style="padding:16px 24px">Henter…</p></div>
     </div>
     <div class="tablewrap" id="sale-card">
-      <div class="thead"><div><h3>Fra demo til salg</h3><p>Kvalificerede demoer, indtil de er afgjort. Markér <b>Solgt</b> eller <b>Ikke solgt</b> efter demoen - SDR'en, der bookede demoen, ser det på sin demo.</p></div><div class="filters" id="sale-filters"></div></div>
+      <div class="thead"><div><h3>Fra demo til salg</h3><p>Alle bookede demoer, indtil de er afgjort. Hver demo har en frist; efter fristen er den rød, til den er markeret <b>Solgt</b>, <b>Ikke solgt</b> med en grund, eller <b>forlænget</b> med en ny dato og hvad vi venter på. Afgørelsen sendes til Twenty, og en demo markeret Won eller Lost i Twenty kommer med herind.</p></div><div class="filters" id="sale-filters"></div></div>
+      <div id="sale-why"></div>
       <table><thead id="sale-head"></thead><tbody id="tb-sale"></tbody></table>
     </div>
     </div>
@@ -1005,8 +1021,7 @@ function renderOverview() {
   const daysLeft = target ? (p.ready / target).toFixed(1) : '-';
   const alerts = [];
   if (p.pendingDemos > 0) alerts.push(`<div class="alert act"><span>🎯</span><span><b>${p.pendingDemos} demo${p.pendingDemos === 1 ? '' : 'er'}</b> venter på din vurdering.</span><button class="pill sm violet" onclick="showTab('demos');resSub('demos')">Gennemgå</button></div>`);
-  if (p.saleStale > 0 || p.saleNudge > 0) { const nd = s.sale_nudge_days || 14, sd = s.sale_stale_days || 45;
-    alerts.push(`<div class="alert ${p.saleStale ? 'warn' : ''}"><span>${p.saleStale ? '⚠' : '⏳'}</span><span>${p.saleStale ? `<b>${p.saleStale === 1 ? '1 kvalificeret demo har' : p.saleStale + ' kvalificerede demoer har'} ventet over ${sd} dage</b> på en afgørelse${p.saleNudge ? `, og ${p.saleNudge} over ${nd} dage` : ''}.` : `<b>${p.saleNudge === 1 ? '1 kvalificeret demo har' : p.saleNudge + ' kvalificerede demoer har'} ventet over ${nd} dage</b> på en afgørelse.`} Afgør dem, eller udsæt med en dato.</span><button class="pill sm" onclick="saleFilter='open';showTab('demos');resSub('conv')">Se dem</button></div>`); }
+  if (p.saleRed > 0) alerts.push(`<div class="alert warn"><span>⚠</span><span><b>${p.saleRed === 1 ? '1 demo er' : p.saleRed + ' demoer er'} over fristen</b> uden afgørelse. Markér Solgt, Ikke solgt med en grund, eller forlæng med en ny dato.</span><button class="pill sm" onclick="saleFilter='open';showTab('demos');resSub('conv')">Afgør dem</button></div>`);
   if (O.onboarding) alerts.push(`<div class="alert" style="background:#effaf3;border-color:#cfeedd"><span>🌱</span><span><b>Oplæringsperiode til og med ${e(O.onboarding.label)}.</b> Salgsteamet er stadig i lære- og onboardingmåneden - 4 demoer om dagen er ikke målet endnu. Coachen og ugens opsummering ved det. Ændres under ⚙.</span></div>`);
   if (p.newLast7 === 0) alerts.push(`<div class="alert warn"><span>⏸</span><span><b>Ingen nye leads de sidste 7 dage.</b> Intake (StoreLeads / berigelse) kører ikke - puljen rækker ca. <b>${daysLeft} dage</b> ved fuldt tempo.</span></div>`);
   else if (p.ready < target * 2) alerts.push(`<div class="alert warn"><span>⚠</span><span>Kun <b>${p.ready} leads klar</b> - ca. ${daysLeft} dages opkald ved ${target}/dag.</span></div>`);
@@ -1316,6 +1331,9 @@ function twentyCell(t) {
    above. Tracking only - commission still follows the approval. */
 let saleFilter = 'open';
 const SALE_REASONS = [['price', 'Pris'], ['timing', 'Timing - ikke nu'], ['competitor', 'Valgte en anden'], ['need', 'Intet behov'], ['silent', 'Svarer ikke'], ['other', 'Andet']];
+// The grouped reasons from the server: lead (shouldn't have been booked), ready (not ready yet), closing, other.
+function saleReasonList() { const r = O && O.settings && O.settings.sale_reasons; return Array.isArray(r) && r.length ? r : SALE_REASONS.map(([id, label]) => ({ id, label, side: 'other' })); }
+function saleSides() { return (O && O.settings && O.settings.sale_sides) || { lead: 'Forkert lead', ready: 'Ikke klar endnu', closing: 'Tabt i lukningen', other: 'Andet' }; }
 /* The live funnel over every booked demo, and what a sale costs. Loaded
    with the sales card; re-fetched when the SDR filter changes. */
 const CONV = { data: null, key: '', seq: 0 };
@@ -1374,43 +1392,61 @@ function renderConv() {
 function renderSales() {
   if (!$('tb-sale')) return;
   if (!CONV.data || CONV.key !== convKey()) convLoad();
-  const all = (O.demos || []).filter((l) => (!demoSdr || l.demo_booked_by === demoSdr) && (l.demo_status === 'qualified' || l.sale_status));
+  // Every booked demo that isn't unqualified, until it is decided - also the
+  // ones still waiting for your review: the sale doesn't wait for the commission.
+  const all = (O.demos || []).filter((l) => (!demoSdr || l.demo_booked_by === demoSdr) && (l.demo_status !== 'unqualified' || l.sale_status));
   const open = all.filter((l) => !l.sale_status), won = all.filter((l) => l.sale_status === 'won'), lost = all.filter((l) => l.sale_status === 'lost');
-  const days = (iso) => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 864e5)) : null;
-  const nudgeDays = Number((O.settings || {}).sale_nudge_days) || 14, staleDays = Number((O.settings || {}).sale_stale_days) || 45;
-  const isParked = (l) => l.sale_followup_at && new Date(l.sale_followup_at).getTime() > Date.now();
-  const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '-';
-  const value = won.reduce((a, l) => a + (Number(l.sale_value_dkk) || 0), 0);
-  const oldest = open.reduce((a, l) => Math.max(a, days(l.demo_qualified_at || l.demo_booked_at) || 0), 0);
-  // Per SDR: sold of decided - the demos are the founders', the leads the SDR's.
-  const per = {}; for (const l of [...won, ...lost]) { const k = l.demo_booked_by_name || '?'; const p = per[k] || (per[k] = { won: 0, n: 0 }); p.n++; if (l.sale_status === 'won') p.won++; }
-  $('sale-filters').innerHTML = [['open', 'Venter', open.length], ['won', 'Solgt', won.length], ['lost', 'Ikke solgt', lost.length]].map(([k, l, n]) => `<button class="${saleFilter === k ? 'on' : ''}" onclick="saleFilter='${k}';renderSales()">${l}<span class="n">${n}</span></button>`).join('');
+  const red = open.filter((l) => l.sale_flag === 'red');
+  const dayMs = 864e5; const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+  const RL = Object.fromEntries(saleReasonList().map((x) => [x.id, x.label]));
+  $('sale-filters').innerHTML = [['open', 'Venter', open.length], ['won', 'Solgt', won.length], ['lost', 'Ikke solgt', lost.length]].map(([k, l, n]) => `<button class="${saleFilter === k ? 'on' : ''}" onclick="saleFilter='${k}';renderSales()">${l}<span class="n">${n}</span>${k === 'open' && red.length ? `<span class="n red" title="Over fristen">${red.length}</span>` : ''}</button>`).join('');
+  renderSaleWhy(all, open, won, lost);
   const rows = saleFilter === 'won' ? won : saleFilter === 'lost' ? lost : open;
-  // Open: the ones that need a push first (oldest), parked ones last.
-  rows.sort((a, b) => saleFilter === 'open' ? (isParked(a) - isParked(b)) || new Date(a.demo_qualified_at || a.demo_booked_at) - new Date(b.demo_qualified_at || b.demo_booked_at) : new Date(b.sale_at) - new Date(a.sale_at));
-  $('sale-head').innerHTML = `<tr><th>Demo booket</th><th>Virksomhed</th><th>Kontakt</th><th>Booket af</th>${saleFilter === 'open' ? '<th class="num">Dage siden</th><th></th>' : `<th>${saleFilter === 'won' ? 'Solgt' : 'Afgjort'}</th><th>${saleFilter === 'won' ? 'Værdi' : 'Grund'}</th><th></th>`}</tr>`;
-  const RL = Object.fromEntries(SALE_REASONS);
+  const ord = { red: 0, amber: 1, '': 2 };
+  rows.sort((a, b) => saleFilter === 'open' ? (ord[a.sale_flag || ''] - ord[b.sale_flag || '']) || String(a.sale_due_at).localeCompare(String(b.sale_due_at)) : new Date(b.sale_at) - new Date(a.sale_at));
+  $('sale-head').innerHTML = `<tr><th>Demo booket</th><th>Virksomhed</th><th>Kontakt</th><th>Booket af</th>${saleFilter === 'open' ? '<th>Frist</th><th></th>' : `<th>${saleFilter === 'won' ? 'Solgt' : 'Afgjort'}</th><th>${saleFilter === 'won' ? 'Værdi' : 'Hvorfor'}</th><th></th>`}</tr>`;
   $('tb-sale').innerHTML = rows.length ? rows.map((l) => {
-    const d = days(l.demo_qualified_at || l.demo_booked_at);
     const hint = l.customer && l.customer.current && !l.sale_status ? `<span class="sale-hint">✓ Står som betalende kunde i kundelisten</span>` : '';
-    // Marked at the nudge mark (amber) and the stale mark (red) from ⚙ → Løn;
-    // a parked one shows its date and stays calm until then.
-    const parked = l.sale_followup_at && new Date(l.sale_followup_at).getTime() > Date.now();
-    const lvl = parked ? 'parked' : d >= staleDays ? 'stale' : d >= nudgeDays ? 'nudge' : '';
-    const ageTxt = parked ? `<span class="age parked" title="Udsat - vender tilbage ${e(fmtDate(l.sale_followup_at))}">${e(fmtDate(l.sale_followup_at))}</span>`
-      : `<span class="age ${lvl}" title="${lvl === 'stale' ? `Over ${staleDays} dage uden afgørelse - afgør den, eller udsæt med en dato` : lvl === 'nudge' ? `Over ${nudgeDays} dage - tid til at følge op` : 'Dage siden kvalificeret'}">${d}${lvl === 'stale' ? ' ⚠' : ''}</span>`;
+    const due = l.sale_due_at ? new Date(l.sale_due_at) : null; const due0 = due ? new Date(due) : null; if (due0) due0.setHours(0, 0, 0, 0);
+    const dd = due0 ? Math.round((due0 - today0) / dayMs) : null;
+    const lvl = l.sale_flag === 'red' ? 'stale' : l.sale_flag === 'amber' ? 'nudge' : '';
+    const dueTxt = !due ? '' : l.sale_flag === 'red' ? `<span class="age stale" title="Fristen var ${e(fmtDate(l.sale_due_at))} - markér Solgt, Ikke solgt eller Forlæng">Afgør nu${dd < 0 ? ` · ${-dd} d over` : ''}</span>`
+      : `<span class="age ${lvl}" title="Frist for afgørelse">${dd === 0 ? 'I dag' : dd === 1 ? 'I morgen' : e(fmtDate(l.sale_due_at))}</span>`;
+    const ext = l.sale_extensions ? `<span class="sub">Forlænget ${l.sale_extensions}×${l.sale_note ? ' · venter på: ' + e(l.sale_note) : ''}</span>` : '';
     const tail = saleFilter === 'open'
-      ? `<td class="num">${ageTxt}</td>
-         <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button class="ok" onclick="saleWon('${e(l.cvr)}')">Solgt</button><button class="no" onclick="saleLost('${e(l.cvr)}')">Ikke solgt</button><button onclick="saleWait('${e(l.cvr)}')" title="Kunden skal tænke - udsæt til en dato, så den ikke rykkes imens">Udsæt</button></div></td>`
-      : `<td>${e(fmtDate(l.sale_at))}</td>
-         <td>${saleFilter === 'won' ? (l.sale_value_dkk != null ? e(fmtKr(l.sale_value_dkk)) : '<span class="sub">-</span>') : e(RL[l.sale_reason] || 'Andet')}${l.sale_note ? `<span class="sub">${e(l.sale_note)}</span>` : ''}</td>
+      ? `<td>${dueTxt}${ext}</td>
+         <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button class="ok" onclick="saleWon('${e(l.cvr)}')">Solgt</button><button class="no" onclick="saleLost('${e(l.cvr)}')">Ikke solgt</button><button onclick="saleWait('${e(l.cvr)}')" title="Kunden skal tænke - ny frist, højst ${(O.settings && O.settings.sale_extend_max_days) || 30} dage frem">Forlæng</button></div></td>`
+      : `<td>${e(fmtDate(l.sale_at))}${l.sale_by === 'twenty' ? '<span class="sub">i Twenty</span>' : ''}</td>
+         <td>${saleFilter === 'won' ? (l.sale_value_dkk != null ? e(fmtKr(l.sale_value_dkk)) : '<span class="sub">-</span>') : e(RL[l.sale_reason] || 'Andet')}${l.sale_note && l.sale_note !== 'Markeret i Twenty' ? `<span class="sub">${e(l.sale_note)}</span>` : ''}</td>
          <td class="sale-act" onclick="event.stopPropagation()"><div class="review"><button onclick="saleSet('${e(l.cvr)}','pending')" title="Tilbage til Venter">Fortryd</button></div></td>`;
     return `<tr class="rowlink sale-${saleFilter === 'open' ? lvl : ''}" onclick="openLead('${e(l.cvr)}')">
-      <td><span class="chip ok">${e(fmtDate(l.demo_booked_at))}</span></td>
-      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? (l.city ? ' · ' : '') + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span>${hint}${parked && l.sale_note ? `<span class="sub">${e(l.sale_note)}</span>` : ''}</td>
+      <td><span class="chip ok">${e(fmtDate(l.demo_booked_at))}</span>${l.demo_status !== 'qualified' && !l.sale_status ? '<span class="sub">Afventer din godkendelse</span>' : ''}</td>
+      <td><b>${e(l.name)}</b><span class="sub">${e(l.city || '')}${l.web ? (l.city ? ' · ' : '') + e(String(l.web).replace(/^https?:\/\//, '').replace(/\/$/, '')) : ''}</span>${hint}</td>
       <td>${l.contact ? `<b>${e(l.contact.name)}</b><span class="sub">${e(l.contact.title || '')}</span>` : '-'}</td>
-      <td>${e(l.demo_booked_by_name || '')}</td>${tail}</tr>`;
-  }).join('') : `<tr class="empty-row"><td colspan="7">${saleFilter === 'open' ? 'Ingen kvalificerede demoer venter på svar.' : saleFilter === 'won' ? 'Ingen salg markeret endnu.' : 'Ingen markeret som ikke solgt.'}</td></tr>`;
+      <td>${e(l.demo_booked_by_name || '')}${l.demo_tier ? `<span class="sub">Tier ${e(l.demo_tier)}</span>` : ''}</td>${tail}</tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="7">${saleFilter === 'open' ? 'Ingen demoer venter på en afgørelse.' : saleFilter === 'won' ? 'Ingen salg markeret endnu.' : 'Ingen markeret som ikke solgt.'}</td></tr>`;
+}
+/* Where the machine leaks: the lost demos by group (wrong lead / not ready /
+   lost in the closing), by the SDR who booked them, and by checklist tier. */
+function renderSaleWhy(all, open, won, lost) {
+  const el = $('sale-why'); if (!el) return;
+  const SIDE = saleSides(); const RD = Object.fromEntries(saleReasonList().map((x) => [x.id, x]));
+  const sideOf = (l) => (RD[l.sale_reason] || {}).side || 'other';
+  const red = open.filter((l) => l.sale_flag === 'red').length;
+  const decided = won.length + lost.length;
+  const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '-';
+  const bySide = {}; for (const l of lost) { const s = sideOf(l); (bySide[s] = bySide[s] || []).push(l); }
+  const sides = ['lead', 'ready', 'closing', 'other'].filter((s) => bySide[s]);
+  const topReasons = (ls) => { const c = {}; for (const l of ls) c[l.sale_reason] = (c[l.sale_reason] || 0) + 1; return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${e((RD[k] || {}).label || 'Andet')} ${n}`).join(' · '); };
+  const per = {}; for (const l of [...won, ...lost]) { const k = l.demo_booked_by_name || '?'; const p = per[k] || (per[k] = { won: 0, lead: 0, ready: 0, closing: 0, other: 0, n: 0 }); p.n++; if (l.sale_status === 'won') p.won++; else p[sideOf(l)]++; }
+  const tiers = {}; for (const l of all) { const k = l.demo_tier ? 'Tier ' + l.demo_tier : 'Uden tier'; const t = tiers[k] || (tiers[k] = { won: 0, lost: 0, open: 0 }); if (l.sale_status === 'won') t.won++; else if (l.sale_status === 'lost') t.lost++; else t.open++; }
+  el.innerHTML = `<div class="why-grid">
+    <div class="why-box ${red ? 'red' : ''}"><span class="k">Venter på afgørelse</span><b>${open.length}</b><span class="sub">${red ? `<b>${red} over fristen</b> - afgør eller forlæng` : 'Ingen over fristen'}</span></div>
+    <div class="why-box"><span class="k">Afgjort</span><b>${decided}</b><span class="sub">${won.length} solgt · ${lost.length} ikke solgt · ${pct(won.length, decided)} lukket</span></div>
+    ${lost.length ? `<div class="why-box wide"><span class="k">Hvorfor de ikke blev solgt</span>${sides.map((s) => `<div class="why-row"><span>${e(SIDE[s] || s)}</span><b>${bySide[s].length}</b><span class="bar"><i style="width:${Math.round(100 * bySide[s].length / lost.length)}%"></i></span><span class="sub">${topReasons(bySide[s])}</span></div>`).join('')}</div>` : `<div class="why-box wide"><span class="k">Hvorfor de ikke blev solgt</span><span class="sub">Når de første er markeret Ikke solgt med en grund, ses her, om det er leadet, timingen eller lukningen, der taber dem.</span></div>`}
+  </div>
+  ${decided ? `<div class="why-tables"><table><thead><tr><th>Booket af</th><th class="num">Solgt</th><th class="num" title="${e(SIDE.lead)}">Forkert lead</th><th class="num">Ikke klar</th><th class="num">Lukningen</th><th class="num">Andet</th></tr></thead><tbody>${Object.entries(per).map(([k, p]) => `<tr><td>${e(k)}</td><td class="num">${p.won}</td><td class="num">${p.lead}</td><td class="num">${p.ready}</td><td class="num">${p.closing}</td><td class="num">${p.other}</td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>Tjekliste</th><th class="num">Solgt</th><th class="num">Ikke solgt</th><th class="num">Venter</th></tr></thead><tbody>${Object.entries(tiers).sort().map(([k, t]) => `<tr><td>${e(k)}</td><td class="num">${t.won}</td><td class="num">${t.lost}</td><td class="num">${t.open}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
 }
 async function saleSet(cvr, status, extra) {
   try { await post('/api/sdr/admin/sale', { cvr, status, ...(extra || {}) }); toast(status === 'won' ? '✓ Markeret som solgt' : status === 'lost' ? 'Markeret som ikke solgt' : status === 'wait' ? 'Udsat - rykkes ikke før datoen' : 'Tilbage til Venter'); if ($('salemodal')) $('salemodal').remove(); CONV.data = null; await loadOverview(); }
@@ -1424,11 +1460,15 @@ function saleModal(html) {
 }
 function saleWait(cvr) {
   const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
-  const t = new Date(); t.setDate(t.getDate() + 14); const v = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-  saleModal(`<h3>${e(l.name)} skal tænke</h3><p>Udsæt afgørelsen til en dato. Demoen tæller stadig som "venter", men rykkes ikke før den dag.</p>
-    <label>Vender tilbage</label><input type="date" id="sm-at" value="${v}" min="${drillToday()}">
-    <label>Note - valgfri</label><input id="sm-note" maxlength="500" placeholder="fx beslutter efter Black Friday">
-    <div class="row"><button class="pill tertiary" onclick="$('salemodal').remove()">Annullér</button><button class="pill primary" onclick="saleSet('${e(cvr)}','wait',{ followup_at: $('sm-at').value ? $('sm-at').value + 'T09:00:00' : null, note: $('sm-note').value })">Udsæt</button></div>`);
+  const max = (O.settings && O.settings.sale_extend_max_days) || 30;
+  const iso = (n) => { const t = new Date(); t.setDate(t.getDate() + n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
+  const n = (l.sale_extensions || 0) + 1;
+  saleModal(`<h3>Forlæng ${e(l.name)}</h3><p>Ny frist for afgørelsen - højst ${max} dage frem. Demoen er rød igen, hvis den ikke er afgjort til den tid.</p>
+    ${n >= 3 ? `<p class="sm-warn">Det er ${n}. forlængelse. Er den stadig reelt i spil - eller er den tabt?</p>` : ''}
+    <div class="sm-quick">${[7, 14, 30].filter((d) => d <= max).map((d) => `<button class="pill sm" onclick="$('sm-at').value='${iso(d)}'">+${d} dage</button>`).join('')}</div>
+    <label>Ny frist</label><input type="date" id="sm-at" value="${iso(Math.min(14, max))}" min="${iso(1)}" max="${iso(max)}">
+    <label>Hvad venter vi på?</label><input id="sm-note" maxlength="500" placeholder="fx svar efter budgetmøde fredag">
+    <div class="row"><button class="pill tertiary" onclick="$('salemodal').remove()">Annullér</button><button class="pill primary" onclick="if($('sm-note').value.trim().length<3){toast('Skriv hvad vi venter på');return;} saleSet('${e(cvr)}','wait',{ followup_at: $('sm-at').value ? $('sm-at').value + 'T09:00:00' : null, note: $('sm-note').value })">Forlæng</button></div>`);
 }
 function saleWon(cvr) {
   const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
@@ -1441,10 +1481,11 @@ function saleWon(cvr) {
 }
 function saleLost(cvr) {
   const l = (O.demos || []).find((x) => x.cvr === cvr); if (!l) return;
-  saleModal(`<h3>${e(l.name)} blev ikke til et salg</h3><p>Hvorfor? Det bliver til mønstre over tid.</p>
-    <div class="sm-reasons">${SALE_REASONS.map(([k, t], i) => `<label class="chk"><input type="radio" name="sm-r" value="${k}" ${i === 0 ? 'checked' : ''}> ${e(t)}</label>`).join('')}</div>
+  const SIDE = saleSides(); const list = saleReasonList();
+  saleModal(`<h3>${e(l.name)} blev ikke til et salg</h3><p>Hvorfor? Grupperne viser over tid, om det er leadet, timingen eller lukningen, der taber demoerne.</p>
+    ${['lead', 'ready', 'closing', 'other'].map((s) => { const rs = list.filter((x) => (x.side || 'other') === s); return rs.length ? `<div class="sm-group"><span class="k">${e(SIDE[s] || s)}</span><div class="sm-reasons">${rs.map((x) => `<label class="chk"><input type="radio" name="sm-r" value="${e(x.id)}"> ${e(x.label)}</label>`).join('')}</div></div>` : ''; }).join('')}
     <label>Note - valgfri</label><input id="sm-note" maxlength="500" placeholder="fx vender tilbage i Q1">
-    <div class="row"><button class="pill tertiary" onclick="$('salemodal').remove()">Annullér</button><button class="pill primary" onclick="saleSet('${e(cvr)}','lost',{ reason: (document.querySelector('input[name=sm-r]:checked') || {}).value, note: $('sm-note').value })">Markér ikke solgt</button></div>`);
+    <div class="row"><button class="pill tertiary" onclick="$('salemodal').remove()">Annullér</button><button class="pill primary" onclick="const r=(document.querySelector('input[name=sm-r]:checked')||{}).value; if(!r){toast('Vælg hvorfor');return;} saleSet('${e(cvr)}','lost',{ reason: r, note: $('sm-note').value })">Markér ikke solgt</button></div>`);
 }
 /* The SDR's checklist from the call, read-only, with the tier choice and the
    decision. "Kvalificeret" always comes through here, so the tier is seen. */
@@ -1884,9 +1925,8 @@ function openSettings() {
       + row('Tier 1 fra', 'Så mange af de tre købssignaler (nævner selv problemet, har prøvet at løse det, vil i gang snart). Du kan altid rette tier, når demoen vurderes.', num('st-t1sig', s.tier1_min_signals ?? 2, { min: 1, max: 3, unit: 'signaler' }))
       + row('Grundløn pr. SDR pr. måned', 'Vises sammen med provisionen under Dine tal, og bruges i pris pr. salg.', num('st-base', s.base_salary_dkk ?? 15000, { min: 0, unit: 'kr' }))
       + row('Kundeværdi (LTV)', 'Hvad en kunde er værd over sin levetid. Holdes op mod pris pr. salg under Konvertering - sundt fra 3×.', num('st-ltv', s.ltv_dkk ?? 19000, { min: 0, unit: 'kr' })))
-      + grp('Rykker på kvalificerede demoer uden afgørelse',
-        row('Markér gul efter', 'Benchmark: de fleste afgør inden 14 dage.', num('st-nudge', s.sale_nudge_days ?? 14, { min: 1, max: 365, unit: 'dage' }))
-      + row('Markér rød efter', 'Benchmark: 90% afgør inden 45 dage.', num('st-stale', s.sale_stale_days ?? 45, { min: 1, max: 730, unit: 'dage' })))
+      + grp('Afgørelse på demoer',
+        row('Frist for afgørelse', 'Dage efter booking, før en demo uden afgørelse bliver rød under Salg. Forlæng giver en ny frist, højst 30 dage frem ad gangen. De fleste afgør inden 14 dage.', num('st-nudge', s.sale_nudge_days ?? 14, { min: 1, max: 365, unit: 'dage' })))
       + grp('Tæller med i omkostninger og konvertering',
         row('SDR\'er', 'Grundløn × antal, og deres demoer i tragten. Slå fra for en medstifter, der ringer nu og da.', `<div class="st-chks">${((O.perUser || []).filter((u) => u.id && u.id !== 'admin')).map((u) => `<label class="chk"><input type="checkbox" class="st-cost" value="${e(u.id)}" ${(s.cost_exclude || []).includes(u.id) ? '' : 'checked'}> ${e(u.name)}</label>`).join('') || '<span class="sub">Ingen SDR\'er endnu.</span>'}</div>`)))}
     ${pane('flow', 'Sådan arbejder SDR\'erne dagen igennem.', grp('Ringelisten',
@@ -1947,7 +1987,7 @@ async function saveSettings() {
     tools: { storeleads_usd: Number($('tl-sl').value) || 0, apollo_usd: Number($('tl-ap').value) || 0, apollo_credits: Number($('tl-apc').value) || 0, fe_usd_per_credit: Number($('tl-fe').value) || 0, usd_dkk: Number($('tl-fx').value) || 6.9 },
     bench: { talk_avg_s: Number($('st-btalk').value) || 180, calls_per_demo: Number($('st-bdemo').value) || 40, qual_rate_pct: Number($('st-bqual').value) || 70 },
     cost_exclude: [...document.querySelectorAll('.st-cost')].filter((x) => !x.checked).map((x) => x.value),
-    sale_nudge_days: Number($('st-nudge').value) || 14, sale_stale_days: Number($('st-stale').value) || 45, ltv_dkk: Number($('st-ltv').value) || 0,
+    sale_nudge_days: Number($('st-nudge').value) || 14, ltv_dkk: Number($('st-ltv').value) || 0,
     daily_target: Number($('st-target').value) || 60, list_size: Number($('st-size').value) || 10, commission_dkk: Number($('st-comm').value), commission_tier2_dkk: Number($('st-comm2').value), tier1_min_signals: Number($('st-t1sig').value) || 2, base_salary_dkk: Number($('st-base').value) || 0, onboarding_until: $('st-onboard').value || '', no_answer_park_after: Number($('st-park-after').value) || 3, no_answer_park_days: Number($('st-park-days').value) || 60, calendly_url: $('st-cal').value.trim(), demo_webhook_url: $('st-hook').value.trim(), pitch_text: $('st-pitch').value,
     dialer: { users: [...document.querySelectorAll('[id^="tw-on-"]')].filter((x) => x.checked).map((x) => x.id.slice(6)), numbers: Object.fromEntries([...document.querySelectorAll('[id^="tw-num-"]')].map((x) => [x.id.slice(7), x.value.trim()]).filter(([, v]) => v)), consent: $('tw-consent').value, retention_days: Number($('tw-ret').value) || 30, live: $('tw-live').checked },
     rules: { require_meta: $('r-meta').checked, hide_no_ads: $('r-noads').checked, hide_stale_ads: $('r-stale').checked, rank_weak_last: $('r-weak').checked, weak_revenue_mio: Number($('r-weakmio').value) || 5, min_ads: Number($('r-minads').value) || 0, exclude_sources: [...document.querySelectorAll('.r-src:checked')].map((x) => x.value), exclude_niches: $('r-niches').value.split(',').map((x) => x.trim()).filter(Boolean) },

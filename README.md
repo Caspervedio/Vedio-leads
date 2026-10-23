@@ -221,6 +221,33 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Fra demo til salg: frist, afgørelse og hvorfor (okt. 2026).** 68 demoer var booket
+  15. sep. - 22. okt.; 3 var markeret solgt, ingen tabt - udfaldet blev aldrig noteret,
+  hverken her eller i Twenty (61 af 66 stod stadig på "Demo Booked"). Nu:
+  - **Frist**: hver booket demo, der ikke er ukvalificeret og ikke afgjort, har en frist
+    (`saleDueAt`): booking + `sale_nudge_days` (14, ⚙ → Løn: "Frist for afgørelse"), eller
+    den dato den er forlænget til. Efter fristen er den **rød** (`saleFlag`; gul de sidste
+    3 dage) under Admin → Resultater → Salg, og forsiden viser "N demoer er over fristen".
+    Også demoer, der venter på din godkendelse, er med - salget venter ikke på provisionen.
+  - **Afgørelse** (kun admin, `POST /api/sdr/admin/sale`): **Solgt** (dato, værdi),
+    **Ikke solgt** - en grund er påkrævet - eller **Forlæng**: ny frist højst
+    `SALE_EXTEND_MAX_DAYS` (30) dage frem og *hvad vi venter på* (påkrævet). Antal
+    forlængelser tælles (`sale_extensions`); 3. gang spørger modalen, om den reelt
+    stadig er i spil. Hver afgørelse logges (`sale_log`) og skrives i notetråden.
+  - **Grundene i grupper** (`SALE_REASON_DEFS`), så bunken af tabte siger, hvor
+    maskinen lækker: *Forkert lead* (ikke målgruppe, intet annoncebudget, ikke
+    beslutningstager, mødte ikke op), *Ikke klar endnu* (ikke en prioritet, timing,
+    ingen tid til at optage, intet behov), *Tabt i lukningen* (for dyrt, valgte en
+    anden / gør det selv, svarer ikke efter demoen), *Andet*. Salg-fanen viser
+    fordelingen pr. gruppe med de hyppigste grunde, pr. SDR der bookede, og solgt /
+    ikke solgt / venter pr. tjekliste-tier.
+  - **Twenty**: afgørelsen skrives på dealen (`twentyPushOutcome`): Solgt → stage WON +
+    closeDate + amount, Ikke solgt → LOST + closeDate + Twentys lostReason, hvor en
+    passer (NOT_ICP, NOT_A_PRIORITY, NO_TIME, TOO_EXPENSIVE, USES_COMPETITOR,
+    NO_RESPONSE), Forlæng → closeDate = ny frist, Fortryd → tilbage til Demo Booked.
+    Omvendt læser `twenty-demo-sync` (hvert 5. min.) 10 åbne deals pr. kørsel; står en på
+    WON eller LOST i Twenty, markeres den her også (`sale_by: "twenty"`, lostReason
+    oversat tilbage).
 - **Lead-kvalitet: hvem der faktisk booker kvalificerede demoer (okt. 2026).** De
   1.096 StoreLeads-leads, der var ringet til, viste: Facebook-side + Meta-pixel + under
   5 mio. kr i omsætning gav én kvalificeret demo pr. ca. 42 opkald; ingen side, ingen

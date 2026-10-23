@@ -14607,7 +14607,42 @@ app.post("/api/cron/twenty-demo-sync", async (req, res) => {
     }
     saveTwentyLedger(ledger);
   }
-  if (due.length) console.log("[twenty-demo-sync] done:", JSON.stringify(stats));
+  // Outcomes set in Twenty come back: an open deal moved to Won or Lost there
+  // is marked the same here (and its lost reason mapped), 10 per run, the
+  // longest unchecked first. Nothing is written to Twenty from this step.
+  stats.read = 0; stats.fromTwenty = 0;
+  try {
+    const open = (d.leads || []).filter((l) => saleIsOpen(l) && ledger[l.cvr] && ledger[l.cvr].opp_id)
+      .sort((a, b) => String(ledger[a.cvr].stage_checked_at || "").localeCompare(String(ledger[b.cvr].stage_checked_at || ""))).slice(0, 10);
+    const back = {}; for (const [k, v] of Object.entries(SALE_REASON_DEFS)) if (v.twenty && !back[v.twenty]) back[v.twenty] = k;
+    const found = [];
+    for (const l of open) {
+      const e = ledger[l.cvr];
+      try {
+        const j = await twentyCall("GET", `opportunities/${e.opp_id}`); const o = (j && j.data && (j.data.opportunity || j.data)) || {};
+        e.stage_checked_at = new Date().toISOString(); e.stage = o.stage || null; stats.read++;
+        if (o.stage === "WON" || o.stage === "LOST") found.push({ cvr: l.cvr, o });
+      } catch (err) { e.stage_checked_at = new Date().toISOString(); console.warn("[twenty-demo/stage]", l.name, err.message); }
+    }
+    saveTwentyLedger(ledger);
+    if (found.length) {
+      const d2 = loadPool(); const nowIso = new Date().toISOString();
+      for (const { cvr, o } of found) {
+        const lead = (d2.leads || []).find((x) => x.cvr === cvr); if (!lead || !saleIsOpen(lead)) continue;
+        const won = o.stage === "WON"; const at = o.closeDate && !isNaN(new Date(o.closeDate).getTime()) && new Date(o.closeDate).getTime() <= Date.now() ? new Date(o.closeDate).toISOString() : nowIso;
+        lead.sale_status = won ? "won" : "lost"; lead.sale_at = at; lead.sale_by = "twenty"; lead.sale_followup_at = null;
+        lead.sale_value_dkk = won && o.amount && Number(o.amount.amountMicros) > 0 ? Math.round(Number(o.amount.amountMicros) / 1e6) : null;
+        lead.sale_reason = won ? "" : (back[o.lostReason] || "other"); lead.sale_note = "Markeret i Twenty";
+        lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
+        lead.note_log.push({ at: nowIso, by: "twenty", where: "admin", text: won ? "Solgt (markeret i Twenty)" : `Ikke solgt (markeret i Twenty): ${SALE_REASONS[lead.sale_reason] || "Andet"}` });
+        lead.sale_log = [...(Array.isArray(lead.sale_log) ? lead.sale_log : []), { at: nowIso, by: "twenty", status: lead.sale_status, reason: lead.sale_reason, until: null, note: "fra Twenty" }].slice(-20);
+        sdrTouch(lead); stats.fromTwenty++;
+        logActivity("sdr-sale", `Twenty: ${lead.name} ${won ? "solgt" : "ikke solgt"}`, { cvr, status: lead.sale_status });
+      }
+      if (stats.fromTwenty) savePool(d2);
+    }
+  } catch (e) { console.warn("[twenty-demo-sync/read]", e.message); }
+  if (due.length || stats.fromTwenty) console.log("[twenty-demo-sync] done:", JSON.stringify(stats));
   res.json({ ok: true, stats });
 });
 // ─── Genopring: companies Vedio has met before, from Twenty ────────────────
@@ -14900,8 +14935,8 @@ async function sdrGeminiJson(prompt, audio, opts) {
 }
 // The latest pool and a change counter, for the "a no covers the company" index (sdrNoIndex).
 let SDR_NO_LEADS = null, SDR_NO_VER = 0, SDR_NO_CACHE = null;
-function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) { SDR_NO_LEADS = d.leads; SDR_LISTS_REF = d.sdr_lists || {}; SDR_LISTED.map = null; SDR_RULES_REF = (d.sdr_settings && d.sdr_settings.rules) || null; } return d; }
-let SDR_RULES_REF = null;
+function loadPool() { const d = loadUserData(POOL_ID); if (d && Array.isArray(d.leads)) { SDR_NO_LEADS = d.leads; SDR_LISTS_REF = d.sdr_lists || {}; SDR_LISTED.map = null; SDR_RULES_REF = (d.sdr_settings && d.sdr_settings.rules) || null; SDR_SETTINGS_REF = d.sdr_settings || null; } return d; }
+let SDR_RULES_REF = null, SDR_SETTINGS_REF = null;
 // Every SDR/admin save also stamps the meta (lists + settings) as freshest.
 function savePool(d) { d.sdr_meta_at = new Date().toISOString(); saveUserData(POOL_ID, d); }
 // Write-stamps: SDR/admin handlers mark what they changed so a background
@@ -15356,6 +15391,7 @@ function sdrSlim(l, nameById) {
     cvr: l.cvr, name: l.name || "", city: l.city || "", web: l.web || l.website || "",
     about: l.about || "",
     shop: sdrShopOf(l), fit_weak: sdrFitWeak(l),
+    sale_due_at: saleIsOpen(l) ? saleDueAt(l, SDR_SETTINGS_REF) : null, sale_flag: saleFlag(l, SDR_SETTINGS_REF), sale_extensions: Number(l.sale_extensions) || 0,
     niche: l.ind || l.industry || l.niche || "",
     phone: ph.phone, phone_label: ph.label,
     contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
@@ -15979,6 +16015,7 @@ function buildSdrState(userId, d) {
     email_templates: mineMail || settings.email_templates, mail_is_mine: !!mineMail, mail_team: settings.email_templates,
     checklist: SDR_CHECKLIST,
     dialer_me: sdrDialerFor(userId, settings),
+    sale_reasons: SALE_REASON_LIST, sale_sides: SALE_SIDES, sale_extend_max_days: SALE_EXTEND_MAX_DAYS,
   };
   return {
     me: { id: meUser.id, name: meUser.name, role: meUser.role || null, is_admin: isAdmin },
@@ -17219,7 +17256,62 @@ app.get("/api/sdr/admin/conversion", authMiddleware, (req, res) => {
 // Admin: did the demo become a sale? The step after "kvalificeret" - the
 // founders take the demo, then mark it Solgt (date, optional value) or Ikke
 // solgt (a reason). Tracking only: commission still follows the approval.
-const SALE_REASONS = { price: "Pris", timing: "Timing - ikke nu", competitor: "Valgte en anden", need: "Intet behov", silent: "Svarer ikke", other: "Andet" };
+// ─── After the demo: the closer decides (Oct 2026) ─────────────────────────
+// 68 demos booked from 15 Sep to 22 Oct: 3 marked won, none lost - the outcome
+// was never recorded, here or in Twenty (61 of 66 deals still "Demo Booked").
+// Every open demo now has a decision date - the booking + sale_nudge_days, or
+// the date it was extended to. Past it the deal is red in admin's Salg until it
+// is marked won, lost (a reason is required) or extended (a new date, at most
+// SALE_EXTEND_MAX_DAYS out, and what we are waiting for). Admin decides.
+// The reasons fall in groups, so the lost pile says where the machine leaks:
+// the lead should not have been booked, it wasn't ready, or it was lost in
+// the closing. Each maps to Twenty's lost reason where one fits.
+const SALE_SIDES = { lead: "Forkert lead - burde ikke være booket", ready: "Ikke klar endnu", closing: "Tabt i lukningen", other: "Andet" };
+const SALE_REASON_DEFS = {
+  not_icp: { label: "Ikke vores målgruppe", side: "lead", twenty: "NOT_ICP" },
+  budget: { label: "Intet eller for lille annoncebudget", side: "lead", twenty: "NOT_ICP" },
+  not_decider: { label: "Ikke beslutningstager", side: "lead", twenty: null },
+  noshow: { label: "Mødte ikke op til demoen", side: "lead", twenty: "NO_RESPONSE" },
+  not_priority: { label: "Video og annoncer er ikke en prioritet", side: "ready", twenty: "NOT_A_PRIORITY" },
+  timing: { label: "Timing - ikke nu", side: "ready", twenty: "NOT_A_PRIORITY" },
+  no_time: { label: "Ingen tid til at optage materiale", side: "ready", twenty: "NO_TIME" },
+  need: { label: "Intet behov", side: "ready", twenty: "NOT_A_PRIORITY" },
+  price: { label: "For dyrt", side: "closing", twenty: "TOO_EXPENSIVE" },
+  competitor: { label: "Valgte en anden / gør det selv", side: "closing", twenty: "USES_COMPETITOR" },
+  silent: { label: "Svarer ikke efter demoen", side: "closing", twenty: "NO_RESPONSE" },
+  other: { label: "Andet", side: "other", twenty: null },
+};
+const SALE_REASONS = Object.fromEntries(Object.entries(SALE_REASON_DEFS).map(([k, v]) => [k, v.label]));
+const SALE_REASON_LIST = Object.entries(SALE_REASON_DEFS).map(([id, v]) => ({ id, label: v.label, side: v.side }));
+const SALE_EXTEND_MAX_DAYS = 30;
+function saleIsOpen(l) { return l.lastAction === "demo-booked" && !!l.demo_booked_at && l.demo_status !== "unqualified" && !l.sale_status; }
+function saleDueAt(l, settings) {
+  if (l.sale_followup_at) return l.sale_followup_at;
+  const nd = Number((settings || {}).sale_nudge_days) || 14;
+  return new Date(new Date(l.demo_booked_at).getTime() + nd * 864e5).toISOString();
+}
+// red = past the decision date; amber = due within 3 days.
+function saleFlag(l, settings, now) {
+  if (!saleIsOpen(l)) return "";
+  const due = new Date(saleDueAt(l, settings)).getTime(); now = now || Date.now();
+  return now >= due ? "red" : due - now < 3 * 864e5 ? "amber" : "";
+}
+// The decision, mirrored onto the deal in Twenty (stage, close date, lost reason, amount).
+async function twentyPushOutcome(cvr) {
+  if (!twentyReady()) return;
+  const e0 = loadTwentyLedger()[cvr]; if (!e0 || !e0.opp_id) return;
+  const l = (loadPool().leads || []).find((x) => x.cvr === cvr); if (!l) return;
+  const body = {};
+  if (l.sale_status === "won") { body.stage = "WON"; body.closeDate = l.sale_at; if (l.sale_value_dkk != null) body.amount = { amountMicros: Math.round(Number(l.sale_value_dkk) * 1e6), currencyCode: "DKK" }; }
+  else if (l.sale_status === "lost") { body.stage = "LOST"; body.closeDate = l.sale_at; const t = (SALE_REASON_DEFS[l.sale_reason] || {}).twenty; if (t) body.lostReason = t; }
+  else if (l.sale_followup_at) body.closeDate = l.sale_followup_at; // extended: the expected decision date
+  else if (e0.outcome && e0.outcome.stage) body.stage = process.env.TWENTY_OPP_STAGE || "DEMO_BOOKED"; // undone: back to where we put it
+  else return;
+  let err = null;
+  try { await twentyCall("PATCH", `opportunities/${e0.opp_id}`, body); } catch (e) { err = String(e.message || e).slice(0, 200); console.warn("[twenty/outcome]", l.name, err); }
+  const L = loadTwentyLedger(); L[cvr] = { ...(L[cvr] || {}), outcome: err ? (L[cvr] || {}).outcome || null : { stage: body.stage || null, at: new Date().toISOString() }, outcome_error: err };
+  saveTwentyLedger(L);
+}
 app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
   try {
     if (!sdrAdminGuard(req, res)) return;
@@ -17232,14 +17324,17 @@ app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
     if (b.at) { const t = new Date(b.at); if (isNaN(t.getTime()) || t.getTime() > Date.now() + 864e5) return res.status(400).json({ error: "Ugyldig dato" }); at = t.toISOString(); }
     const value = b.value === "" || b.value == null ? null : Number(b.value);
     if (value != null && !(Number.isFinite(value) && value >= 0 && value < 1e8)) return res.status(400).json({ error: "Ugyldig værdi" });
-    if (b.status === "lost" && b.reason && !SALE_REASONS[b.reason]) return res.status(400).json({ error: "Ugyldig grund" });
+    if (b.status === "lost" && !SALE_REASONS[b.reason]) return res.status(400).json({ error: "Vælg hvorfor det ikke blev et salg" });
     const users = loadUsers(); const adminName = (users.find((u) => u.id === req.userId) || {}).name || "admin";
     if (b.status === "pending") { lead.sale_status = null; lead.sale_at = null; lead.sale_by = null; lead.sale_value_dkk = null; lead.sale_reason = ""; lead.sale_note = ""; lead.sale_followup_at = null; }
     else if (b.status === "wait") {
       // A slow decider: park it until a date. Still open, still counted as waiting - just not nagged until then.
       const w = b.followup_at ? new Date(b.followup_at) : null;
       if (!w || isNaN(w.getTime()) || w.getTime() < Date.now()) return res.status(400).json({ error: "Vælg en dato fremme i tiden" });
+      if (w.getTime() > Date.now() + (SALE_EXTEND_MAX_DAYS + 1) * 864e5) return res.status(400).json({ error: `Højst ${SALE_EXTEND_MAX_DAYS} dage ad gangen - så tager vi stilling igen` });
+      if (String(b.note || "").trim().length < 3) return res.status(400).json({ error: "Skriv hvad vi venter på" });
       lead.sale_followup_at = w.toISOString(); lead.sale_note = String(b.note || "").trim().slice(0, 500);
+      lead.sale_extensions = (Number(lead.sale_extensions) || 0) + 1;
     }
     else {
       lead.sale_followup_at = null;
@@ -17250,12 +17345,14 @@ app.post("/api/sdr/admin/sale", authMiddleware, (req, res) => {
     }
     // Into the thread, so the SDR who booked it sees how it ended.
     const text = b.status === "won" ? `Solgt efter demoen${value != null ? ` (${value.toLocaleString("da-DK")} kr)` : ""}${lead.sale_note ? " - " + lead.sale_note : ""}`
-      : b.status === "lost" ? `Ikke solgt efter demoen: ${SALE_REASONS[lead.sale_reason] || "Andet"}${lead.sale_note ? " - " + lead.sale_note : ""}`
-      : b.status === "wait" ? `Salg: vender tilbage ${new Date(lead.sale_followup_at).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}${lead.sale_note ? " - " + lead.sale_note : ""}` : "Salg sat tilbage til afventer";
+      : b.status === "lost" ? `Ikke solgt efter demoen: ${SALE_REASONS[lead.sale_reason] || "Andet"} (${SALE_SIDES[(SALE_REASON_DEFS[lead.sale_reason] || {}).side] || "Andet"})${lead.sale_note ? " - " + lead.sale_note : ""}`
+      : b.status === "wait" ? `Salg forlænget til ${new Date(lead.sale_followup_at).toLocaleDateString("da-DK", { day: "numeric", month: "short" })}${lead.sale_extensions > 1 ? ` (${lead.sale_extensions}. gang)` : ""}${lead.sale_note ? " - venter på: " + lead.sale_note : ""}` : "Salg sat tilbage til afventer";
     lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
     lead.note_log.push({ at: nowIso, by: req.userId, where: "admin", text });
+    lead.sale_log = [...(Array.isArray(lead.sale_log) ? lead.sale_log : []), { at: nowIso, by: req.userId, status: b.status, reason: lead.sale_reason || "", until: b.status === "wait" ? lead.sale_followup_at : null, note: String(b.note || "").trim().slice(0, 200) }].slice(-20);
     sdrTouch(lead);
     savePool(d);
+    setImmediate(() => twentyPushOutcome(lead.cvr).catch((e) => console.warn("[twenty/outcome]", e.message)));
     logActivity("sdr-sale", `${adminName}: ${lead.name} ${b.status === "won" ? "solgt" : b.status === "lost" ? "ikke solgt" : b.status === "wait" ? "salg udsat" : "afventer salg"}`, { cvr: lead.cvr, userId: req.userId, status: b.status });
     sdrRespond(res, req.userId, d);
   } catch (e) { sdrFail(res, e, "admin/sale"); }
@@ -17396,11 +17493,8 @@ app.get("/api/sdr/admin/overview", authMiddleware, (req, res) => {
         archived: leads.filter((l) => l.lastAction === "not-relevant").length, twenty: leads.filter((l) => l.twenty_opportunity_id).length,
         newLast7: days.slice(-7).reduce((a, k) => a + byDay[k].newLeads, 0), newLast14: days.reduce((a, k) => a + byDay[k].newLeads, 0),
         followupsOpen: base.stats.followupsOpen, pendingDemos: (base.demos || []).filter((x) => (x.demo_status || "pending") === "pending").length,
-        // Qualified demos still without a sales outcome, past the nudge / stale marks (a parked one waits until its date).
-        ...(() => { const nd = Number(settings.sale_nudge_days) || 14, sd = Number(settings.sale_stale_days) || 45; let nudge = 0, stale = 0;
-          for (const l of leads) { if (l.lastAction !== "demo-booked" || l.demo_status !== "qualified" || l.sale_status) continue; if (l.sale_followup_at && new Date(l.sale_followup_at).getTime() > now) continue;
-            const age = (now - new Date(demoQualifiedAt(l) || l.demo_booked_at).getTime()) / 864e5; if (age >= sd) stale++; else if (age >= nd) nudge++; }
-          return { saleNudge: nudge, saleStale: stale }; })(),
+        // Booked demos without a decision: past their decision date (red) or due within 3 days (amber).
+        ...(() => { let red = 0, amber = 0; for (const l of leads) { const f = saleFlag(l, settings, now); if (f === "red") red++; else if (f === "amber") amber++; } return { saleRed: red, saleAmber: amber }; })(),
         onLists: leads.filter((l) => sdrClaimActive(l, now)).length,
         retry: leads.filter((l) => l.retry_pool && sdrIsActive(l) && !(l.retry && l.retry.blocked)).length,
       },
