@@ -1065,6 +1065,24 @@ main{transition:margin-right .46s var(--ease)}
 .ph-pill.live{background:#e6f6ec;color:var(--approve)}.ph-pill.ring{background:var(--violet-soft);color:var(--violet)}.ph-pill.done{background:var(--paper);color:var(--txt)}.ph-pill.wait{background:#fdf3e2;color:#9a5b00}.ph-pill.ok{background:#e6f6ec;color:var(--approve)}
 .ph-x{margin-left:auto;border:0;background:transparent;font-size:14px;color:var(--txt-faint);cursor:pointer;padding:4px;border-radius:8px}
 .ph-x:hover{background:var(--paper);color:var(--txt)}
+/* "Seneste opkald": a clock next to ✕, the list in place of the keypad */
+.ph-hbtn{margin-left:auto;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;border-radius:9px;color:var(--txt-soft);cursor:pointer}
+.ph-hbtn svg{width:17px;height:17px}
+.ph-hbtn:hover,.ph-hbtn.on{background:var(--paper);color:var(--txt)}
+.ph-hbtn + .ph-x{margin-left:0}
+.ph-hist{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow-y:auto;margin:0 -6px}
+.ph-hrow{display:flex;align-items:center;gap:6px;border-radius:12px}
+.ph-hrow:hover{background:var(--paper)}
+.ph-hmain{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:8px 6px;border:0;background:transparent;text-align:left;cursor:pointer;font:inherit;color:inherit}
+.ph-av.sm{width:34px;height:34px;font-size:12px;flex-shrink:0}
+.ph-ht{min-width:0;display:flex;flex-direction:column;gap:1px}
+.ph-ht b{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph-ht span{font-size:11.5px;color:var(--txt-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph-dir{font-style:normal;font-weight:800;margin-right:4px;color:var(--txt-soft)}.ph-dir.miss{color:#b42318}
+.ph-hcall{flex-shrink:0;width:36px;height:36px;margin-right:6px;border-radius:50%;border:1px solid var(--line);background:var(--white);color:var(--approve);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.ph-hcall svg{width:16px;height:16px}
+.ph-hcall:hover{background:#e6f6ec;border-color:#bfe5cc}
+.ph-hcall:disabled{opacity:.4;cursor:default}
 .ph-who{display:flex;align-items:center;gap:12px;margin-bottom:14px}
 .ph-who b{display:block;font-size:17px;letter-spacing:-.01em;line-height:1.2}
 .ph-who span{display:block;font-size:12.5px;color:var(--txt-soft);margin-top:2px}
@@ -1146,8 +1164,6 @@ main{transition:margin-right .46s var(--ease)}
 .set-mailrules{display:flex;flex-direction:column;gap:6px}
 .mailrule{display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:10px;background:var(--paper);font-size:13px;line-height:1.45}
 .mailrule span{flex:1}
-/* a contact name only the AI found */
-.namecheck{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#fff6ea;border:1px solid #f3dfbe;color:#9a5b00;font-size:11px;font-weight:800;letter-spacing:.02em;vertical-align:middle;cursor:help}
 /* Noter: the overview and the button; the note window */
 #notebox .nb-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 #notebox .nb-head h4{margin:0}

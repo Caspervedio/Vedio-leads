@@ -115,9 +115,11 @@ aktive Meta-annoncer (mindst 1 · 3 · 5 · 10 · 20, efterset i Ad Library) - l
 fyldes fra fokus først og fra resten, når fokus er tomt. (Kontakt-håndtaget
 ejer/marketing/omstilling er taget ud - ingen brugte det.)
 
-**Fravælg uden opkald** (tæller ikke som et opkald): *Ikke vores
-målgruppe* (arkiveres), *For svag lige nu* (hviler 90 dage og kommer tilbage
-nederst i puljen) eller *Ring senere* (en dato; bliver SDR'ens opfølgning).
+**Spring over ▾** (blandt udfaldene, tasten →; tæller ikke som et opkald) spørger altid
+hvorfor: *Senere i dag* (nederst på listen), *Ikke vores målgruppe* (arkiveres, med
+begrundelse), *For svag lige nu* og *Ingen aktive annoncer* (hviler 90 dage) eller *Ring
+senere* (om 1 uge, 2 uger, 1 måned; bliver SDR'ens opfølgning). Den erstattede "Fravælg
+uden opkald" og det løse "Spring over →" nederst på kortet (okt. 2026).
 Trykkes "Ikke relevant" uden "Ring op", spørger kortet om det var et opkald. Ved
 "Følg op" står "Jeg har ringet" altid tændt (de fleste ringer fra egen telefon);
 slå den fra for at flytte leadet uden at det tæller. Tallet "fjernet" står ved "ringet i dag", i admins Per SDR og i Excel.
@@ -220,7 +222,18 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   støj- og volumenbehandling - til laptop-mikrofon og højttaler) og *headset*
   (ingen bearbejdning - kabel- eller USB-headset; det er Chromes støjreduktion og
   auto-gain, der får en stemme til at lyde komprimeret og "inde i en kasse").
-  Valget gemmes i browseren (`vl_mic_mode`). Bruger man en Bluetooth-mikrofon
+  Valget gemmes i browseren (`vl_mic_mode`). **Lydfilter** (til som standard,
+  `vl_audio_fx`; `public/dial-fx.js` + `fxProcessor` i appen, via SDK'ens
+  `audio.addProcessor`): mikrofonen får et high-pass-filter (90 Hz - den dybe rumlen,
+  der lyder som "inde i en kasse"), et blødt gate, der dæmper baggrunden 12 dB mellem
+  ordene uden at hakke i talen, og en blid udjævning af niveauet i stedet for Chromes
+  auto-gain (som løftede baggrundsstøjen mellem ordene - "suset"). Med headset renses
+  også det, man hører: brum og sus uden for telefonbåndet (300-3400 Hz) skæres væk, og
+  samme gate dæmper linjestøj. Med højttaler røres det, man hører, ikke - Chromes
+  ekkodæmpning skal have den urørte lyd. Fejler noget, kører opkaldet med den rå lyd.
+  Målt på et testsignal: baggrund til stemme fra 39 til 46 dB (mikrofon) og 56 dB (det
+  man hører). Selve telefonnettet er smalbåndet - kunden hører altid "telefonlyd".
+  Bruger man en Bluetooth-mikrofon
   (AirPods o.l.), skifter Mac'en til hands-free-profilen i telefonkvalitet, så alt
   lyder komprimeret - kortet advarer om det ved første opkald; brug Mac'ens egen
   mikrofon eller et kabelheadset. Samtalen optages i to kanaler (samtykke: SDR'en
@@ -233,6 +246,9 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   mailen klar til at sende, og tjeklisten forudfyldes ved "Demo booket". Udfaldet
   gemmer den rigtige varighed (`dial_s`) og `call_sid`. Indgående opkald til et
   SDR-nummer ringer i browseren og noteres på leadet ("Ringede selv tilbage").
+  **Seneste opkald** (uret ved ✕ i telefonvinduet): de seneste 25 numre, der er ringet
+  til eller fra i denne browser (`vl_ph_recent`) - retning, tid og længde; tryk for at
+  åbne leadet (eller sætte nummeret ind), eller ring direkte op igen.
   **Telefonvinduet** (knappen nederst til venstre, kun når telefonen er slået til) ringer
   et vilkårligt dansk nummer op med tastatur og slår nummeret op i hele puljen, mens
   man taster (`GET /api/sdr/lookup?phone=`: firma, kontakt, status); et indgående

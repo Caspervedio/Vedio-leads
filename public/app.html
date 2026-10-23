@@ -575,6 +575,7 @@ async function dialInit() {
     const t = await get('/api/twilio/token');
     const dev = new Twilio.Device(t.token, { edge: t.edge || ['frankfurt', 'dublin'], codecPreferences: ['opus', 'pcmu'], maxAverageBitrate: 40000, logLevel: 'error', closeProtection: 'Du er i gang med et opkald' });
     dev.audio.setAudioConstraints(dialMicConstraints());
+    dialFxApply(dev);
     try { dev.audio.incoming(true); dev.audio.outgoing(true); dev.audio.disconnect(true); } catch {}
     dev.on('tokenWillExpire', async () => { try { const n = await get('/api/twilio/token'); dev.updateToken(n.token); } catch {} });
     dev.on('error', (err) => { console.warn('[dialer]', err); if (!DIAL.call) toast('Telefon: ' + (err.message || err.code), 5000); });
@@ -598,8 +599,70 @@ async function dialFillMics() {
    voice sound compressed and boxed-in. With a headset there is nothing to
    suppress, so "headset" turns it off; "standard" is for laptop mic + speakers. */
 function dialMicMode() { try { return localStorage.getItem('vl_mic_mode') === 'headset' ? 'headset' : 'std'; } catch { return 'std'; } }
-function dialMicConstraints() { return dialMicMode() === 'headset' ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : { echoCancellation: true, noiseSuppression: true, autoGainControl: true }; }
-function dialSetMicMode(m) { try { localStorage.setItem('vl_mic_mode', m); } catch {} if (DIAL.device) DIAL.device.audio.setAudioConstraints(dialMicConstraints()); toast(m === 'headset' ? 'Headset-lyd: ingen støjreduktion og automatisk volumen' : 'Standard-lyd: Chrome renser lyden'); }
+function dialMicConstraints() { return dialMicMode() === 'headset' ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : { echoCancellation: true, noiseSuppression: true, autoGainControl: !dialFxOn() }; }
+/* The call sound filter. Chrome's automatic gain lifted the background between
+   words - the static - and nothing cut the low rumble that makes a voice sound
+   boxed in. The microphone now goes through a high-pass, a gentle leveller in
+   place of Chrome's gain and a soft gate (dial-fx.js) that lowers, not mutes,
+   the background between words. What we hear of the customer is a phone line
+   (300-3400 Hz): with a headset, the hum and hiss outside that band are cut and
+   the same gate applies. With speakers it is left alone - Chrome's echo
+   cancellation needs the untouched sound. Anything that fails falls back to
+   the plain sound; ⚙ → Telefon → Lydfilter turns it off. */
+const FX = { ctx: null, ready: null, local: null, remote: null };
+function dialFxOn() { try { return localStorage.getItem('vl_audio_fx') !== 'off'; } catch { return true; } }
+async function fxCtx() {
+  if (!FX.ctx) {
+    FX.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    FX.ready = FX.ctx.audioWorklet ? FX.ctx.audioWorklet.addModule('/dial-fx.js') : Promise.reject(new Error('AudioWorklet mangler'));
+  }
+  if (FX.ctx.state !== 'running') await FX.ctx.resume().catch(() => {});
+  await FX.ready;
+  if (FX.ctx.state !== 'running') throw new Error('lyd ikke startet');
+  return FX.ctx;
+}
+function fxProcessor(kind) {
+  const live = new Map();
+  return {
+    async createProcessedStream(stream) {
+      try {
+        const ctx = await fxCtx();
+        // Chrome only feeds a remote WebRTC stream to WebAudio while it is also playing somewhere.
+        const keep = kind === 'remote' ? Object.assign(new Audio(), { muted: true, srcObject: stream }) : null;
+        if (keep) keep.play().catch(() => {});
+        const src = ctx.createMediaStreamSource(stream); const out = ctx.createMediaStreamDestination();
+        const biq = (type, f, q, g) => { const n = ctx.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q != null) n.Q.value = q; if (g != null) n.gain.value = g; return n; };
+        // The gate goes before the leveller: the leveller's own make-up gain
+        // lifts the background too, and the gate must judge the raw level.
+        const gate = new AudioWorkletNode(ctx, 'vedio-gate', { processorOptions: { thresholdDb: kind === 'local' ? -48 : -46, floorDb: -12 } });
+        let chain;
+        if (kind === 'local') {
+          const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -26; comp.knee.value = 12; comp.ratio.value = 3; comp.attack.value = 0.005; comp.release.value = 0.2;
+          chain = [biq('highpass', 90, 0.7), gate, comp];
+        } else chain = [biq('highpass', 140, 0.7), biq('peaking', 500, 1, -2), biq('peaking', 2600, 0.9, 2.5), biq('lowpass', 3900, 0.7), gate];
+        let prev = src; for (const n of chain) { prev.connect(n); prev = n; } prev.connect(out);
+        live.set(out.stream, { src, chain, keep });
+        return out.stream;
+      } catch (ex) { console.warn('[dialer] lydfilter slået fra for dette opkald:', ex && ex.message); return stream; }
+    },
+    async destroyProcessedStream(stream) {
+      const x = live.get(stream); if (!x) return; live.delete(stream);
+      try { x.src.disconnect(); x.chain.forEach((n) => n.disconnect()); if (x.keep) { x.keep.pause(); x.keep.srcObject = null; } } catch {}
+    },
+  };
+}
+function dialFxApply(dev) {
+  const d = dev || DIAL.device; const au = d && d.audio; if (!au || typeof au.addProcessor !== 'function') return;
+  const wantRemote = dialFxOn() && dialMicMode() === 'headset';
+  try {
+    if (dialFxOn() && !FX.local) { FX.local = fxProcessor('local'); au.addProcessor(FX.local); }
+    if (!dialFxOn() && FX.local) { au.removeProcessor(FX.local); FX.local = null; }
+    if (wantRemote && !FX.remote) { FX.remote = fxProcessor('remote'); au.addProcessor(FX.remote, true); }
+    if (!wantRemote && FX.remote) { au.removeProcessor(FX.remote, true); FX.remote = null; }
+  } catch (ex) { console.warn('[dialer] lydfilter', ex); }
+}
+function dialSetFx(on) { try { localStorage.setItem('vl_audio_fx', on ? 'on' : 'off'); } catch {} if (DIAL.device) { DIAL.device.audio.setAudioConstraints(dialMicConstraints()); dialFxApply(); } toast(on ? 'Lydfilter til - gælder fra næste opkald' : 'Lydfilter fra - gælder fra næste opkald'); }
+function dialSetMicMode(m) { try { localStorage.setItem('vl_mic_mode', m); } catch {} if (DIAL.device) { DIAL.device.audio.setAudioConstraints(dialMicConstraints()); dialFxApply(); } toast(m === 'headset' ? 'Headset-lyd: ingen støjreduktion og automatisk volumen' : 'Standard-lyd: Chrome renser lyden'); }
 function dialMicLabel() { if (!DIAL.device) return ''; const cur = DIAL.device.audio.inputDevice; if (cur) return cur.label || ''; const all = [...DIAL.device.audio.availableInputDevices.values()]; const d = all.find((x) => x.deviceId === 'default') || all[0]; return d ? d.label || '' : ''; }
 function dialMicIsBt() { return /airpods|bluetooth|hands-free|\bbt\b|beats|buds|wh-1|wf-1/i.test(dialMicLabel()); }
 function dialMicWarn() { if (DIAL.btWarned || !dialMicIsBt()) return; DIAL.btWarned = true; toast('Bluetooth-mikrofon (' + dialMicLabel() + '): Mac\'en skifter til telefonkvalitet, så alt lyder komprimeret. Brug Mac\'ens egen mikrofon eller et kabelheadset.', 9000); }
@@ -629,6 +692,7 @@ async function dialStart(to, opts) {
     const call = await DIAL.device.connect({ params: { To: num, cvr } });
     DIAL.sid = (call.parameters && call.parameters.CallSid) || '';
     DIAL.manual = manual; DIAL.manualCvr = cvr;
+    DIAL.hist = test ? null : { num, name: manual ? ((opts && opts.name) || '') : L.name, cvr, dir: 'out', at: new Date().toISOString() };
     dialWire(call, cvr, label, test ? '' : manual ? ((opts && opts.name) || '') : L.name, test ? '' : fmtPhone(num));
     if (manual) { PH.open = true; renderPhone(); }
   } catch (ex) { toast('Kunne ikke ringe: ' + ex.message, 5000); }
@@ -636,15 +700,16 @@ async function dialStart(to, opts) {
 function dialIncoming(call) {
   const from = (call.parameters && call.parameters.From) || '';
   if (DIAL.call) { call.reject(); return; }
-  DIAL.incoming = call; DIAL.state = 'incoming'; DIAL.to = fmtPhone(from); DIAL.incomingName = ''; DIAL.incomingLead = null; DIAL.manualCvr = '';
-  const stop = () => { if (DIAL.incoming === call) { DIAL.incoming = null; DIAL.state = 'idle'; phRing(false); renderDial(); } };
+  DIAL.incoming = call; DIAL.incomingFrom = from; DIAL.state = 'incoming'; DIAL.to = fmtPhone(from); DIAL.incomingName = ''; DIAL.incomingLead = null; DIAL.manualCvr = '';
+  const stop = () => { if (DIAL.incoming === call) { phHistAdd({ num: from, name: DIAL.incomingName || '', cvr: DIAL.incomingLead ? DIAL.incomingLead.cvr : '', dir: 'missed', at: new Date().toISOString() }); DIAL.incoming = null; DIAL.state = 'idle'; phRing(false); renderDial(); } };
   call.on('cancel', stop); call.on('reject', stop);
   PH.open = true; phRing(true); renderDial();
   // Who is it? The whole pool, not just what the browser holds.
   get('/api/sdr/lookup?phone=' + encodeURIComponent(from)).then((r) => { if (DIAL.incoming !== call) return; DIAL.incomingLead = r.lead || null; DIAL.incomingName = r.lead ? r.lead.name : ''; renderDial(); }).catch(() => {});
 }
-function dialAccept() { const c = DIAL.incoming; if (!c) return; DIAL.incoming = null; phRing(false); const lead = DIAL.incomingLead; DIAL.manual = true; DIAL.manualCvr = lead ? lead.cvr : ''; dialWire(c, lead ? lead.cvr : '', DIAL.to + (DIAL.incomingName ? ' · ' + DIAL.incomingName : ''), DIAL.incomingName, DIAL.to); c.accept(); }
-function dialReject() { const c = DIAL.incoming; if (!c) return; c.reject(); DIAL.incoming = null; phRing(false); DIAL.state = 'idle'; renderDial(); }
+function dialAccept() { const c = DIAL.incoming; if (!c) return; DIAL.incoming = null; phRing(false); const lead = DIAL.incomingLead;
+  DIAL.hist = { num: DIAL.incomingFrom || '', name: DIAL.incomingName || '', cvr: lead ? lead.cvr : '', dir: 'in', at: new Date().toISOString() }; DIAL.manual = true; DIAL.manualCvr = lead ? lead.cvr : ''; dialWire(c, lead ? lead.cvr : '', DIAL.to + (DIAL.incomingName ? ' · ' + DIAL.incomingName : ''), DIAL.incomingName, DIAL.to); c.accept(); }
+function dialReject() { const c = DIAL.incoming; if (!c) return; phHistAdd({ num: DIAL.incomingFrom || '', name: DIAL.incomingName || '', cvr: DIAL.incomingLead ? DIAL.incomingLead.cvr : '', dir: 'missed', at: new Date().toISOString() }); c.reject(); DIAL.incoming = null; phRing(false); DIAL.state = 'idle'; renderDial(); }
 function dialHangup() { if (DIAL.call) DIAL.call.disconnect(); }
 function dialMute() { if (!DIAL.call) return; DIAL.muted = !DIAL.muted; DIAL.call.mute(DIAL.muted); renderDial(); }
 function dialDigit(d) { if (DIAL.call) DIAL.call.sendDigits(d); }
@@ -654,6 +719,7 @@ function dialEnded(call, cvr) {
   if (DIAL.timer) { clearInterval(DIAL.timer); DIAL.timer = null; }
   DIAL.call = null; DIAL.state = 'ended'; DIAL.lastDur = dur; DIAL.lastSid = DIAL.sid || ((call.parameters && call.parameters.CallSid) || ''); DIAL.lastCvr = cvr || ''; DIAL.muted = false; DIAL.keypad = false;
   DIAL.lastManual = !!DIAL.manual; DIAL.manual = false;
+  if (DIAL.hist) { phHistAdd({ ...DIAL.hist, dur }); DIAL.hist = null; }
   LIVE.ended = true; liveCloseLater();
   renderDial();
   if (DIAL.aiStatus === 'ready' && DIAL.aiFor === cvr) { /* the live analysis landed first */ }
@@ -715,7 +781,28 @@ function renderDial() {
 /* ─── The phone window: dial any number, see who is calling, open the lead ───
    Floating next to the Sparring button. Shares DIAL with the card panel; the
    card panel stays for calls started from a lead. */
-const PH = { open: false, num: '', match: null, lookupT: null, ringT: null, ringCtx: null };
+const PH = { open: false, num: '', match: null, lookupT: null, ringT: null, ringCtx: null, view: '' };
+/* "Seneste opkald": the calls made and taken in this browser, newest first,
+   one per number - tap to open the lead (or put the number in), or ring back. */
+const PH_HIST_KEY = 'vl_ph_recent';
+const PH_HIST_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/><path d="M12 7.5V12l3 2"/></svg>';
+function phHist() { try { const x = JSON.parse(localStorage.getItem(PH_HIST_KEY) || '[]'); return Array.isArray(x) ? x : []; } catch { return []; } }
+function phHistAdd(h) {
+  const num = String((h && h.num) || '').replace(/[^0-9+]/g, ''); if (!num || num === 'test') return;
+  const all = [{ ...h, num }, ...phHist().filter((x) => x.num !== num)].slice(0, 25);
+  try { localStorage.setItem(PH_HIST_KEY, JSON.stringify(all)); } catch {}
+}
+function phHistToggle() { PH.view = PH.view === 'hist' ? '' : 'hist'; renderPhone(); }
+function phHistPick(i) { const h = phHist()[i]; if (!h) return; PH.view = ''; if (h.cvr) { phOpenLead(h.cvr); renderPhone(); return; } PH.num = fmtPhone(h.num); renderPhone(); const n = $('ph-num'); if (n) { phInput(n.value); n.focus(); } }
+function phHistCall(i) { const h = phHist()[i]; if (!h || DIAL.call) return; PH.view = ''; dialStart(h.num, { manual: true, cvr: h.cvr || '', name: h.name || '' }); }
+function phAgo(iso) {
+  const t = new Date(iso).getTime(); if (!t) return ''; const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return 'lige nu'; if (m < 60) return m + ' min siden';
+  const d = new Date(t), today = new Date(); const hm = d.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === today.toDateString()) return 'i dag ' + hm;
+  const y = new Date(today); y.setDate(y.getDate() - 1); if (d.toDateString() === y.toDateString()) return 'i går ' + hm;
+  return d.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }) + ' ' + hm;
+}
 function phToggle() { PH.open = !PH.open; renderPhone(); if (PH.open) { const i = $('ph-num'); if (i) i.focus(); } }
 function phInput(v) { PH.num = String(v || ''); if (PH.lookupT) clearTimeout(PH.lookupT); PH.match = null; const d = PH.num.replace(/[^0-9]/g, ''); if (d.length >= 8) PH.lookupT = setTimeout(phLookup, 250); else renderPhoneMatch(); }
 function phKey(k) { const i = $('ph-num'); PH.num = (PH.num || '') + k; if (i) i.value = PH.num; phInput(PH.num); }
@@ -770,7 +857,7 @@ function renderPhone() {
   // The SDR's own number sits at the foot of the window: next to the number
   // field it read as something to call (Casper, Oct 2026).
   const foot = myNum ? `<div class="ph-foot" title="Det nummer, kunderne ser og kan ringe tilbage til">Dit nummer <b>${e(fmtPhone(myNum))}</b></div>` : '';
-  const head = (t, pill) => `<div class="ph-head"><span class="ph-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>${t}</span>${pill ? `<span class="ph-pill ${pill[1]}">${pill[0]}</span>` : ''}<button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
+  const head = (t, pill, extra) => `<div class="ph-head"><span class="ph-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg>${t}</span>${pill ? `<span class="ph-pill ${pill[1]}">${pill[0]}</span>` : ''}${extra || ''}<button class="ph-x" onclick="phToggle()" title="Luk">✕</button></div>`;
   const who = (name, num, sub) => `<div class="ph-who"><span class="ph-av">${e(phInitials(name || num))}</span><div><b>${e(name || num)}</b>${name ? `<span>${e(num)}</span>` : ''}${sub ? `<span>${e(sub)}</span>` : ''}</div></div>`;
   if (st === 'incoming') {
     const m = DIAL.incomingLead;
@@ -818,7 +905,18 @@ function renderPhone() {
       <button class="ph-link" onclick="DIAL.state='idle';DIAL.lastManual=false;renderPhone()">Ny samtale</button>`;
     return;
   }
-  w.innerHTML = `${head('Telefon', null)}
+  const histBtn = (on) => `<button class="ph-hbtn ${on ? 'on' : ''}" onclick="phHistToggle()" title="${on ? 'Tilbage til tastaturet' : 'Seneste opkald'}">${on ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>' : PH_HIST_IC}</button>`;
+  if (PH.view === 'hist') {
+    const rows = phHist();
+    const dir = (h) => h.dir === 'missed' ? '<i class="ph-dir miss" title="Ubesvaret">↙</i>' : h.dir === 'in' ? '<i class="ph-dir" title="Indgående">↙</i>' : '<i class="ph-dir" title="Udgående">↗</i>';
+    w.innerHTML = `${head('Seneste opkald', null, histBtn(true))}
+      <div class="ph-hist">${rows.length ? rows.map((h, i) => `<div class="ph-hrow">
+        <button class="ph-hmain" onclick="phHistPick(${i})" title="${h.cvr ? 'Åbn leadet' : 'Sæt nummeret ind'}"><span class="ph-av sm">${e(phInitials(h.name || h.num))}</span><span class="ph-ht"><b>${e(h.name || fmtPhone(h.num))}</b><span>${dir(h)}${h.name ? e(fmtPhone(h.num)) + ' · ' : ''}${e(phAgo(h.at))}${h.dur ? ' · ' + dialFmt(h.dur) : ''}</span></span></button>
+        <button class="ph-hcall" onclick="phHistCall(${i})" title="Ring op igen" ${busyCall ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6.3 6.3l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.7a2 2 0 0 1 1.7 2z"/></svg></button>
+      </div>`).join('') : '<div class="ph-note">Ingen opkald endnu fra telefonen her.</div>'}</div>${foot}`;
+    return;
+  }
+  w.innerHTML = `${head('Telefon', null, histBtn(false))}
     <div class="ph-dial">
       <input id="ph-num" type="tel" placeholder="+45 12 34 56 78" value="${e(PH.num)}" oninput="phInput(this.value)" onkeydown="if(event.key==='Enter')phDial()" autocomplete="off">
       <div id="ph-matchbox"></div>
@@ -887,7 +985,7 @@ function renderCard() {
     ${historyHtml(L)}
     <div class="person ${c ? '' : 'none'}">
       ${c ? `<div class="avatar">${c.photoUrl ? `<img src="${e(c.photoUrl)}" alt="" onerror="this.remove()">` : ''}${initials(c.name)}</div>
-      <div class="who"><b>${e(c.name)}</b>${c.name_check ? `<span class="namecheck" title="Navnet er fundet af AI på hjemmesiden eller via Google og ikke bekræftet andre steder. Åbn ikke med navnet - spørg hellere: 'Er det ${e(String(c.name).split(' ')[0])}, der står for markedsføringen?'">Tjek navnet</span>` : ''}<span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
+      <div class="who"><b>${e(c.name)}</b><span>${e(c.title || '')}${L.contacts_count > 1 ? ` · +${L.contacts_count - 1} andre` : ''}</span></div>
       <div class="links">${c.linkedin ? `<a href="${e(c.linkedin)}" target="_blank" rel="noopener">LinkedIn ↗</a>` : `<a href="${e(liPeopleUrl(c.name + ' ' + searchName(L)))}" target="_blank" rel="noopener" title="Søger efter ${e(c.name)} på LinkedIn">Søg på LinkedIn ↗</a>`}<a href="${e(liPeopleUrl(searchName(L)))}" target="_blank" rel="noopener" title="Andre der arbejder hos ${e(searchName(L))} - hvis kontakten ikke er den rigtige">Find andre ↗</a>${c.email ? `<a href="mailto:${e(c.email)}">${e(c.email)}</a>` : ''}<button onclick="toggleCedit()">✎ Ret lead</button></div>`
       : `<span><b>Omstillingsopkald.</b> Vi har ikke fundet et navn - ring på hovednummeret og spørg: <i>"Hvem står for jeres markedsføring - må jeg tale med dem?"</i> Skriv navnet ind, når du får det.</span><div class="links"><a href="${e(liPeopleUrl(searchName(L)))}" target="_blank" rel="noopener" title="Folk der arbejder hos ${e(searchName(L))} - find marketingansvarlig eller ejer">Find på LinkedIn ↗</a><button onclick="toggleCedit()">+ Tilføj kontakt</button></div>`}
       ${(L.contacts || []).length > 1 ? `<div class="others"><span class="k">Andre hos ${e(L.name || 'firmaet')}</span>${(L.contacts || []).filter((x) => !c || x.name !== c.name).map((x) => `<button class="oc" onclick="selectContact('${e(x.name).replace(/'/g, '&#39;')}')" title="${e(x.title || '')}${x.phone ? ' · ' + e(fmtPhone(x.phone)) : ''}">${x.has_phone ? '📞 ' : ''}${e(x.name)}${x.title ? `<span>${e(x.title)}</span>` : ''}</button>`).join('')}</div>` : ''}
@@ -910,7 +1008,6 @@ function renderCard() {
       <div class="row">
         ${dialerOn() ? `<button class="pill primary" id="callbtn" onclick="dialStart()" ${DIAL.call ? 'disabled' : ''}>` : `<a class="pill primary" id="callbtn" href="${dk ? telHref(L.phone) : '#'}" onclick="onCall(event)">`}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg><span id="calllbl">Ring op</span>${dialerOn() ? '</button>' : '</a>'}
         ${S.settings && S.settings.calendly_url ? `<a class="pill primary violet-cta" href="${e(calendlyFor(L))}" target="_blank" rel="noopener" title="Åbner Calendly med kontakten udfyldt og SDR som kilde">Book demo i Calendly ↗</a>` : ''}
-        <button class="pill tertiary screenbtn" onclick="toggleScreen()" title="Fravælg leadet uden at ringe: ikke vores målgruppe, for svag lige nu eller ring senere. Tæller ikke som et opkald.">Fravælg uden opkald ▾</button>
       </div>
       <div id="dialpanel" hidden></div>
       <div class="steplbl two"><i>2</i> Udfald</div>
@@ -925,9 +1022,9 @@ function renderCard() {
         <button class="pill" onclick="notRelevant()"><span class="key">6</span>Ikke relevant</button>
         <button class="pill" onclick="disp('wrong-number')" title="Nummeret virker ikke - leadet sendes til berigelse"><span class="key">7</span>Forkert nummer</button>
         <button class="pill" onclick="disp('ivr')" title="Tryk 1 for salg, 2 for… - ingen person nået. Leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage">Telefonmenu</button>
+        <button class="pill" onclick="toggleScreen()" title="Videre uden at ringe - du vælger hvorfor. Tæller ikke som et opkald"><span class="key">→</span>Spring over ▾</button>
       </div>
       <div id="chooser" hidden></div>
-      <div class="hint"><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
     </div>
   </div>`;
   renderDial(); renderNotes(); renderHistory(); renderRefs();
@@ -1255,18 +1352,21 @@ function fuPick(iso) {
   const called = $('fu-called') ? $('fu-called').checked : true;
   if (called) disp('follow-up', iso); else screen('later', iso);
 }
-/* "Fravælg uden opkald": off the list without a call - it never counts as one. */
+/* "Spring over": on without a call, always with a reason - it never counts as
+   one. Took over from "Fravælg uden opkald" and the bare "Spring over →"
+   (Casper, Oct 2026); "Senere i dag" is the old skip to the bottom of the list. */
 function toggleScreen(first) {
   const c = $('chooser'); const open = !(chooserOpen && c.dataset.kind === 'screen');
   chooserOpen = open; c.hidden = !open; c.dataset.kind = open ? 'screen' : ''; if (!open) return;
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
   c.innerHTML = `<div class="chooser screen">
-    ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fravælg uden opkald</span>'}
+    ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Hvorfor springer du over?</span>'}
+    <button class="pill" onclick="chooserOpen=false;$('chooser').hidden=true;skip()" title="Bliver på din liste, nederst - du tager det senere i dag">Senere i dag</button>
     <button class="pill" onclick="screenIcpWhy()" title="Arkiveres - kommer ikke igen">Ikke vores målgruppe</button>
     <button class="pill" onclick="screen('weak')" title="Tilbage i puljen om 3 måneder, nederst">For svag lige nu</button>
     <button class="pill" onclick="screen('noads')" title="Du har set efter i Ad Library: ingen aktive annoncer. Gemmes på leadet, så det ikke serveres igen før om 3 måneder">Ingen aktive annoncer</button>
     <span class="screen-later">Ring senere: <button class="pill sm" onclick="screen('later','${at(7, 9)}')">Om 1 uge</button><button class="pill sm" onclick="screen('later','${at(14, 9)}')">Om 2 uger</button><button class="pill sm" onclick="screen('later','${at(30, 9)}')">Om 1 måned</button></span>
-    <span class="sub" style="width:100%">Tæller ikke som et opkald. En note i feltet ovenfor gemmes med.</span>
+    <span class="sub" style="width:100%">Tæller ikke som et opkald.</span>
   </div>`;
 }
 /* One tap for why it isn't ours - what we learn here is filtered out at intake. */
@@ -1284,7 +1384,7 @@ async function screen(reason, when, why) {
   const L = S.current; if (!L || busy) return; busy = true;
   try {
     apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, why: why || '' }));
-    const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', noads: 'Noteret: ingen aktive annoncer - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
+    const msg = { icp: 'Sprunget over - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Sprunget over - tilbage i puljen om 3 måneder.', noads: 'Noteret: ingen aktive annoncer - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
@@ -1309,7 +1409,7 @@ function markMailSent() {
 function notRelevant() {
   const L = S.current; if (!L) return;
   if (calledCvr === L.cvr) { disp('not-relevant'); return; }
-  toggleScreen(`Du har ikke trykket <b>Ring op</b> på ${e(L.name)}. Fravælg det uden at det tæller som opkald - eller <button class="linkbtn" onclick="calledCvr=S.current.cvr;disp('not-relevant')">jeg har ringet, registrér Ikke relevant</button>`);
+  toggleScreen(`Du har ikke trykket <b>Ring op</b> på ${e(L.name)}. Spring det over uden at det tæller som opkald - eller <button class="linkbtn" onclick="calledCvr=S.current.cvr;disp('not-relevant')">jeg har ringet, registrér Ikke relevant</button>`);
 }
 async function disp(action, callback_at, extra) {
   const L = S.current; if (!L || busy) return; busy = true;
@@ -2943,8 +3043,8 @@ function openSettings() {
         ${s.dialer_me && s.dialer_me.enabled ? `<section class="set-card">
           <div class="set-k">Telefon</div>
           <p class="set-help">Du ringer fra browseren på ${e(fmtPhone(s.dialer_me.number))}. Brug et headset med ledning eller USB - Bluetooth giver en fjern, tynd lyd. Tjek lyden her første gang: du hører dig selv bagefter.</p>
-          <div class="row" style="justify-content:flex-start;margin-top:8px"><button class="pill" onclick="$('settings').remove();dialStart('test')">Test lyd (ca. 15 sek.)</button><select id="dial-mic" onchange="dialSetMic(this.value)" style="max-width:260px"><option value="">Mikrofon: standard</option></select><select id="dial-proc" onchange="dialSetMicMode(this.value)"><option value="std" ${dialMicMode() === 'std' ? 'selected' : ''}>Lyd: standard (laptop-mikrofon)</option><option value="headset" ${dialMicMode() === 'headset' ? 'selected' : ''}>Lyd: headset (mindst bearbejdning)</option></select></div>
-          <div class="sub" style="margin-top:6px">Lyder du komprimeret eller "inde i en kasse"? Vælg Lyd: headset, når du bruger et kabel- eller USB-headset - så renser Chrome ikke lyden. En Bluetooth-mikrofon (AirPods o.l.) giver altid telefonkvalitet; brug Mac'ens mikrofon eller et kabelheadset.</div>
+          <div class="row" style="justify-content:flex-start;margin-top:8px"><button class="pill" onclick="$('settings').remove();dialStart('test')">Test lyd (ca. 15 sek.)</button><select id="dial-mic" onchange="dialSetMic(this.value)" style="max-width:260px"><option value="">Mikrofon: standard</option></select><select id="dial-proc" onchange="dialSetMicMode(this.value)"><option value="std" ${dialMicMode() === 'std' ? 'selected' : ''}>Lyd: standard (laptop-mikrofon)</option><option value="headset" ${dialMicMode() === 'headset' ? 'selected' : ''}>Lyd: headset (mindst bearbejdning)</option></select><select id="dial-fx" onchange="dialSetFx(this.value === 'on')"><option value="on" ${dialFxOn() ? 'selected' : ''}>Lydfilter: til (støj og rumlen dæmpes)</option><option value="off" ${dialFxOn() ? '' : 'selected'}>Lydfilter: fra</option></select></div>
+          <div class="sub" style="margin-top:6px">Lyder du komprimeret eller "inde i en kasse"? Vælg Lyd: headset, når du bruger et kabel- eller USB-headset - så renser Chrome ikke lyden, og lydfilteret renser også det, du hører. Lydfilteret dæmper baggrundsstøj mellem ordene og den dybe rumlen; lyder noget forkert, så slå det fra. En Bluetooth-mikrofon (AirPods o.l.) giver altid telefonkvalitet; brug Mac'ens mikrofon eller et kabelheadset.</div>
         </section>` : ''}
         <section class="set-card">
           <div class="set-k">Dagen</div>
@@ -3080,7 +3180,7 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '7') disp('wrong-number');
   else if (ev.key === '8') disp('ivr');
   else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); noteModal(); }
-  else if (ev.key === 'ArrowRight') skip();
+  else if (ev.key === 'ArrowRight') toggleScreen();
 });
 
 /* ─── Boot ─────────────────────────────────────────────────────────────── */
