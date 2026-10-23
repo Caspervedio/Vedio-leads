@@ -1129,3 +1129,8 @@ main{transition:margin-right .46s var(--ease)}
 @media (max-width:760px){.ph-fab{left:16px;bottom:16px}.ph-win{left:16px;bottom:78px}}
 /* weak match: no page, no pixel, or big - served after the rest */
 .fitweak{display:inline-flex;align-items:center;margin:6px 0 0;padding:3px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--txt-soft)}
+/* image / video split of the active ads, next to the Ad Library proof */
+.mediasplit{display:inline-flex;align-items:center;gap:6px;margin-left:8px;padding:3px 10px;border-radius:999px;background:var(--paper);border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--txt-soft);white-space:nowrap;vertical-align:middle}
+.mediasplit b{color:var(--txt);font-weight:800}
+.mediasplit.heavy{background:#fff6ea;border-color:#f3dfbe;color:#7a4700}
+.mediasplit i{font-style:normal;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9a5b00;margin-left:2px}

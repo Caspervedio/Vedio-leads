@@ -221,6 +221,16 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Billed-tunge annoncører (okt. 2026, en SDR's idé).** Ad Library-tjekket tæller nu
+  for hver aktiv annoncør, hvor mange af de aktive annoncer der er billeder og hvor mange
+  video (`adLibraryMediaUrl`, `adlib_img`/`adlib_vid`; to ekstra opslag pr. aktiv side;
+  aktive uden opdeling er "due" én gang i døgnet, til den er læst). Billeder + video er
+  ofte færre end alle aktive - webshops kører også katalog- og karruselannoncer.
+  "Billed-tunge: flere billed- end videoannoncer (mindst 5)" er et valg under Fokus →
+  Aktive Meta-annoncer (`sdrImageHeavy`) - ikke en del af rangeringen: kun 3 af 28
+  kvalificerede demoer var billed-tunge, så det er en vinkel til pitchen, ikke et kvalitetsfilter.
+  Kortet viser "18 billeder · 1 video" ved siden af Ad Library-beviset, med mærket
+  "Billed-tung", når det passer.
 - **Fra demo til salg: frist, afgørelse og hvorfor (okt. 2026).** 68 demoer var booket
   15. sep. - 22. okt.; 3 var markeret solgt, ingen tabt - udfaldet blev aldrig noteret,
   hverken her eller i Twenty (61 af 66 stod stadig på "Demo Booked"). Nu:

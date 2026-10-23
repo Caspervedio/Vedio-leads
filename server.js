@@ -9223,6 +9223,8 @@ const META_RECENT_WINDOW_DAYS = 90;
 // keeps it useful when our last check is a few days old - a paused ad is still
 // something to open a call with.
 function adLibraryActiveUrl(pageId) { return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`; }
+// Active ads of one media type (image / video) - for the image-heavy split.
+function adLibraryMediaUrl(pageId, mt) { return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&media_type=${mt}&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`; }
 function adLibraryAllUrl(pageId) { return `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&media_type=all&search_type=page&view_all_page_id=${encodeURIComponent(pageId)}`; }
 // ─── Ad Library check: what the SDR would see ────────────────────────────
 // The Facebook-page flag ("currently running ads") was wrong on 10 of 14
@@ -9287,13 +9289,20 @@ async function adlibCheckLead(context, l) {
     const a = await read(adLibraryActiveUrl(pid)); if (!a) return { blocked: true };
     let total = a.count, last = a.dates.length ? Math.max(...a.dates) : null;
     if (a.count === 0) { const all = await read(adLibraryAllUrl(pid)); if (!all) return { blocked: true }; total = all.count; last = all.dates.length ? Math.max(...all.dates) : null; }
-    return { active: a.count, total, last };
+    // Active advertisers: how many of the ads are images and how many video
+    // (an SDR's idea: a shop paying for many image ads and few videos lacks
+    // exactly what we make). Unreadable stays unknown and is tried again.
+    let img = null, vid = null;
+    if (a.count > 0) { const ri = await read(adLibraryMediaUrl(pid, "image")); const rv = ri ? await read(adLibraryMediaUrl(pid, "video")) : null; if (ri && rv) { img = ri.count; vid = rv.count; } }
+    return { active: a.count, total, last, img, vid };
   } finally { await page.close().catch(() => {}); }
 }
 function adlibApply(l, r, nowIso, by) {
   l.adlib_active = r.active; l.adlib_total = r.total;
   if (r.last) l.adlib_last_start = new Date(r.last).toISOString().slice(0, 10);
   l.adlib_checked_at = nowIso; l.adlib_by = by || "cron"; delete l.adlib_recheck;
+  if (r.active > 0) { l.adlib_media_tried_at = nowIso; if (r.img != null && r.vid != null) { l.adlib_img = r.img; l.adlib_vid = r.vid; l.adlib_media_at = nowIso; } }
+  else { l.adlib_img = 0; l.adlib_vid = 0; l.adlib_media_at = nowIso; }
   l.adlib_status = r.active > 0 ? "active" : r.total > 0 ? "past" : "none";
   // The page flag was the old truth - keep it in line for anything still reading it.
   l.meta_verified_active = r.active > 0; l.meta_verified_at = nowIso; l.meta_ads_active_now = r.active;
@@ -9323,6 +9332,8 @@ function adlibScore(l, now) {
 }
 function adlibDue(l, now) {
   if (!l.adlib_checked_at || l.adlib_recheck) return true;
+  // Active, but the image/video split isn't known yet: once a day until it is.
+  if (l.adlib_status === "active" && l.adlib_img == null && !(l.adlib_media_tried_at && now - new Date(l.adlib_media_tried_at).getTime() < 86400e3)) return true;
   return now - new Date(l.adlib_checked_at).getTime() > (l.adlib_status === "active" ? ADLIB_RECHECK_ACTIVE_MS : ADLIB_RECHECK_OTHER_MS);
 }
 // Who first: what is on a list now, then the pool in the order it would be served.
@@ -15416,7 +15427,7 @@ function sdrSlim(l, nameById) {
       adlibId: l.facebook_adlib_id || (/^1000\d{10,}$/.test(String(l.facebook_page_id || "")) ? "" : (l.facebook_page_id || "")),
       pageName: l.facebook_page_name || "",
       // What the Ad Library itself shows for the page (see adlibSweep).
-      adlib: l.adlib_status ? { status: l.adlib_status, active: Number(l.adlib_active) || 0, total: Number(l.adlib_total) || 0, last: l.adlib_last_start || null, at: l.adlib_checked_at || null, by: l.adlib_by || null, url_active: l.facebook_adlib_id ? adLibraryActiveUrl(l.facebook_adlib_id) : "", url_all: l.facebook_adlib_id ? adLibraryAllUrl(l.facebook_adlib_id) : "" } : null,
+      adlib: l.adlib_status ? { status: l.adlib_status, active: Number(l.adlib_active) || 0, total: Number(l.adlib_total) || 0, img: l.adlib_img ?? null, vid: l.adlib_vid ?? null, image_heavy: sdrImageHeavy(l), last: l.adlib_last_start || null, at: l.adlib_checked_at || null, by: l.adlib_by || null, url_active: l.facebook_adlib_id ? adLibraryActiveUrl(l.facebook_adlib_id) : "", url_all: l.facebook_adlib_id ? adLibraryAllUrl(l.facebook_adlib_id) : "" } : null,
     },
     source_label: sdrSourceLabel(l),
     callback_at: l.callback_at || null, lastAction: l.lastAction || null, lastCallAt: l.lastCallAt || null,
@@ -15482,12 +15493,17 @@ const SDR_SIZE = { small: "Små webshops (under 1 mio. kr/år)", medium: "Mellem
 const SDR_ROLE = { owner: "Ejer / direktør", marketing: "Marketing / salg", switchboard: "Omstilling (intet navn)" };
 // "Fokus i dag" → Aktive Meta-annoncer: at least this many, verified in the
 // Ad Library. Replaced the Kontakt handle (Casper: nobody used it).
-const SDR_ADS_MIN = { any: "Har kørt annoncer (nu eller før)", "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer", "0": "Ingen aktive annoncer lige nu" };
+const SDR_ADS_MIN = { any: "Har kørt annoncer (nu eller før)", "1": "Mindst 1 aktiv annonce", "3": "Mindst 3 aktive annoncer", "5": "Mindst 5 aktive annoncer", "10": "Mindst 10 aktive annoncer", "20": "Mindst 20 aktive annoncer", img: "Billed-tunge: flere billed- end videoannoncer (mindst 5)", "0": "Ingen aktive annoncer lige nu" };
+// Image-heavy: more active image ads than video, at least 5 of the two. An
+// SDR's lead idea; a choice under Fokus, not part of the ranking - only 3 of
+// 28 qualified demos so far were image-heavy (Oct 2026), so it narrows a list
+// to a pitch angle rather than to the leads that book.
+function sdrImageHeavy(l) { const i = Number(l.adlib_img), v = Number(l.adlib_vid); return l.adlib_status === "active" && l.adlib_img != null && i > v && i + v >= 5; }
 function sdrLeadAds(l) { return l.adlib_status === "active" ? (Number(l.adlib_active) || 0) : 0; }
 // "0" = checked and found without active ads (paused or never) - a lane of
 // its own, so one SDR can work them with another pitch while the lists of
 // the others stay with the advertisers. Unchecked leads are in neither.
-function sdrAdsMatch(l, k) { return k === "any" ? (l.adlib_status === "active" || l.adlib_status === "past") : k === "0" ? (l.adlib_status === "past" || l.adlib_status === "none") : sdrLeadAds(l) >= Number(k); }
+function sdrAdsMatch(l, k) { if (k === "img") return sdrImageHeavy(l); return k === "any" ? (l.adlib_status === "active" || l.adlib_status === "past") : k === "0" ? (l.adlib_status === "past" || l.adlib_status === "none") : sdrLeadAds(l) >= Number(k); }
 function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
 // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
 const STORELEADS_USD_DKK = 6.9;
@@ -15979,7 +15995,7 @@ function buildSdrState(userId, d) {
   const cnt = (fn, skip) => { const m = {}; for (const l of focusBase) { if (skip && !okExcept(l, skip)) continue; const k = fn(l); if (k) m[k] = (m[k] || 0) + 1; } return m; };
   const catsAll = cnt(sdrLeadCat), cats = cnt(sdrLeadCat, "cat"), sizes = cnt(sdrLeadSize, "size");
   // Thresholds are cumulative: "mindst 3" counts everything with 3 or more.
-  const adsKeys = ["any", "1", "3", "5", "10", "20", "0"]; // numeric keys would otherwise sort first
+  const adsKeys = ["any", "1", "3", "5", "10", "20", "img", "0"]; // numeric keys would otherwise sort first
   const adsN = Object.fromEntries(adsKeys.map((k) => [k, focusBase.filter((l) => okExcept(l, "ads") && sdrAdsMatch(l, k)).length]));
   const focus = {
     current: L.focus || null, short: !!L.focus && !!L.focus_short,

@@ -828,7 +828,7 @@ function renderCard() {
   // or that they ran ads before - with the date we looked.
   const ad = m.adlib; const chk = ad && ad.at ? `tjekket ${fmtDay(ad.at)}${ad.by && ad.by !== 'cron' ? ' af en SDR' : ''}` : '';
   const proofAd = !ad ? '' : ad.status === 'active'
-    ? `<a class="proof" href="${e(ad.url_active)}" target="_blank" rel="noopener" title="Deres aktive annoncer i Meta Ad Library · ${e(chk)}"><span class="shape"></span>Kører ${ad.active} Meta-annonce${ad.active === 1 ? '' : 'r'} lige nu ↗</a>`
+    ? `<a class="proof" href="${e(ad.url_active)}" target="_blank" rel="noopener" title="Deres aktive annoncer i Meta Ad Library · ${e(chk)}"><span class="shape"></span>Kører ${ad.active} Meta-annonce${ad.active === 1 ? '' : 'r'} lige nu ↗</a>${ad.img != null && ad.vid != null && ad.img + ad.vid > 0 ? `<span class="mediasplit ${ad.image_heavy ? 'heavy' : ''}" title="Aktive annoncer efter type${ad.image_heavy ? ' - billed-tung: mange billeder, få videoer' : ''}${ad.active > ad.img + ad.vid ? ` · de øvrige ${ad.active - ad.img - ad.vid} er andre formater (katalog, karrusel)` : ''}"><b>${ad.img}</b> billede${ad.img === 1 ? '' : 'r'} · <b>${ad.vid}</b> video${ad.vid === 1 ? '' : 'er'}${ad.image_heavy ? '<i>Billed-tung</i>' : ''}</span>` : ''}`
     : ad.status === 'past'
       ? `<a class="proof quiet" href="${e(ad.url_all)}" target="_blank" rel="noopener" title="Har kørt annoncer før - ingen aktive lige nu · ${e(chk)}"><span class="shape"></span>Har kørt Meta-annoncer${ad.last ? ' · sidst ' + e(fmtMonth(ad.last)) : ''} ↗</a>`
       : `<span class="proof off" title="${e(chk)}"><span class="shape"></span>Ingen annoncer i Ad Library</span>`;
