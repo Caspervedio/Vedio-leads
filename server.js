@@ -10151,8 +10151,13 @@ async function fetchAndExtractPhone(url) {
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]*>/g, " ");
+    // Only a number with a phone word in front of it - an 8-digit CVR, EAN or
+    // order number reads like a phone number (an SDR's rule, Oct 2026).
     const txtMatches = [...visible.matchAll(DK_PHONE_REGEX)];
     for (const m of txtMatches) {
+      const before = visible.slice(Math.max(0, m.index - 48), m.index);
+      if (/(cvr|se[\s.-]*nr|ean|reg\.?|konto|ordre|vare|faktura|p-nr)[\s.:#-]*(nr\.?|nummer)?[\s.:#-]*$/i.test(before)) continue;
+      if (!/(tlf|telefon|ring|kontakt|phone|mobil|call|☎|📞)/i.test(before)) continue;
       const phone = normalizeDkPhone(m[1]);
       if (phone) return { phone, source: "text-match", url };
     }
@@ -15169,6 +15174,17 @@ function sdrOnOtherList(cvr, userId) {
   const u = SDR_LISTED.map.get(cvr); return !!u && u !== userId;
 }
 let SDR_LISTS_REF = null;
+// A name only Gemini found (on the website or via Google) and nothing else
+// backs - no data vendor, no LinkedIn, no CVR, no SDR. A wrong name in the
+// opening ruins the call, so the card says "tjek navnet".
+function sdrNameUnconfirmed(l, c) {
+  if (!c || !c.name) return false;
+  const ai = (x) => /^gemini/.test(String(x.source_discovery || x.source || ""));
+  if (!ai(c)) return false;
+  if (c.linkedin || c.linkedinUrl || c.linkedin_url || c.verified || c.sdr_confirmed) return false;
+  const n = String(c.name).toLowerCase().trim();
+  return !(l.contacts || []).some((x) => x !== c && x && String(x.name || "").toLowerCase().trim() === n && !ai(x));
+}
 function sdrPrimaryContact(l) {
   const cs = Array.isArray(l.contacts) ? l.contacts.filter((c) => c && c.name) : [];
   // SDR's explicit pick wins; else the first person with a direct DK line; else the first person.
@@ -15553,7 +15569,7 @@ function sdrSlim(l, nameById) {
     sale_due_at: saleIsOpen(l) ? saleDueAt(l, SDR_SETTINGS_REF) : null, sale_flag: saleFlag(l, SDR_SETTINGS_REF), sale_extensions: Number(l.sale_extensions) || 0,
     niche: l.ind || l.industry || l.niche || "",
     phone: ph.phone, phone_label: ph.label,
-    contact: c ? { name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
+    contact: c ? { name_check: sdrNameUnconfirmed(l, c), name: c.name, title: c.title || "", email: c.email || "", linkedin: c.linkedin || c.linkedinUrl || c.linkedin_url || "", photoUrl: c.photoUrl || "" } : null,
     contacts_count: Array.isArray(l.contacts) ? l.contacts.filter((x) => x && x.name).length : 0,
     contacts: sdrContactList(l),
     // Two very different signals, kept apart so the card can't overclaim:
