@@ -1219,3 +1219,108 @@ main{transition:margin-right .46s var(--ease)}
 .al-skip{margin-top:10px;max-height:190px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;font-size:12.5px;line-height:1.6;background:var(--paper)}
 .al-skip .k{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-faint);margin-bottom:4px}
 @media (max-width:640px){.al-map{grid-template-columns:1fr 1fr}}
+
+/* ─── Mobile, second pass (Oct 2026) ──────────────────────────────────────
+   The phone layout predated the AI panel, the browser phone, the five-tab
+   bar and the newer tables. Anything off-screen made the page wider than the
+   phone, so the whole app zoomed out and the bottom bar slid out of view. */
+.tab-ic{display:none}
+@media (max-width:760px){
+  html,body{overflow-x:clip}
+  /* bottom bar: five tabs on one row, icon over label */
+  nav.tabs{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);padding:5px 4px calc(5px + env(safe-area-inset-bottom));gap:2px;box-shadow:0 -6px 20px rgba(14,14,12,.05)}
+  nav.tabs button{position:relative;padding:7px 2px 6px;min-height:52px;font-size:10.5px;font-weight:700;gap:3px;border-radius:14px;color:var(--txt-faint)}
+  nav.tabs button .tab-ic{display:block;width:21px;height:21px}
+  nav.tabs button .tab-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  nav.tabs button.active{background:transparent;color:var(--violet)}
+  nav.tabs button.active .tab-ic{stroke-width:2.4}
+  nav.tabs button .n{position:absolute;top:3px;left:calc(50% + 5px);margin:0;min-width:18px;padding:1px 5px;font-size:10px;line-height:15px;background:var(--violet);color:var(--white);border:2px solid var(--white)}
+  nav.tabs button.active .n{background:var(--violet);color:var(--white)}
+  /* number tiles: two across, also where a view sets its own columns */
+  .tiles,.tiles.five,#tiles{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .tile{min-width:0}.tile b{overflow-wrap:anywhere}
+  /* floating buttons sit above the bar, not on it */
+  .ai-fab{right:14px;bottom:calc(74px + env(safe-area-inset-bottom));width:50px;height:50px;font-size:22px}
+  .ph-fab{left:14px;bottom:calc(74px + env(safe-area-inset-bottom))}
+  #toast{bottom:calc(84px + env(safe-area-inset-bottom));max-width:calc(100vw - 28px);text-align:center}
+  main{padding-bottom:calc(150px + env(safe-area-inset-bottom))}
+  /* AI panel: a full-screen sheet when open, gone when closed */
+  .aipanel:not(.open){display:none}
+  .aipanel,.aipanel.wide{top:0;width:100%;max-width:100%;border-left:0;z-index:60;height:100dvh}
+  body.ai-open .ai-fab{display:none}
+  /* phone window: a sheet over the bar */
+  .ph-win{left:8px;right:8px;width:auto;max-width:none;bottom:calc(70px + env(safe-area-inset-bottom));max-height:calc(100dvh - 150px);overflow-y:auto}
+  /* windows: bottom sheets, scrolling inside */
+  .modalbg{align-items:flex-end;padding:0}
+  .modal,.modal.wide{max-width:100%;border-radius:22px 22px 0 0;max-height:92dvh;padding:22px 18px calc(22px + env(safe-area-inset-bottom));animation:sheetup .28s var(--ease) both}
+  .modal .row{flex-wrap:wrap;gap:8px}
+  .modal .row .pill{flex:1 1 auto;justify-content:center;min-height:46px}
+  @keyframes sheetup{from{transform:translateY(40px);opacity:.9}to{transform:none;opacity:1}}
+  /* Ringeliste: the tabs, the search and the two buttons each get room */
+  .subnav{flex-wrap:wrap;gap:8px}
+  .subnav > button[data-sub]{flex:1 1 0;justify-content:center;white-space:nowrap;padding:10px 10px}
+  .subnav .listsearch{order:3;flex:1 1 100%;margin-left:0}
+  .subnav .listsearch input{width:100%}
+  .subnav .addlead,.subnav .addlead.refresh{order:4;flex:1 1 0;margin-left:0;justify-content:center;min-height:42px;white-space:nowrap}
+  .duelane .dl-strip{flex-wrap:wrap;row-gap:2px}
+  /* Opkald: keyboard shortcuts mean nothing on a phone */
+  .row.disp .pill .key,.card .key,.ai-hint,#notemodal .row .sub{display:none}
+  /* long names and notes wrap instead of pushing the page wider */
+  .pill{max-width:100%}
+  .others .pill,.others .oc{white-space:normal;text-align:left;line-height:1.3;height:auto}
+  .cfoot{flex-wrap:wrap;padding:8px 12px 10px}
+  .cfoot .sub{white-space:normal;flex:1 1 100%}
+  .cfoot .pill{margin-left:0}
+  .rshneed{flex-wrap:wrap;row-gap:4px}.rshneed > *{flex:0 1 auto}
+  .co h2,.card h2{overflow-wrap:anywhere}
+  .meta,.card .sub{overflow-wrap:anywhere}
+  /* Dine tal: demos and today's calls as cards, not sideways tables */
+  #view-results table.demotbl,#view-results table.todaytbl{min-width:0}
+  .demotbl thead,.todaytbl thead{display:none}
+  #view-results #tb-demo,#tb-today{display:block}
+  #view-results #tb-demo tr,#tb-today tr{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  #view-results #tb-demo tr.empty-row,#tb-today tr.empty-row{display:block}
+  #view-results #tb-demo td,#tb-today td{display:block;padding:0!important;border:0;max-width:none!important;font-size:13.5px}
+  #view-results #tb-demo td:nth-child(2){grid-column:1;grid-row:1}
+  #view-results #tb-demo td:nth-child(4){grid-column:2;grid-row:1;text-align:right;font-size:14px}
+  #view-results #tb-demo td:nth-child(3){grid-column:1/-1;grid-row:2}
+  #view-results #tb-demo td:nth-child(1){grid-column:1/-1;grid-row:3}
+  #view-results #tb-demo td:nth-child(6){grid-column:1/-1;grid-row:4}
+  #view-results #tb-demo td:nth-child(5){grid-column:1/-1;grid-row:5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  #view-results #tb-demo td:nth-child(5):empty{display:none}
+  #tb-today td:nth-child(2){grid-column:1;grid-row:1}
+  #tb-today td:nth-child(1){grid-column:2;grid-row:1;text-align:right}
+  #tb-today td:nth-child(4){grid-column:1/-1;grid-row:2}
+  #tb-today td:nth-child(3){grid-column:1/-1;grid-row:3;color:var(--txt-soft)}
+  #tb-today td:nth-child(5){grid-column:1/-1;grid-row:4}
+  #tb-today td:nth-child(5):empty,#tb-today td:nth-child(3):empty{display:none}
+  /* Sagt nej til: firm + outcome on top, contact, note, when, "Åbn igen" */
+  #sub-declined thead{display:none}
+  #sub-declined .tablewrap table{min-width:0}
+  #tb-declined{display:block}
+  #tb-declined tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  #tb-declined tr.empty-row{display:block}
+  #tb-declined td{display:block;padding:0!important;border:0;max-width:none!important;font-size:13.5px;white-space:normal!important;text-align:left!important}
+  #tb-declined td:nth-child(2){grid-column:1;grid-row:1}
+  #tb-declined td:nth-child(4){grid-column:2;grid-row:1;text-align:right!important}
+  #tb-declined td:nth-child(3){grid-column:1/-1;grid-row:2}
+  #tb-declined td:nth-child(5){grid-column:1/-1;grid-row:3}
+  #tb-declined td:nth-child(5):empty{display:none}
+  #tb-declined td:nth-child(1){grid-column:1;grid-row:4;align-self:center}
+  #tb-declined td:nth-child(1) .sub{display:inline;margin-right:6px}
+  #tb-declined td:nth-child(6){grid-column:2;grid-row:4;text-align:right!important}
+}
+/* Tablet (761-1024px): the header carried five tabs, the name and two icons
+   in 768px and pushed the page sideways; the list's tabs, search and buttons
+   squeezed into one row. */
+@media (min-width:761px) and (max-width:1024px){
+  html,body{overflow-x:clip}
+  .hwrap{gap:12px;padding-left:18px;padding-right:18px}
+  nav.tabs{gap:2px;min-width:0}
+  nav.tabs button{padding:8px 10px;font-size:13.5px;white-space:nowrap}
+  .me #me-name{display:none}
+  .subnav{flex-wrap:wrap;row-gap:8px}
+  .subnav > button[data-sub],.subnav .addlead{white-space:nowrap}
+  .subnav .listsearch{order:3;flex:1 1 100%;margin-left:0}
+  .subnav .listsearch input{width:100%}
+}

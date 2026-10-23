@@ -42,6 +42,16 @@ sorteres først, så omstillingsopkald først dukker op, når de gode er brugt.
 | **Dine tal** | SDR'ens egne tal: kvalificeret provision i lønnen (ventende demoer står som "op til", lægges ikke til lønnen), dagens og ugens opkald og demoer, coachen, egne demoer og egne opkald i dag. En booket demo kan rettes bagefter (✎ Ret). Holdets tal ligger i admin. |
 | **Research** | Opgaven mellem opkaldene: find navn og nummer på leads, automatikken ikke kunne færdiggøre. |
 
+**På mobil og tablet** (`app.css`, "Mobile, second pass" og "Tablet"; admin har sine egne
+regler i `admin.html`). Under 760 px: fanerne ligger i en bund-bjælke med ikoner (fem i appen,
+seks i admin, altid én række), AI-knappen og telefon-knappen sidder over bjælken, AI-panelet
+er en fuld skærm og helt væk, når det er lukket (lukket lå det uden for skærmen og gjorde siden
+bredere end telefonen, så alt blev zoomet ud), vinduer åbner som ark nedefra, og tabellerne er
+kort: Ringeliste, Opfølgning, Sagt nej til, Dine demoer, Dagens opkald, og i admin Leads,
+Genopring, Reserve, Demoer og abonnementerne. Store oversigtstabeller (SDR'erne, kilder) ruller
+sidelæns i deres panel. 761-1024 px: en smallere topbjælke uden navnet, og listens knapper og
+søgning på hver sin række. Intet på siden må være bredere end skærmen (`overflow-x: clip`).
+
 **Kortet** viser to linjer om hvad firmaet laver (Gemini læser deres website),
 op til tre Vedio-kunder i samme branche man kan nævne, og et link til deres
 egne annoncer i Meta Ad Library. Alt hvad kortet påstår, er tjekket — "kører
