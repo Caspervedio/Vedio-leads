@@ -221,6 +221,25 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   tilhører. Lyd slettes hos Twilio efter `retention_days` (30) af `POST /api/cron/recordings-prune`;
   transskript og resumé bliver. Alle webhooks tjekkes mod Twilios signatur
   (`TWILIO_SKIP_VALIDATE=1` kun til lokale tests; `PUBLIC_URL` = den offentlige adresse).
+- **Ingen svar går tilbage til puljen (okt. 2026).** Et "Ingen svar" lægger ikke længere en
+  opfølgning i SDR'ens Opfølgning: leadet slippes og hviler til senere samme dag (opkald før
+  kl. 13 + 3 timer) eller næste hverdag om morgenen (`resurface_at`), og så kan alle SDR'er få
+  det igen - rangeret som ethvert lead, efter de friske med samme vægt. Parkeringen efter N
+  forsøg i træk (`no_answer_park_after`, 60 dage) er uændret. Engangs-flytning af dem, der
+  allerede ventede: `POST /api/cron/no-answer-to-pool[?dry=1]` (cron-secret; en ventetid,
+  der stadig er fremme, beholdes som hvil; et lead åbent i et opkald lige nu springes over).
+- **Hvorfor et lead forsvandt fra listen.** Hver gang et lead forlader en SDR's liste, uden at
+  SDR'en har sat et udfald, skrives det på leadet (`list_log`, de seneste 12) med grunden
+  (`sdrOutWhy`): ikke længere ringbart (demo booket, hviler til X, udskudt til i morgen,
+  opfølgning, et andet lead med samme nummer sagde nej, intet dansk nummer, puljens regler,
+  ligger hos en anden), opfølgningen forfaldt (→ Opfølgning), listen var fuld, byttet ud med
+  Nye leads, "Ikke i dag", flyttet af admin. Kortets Historik viser det som "Væk fra Marcus'
+  liste · <grund>". Admins "Flyt til SDR" fjerner nu et hvil eller "til i morgen" på leadet,
+  så flytningen bliver stående (High5 blev flyttet til Marcus fire gange 20. okt.).
+- **Noter i højre kolonne** er et overblik (nyeste først, 5 ad gangen, "Vis alle") og én knap,
+  "+ Tilføj note", der åbner et vindue (⌘/Ctrl+Enter gemmer). Udfald gemmer ikke længere en
+  note fra et felt. "Brug som note" (AI-resuméet), AI-chattens "Til note", talememoet og
+  tasten N åbner vinduet udfyldt.
 - **Mailen efter opkaldet, klar når røret lægges på (okt. 2026).** Bygget på en SDR's egen
   mailmetode (Marcus) og fodret med selve samtalen i stedet for skrevne noter. Lige efter
   samtaleanalysen kører et eget mail-trin (`mailDraftFor`) - fra live-analysen (SSE-event

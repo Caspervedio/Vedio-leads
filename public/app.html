@@ -808,7 +808,7 @@ function renderPhone() {
   renderPhoneMatch();
 }
 function dialReasonLabel(k) { return { budget: 'Intet budget', 'not-decider': 'Ikke beslutningstager', 'has-agency': 'Har bureau', 'no-ads': 'Kører ikke annoncer', timing: 'Timing', 'not-interested': 'Ikke interesseret', unreachable: 'Fik ikke fat', other: 'Andet' }[k] || k; }
-function dialUseNote() { const ai = DIAL.ai; const n = $('note'); if (!ai || !n) return; const txt = `${ai.summary}${ai.next_step ? ' Næste skridt: ' + ai.next_step : ''}`; n.value = n.value.trim() ? n.value.trim() + '\n' + txt : txt; n.focus(); toast('Sat ind i noten'); }
+function dialUseNote() { const ai = DIAL.ai; if (!ai) return; const txt = `${ai.summary}${ai.next_step ? ' Næste skridt: ' + ai.next_step : ''}`; noteModal(txt); return; n.value = n.value.trim() ? n.value.trim() + '\n' + txt : txt; n.focus(); toast('Sat ind i noten'); }
 /* Opkald card */
 function renderCard() {
   const w = $('cardwrap'); calling = false; chooserOpen = false; ceditOpen = false;
@@ -975,7 +975,8 @@ function renderHistory() {
   const WHERE = { research: 'Research', list: 'Ringeliste', admin: 'Admin', results: 'Resultater', auto: 'Automatisk' };
   const rows = [];
   for (const c of (L.calls || [])) if (c && c.at) rows.push({ at: c.at, kind: 'call', text: `${ACTION_LABEL[c.action] || c.action}${c.by_name ? ' · ' + c.by_name : ''}${c.duration_s ? ' · ' + dialFmt(c.duration_s) : ''}`, note: c.note || '' });
-  for (const n of (L.note_thread || [])) if (n && n.at && n.kind !== 'call') rows.push({ at: n.at, kind: n.where === 'call' ? 'ai' : 'note', text: n.where === 'call' ? 'AI-resumé af samtalen' : `${n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || 'Note')}${n.where && WHERE[n.where] ? ' · ' + WHERE[n.where] : ''}`, note: n.text || '' });
+  for (const n of (L.note_thread || [])) if (n && n.at && n.kind !== 'call') rows.push({ at: n.at, kind: /^AI-resumé/.test(String(n.text || '')) ? 'ai' : 'note', text: /^AI-resumé/.test(String(n.text || '')) ? 'AI-resumé af samtalen' : `${n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || 'Note')}${n.where && WHERE[n.where] ? ' · ' + WHERE[n.where] : ''}`, note: n.text || '' });
+  for (const x of (L.list_log || [])) if (x && x.at) rows.push({ at: x.at, kind: 'list', text: `Væk fra ${x.who ? (/s$/i.test(x.who) ? x.who + "'" : x.who + 's') : 'en'} liste`, note: x.why || '' });
   if (L.email_sent_at) rows.push({ at: L.email_sent_at, kind: 'mail', text: `Mail sendt${L.email_template ? ' · ' + L.email_template : ''}`, note: '' });
   if (L.demo_booked_at) rows.push({ at: L.demo_booked_at, kind: 'demo', text: `Demo booket${L.demo_booked_by_name ? ' af ' + L.demo_booked_by_name : ''}${L.demo_status && L.demo_status !== 'pending' ? ' · ' + ({ qualified: 'kvalificeret', unqualified: 'ikke kvalificeret' }[L.demo_status] || L.demo_status) : ''}`, note: '' });
   rows.sort((a, b) => new Date(b.at) - new Date(a.at));
@@ -2016,21 +2017,43 @@ async function mailDraftSend(copyOnly) {
 }
 function renderLivePane() { const p = document.querySelector('.cpane[data-k="samtale"]'); const L = S.current; if (p && L) { p.innerHTML = livePaneHtml(L); renderLiveLines(); } }
 /* Notes live in the side column: the field, then the thread. */
-/* The draft belongs to the lead it was written on. A re-render of the same
-   lead (a poll, a saved contact) keeps it; the next lead starts empty -
-   otherwise an outcome there saved the previous lead's note on it. */
+/* Noter in the side column: the lead's notes, newest first, and one button
+   that opens a window to write a new one (Casper, Oct 2026). Outcomes no
+   longer carry a note of their own - a note is written and saved on purpose. */
+let NOTES_ALL = false;
+function noteRowHtml(n) {
+  const who = n.kind === 'legacy' ? 'Tidligere note' : (n.by_name || n.by || '');
+  const WHERE = { research: 'Research', call: 'Opkald', list: 'Ringeliste', admin: 'Admin', results: 'Resultater', auto: 'Automatisk' };
+  const tag = n.kind === 'call' && n.action ? `<span class="chip a-${e(n.action)} sm">${e(ACTION_LABEL[n.action] || n.action)}</span>` : (n.where && WHERE[n.where] ? `<span class="chip sm where">${e(WHERE[n.where])}</span>` : '');
+  return `<div class="nt ${n.kind === 'call' ? 'call' : ''}"><div class="h"><b>${e(who)}</b>${n.at ? `<time title="${e(fmtWhen(n.at))}">${e(fmtAgo(n.at))}</time>` : ''}${tag}</div><div class="t">${e(n.text)}</div></div>`;
+}
 function renderNotes() {
   const b = $('notebox'); const L = S.current; if (!b) return; b.hidden = !L; if (!L) { b.dataset.cvr = ''; return; }
-  const prev = $('note') && b.dataset.cvr === L.cvr ? $('note').value : '';
+  if (b.dataset.cvr !== L.cvr) NOTES_ALL = false;
   b.dataset.cvr = L.cvr;
-  const n = (L.note_thread || []).length;
-  b.innerHTML = `<h4>Noter${n ? `<span class="dn">${n}</span>` : ''}</h4>
-    <div class="composer" id="composer">
-      <textarea id="note" class="note" placeholder="Skriv en note…" oninput="noteDirty()" onfocus="composerFocus(1)" onblur="composerFocus(0)"></textarea>
-      <div class="cfoot"><span class="sub" id="note-state">Gemmes også, når du vælger et udfald</span><button class="pill sm violet" id="note-save" onclick="saveNote()" disabled>Gem note</button></div>
-    </div>
-    ${noteThreadHtml(L.note_thread)}`;
-  if (prev && $('note')) { $('note').value = prev; noteDirty(); }
+  const t = (L.note_thread || []).filter((n) => n && String(n.text || '').trim()).slice().sort((x, y) => String(y.at || '').localeCompare(String(x.at || '')));
+  const shown = NOTES_ALL ? t : t.slice(0, 5);
+  b.innerHTML = `<div class="nb-head"><h4>Noter${t.length ? `<span class="dn">${t.length}</span>` : ''}</h4><button class="pill sm" onclick="noteModal()">+ Tilføj note</button></div>
+    ${t.length ? `<div class="nb-list">${shown.map(noteRowHtml).join('')}</div>${t.length > shown.length ? `<button class="linkbtn" onclick="NOTES_ALL=true;renderNotes()">Vis alle ${t.length} →</button>` : ''}` : '<p class="sub nb-empty">Ingen noter endnu.</p>'}`;
+}
+function noteModal(prefill) {
+  const L = S.current; if (!L) return;
+  const old = $('notemodal'); if (old) old.remove();
+  const bg = document.createElement('div'); bg.className = 'modalbg'; bg.id = 'notemodal';
+  bg.innerHTML = `<div class="modal notemodal"><h3>Ny note</h3><p class="sub">${e(L.name || '')}</p>
+    <textarea id="nm-text" rows="7" placeholder="Hvad blev sagt, hvad er aftalt, hvem skal vi tale med…">${e(prefill || '')}</textarea>
+    <div class="row"><span class="sub">⌘/Ctrl + Enter gemmer</span><button class="pill tertiary" onclick="$('notemodal').remove()">Annuller</button><button class="pill primary" id="nm-save" onclick="noteModalSave()">Gem note</button></div></div>`;
+  bg.addEventListener('click', (ev) => { if (ev.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  const ta = $('nm-text'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); noteModalSave(); } else if (ev.key === 'Escape') bg.remove(); });
+}
+async function noteModalSave() {
+  const L = S.current; const ta = $('nm-text'); const txt = ta ? ta.value.trim() : '';
+  if (!L || !txt) { toast('Skriv en note først'); return; }
+  const btn = $('nm-save'); if (btn) btn.disabled = true;
+  try { const d = await post('/api/sdr/note', { cvr: L.cvr, note: txt }); const m = $('notemodal'); if (m) m.remove(); apply(d, { keepCurrent: false }); toast('Note gemt'); }
+  catch (ex) { if (btn) btn.disabled = false; toast('Fejl: ' + ex.message, 4000); }
 }
 // The note text, only when the field was drawn for this lead.
 function noteVal(L) { const n = $('note'), b = $('notebox'); L = L || S.current; return n && b && L && b.dataset.cvr === L.cvr ? n.value.trim() : ''; }
@@ -2179,7 +2202,7 @@ async function debriefSend({ blob, text }, silent) {
     if (blob) { body.audio_b64 = await blobToB64(blob); body.mime = (blob.type || recState.mime || 'audio/webm').split(';')[0]; }
     else body.text = text;
     const d = await post('/api/sdr/debrief', body);
-    const n = $('note'); if (n) n.value = [n.value.trim(), d.summary, d.next_step ? 'Næste: ' + d.next_step : ''].filter(Boolean).join('\n');
+    noteModal([d.summary, d.next_step ? 'Næste: ' + d.next_step : ''].filter(Boolean).join('\n'));
     debriefUI('<span class="busy" style="color:var(--approve)">✓ Resumé lagt i noten</span>');
     const c = $('coach'); if (c && d.coaching) { c.innerHTML = `<div class="coach"><span class="k">Til næste opkald</span><span>${e(d.coaching)}</span><button class="x" onclick="$('coach').hidden=true">Skjul</button></div>`; c.hidden = false; }
     if (!silent) toast('Debrief klar - tjek noten og vælg udfald.');
@@ -2528,7 +2551,7 @@ function aiRender() {
   box.scrollTop = box.scrollHeight;
 }
 function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
-function aiToNote(i) { const m = AI.chat.messages[i]; const n = $('note'); if (!n) return; n.value = (n.value ? n.value.trimEnd() + '\n' : '') + m.text.trim(); n.dispatchEvent(new Event('input')); toast('Lagt i noten - husk Gem note'); }
+function aiToNote(i) { const m = AI.chat.messages[i]; if (!m) return; noteModal(m.text.trim()); return; const n = null; if (!n) return; n.dispatchEvent(new Event('input')); toast('Lagt i noten - husk Gem note'); }
 /* Sending never blocks the panel: the question shows at once, files that
    are still uploading finish first, and the answer lands in its own chat -
    even if the SDR has moved on to another conversation meanwhile. */
@@ -3042,7 +3065,7 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === '6') notRelevant();
   else if (ev.key === '7') disp('wrong-number');
   else if (ev.key === '8') disp('ivr');
-  else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); const n = $('note'); if (n) n.focus(); }
+  else if (ev.key.toLowerCase() === 'n') { ev.preventDefault(); noteModal(); }
   else if (ev.key === 'ArrowRight') skip();
 });
 

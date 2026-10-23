@@ -1154,3 +1154,17 @@ main{transition:margin-right .46s var(--ease)}
 .mailrule span{flex:1}
 /* a contact name only the AI found */
 .namecheck{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:#fff6ea;border:1px solid #f3dfbe;color:#9a5b00;font-size:11px;font-weight:800;letter-spacing:.02em;vertical-align:middle;cursor:help}
+/* Noter: the overview and the button; the note window */
+#notebox .nb-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+#notebox .nb-head h4{margin:0}
+#notebox .nb-list{display:flex;flex-direction:column;gap:8px}
+#notebox .nb-list .nt{padding:9px 11px;border-radius:10px;background:var(--paper)}
+#notebox .nb-list .nt .h{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--txt-faint)}
+#notebox .nb-list .nt .h b{color:var(--txt);font-size:12.5px}
+#notebox .nb-list .nt .t{margin-top:3px;font-size:13px;line-height:1.45;color:var(--txt);white-space:pre-wrap}
+#notebox .nb-empty{margin:4px 0 0}
+.notemodal{max-width:520px;width:100%}
+.notemodal textarea{width:100%;font:inherit;font-size:14px;line-height:1.5;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0 12px;resize:vertical}
+.notemodal textarea:focus{outline:none;border-color:var(--violet)}
+.notemodal .row{display:flex;align-items:center;gap:8px;justify-content:flex-end}.notemodal .row .sub{margin-right:auto;font-size:12px}
+.history .h.list b{color:var(--txt-soft)}
