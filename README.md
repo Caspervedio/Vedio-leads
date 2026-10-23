@@ -250,6 +250,17 @@ Ordbog i hele værktøjet: en **demo** bookes, founders **vurderer** den, og en
   Opfølgning og demoer sendes som lette rækker (`sdrRowLite`; kun egne demoer) - kortet får
   altid hele leadet fra claim/open-lead. Tilstanden for en SDR: 583 KB → 27 KB over nettet.
   Fortrydelses-snapshots ældre end et døgn slettes (`poolTidy`, med den natlige recordings-prune).
+  Anden runde (23. okt., målt i loggen: claim ~3,8 s, udfald ~4 s, tilstand ~1,1 s): hver
+  skrivning af puljen er en synkron upload af hele filen til bucketen og blokerer alt andet
+  imens. "Tid på leadet"-uret (`opened_at`) blev skrevet i puljen ved hvert leadskift - to
+  hele skrivninger pr. udfald. Det holdes nu i hukommelsen (`SDR_OPEN`, ét åbent lead pr. SDR;
+  browseren sender alligevel sin egen tid, `active_s`). Tilstanden bygges ~35 % hurtigere:
+  leadets kategori huskes, til teksten ændres (`sdrLeadCat`), dansk-nummer-tjekket huskes
+  (`isDkPhone`), Research-tallet tælles uden at sortere, og køens sorteringsværdier regnes én
+  gang pr. lead. Svarene er de samme (sammenlignet felt for felt med den gamle kode på en kopi).
+  Et SDR-/admin-request over 1,5 s logger én linje med fordelingen:
+  `[slow] POST /api/sdr/claim 3800ms read=0 parse=400 merge=0 stringify=300 write=1900 writes=1 stat=50`
+  (`SLOW_MS` ændrer grænsen). Resten er bygning af svaret.
 - **Appen opdaterer sig selv ved ny version.** Tilstanden har `build` (Cloud Runs `K_REVISION`);
   ser en åben app en ny, genindlæses den - ikke midt i et opkald, med et vindue åbent eller
   mens der skrives (så venter den og siger det).

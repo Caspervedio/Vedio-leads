@@ -290,7 +290,6 @@ async function loadState({ keepCurrent = false } = {}) {
   if (gen !== STATE_GEN || busy) return; // an action answered meanwhile - its state is the newer one
   STATE_GEN++;
   const prevCvr = S && S.current ? S.current.cvr : null;
-  const prevNote = prevCvr && $('note') ? $('note').value : '';
   S = d; me = d.me || me;
   // Never swap the card under a live call. The server puts a follow-up at the
   // front of the list the moment it falls due, and the 20-second poll then
@@ -302,7 +301,7 @@ async function loadState({ keepCurrent = false } = {}) {
     const still = (S.list && S.list.items || []).find((x) => x.cvr === prevCvr);
     if (still) { S.current = still; held = true; }
   }
-  renderAll({ keepCurrent: held || (keepCurrent && S.current && S.current.cvr === prevCvr), prevNote });
+  renderAll({ keepCurrent: held || (keepCurrent && S.current && S.current.cvr === prevCvr) });
   buildCheck();
 }
 async function get(path) {
@@ -410,7 +409,7 @@ function adLibUrl(L) {
 }
 
 /* ─── Render ───────────────────────────────────────────────────────────── */
-function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
+function renderAll({ keepCurrent = false } = {}) {
   $('me-name').textContent = (me && me.name) || '-';
   const st = S.stats || {}; const target = (S.settings && S.settings.daily_target) || 60;
   $('s-calls').textContent = st.callsToday || 0; $('s-target').textContent = target;
@@ -423,7 +422,7 @@ function renderAll({ keepCurrent = false, prevNote = '' } = {}) {
   if ($('sn-list')) $('sn-list').textContent = st.listRemaining || 0;
   if (S.research) { RSH.remaining = S.research.remaining; RSH.fixedToday = S.research.fixedToday; }
   renderList(); renderDue();
-  if (!keepCurrent) renderCard(); else if ($('note') && prevNote && $('notebox') && S.current && $('notebox').dataset.cvr === S.current.cvr) $('note').value = prevNote;
+  if (!keepCurrent) renderCard();
   dialInit();
   renderUpNext(); renderHistory(); renderFollowups(); renderDemos(); renderResults(); renderCoaching(); renderToday(); renderFocus();
 }
@@ -828,7 +827,7 @@ function renderPhone() {
   renderPhoneMatch();
 }
 function dialReasonLabel(k) { return { budget: 'Intet budget', 'not-decider': 'Ikke beslutningstager', 'has-agency': 'Har bureau', 'no-ads': 'Kører ikke annoncer', timing: 'Timing', 'not-interested': 'Ikke interesseret', unreachable: 'Fik ikke fat', other: 'Andet' }[k] || k; }
-function dialUseNote() { const ai = DIAL.ai; if (!ai) return; const txt = `${ai.summary}${ai.next_step ? ' Næste skridt: ' + ai.next_step : ''}`; noteModal(txt); return; n.value = n.value.trim() ? n.value.trim() + '\n' + txt : txt; n.focus(); toast('Sat ind i noten'); }
+function dialUseNote() { const ai = DIAL.ai; if (!ai) return; const txt = `${ai.summary}${ai.next_step ? ' Næste skridt: ' + ai.next_step : ''}`; noteModal(txt); }
 /* Opkald card */
 function renderCard() {
   const w = $('cardwrap'); calling = false; chooserOpen = false; ceditOpen = false;
@@ -927,7 +926,6 @@ function renderCard() {
         <button class="pill" onclick="disp('ivr')" title="Tryk 1 for salg, 2 for… - ingen person nået. Leadet sendes til Research for et direkte nummer og prøves igen om tre hverdage">Telefonmenu</button>
       </div>
       <div id="chooser" hidden></div>
-      <div id="mailbox" hidden></div>
       <div class="hint"><button class="linkbtn" style="margin-left:auto" onclick="skip()" title="Flyt leadet nederst på dagens liste">Spring over <kbd>→</kbd></button></div>
     </div>
   </div>`;
@@ -948,7 +946,7 @@ function toggleCedit() {
 async function saveContact() {
   const L = S.current; if (!L || busy) return; busy = true;
   const body = { cvr: L.cvr, name: $('ce-name').value, title: $('ce-title').value, phone: $('ce-phone').value, email: $('ce-email').value };
-  try { const note = $('note') ? $('note').value : ''; apply(await post('/api/sdr/contact', body)); if ($('note')) $('note').value = note; toast('✓ Kontakt gemt'); }
+  try { apply(await post('/api/sdr/contact', body)); toast('✓ Kontakt gemt'); }
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
 }
 /* ─── Opfølgninger der er forfaldne ───────────────────────────────────────
@@ -1260,7 +1258,6 @@ function fuPick(iso) {
 function toggleScreen(first) {
   const c = $('chooser'); const open = !(chooserOpen && c.dataset.kind === 'screen');
   chooserOpen = open; c.hidden = !open; c.dataset.kind = open ? 'screen' : ''; if (!open) return;
-  if (typeof mailOpen !== 'undefined' && mailOpen) { mailOpen = false; $('mailbox').hidden = true; }
   const at = (d, h) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, 0, 0, 0); return x.toISOString(); };
   c.innerHTML = `<div class="chooser screen">
     ${first ? `<div class="screen-q">${first}</div>` : '<span class="kicker">Fravælg uden opkald</span>'}
@@ -1284,9 +1281,8 @@ function screenIcpWhy() {
 }
 async function screen(reason, when, why) {
   const L = S.current; if (!L || busy) return; busy = true;
-  const note = noteVal(L);
   try {
-    apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, note, why: why || '' }));
+    apply(await post('/api/sdr/screen', { cvr: L.cvr, reason, callback_at: when || null, why: why || '' }));
     const msg = { icp: 'Fravalgt - ikke vores målgruppe. Tæller ikke som opkald.', weak: 'Fravalgt - tilbage i puljen om 3 måneder.', noads: 'Noteret: ingen aktive annoncer - tilbage i puljen om 3 måneder.', later: 'Flyttet til ' + fmtWhen(when) + ' - tæller ikke som opkald.' }[reason];
     toastAction(msg, 'Fortryd', () => undoLast(L.cvr), 6000);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1294,11 +1290,10 @@ async function screen(reason, when, why) {
   finally { busy = false; }
 }
 /* ─── "Send mig en mail" ───────────────────────────────────────────────────
-   The most common ask on a cold call. Pick a template, check the address,
-   open it in the SDR's own mail app (so it comes from their vedio.dk address
-   and replies land in their inbox), and the lead goes to Opfølgning with the
-   follow-up already scheduled. */
-let mailOpen = false;
+   The mail itself is the AI draft written from the call (mailDraft*), opened
+   in the SDR's own Gmail so it carries their signature; "Markér mail sendt"
+   then gives the lead the ✉ badge and a follow-up. The old template composer
+   (pick a template, fill it, send) went in Oct 2026 - nothing opened it any more. */
 // Gmail sends server-side as the SDR's own vedio.dk address when the Workspace
 // delegation is in place; otherwise we fall back to their mail client.
 let gmailReady = false, gmailAddr = '';
@@ -1306,200 +1301,10 @@ async function gmailProbe() {
   try { const d = await get('/api/sdr/gmail/status'); gmailReady = !!d.ready; gmailAddr = d.email || ''; }
   catch { gmailReady = false; }
 }
-function mailTemplates() { return (S.settings && S.settings.email_templates) || []; }
-function fillMail(text, L) {
-  const c = L.contact || {};
-  const first = String(c.name || '').trim().split(/\s+/)[0];
-  // No name yet (switchboard lead): "Hej {fornavn}" must not become "Hej der".
-  if (!first) return String(text || '').replace(/\{fornavn\}/g, '').split('\n').map((s) => s.replace(/\s+$/, '')).join('\n')
-    .replace(/\{firma\}/g, L.name || '').replace(/\{sdr\}/g, (me && me.name) || '')
-    .replace(/\{calendly\}/g, (S.settings && S.settings.calendly_url) || '')
-    .replace(/\{note\}/g, noteVal(L))
-    .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
-  return String(text || '')
-    .replace(/\{fornavn\}/g, first)
-    .replace(/\{firma\}/g, L.name || '')
-    .replace(/\{sdr\}/g, (me && me.name) || '')
-    .replace(/\{calendly\}/g, (S.settings && S.settings.calendly_url) || '')
-    .replace(/\{note\}/g, noteVal(L))
-    .replace(/\{om\}/g, (L.about || '').replace(/\n/g, ' '));
-}
-/* "Mail sendt": the SDR writes the mail in their own Gmail (with their
-   signature) and marks it here, so the lead gets the ✉ badge and a
-   follow-up. The in-app composer below is no longer reachable from the
-   card - Gmail sends from the API carried no signature - but is kept so it
-   can come back once it can. */
 function markMailSent() {
   const L = S.current; if (!L) return;
   disp('email-sent', null, { email_to: (L.contact && L.contact.email) || L.email_to || '' });
 }
-function toggleMail() {
-  const box = $('mailbox'); const L = S.current; if (!L) return;
-  mailOpen = !mailOpen; box.hidden = !mailOpen; if (!mailOpen) return;
-  if (chooserOpen) { chooserOpen = false; $('chooser').hidden = true; }
-  const ts = mailTemplates();
-  if (!ts.length) { box.innerHTML = `<div class="chooser">Ingen mailskabeloner endnu - admin opretter dem under ⚙.</div>`; return; }
-  const to = (L.contact && L.contact.email) || L.email_to || '';
-  box.innerHTML = `<div class="mailbox">
-    <div class="row" style="gap:8px;flex-wrap:wrap">
-      <span class="kicker">Send mail</span>
-      <select id="m-tpl" onchange="mailPick()">${ts.map((t, i) => `<option value="${i}">${e(t.name)}</option>`).join('')}</select>
-    </div>
-    <label>Til</label><input id="m-to" type="email" placeholder="navn@firma.dk" value="${e(to)}">
-    <label>Emne</label><input id="m-sub" type="text">
-    <div class="row" style="gap:8px;align-items:baseline"><label style="margin:0">Besked</label>
-      <button class="pill sm tertiary" style="margin-left:auto" onclick="mailLink()" title="Markér de ord der skal være klikbare, og klik her">🔗 Indsæt link</button></div>
-    <div id="m-body" class="mbody" contenteditable="true" spellcheck="true"></div>
-    <div class="sub" style="margin-top:4px">Markér de ord linket skal ligge bag, og klik 🔗 - modtageren ser kun ordene.</div>
-    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
-      <button class="pill violet" id="m-send" onclick="mailSend()">${gmailReady ? 'Send med Gmail' : 'Åbn i mail og planlæg opfølgning'}</button>
-      ${gmailReady ? `<button class="pill sm tertiary" onclick="mailSend(true)" title="Åbn i dit eget mailprogram i stedet">Åbn i mailprogram</button>` : ''}
-      <button class="pill sm tertiary" onclick="mailCopy()">Kopiér tekst</button>
-      <span class="sub" style="margin-left:auto">${gmailReady ? `Sendes fra ${e(gmailAddr)} · ` : ''}følges op om ${e(String((S.settings && S.settings.email_followup_days) || 2))} hverdage</span>
-    </div>
-  </div>`;
-  mailPick();
-}
-function mailPick() {
-  const L = S.current; if (!L) return;
-  const t = mailTemplates()[Number($('m-tpl').value) || 0]; if (!t) return;
-  $('m-sub').value = fillMail(t.subject, L);
-  mailSetBody(fillMail(t.body, L));
-  mailPrefillFromCall(L);
-}
-/* The mail Gemini drafted from the call replaces the template text - the
-   SDR still reads it and presses send. */
-function mailPrefillFromCall(L) {
-  const ai = DIAL.ai; if (!ai || DIAL.aiFor !== L.cvr || !ai.email || !ai.email.body) return;
-  if ($('m-sub') && ai.email.subject) $('m-sub').value = ai.email.subject;
-  mailSetBody(ai.email.body.replace(/\{calendly\}/g, calendlyFor(L) || '').replace(/\{fornavn\}/g, ((L.contact && L.contact.name) || '').split(' ')[0]));
-  const box = document.querySelector('#mailbox .mailbox'); if (box && !box.querySelector('.ai-draft')) box.insertAdjacentHTML('afterbegin', '<div class="ai-draft">✦ Udkast skrevet ud fra samtalen - læs det igennem før du sender.</div>');
-}
-/* The body is rich text, so the SDR sees the link the way the recipient will:
-   the words, underlined, with the URL behind them. On the wire it is still
-   [tekst](url) - the server never has to trust HTML from the browser. */
-function mailUrlOk(u) { return /^(https?:\/\/|mailto:)/i.test(String(u || '').trim()); }
-function mailSetBody(text) {
-  const root = $('m-body'); if (!root) return;
-  root.innerHTML = '';
-  String(text || '').split('\n').forEach((line) => {
-    const div = document.createElement('div');
-    const re = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
-    let last = 0, m;
-    while ((m = re.exec(line))) {
-      if (m.index > last) div.appendChild(document.createTextNode(line.slice(last, m.index)));
-      if (mailUrlOk(m[2])) {
-        const a = document.createElement('a');
-        a.href = m[2]; a.textContent = m[1];
-        div.appendChild(a);
-      } else div.appendChild(document.createTextNode(m[0]));
-      last = re.lastIndex;
-    }
-    if (last < line.length) div.appendChild(document.createTextNode(line.slice(last)));
-    if (!div.childNodes.length) div.appendChild(document.createElement('br'));
-    root.appendChild(div);
-  });
-}
-/* Back to text. Anything pasted in from a website is flattened to its words;
-   only the links survive, as [tekst](url). */
-function mailGetBody() {
-  const root = $('m-body'); if (!root) return '';
-  let out = '';
-  (function walk(node) {
-    for (const n of node.childNodes) {
-      if (n.nodeType === 3) { out += n.nodeValue; continue; }
-      if (n.nodeType !== 1) continue;
-      if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(n.tagName)) continue; // never the mail's words
-      if (n.tagName === 'BR') { out += '\n'; continue; }
-      if (n.tagName === 'A') {
-        const href = (n.getAttribute('href') || '').trim();
-        const text = (n.textContent || '').replace(/\s+/g, ' ').trim();
-        out += text ? (mailUrlOk(href) ? `[${text}](${href})` : text) : '';
-        continue;
-      }
-      const block = /^(DIV|P|LI|TR|H[1-6]|BLOCKQUOTE|UL|OL)$/.test(n.tagName);
-      if (block && out && !out.endsWith('\n')) out += '\n';
-      walk(n);
-      if (block && out && !out.endsWith('\n')) out += '\n';
-    }
-  })(root);
-  return out.replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
-}
-function mailLink() {
-  const root = $('m-body'); if (!root) return;
-  const sel = window.getSelection();
-  if (!sel || !sel.rangeCount || !root.contains(sel.anchorNode)) { root.focus(); toast('Markér først de ord linket skal ligge bag', 4000); return; }
-  const range = sel.getRangeAt(0);
-  // Caret inside a link: 🔗 edits that one, and a blank field removes it.
-  let existing = range.startContainer;
-  while (existing && existing !== root && !(existing.nodeType === 1 && existing.tagName === 'A')) existing = existing.parentNode;
-  existing = existing && existing !== root ? existing : null;
-  let url = (prompt(existing ? 'Ret linket (tomt felt fjerner det):' : 'Link til:', (existing && existing.getAttribute('href')) || 'https://') || '').trim();
-  if (existing && !url) {
-    const p = existing.parentNode;
-    while (existing.firstChild) p.insertBefore(existing.firstChild, existing);
-    p.removeChild(existing); root.focus(); return;
-  }
-  if (!url || url === 'https://') return;
-  if (/^www\./i.test(url)) url = 'https://' + url;
-  if (!mailUrlOk(url)) { toast('Linket skal starte med https:// eller mailto:', 4500); return; }
-  if (existing) { existing.setAttribute('href', url); root.focus(); return; }
-  // Double-clicking a word often takes the space with it - keep that space
-  // outside the link so the sentence doesn't lose it.
-  const raw = range.toString();
-  const lead = raw.match(/^\s*/)[0], trail = raw.slice(lead.length).match(/\s*$/)[0];
-  const text = (raw.trim() || prompt('Tekst der skal være klikbar:', url) || '').trim();
-  if (!text) return;
-  const a = document.createElement('a');
-  a.href = url; a.textContent = text;
-  const frag = document.createDocumentFragment();
-  if (lead) frag.appendChild(document.createTextNode(lead));
-  frag.appendChild(a);
-  if (trail) frag.appendChild(document.createTextNode(trail));
-  range.deleteContents(); range.insertNode(frag);
-  const after = document.createRange(); after.setStartAfter(a); after.collapse(true);
-  sel.removeAllRanges(); sel.addRange(after); root.focus();
-}
-/* mailto: and the clipboard can't carry HTML, so links are flattened. */
-function mailPlain(body) {
-  return String(body || '').replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, t, u) => (t.trim() === u.trim() ? u : `${t} (${u})`));
-}
-function mailCopy() {
-  const txt = $('m-sub').value + '\n\n' + mailPlain(mailGetBody());
-  navigator.clipboard.writeText(txt).then(() => toast('Kopieret - indsæt i din mail'), () => toast('Kunne ikke kopiere', 3000));
-}
-async function mailSend(forceClient) {
-  const L = S.current; if (!L || busy) return;
-  const to = $('m-to').value.trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Skriv en gyldig mailadresse - spørg dem om den på opkaldet', 4000); $('m-to').focus(); return; }
-  const t = mailTemplates()[Number($('m-tpl').value) || 0] || {};
-  const subject = $('m-sub').value, body = mailGetBody();
-  // "Det gule er det, du udfylder": a [placeholder] still in the mail means
-  // something wasn't filled in - "omkring [16-24.000] kr" is worse than no
-  // mail. A link, [tekst](url), is not a placeholder.
-  const holes = [...new Set(((subject + '\n' + body).match(/\[[^\]\n]{1,40}\](?!\()/g) || []))];
-  if (holes.length && !confirm(`Mailen har stadig noget, der skal udfyldes: ${holes.join(', ')}\n\nSend alligevel?`)) return;
-  // Keep the address on the contact so it's there next time.
-  if (L.contact && L.contact.name && to !== (L.contact.email || '')) {
-    try { await post('/api/sdr/contact', { cvr: L.cvr, name: L.contact.name, title: L.contact.title || '', email: to }); } catch (_) {}
-  }
-  if (gmailReady && !forceClient) {
-    const btn = $('m-send'); if (btn) { btn.disabled = true; btn.textContent = 'Sender…'; }
-    try {
-      await post('/api/sdr/gmail/send', { cvr: L.cvr, to, subject, body });
-    } catch (ex) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Send med Gmail'; }
-      toast('Kunne ikke sende: ' + ex.message + ' - prøv "Åbn i mailprogram"', 6000);
-      return;
-    }
-  } else {
-    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(mailPlain(body))}`;
-  }
-  mailOpen = false; $('mailbox').hidden = true;
-  await disp('email-sent', null, { email_template: t.name || '', email_to: to });
-}
-// "Ikke relevant" is an outcome of a call. Pressed without "Ring op" it was
-// usually a screening decision - ask once, so it isn't counted as a dial.
 function notRelevant() {
   const L = S.current; if (!L) return;
   if (calledCvr === L.cvr) { disp('not-relevant'); return; }
@@ -1507,11 +1312,10 @@ function notRelevant() {
 }
 async function disp(action, callback_at, extra) {
   const L = S.current; if (!L || busy) return; busy = true;
-  const note = noteVal(L);
   try {
     if (recState.rec) await debriefStop(true); // don't lose a running memo
     const dial = DIAL.lastCvr === L.cvr && DIAL.lastSid ? { call_sid: DIAL.lastSid, dial_s: DIAL.lastDur } : {};
-    const r = await post('/api/sdr/disposition', { cvr: L.cvr, action, note, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...dial, ...(extra || {}) });
+    const r = await post('/api/sdr/disposition', { cvr: L.cvr, action, callback_at: callback_at || null, active_s: activeSeconds(L.cvr), ...dial, ...(extra || {}) });
     if (dial.call_sid) { DIAL.lastSid = ''; DIAL.lastCvr = ''; }
     apply(r);
     if (r.parked) { toastAction(`Ingen svar ${r.parked.after} gange i træk - parkeret til ${fmtWhen(r.parked.until)} og tilbage i puljen nederst.`, 'Fortryd', () => undoLast(L.cvr), 8000); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
@@ -1712,31 +1516,9 @@ function noteThreadHtml(thread, id) {
   }).join('');
   return `<div class="notethread" id="${id || 'notethread'}"><div class="k">Noter (${t.length})</div>${rows}</div>`;
 }
-/* A note used to exist only until you picked an outcome - close the tab
-   mid-call and it was gone. Now it saves on its own button and is stamped. */
-function composerFocus(on) { const c = $('composer'); if (c) c.classList.toggle('on', !!on); }
-function noteDirty() {
-  const b = $('note-save'), n = $('note'); if (!b || !n) return;
-  b.disabled = !n.value.trim();
-  b.textContent = 'Gem note';
-}
-async function saveNote() {
-  const L = S.current; if (!L || busy) return;
-  const txt = noteVal(L);
-  if (!txt) { toast('Skriv en note først'); return; }
-  busy = true;
-  try {
-    const d = await post('/api/sdr/note', { cvr: L.cvr, note: txt });
-    // Re-render the card so the note appears in the thread, and clear the box.
-    apply(d, { keepCurrent: false });
-    const th = $('notethread'); if (th) th.scrollTop = th.scrollHeight;
-    toast('Note gemt');
-  } catch (ex) { toast('Fejl: ' + ex.message, 4000); }
-  finally { busy = false; }
-}
 async function skip() {
   const L = S.current; if (!L || busy) return; busy = true;
-  try { apply(await post('/api/sdr/skip', { cvr: L.cvr, note: noteVal(L) })); toast('Flyttet nederst på listen'); }
+  try { apply(await post('/api/sdr/skip', { cvr: L.cvr })); toast('Flyttet nederst på listen'); }
   catch (ex) { toast('Fejl: ' + ex.message, 4000); } finally { busy = false; }
 }
 async function jumpTo(cvr) {
@@ -2123,7 +1905,6 @@ async function noteModalSave() {
   catch (ex) { if (btn) btn.disabled = false; toast('Fejl: ' + ex.message, 4000); }
 }
 // The note text, only when the field was drawn for this lead.
-function noteVal(L) { const n = $('note'), b = $('notebox'); L = L || S.current; return n && b && L && b.dataset.cvr === L.cvr ? n.value.trim() : ''; }
 function pickScript(id) {
   scriptPickSet(id);
   const pb = $('pitchbody'); if (pb && S && S.current) pb.innerHTML = pitchPanelHtml(S.current);
@@ -2309,7 +2090,7 @@ function calendlyFor(L) {
 }
 async function selectContact(name) {
   const L = S.current; if (!L || busy) return; busy = true;
-  try { const note = $('note') ? $('note').value : ''; apply(await post('/api/sdr/contact/select', { cvr: L.cvr, name })); if ($('note')) $('note').value = note; toast(`Ringer til ${name}`); }
+  try { apply(await post('/api/sdr/contact/select', { cvr: L.cvr, name })); toast(`Ringer til ${name}`); }
   catch (ex) { toast(ex.message, 4000); } finally { busy = false; }
 }
 function fmtDur(s) { if (!s && s !== 0) return ''; if (s < 60) return s + ' s'; return Math.round(s / 60) + ' min'; }
@@ -2637,7 +2418,7 @@ async function aiAddLead(mi, j) {
   } catch (ex) { toast(ex.message, 5000); }
 }
 function aiCopy(i) { const m = AI.chat.messages[i]; navigator.clipboard.writeText(m.text).then(() => toast('Kopieret'), () => toast('Kunne ikke kopiere')); }
-function aiToNote(i) { const m = AI.chat.messages[i]; if (!m) return; noteModal(m.text.trim()); return; const n = null; if (!n) return; n.dispatchEvent(new Event('input')); toast('Lagt i noten - husk Gem note'); }
+function aiToNote(i) { const m = AI.chat.messages[i]; if (m) noteModal(m.text.trim()); }
 /* Sending never blocks the panel: the question shows at once, files that
    are still uploading finish first, and the answer lands in its own chat -
    even if the SDR has moved on to another conversation meanwhile. */

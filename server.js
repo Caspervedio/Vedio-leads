@@ -22,6 +22,16 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 app.use(cors());
 app.use(express.json({ limit: "12mb" })); // voice debriefs arrive as base64 audio
 app.use("/api/twilio", express.urlencoded({ extended: false })); // Twilio posts form-encoded webhooks
+// Where a slow click spends its time: the pool's read, parse, merge, stringify
+// and write are added up per request, and an SDR/admin request over 1.5 s logs
+// one "[slow]" line with the split - "the platform is slow" gets numbers.
+const _reqT = new (require("async_hooks").AsyncLocalStorage)();
+function tAdd(k, t0) { const st = _reqT.getStore(); if (st) st[k] = (st[k] || 0) + (Date.now() - t0); }
+app.use("/api/sdr", (req, res, next) => {
+  const t0 = Date.now(), st = {};
+  res.on("finish", () => { const ms = Date.now() - t0; if (ms > (Number(process.env.SLOW_MS) || 1500) && !String(req.headers.accept || "").includes("text/event-stream")) console.log(`[slow] ${req.method} ${req.baseUrl}${req.path} ${ms}ms ${Object.entries(st).map(([k, v]) => `${k}=${v}`).join(" ") || "-"}`); });
+  _reqT.run(st, next);
+});
 // Never cache the SPA shell (index.html) - it's a single-page app, so a
 // stale shell means the browser runs old in-memory JS after a deploy.
 // no-store guarantees a normal refresh always pulls the latest build.
@@ -44,7 +54,7 @@ app.use(express.static(path.join(__dirname, "public")));
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 function loadJsonFile(filePath, defaultValue) {
   try {
-    if (filePath === _poolCache.file) { const raw = poolRawRead(); if (raw != null) return JSON.parse(raw); return defaultValue; }
+    if (filePath === _poolCache.file) { let t = Date.now(); const raw = poolRawRead(); tAdd("read", t); if (raw == null) return defaultValue; t = Date.now(); const d = JSON.parse(raw); tAdd("parse", t); return d; }
     if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch (e) { console.error("loadJsonFile failed:", filePath, e.message); }
   return defaultValue;
@@ -337,11 +347,13 @@ function saveUserData(userId, d) {
   // external APIs for seconds/minutes → save). A job's stale copy must not
   // clobber outcomes the SDRs registered meanwhile, so pool saves merge
   // SDR-owned fields from disk first (see sdrMergeBeforeSave).
-  if (userId === "pool" && typeof sdrMergeBeforeSave === "function") { try { sdrMergeBeforeSave(d); } catch (e) { console.warn("[pool-merge]", e.message); } }
+  if (userId === "pool" && typeof sdrMergeBeforeSave === "function") { const t = Date.now(); try { sdrMergeBeforeSave(d); } catch (e) { console.warn("[pool-merge]", e.message); } tAdd("merge", t); }
   // The pool is rewritten on every SDR click; indentation made it ~30% bigger.
   if (userId === "pool") {
-    const raw = JSON.stringify(d); fs.writeFileSync(_poolCache.file, raw);
-    const st = poolStat(); if (st) Object.assign(_poolCache, { raw, mtimeMs: st.mtimeMs, size: st.size }); else _poolCache.raw = null;
+    let t = Date.now(); const raw = JSON.stringify(d); tAdd("stringify", t);
+    t = Date.now(); fs.writeFileSync(_poolCache.file, raw); tAdd("write", t);
+    { const rs = _reqT.getStore(); if (rs) rs.writes = (rs.writes || 0) + 1; }
+    t = Date.now(); const st = poolStat(); tAdd("stat", t); if (st) Object.assign(_poolCache, { raw, mtimeMs: st.mtimeMs, size: st.size }); else _poolCache.raw = null;
     _poolLoadedAt.set(d, st || { mtimeMs: 0, size: 0 });
     return;
   }
@@ -15270,9 +15282,13 @@ function sdrMergeBeforeSave(d) {
   }
   if (merged) console.log(`[pool-merge] kept ${merged} newer SDR-side change(s) from disk`);
 }
+const _dkPhone = new Map();
 function isDkPhone(p) {
-  const x = String(p || "").replace(/[^0-9+]/g, "");
-  return /^\+45\d{8}$/.test(x) || /^45\d{8}$/.test(x) || /^\d{8}$/.test(x);
+  const k = String(p || ""); const hit = _dkPhone.get(k); if (hit !== undefined) return hit;
+  const x = k.replace(/[^0-9+]/g, "");
+  const ok = /^\+45\d{8}$/.test(x) || /^45\d{8}$/.test(x) || /^\d{8}$/.test(x);
+  if (_dkPhone.size > 50000) _dkPhone.clear();
+  _dkPhone.set(k, ok); return ok;
 }
 function normDkPhone(p) {
   const x = String(p || "").replace(/[^0-9+]/g, "");
@@ -15807,7 +15823,19 @@ function sdrLeadAds(l) { return l.adlib_status === "active" ? (Number(l.adlib_ac
 // its own, so one SDR can work them with another pitch while the lists of
 // the others stay with the advertisers. Unchecked leads are in neither.
 function sdrAdsMatch(l, k) { if (k === "img") return sdrImageHeavy(l); return k === "any" ? (l.adlib_status === "active" || l.adlib_status === "past") : k === "0" ? (l.adlib_status === "past" || l.adlib_status === "none") : sdrLeadAds(l) >= Number(k); }
-function sdrLeadCat(l) { return catFromText(l.ind || l.industry || l.niche, l.about, l.name) || "andet"; }
+// Twenty regexes over the description, for every lead, several times per state
+// build: the biggest single cost of a state poll (Oct 2026 profile). The answer
+// only changes when the text does, so it is remembered per lead until then.
+const _leadCat = new Map();
+function sdrLeadCat(l) {
+  const n = l.ind || l.industry || l.niche, a = l.about, m = l.name;
+  const c = _leadCat.get(l.cvr);
+  if (c && c.n === n && c.a === a && c.m === m) return c.cat;
+  const cat = catFromText(n, a, m) || "andet";
+  if (_leadCat.size > 60000) _leadCat.clear();
+  _leadCat.set(l.cvr, { n, a, m, cat });
+  return cat;
+}
 // StoreLeads reports USD cents; roughly 6.9 kr to the dollar.
 const STORELEADS_USD_DKK = 6.9;
 // What StoreLeads estimates for a webshop: yearly sales (in kr) and monthly
@@ -15889,6 +15917,8 @@ function sdrQueue(d, userId, now, exclude, settings) {
   // 0 = fits, 1 = weak match (no page / no pixel / big), 2 = never ran ads.
   const fit = sdrFitRules(s); const band = new Map();
   for (const l of eligible) band.set(l.cvr, l.adlib_status === "none" ? 2 : fit.rank_weak_last && sdrFitWeak(l, s) ? 1 : 0);
+  const score = new Map(), person = new Map();
+  for (const l of eligible) if (!l.callback_at) { score.set(l.cvr, adlibScore(l, now)); person.set(l.cvr, sdrHasPerson(l) ? 1 : 0); }
   const fresh = eligible.filter((l) => !l.callback_at).sort((a, b) => {
     // My own research / own additions first - they're mine.
     const ar = sdrReservedFor(a) === userId ? 1 : 0, br = sdrReservedFor(b) === userId ? 1 : 0;
@@ -15905,9 +15935,9 @@ function sdrQueue(d, userId, now, exclude, settings) {
     // and long-stopped are filtered out by the rules.)
     const ab = band.get(a.cvr), bb = band.get(b.cvr);
     if (ab !== bb) return ab - bb;
-    const as = adlibScore(a, now), bs = adlibScore(b, now);
+    const as = score.get(a.cvr), bs = score.get(b.cvr);
     if (as !== bs) return bs - as;
-    const ap = sdrHasPerson(a) ? 1 : 0, bp = sdrHasPerson(b) ? 1 : 0;
+    const ap = person.get(a.cvr), bp = person.get(b.cvr);
     if (ap !== bp) return bp - ap;
     const am = a.meta_advertiser === true ? 1 : 0, bm = b.meta_advertiser === true ? 1 : 0;
     if (am !== bm) return bm - am;
@@ -16194,6 +16224,12 @@ function commissionPeriodView(d, P, settings, nameById) {
   return { ...base, locked: false, future: true, entries: pre };
 }
 function commissionSum(entries, by) { const x = entries.filter((e) => !by || e.by === by); return { amount: x.reduce((a, e) => a + e.sign * e.rate, 0), n: x.filter((e) => e.sign > 0).length, rev: x.filter((e) => e.sign < 0).length }; }
+// "Time spent on lead": which lead each SDR has open, and since when. In
+// memory, one per SDR - stamping it into the pool cost a full 23 MB write on
+// every lead change, twice per outcome (Oct 2026 profile). A restart only
+// loses the clock of the lead open at that moment, and the browser sends its
+// own count (active_s) with the outcome anyway.
+const SDR_OPEN = new Map(); // userId -> { cvr, at }
 function buildSdrState(userId, d) {
   d = d || loadPool();
   const users = loadUsers();
@@ -16216,11 +16252,9 @@ function buildSdrState(userId, d) {
   if (current && !sdrIsAdmin(userId)) {
     // A stamp older than the 20-minute ceiling is dead anyway (closed tab,
     // went to lunch) - it must not block the next measurement.
-    const alreadyOpen = leads.some((l) => l.opened_at && l.opened_by === userId && now - new Date(l.opened_at).getTime() < 20 * 60000);
-    if (!alreadyOpen && !current.opened_at) {
-      current.opened_at = new Date(now).toISOString(); current.opened_by = userId;
-      sdrTouch(current); savePool(d);
-    }
+    const o = SDR_OPEN.get(userId);
+    const alreadyOpen = o && now - new Date(o.at).getTime() < 20 * 60000;
+    if (!alreadyOpen && !(o && o.cvr === current.cvr)) SDR_OPEN.set(userId, { cvr: current.cvr, at: new Date(now).toISOString() });
   }
 
   // Opfølgning shows what THIS SDR can act on: their own follow-ups plus the
@@ -16489,18 +16523,15 @@ app.post("/api/sdr/call-started", authMiddleware, (req, res) => {
 // This stamp costs them nothing: it starts when the lead appears on screen and
 // stops when they pick an outcome. Only the first open counts, so a re-render
 // can't reset the clock.
+// The clock itself lives in memory (SDR_OPEN, by buildSdrState).
 app.post("/api/sdr/opened", authMiddleware, (req, res) => {
   try {
-    const d = loadPool(); const lead = (d.leads || []).find((l) => l.cvr === (req.body || {}).cvr);
-    if (lead) {
-      // The browser knows what is actually on screen, so it moves the clock:
-      // any lead this SDR left without an outcome stops counting here. The
-      // open lead keeps the time it has already accrued.
-      let changed = false;
-      for (const l of d.leads || []) if (l !== lead && l.opened_by === req.userId) { l.opened_at = null; l.opened_by = null; changed = true; }
-      if (!lead.opened_at || lead.opened_by !== req.userId) { lead.opened_at = new Date().toISOString(); lead.opened_by = req.userId; changed = true; }
-      if (changed) { sdrTouch(lead); savePool(d); }
-    }
+    // The browser knows what is actually on screen, so it moves the clock:
+    // any lead this SDR left without an outcome stops counting here. The
+    // open lead keeps the time it has already accrued.
+    const cvr = String((req.body || {}).cvr || "").slice(0, 80);
+    const o = SDR_OPEN.get(req.userId);
+    if (cvr && (!o || o.cvr !== cvr)) SDR_OPEN.set(req.userId, { cvr, at: new Date().toISOString() });
     res.json({ ok: true });
   } catch (e) { sdrFail(res, e, "opened"); }
 });
@@ -16533,10 +16564,12 @@ function sdrDispositionHandler(req, res) {
     if (dialS > 0) duration_s = Math.min(dialS, 60 * 60); // the dialer knows exactly
     else if (active > 0) duration_s = Math.min(active, 20 * 60);
     else {
-      const startedAt = lead.opened_at || lead.last_call_started_at;
+      const o = SDR_OPEN.get(req.userId);
+      const startedAt = (o && o.cvr === lead.cvr ? o.at : null) || lead.opened_at || lead.last_call_started_at;
       if (startedAt) { const s = now - new Date(startedAt).getTime(); if (s > 0 && s < 20 * 60000) duration_s = Math.round(s / 1000); }
     }
     lead.last_call_started_at = null; lead.opened_at = null; lead.opened_by = null;
+    if ((SDR_OPEN.get(req.userId) || {}).cvr === lead.cvr) SDR_OPEN.delete(req.userId);
     lead.calls = Array.isArray(lead.calls) ? lead.calls : [];
     lead.calls.push({ at: nowIso, by: req.userId, action, note: cleanNote, callback_at: callback_at || null, duration_s, ...(req.body && req.body.call_sid ? { call_sid: String(req.body.call_sid).slice(0, 40) } : {}) });
     let parkedAfter = 0;
@@ -16699,6 +16732,7 @@ app.post("/api/sdr/screen", authMiddleware, (req, res) => {
     }
     else { lead.callback_at = when.toISOString(); lead.owner_override = req.userId; lead.owner_override_at = nowIso; lead.resurface_at = null; }
     lead.deferred_until = null; lead.opened_at = null; lead.opened_by = null; lead.last_call_started_at = null;
+    if ((SDR_OPEN.get(req.userId) || {}).cvr === lead.cvr) SDR_OPEN.delete(req.userId);
     const label = R.label + (why ? ` (${SDR_ICP_WHY[why]})` : "") + (reason === "later" ? " " + when.toLocaleDateString("da-DK", { weekday: "short", day: "numeric", month: "short" }) : (reason === "weak" || reason === "noads") ? " - tilbage i puljen om 3 måneder" : "");
     lead.note_log = Array.isArray(lead.note_log) ? lead.note_log : [];
     lead.note_log.push({ at: nowIso, by: req.userId, where: "list", text: `Fravalgt uden opkald: ${label}${cleanNote ? " - " + cleanNote : ""}` });
@@ -16771,23 +16805,26 @@ function sdrResearchNeeds(l) {
   const direct = !!l.ivr_at && !(l.contacts || []).some((c) => c && c.name && isDkPhone(c.phone || c.direct_phone || c.mobile));
   return { person, phone, direct, any: person || phone || direct };
 }
+function sdrResearchOpen(l, userId, now) {
+  if (!sdrIsActive(l)) return false;
+  if (l.lastAction === "demo-booked") return false;
+  if (!sdrResearchNeeds(l).any) return false;
+  if (!(l.web || l.website)) return false;                         // nothing to look at
+  // Saved by a human = what could be found. Without this, a lead whose main
+  // number is a phone menu came straight back after "Gem og næste" whenever
+  // the SDR found a name but no direct line - the same card, again and again.
+  if (l.research_at && now - new Date(l.research_at).getTime() < SDR_RESEARCH_DONE_MS) return false;
+  if (l.research_skipped_at && now - new Date(l.research_skipped_at).getTime() < SDR_RESEARCH_SKIP_MS) return false;
+  if (l.research_hold_by && l.research_hold_by !== userId && l.research_hold_at && now - new Date(l.research_hold_at).getTime() < SDR_RESEARCH_HOLD_MS) return false;
+  // "Spring over" = not this one, not now. Mine only, and only for today -
+  // unlike "Kunne ikke findes", which rests the lead for everyone.
+  if (l.research_pass_by === userId && l.research_pass_at && now - new Date(l.research_pass_at).getTime() < SDR_RESEARCH_PASS_MS) return false;
+  return true;
+}
 function sdrResearchQueue(d, userId, now) {
-  return (d.leads || []).filter((l) => {
-    if (!sdrIsActive(l)) return false;
-    if (l.lastAction === "demo-booked") return false;
-    if (!sdrResearchNeeds(l).any) return false;
-    if (!(l.web || l.website)) return false;                         // nothing to look at
-    // Saved by a human = what could be found. Without this, a lead whose main
-    // number is a phone menu came straight back after "Gem og næste" whenever
-    // the SDR found a name but no direct line - the same card, again and again.
-    if (l.research_at && now - new Date(l.research_at).getTime() < SDR_RESEARCH_DONE_MS) return false;
-    if (l.research_skipped_at && now - new Date(l.research_skipped_at).getTime() < SDR_RESEARCH_SKIP_MS) return false;
-    if (l.research_hold_by && l.research_hold_by !== userId && l.research_hold_at && now - new Date(l.research_hold_at).getTime() < SDR_RESEARCH_HOLD_MS) return false;
-    // "Spring over" = not this one, not now. Mine only, and only for today -
-    // unlike "Kunne ikke findes", which rests the lead for everyone.
-    if (l.research_pass_by === userId && l.research_pass_at && now - new Date(l.research_pass_at).getTime() < SDR_RESEARCH_PASS_MS) return false;
-    return true;
-  }).sort((a, b) => sdrResearchScore(b) - sdrResearchScore(a) || new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
+  const q = (d.leads || []).filter((l) => sdrResearchOpen(l, userId, now));
+  const k = new Map(q.map((l) => [l, [sdrResearchScore(l), new Date(l.addedAt || 0).getTime()]]));
+  return q.sort((a, b) => k.get(b)[0] - k.get(a)[0] || k.get(b)[1] - k.get(a)[1]);
 }
 function sdrResearchSlim(l, nameById) {
   const needs = sdrResearchNeeds(l);
@@ -16812,7 +16849,8 @@ function sdrResearchStats(d, userId, now) {
     if (l.research_by === userId && l.research_at && new Date(l.research_at).getTime() >= t0.getTime()) fixedToday++;
     void now;
   }
-  return { remaining: sdrResearchQueue(d, userId, now).length, fixedToday };
+  let remaining = 0; for (const l of d.leads || []) if (sdrResearchOpen(l, userId, now)) remaining++;
+  return { remaining, fixedToday };
 }
 app.get("/api/sdr/research", authMiddleware, (req, res) => {
   try {
